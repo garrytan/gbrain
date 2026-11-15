@@ -147,7 +147,7 @@ export interface SyncResult {
    * `holds_fix` (a host-operator relay) only.
    */
   held?: import('../core/persistence/sync-holds.ts').GitHoldItem[];
-  held_count?: number; held_needs_human?: number;
+  held_count?: number; held_needs_human?: number; carried?: import('../core/persistence/sync-holds.ts').CarriedHolds[]; skipped?: { symlink_dangling: { count: number; sample: string[] } };
   holds_outstanding?: number; holds_released?: number;
   holds_escalated?: boolean;
   holds_truncated?: boolean;

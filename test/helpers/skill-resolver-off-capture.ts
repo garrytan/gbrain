@@ -10,9 +10,10 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-/** Machine and clock parts: the temp root, the bun path, timestamps, durations, and Codex's trust hash (it hashes hooks.json, which is pinned itself). */
+/** Machine and clock parts: the temp root, the bun path, the Bun directory the hook launcher records, timestamps, durations, and Codex's trust hash (it hashes hooks.json, which is pinned itself). */
 function normalize(text: string, root: string): string {
   return text.split(root).join('<ROOT>').split(process.execPath).join('<BUN>')
+    .replace(/^PATH='(?:[^']|'\\'')*':\$PATH$/m, () => "PATH='<BUN_DIR>':$PATH")
     .replace(/"(updated_at|ts)":\s*"[^"]*"/g, '"$1":"<TS>"')
     .replace(/"duration_ms":\s*\d+/g, '"duration_ms":"<MS>"')
     .replace(/trusted_hash = "sha256:[0-9a-f]+"/g, 'trusted_hash = "<HASH>"');

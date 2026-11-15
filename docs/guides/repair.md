@@ -4389,6 +4389,8 @@ re-screen, which the next sync consumes once it imports or holds the file; docto
 [hold](#held-files). `slug_taken` (the path slug belongs to another page) and `deleted_page`
 (the page was deleted while the file stayed committed) are never scheduled:
 rename one of the two files, or delete the file or restore the page.
+A committed symlink whose target does not exist is skipped by sync, so it is
+never reported as unindexed.
 `metafile_skipped` (never scheduled) lists titled scaffolding files sync skips
 on purpose (`index.md`, `README.md`, ...) under `sync.metafile_pages off`; under
 the default `typed` a nested titled one is an ordinary unindexed file. To keep
@@ -5174,7 +5176,9 @@ the harness configuration, or a `gbrain connect --install` receipt), and no
 because sessions would then read an empty brain while useful memory stays on
 the hosted one. Manage that connection with `gbrain connect <mcp-url>
 --harness <claude-code|codex> --install`; `gbrain doctor --only harness_wiring` shows
-which brain the registration reaches.
+which brain the registration reaches. The skill resolver needs no local brain:
+set it up there with `gbrain setup <claude-code|codex> --skills-index-only
+--skill-loading resolve`.
 
 ### Turn hook not loaded
 
@@ -5228,14 +5232,17 @@ directory in `GBRAIN_HOOK_CWD` and runs gbrain from its own directory. The
 
 - `session_cwd`: the hook was written before the launcher existed.
 - `missing` or `stale`: the hook names the launcher, but it is gone, changed
-  or not executable.
+  or not executable, or (on a `bun install -g` install) it records no Bun or a
+  Bun that is no longer there, so a harness started without bun on PATH, like
+  the Codex app, cannot start gbrain.
 - `foreign`: the launcher's directory holds a file gbrain did not write. The
   launcher refuses to start gbrain there (the hook exits 1 with one stderr
   line) until you remove it.
 
 Run `fix.argv` (`gbrain setup <harness>` for setup's hooks,
 `gbrain setup <harness> --instructions-only` for the turn-rule hook);
-`gbrain post-upgrade` moves every user-scope hook it can find except
+`gbrain post-upgrade` rewrites a stale launcher file in place (no entry or
+trust changes), and moves every user-scope hook it can find except
 `gbrain setup codex`'s, which only setup rewrites because the rewrite re-trusts
 them; post-upgrade prints that command instead. A project-scope
 install is refreshed from its project directory. A setup hook you edited after

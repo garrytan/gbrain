@@ -19,7 +19,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { readManagedSyncFailures } from './sync-failures.ts';
-import { ABANDONED_REPORT_STREAK, passFingerprint, passReadClock, transientEnding } from './sync-pass-row.ts';
+import { ABANDONED_REPORT_STREAK, passFingerprint, passReadClock, transientEnding, type PassRow } from './sync-pass-row.ts';
 import { passFailureKeys } from './sync-cursor-key.ts';
 import type { ManagedSyncFailure } from './sync-failures.ts';
 
@@ -56,9 +56,11 @@ export async function readBlockedManagedSyncs(engine: BrainEngine, sourceIds?: s
     .filter(failure => failure.code !== 'sync_incomplete' && cursors.has(failure.cursor_key) && !passSources.has(failure.source_id))
     .map(failure => ({ source_id: failure.source_id, code: failure.code, run_id: failure.run_id, blocked_since: failure.first_seen })), ...passes, ...passStops];
   // #7982: passes that keep ending on the same transient stop (status's rule: the newest counts itself).
-  const { abandonedPasses, openPassRowsStill } = await import('./sync-pass-status.ts');
+  const { abandonedPasses, openPassRowsStill, passBanked } = await import('./sync-pass-status.ts');
+  // GBRA-542: a pass that stopped after committing work moved the source; it is not listed abandoned.
+  const banked = (row: PassRow) => passBanked(engine, row.value.source_id, row.value.incarnation, row.value.telemetry).catch(() => false);
   for (const { source_id, row } of readings) {
-    if (transientEnding(row.value.telemetry) && abandonedPasses(row) >= ABANDONED_REPORT_STREAK && !listed.some(blocked => blocked.source_id === source_id)) {
+    if (transientEnding(row.value.telemetry) && abandonedPasses(row) >= ABANDONED_REPORT_STREAK && !listed.some(blocked => blocked.source_id === source_id) && !await banked(row)) {
       listed.push({ source_id, code: 'pass_abandoned', run_id: row.value.telemetry.pass_id, blocked_since: passStuckSince(row) });
     }
   }
@@ -68,11 +70,12 @@ export async function readBlockedManagedSyncs(engine: BrainEngine, sourceIds?: s
   const [{ inspectLocks, syncLockId }, { drainLeaseLive }] = await Promise.all([import('../db-lock.ts'), import('./sync-lease.ts')]);
   // #7614: one read for every open source's lock. A read that failed decides nothing: the quiet-window rule (status's) still counts a streak.
   const locks = await inspectLocks(engine, open.map(({ source_id }) => syncLockId(source_id))).catch(() => undefined);
-  const candidates = open.map(({ source_id, row }) => {
+  const candidates = (await Promise.all(open.map(async ({ source_id, row }) => {
     const lock = locks?.get(syncLockId(source_id));
     const interrupted = locks === undefined ? undefined : !lock || !drainLeaseLive(lock);
-    return { source_id, row, interrupted, abandoned: abandonedPasses(row, passReadClock(row), interrupted) >= ABANDONED_REPORT_STREAK };
-  }).filter(entry => entry.interrupted || entry.abandoned);
+    const abandoned = abandonedPasses(row, passReadClock(row), interrupted) >= ABANDONED_REPORT_STREAK && !await banked(row);
+    return { source_id, row, interrupted, abandoned };
+  }))).filter(entry => entry.interrupted || entry.abandoned);
   // #7614: a pass that ended (releasing its lease) after the pass read changed its row, so it is not listed; nor is an archived source.
   // A re-read that failed lists nothing new.
   const still = candidates.length ? await openPassRowsStill(engine, candidates).catch(() => new Set<string>()) : new Set<string>();

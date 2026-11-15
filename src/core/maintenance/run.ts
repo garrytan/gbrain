@@ -34,6 +34,8 @@ import { hasTypesafeKey } from '../ai/decide/index.ts';
 import { isEngineDegraded } from '../degraded-marker.ts';
 import { hasPendingMigrations } from '../migrate-pending.ts';
 import { tryAcquireDbLock } from '../db-lock.ts';
+import { resolveArchiveEnabled } from '../transcripts/archive-default.ts';
+import type { ArchiveMaintenanceOutcome } from '../transcripts/archive-maintenance.ts';
 
 export const MAINTENANCE_LAST_RUN_KEY = 'maintenance.last_run';
 export const MAINTENANCE_AUTO_KEY = 'maintenance.auto';
@@ -176,6 +178,7 @@ export interface UpkeepOpts {
   providers?: SafePhaseProviders;
   capacityPaused?: (engine: BrainEngine) => Promise<{ command: string; config_key: string } | null>;
   cycle?: typeof runCycle;
+  archive?: (engine: BrainEngine, opts: { runner: string; now: Date }) => Promise<ArchiveMaintenanceOutcome>;
 }
 
 const RUNNER_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
@@ -270,7 +273,10 @@ async function preflight(engine: BrainEngine, opts: UpkeepOpts, now: Date): Prom
   return null;
 }
 
-interface WorkItem { key: string; sourceId?: string; phases: CyclePhase[] }
+interface WorkItem { key: string; sourceId?: string; phases: CyclePhase[]; archive?: true }
+
+/** The conversation archive's item (GST-2768): last in a round, only while the archive resolves on. */
+export const ARCHIVE_ITEM_KEY = 'transcript_archive';
 
 function phaseCode(phase: CycleReport['phases'][number]): string | undefined {
   return phase.code ?? phase.error?.code;
@@ -391,7 +397,9 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
     }
     const budgeted = opts.budgetMs !== undefined;
     const sources = (await engine.listAllSources()).sort((a, b) => a.id.localeCompare(b.id));
-    const keys = ['global', ...sources.map((source) => `source:${source.id}`)];
+    const archiveOn = (await resolveArchiveEnabled(engine).catch(() => null))?.enabled === true
+      || (await (await import('../transcripts/archive.ts')).archiveRescopeSkipped(engine).catch(() => null))?.code === 'archive_rescope_pending';
+    const keys = ['global', ...sources.map((source) => `source:${source.id}`), ...(archiveOn ? [ARCHIVE_ITEM_KEY] : [])];
     const parked = (prior?.parked ?? []).filter((p) => keys.includes(p.key)).map((p) => ({ ...p }));
     const retryOnly = !upkeepDue(prior, now);
     const retrying = !budgeted || opts.retryParked || (!retryOnly && !prior?.cursor) ? parked.map((p) => p.key) : [];
@@ -410,6 +418,7 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
     const items: WorkItem[] = [
       { key: 'global', phases: plan.global },
       ...sources.map((source) => ({ key: `source:${source.id}`, sourceId: source.id, phases: plan.source })),
+      ...(archiveOn ? [{ key: ARCHIVE_ITEM_KEY, phases: [], archive: true as const }] : []),
     ].filter((item) => !done.includes(item.key));
     const deadline = budgeted ? Date.now() + opts.budgetMs! : Infinity;
     const steps: UpkeepStep[] = [];
@@ -428,6 +437,16 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
         delete attempts[item.key];
         retry.delete(item.key);
       };
+      if (item.archive) {
+        // An archive error is recorded (transcripts.archive.last_maintenance, doctor) and never fails the pass.
+        const archive = opts.archive ?? (async (e: BrainEngine, o: { runner: string; now: Date }) => (await import('../transcripts/archive-maintenance.ts')).runArchiveMaintenance(e, o));
+        const result: ArchiveMaintenanceOutcome = await archive(engine, { runner: opts.runner, now }).catch((error: unknown) => ({ status: 'ran' as const, code: (error as { code?: string } | null)?.code ?? 'archive_maintenance_failed', message: String(error) }));
+        const failed = result.status === 'ran' && result.record?.status !== 'ok' && !!result.code;
+        steps.push({ name: ARCHIVE_ITEM_KEY, scope: 'global', status: result.status === 'ran' ? (failed ? 'warn' : 'ok') : 'skipped',
+          ...(result.code ? (result.status === 'ran' ? { code: result.code } : { reason: result.code }) : result.status === 'not_due' ? { reason: 'not_due' } : {}) });
+        settle();
+        continue;
+      }
       const unfinished = (): void => {
         if (!budgeted || opts.signal?.aborted) return;
         const slices = (attempts[item.key] ?? 0) + 1;

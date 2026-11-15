@@ -299,7 +299,7 @@ if [ -n "${GBRAIN_VERIFY_LOG_DIR:-}" ]; then
   LOG_DIR="$GBRAIN_VERIFY_LOG_DIR"
   mkdir -p "$LOG_DIR" || { echo "ERROR: cannot create $LOG_DIR" >&2; exit 2; }
 else
-  LOG_DIR="$(mktemp -d /tmp/gbrain-verify-XXXXXX)"
+  LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gbrain-verify-XXXXXX")"
   KEEP_LOGS=0
   trap '[ "$KEEP_LOGS" = "1" ] || rm -rf "$LOG_DIR"' EXIT
 fi

@@ -34,5 +34,8 @@ export const RUNTIME_READER_CONFIG_KEYS: readonly string[] = [
   'access.requester_scope_enforce', // access/requester-scope.ts (GST-363): false turns the unscoped-read refusal on a brain that serves several people into a notice (hosted, until connections are bound); default on
   'mcp.stdio_may_act_for', // access/audience.ts (GBRA-231): whom a local stdio server may act for (_meta.on_behalf_of); unset, stdio refuses every audience
   'proposals.ttl_hours', 'proposals.max_pending_per_actor', 'proposals.max_pending_per_credential', // persistence/memory-proposals.ts: held QM proposal TTL (168 h) and pending caps (10 per person, 50 per credential)
+  'transcripts.archive.enabled', 'transcripts.archive.source', 'transcripts.archive.timezone', // transcripts/archive.ts (GST-2768): the conversation archive switch (gbrain transcripts archive on|off), its source (default conversations) and the timezone its days are cut in (pinned per source on the first run)
+  'transcripts.archive.backfill_days_per_run', 'transcripts.archive.run_window_days', 'transcripts.archive.quiet_minutes', // transcripts/archive.ts: days one backfill run writes, days a run re-reads, and minutes of quiet before an open day embeds
+  'transcripts.archive.maintenance_floor_min', 'transcripts.archive.stale_days', // transcripts/archive-maintenance.ts (GST-2768 PR 3): minutes between maintenance-pass archive runs (360) and days behind before doctor transcript_archive_freshness warns (2)
   'proposals.retention_days', 'proposals.max_payload_chars', 'proposals.max_reason_chars', // persistence/memory-proposals.ts: closed-row retention (30 d), payload (1,000) and deny-reason (500) character caps
 ];

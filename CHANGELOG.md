@@ -10,6 +10,147 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.726.0] - 2026-11-15
+
+- The conversation archive is now on by default for personal brains; turn it off with `gbrain transcripts archive off` ([#9433](https://github.com/garrytan/gbrain/pull/9433))
+- New `gbrain transcripts archive` saves each day of your agent conversations, OpenClaw included, as one redacted, searchable page ([#9432](https://github.com/garrytan/gbrain/pull/9432))
+- Archive pages rank a little below your own notes, and `gbrain doctor` warns when the archive falls behind ([#9433](https://github.com/garrytan/gbrain/pull/9433))
+
+**New, off by default: `gbrain transcripts archive` writes one redacted page per conversation per local day from your agent harnesses, plus a daily index (GST-2768).**
+
+### Added
+- `gbrain transcripts archive run | backfill --from <day> | status | adopt-legacy --dir <folder> | on | off`. Off until `gbrain transcripts archive on`; nothing is scheduled yet. Pages go to `conversations/<harness>/<day>/<label>-<hash8>` and `conversations/days/<day>` in the `conversations` source, redacted before any write; reruns change nothing; the first run pins the timezone so days never re-slice. Backfilled pages are keyword-searchable at once and their embedding waits for `gbrain embed --held`. On a shared brain every page names its readers (the owner, plus an existing `chat-<hash8>` group for a verified group chat); with no owner named, days are held with `archive_owner_unset`. Works on repo-less brains (database is the record), personal repo brains (files committed with `gbrain git commit-push`, then synced) and managed brains (the write coordinator).
+- OpenClaw: live sessions are read through the Gateway (`openclaw gateway call`, with OpenClaw's own config or `OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN`, or `GBRAIN_OPENCLAW_GATEWAY_URL` / `GBRAIN_OPENCLAW_GATEWAY_TOKEN` to override them), checked against OpenClaw 2026.10.9 and 2026.11.3. The archive also reads OpenClaw's retained session files (`.jsonl.reset.<stamp>`, zstd `.jsonl.deleted.<stamp>.<hex>.zst` and `.jsonl.bak.<stamp>`) and merges them with the Gateway's copy of the same session, so a backfill works with the Gateway down and messages from before a reset are kept; migration and Doctor copies are skipped, and `gbrain transcripts ingest` still reads live files only. A day page is rewritten only when it keeps every message it already held, and backfill re-redacts a finished day when the redaction rules changed since it was written. The `openclaw` child gets only PATH, HOME, locale and the resolved Gateway URL and token, and a working-folder `.env` can no longer set any `OPENCLAW_*` or gbrain Gateway variable. Backfill reads large session folders in a bounded way and resumes where the last run stopped.
+- New error codes: `archive_gateway_unreachable`, `archive_gateway_auth`, `archive_gateway_failed`, `archive_owner_unset`, `archive_redaction_failed`, `archive_run_busy` (one run per source at a time), `archive_audience_unproven` (the brain's audience could not be checked, so nothing was written).
+- When a brain becomes shared, the next archive run first keeps every earlier archive page to the owner, then records the new audience. A failed day index write is retried on the next run.
+
+- Docs: `docs/guides/conversation-archive.md`.
+- Tests: `test/transcripts-archive-*.test.ts` (PGLite, including a real git remote and child CLI commit-push), `test/transcripts-openclaw-gateway.test.ts`, `test/transcripts-openclaw-archived-files.test.ts`, `test/transcripts-openclaw-files-only.test.ts`.
+
+### Known limits
+- Redaction works on what each day's own text marks as a secret. A value that a later day labels as a credential stays visible in the earlier day's page.
+- Pages written while the brain was personal are closed on the next archive run after it becomes shared, so they stay readable to other members for up to one maintenance interval.
+
+**The conversation archive is now on by default for personal brains, runs from the maintenance pass, ranks a little below your own pages, and has a doctor check (GST-2768).**
+
+<!-- behavior-change: transcript_archive_default_gst2768 -->
+
+### Changed
+- `transcripts.archive.enabled` unset now resolves on when the brain is personal (this default flip is approved by Garry's 2026-11-15 "do it" on GST-2768) (`brain.audience` personal, or the audience heuristic reads it as personal) and off on a shared or unknown brain, a thin client and a remote caller; an explicit on or off always wins, and a config read failure resolves off. A shared brain is only offered the archive. Existing personal brains see a one-time upgrade notice with the off command, `gbrain transcripts archive off`.
+- Search and query: an archive page ranks a little below a written page that scores close to it (rank prior 0.8), and one result list keeps at most two archive hits per day, unless the query asks about a conversation or a date. `search.rank_priors false` turns both off.
+- `gbrain init` and `gbrain setup <harness>` state the archive in their first-run settings (on, or offered on a shared brain), what leaves the machine, and how to turn it off.
+
+### Added
+- The maintenance pass runs the archive: unattended upkeep (a serve's idle tick, `gbrain maintain --unattended` and its schedule) and the autopilot tick archive the forward days, then one capped backfill run (`transcripts.archive.backfill_days_per_run`) of older days until none are left, at most once per `transcripts.archive.maintenance_floor_min` (default 360). It never runs when the archive resolves off, never fails the pass, and records its outcome in `transcripts.archive.last_maintenance`. One pass is bounded by count and by `ARCHIVE_MAINTENANCE_BUDGET_MS` (120 s, coordinator waits included). A busy run (`archive_run_busy`) or an unproven audience (`archive_audience_unproven`) is a recorded skip the next pass retries. On a managed brain the pass writes through the write coordinator as `put_page` requests under the local CLI identity (`local_cli`); a write accepted but not yet published counts as `accepted` and is not written again; called inside a coordinated write it skips with `archive_inside_publication`. Backfilled pages stay keyword-only until `gbrain embed --held`; no facts extraction or Dream synthesis runs on archive pages.
+- When a brain archived while personal becomes shared, the owner-only re-scope now adds one rule per folder that holds an archive page (replacing any rule already on those folders, a wider one included) instead of one `conversations/` rule, so a group conversation archived afterwards keeps its group. A personal history longer than the per-source rule limit (256 folders) is kept to the owner by one rule on `conversations/` instead (`archive_rescope_folder_cap`, reported by status and doctor), so group conversations archived afterwards stay owner-only too; widening that rule also opens the earlier days to its readers. When the re-scope waits (no owner: `archive_rescope_owner_unset`; rules kept in git: `archive_rescope_git_rules`), `gbrain transcripts archive status` and doctor say so in one line with the next step.
+- Embedding planning reads a page's archive hold marker and budget row in one statement instead of two.
+- Doctor check `transcript_archive_freshness`: warns when a harness's newest archived day is more than `transcripts.archive.stale_days` (default 2) behind its newest session day (fix: `gbrain transcripts archive run`, or `backfill --from <day>` for a wider gap), when no maintenance pass has run the archive in that long (fix: `gbrain autopilot --install`), and lists held days with their codes. Off is ok; a harness with no readable sessions is informational.
+- Docs: `docs/guides/conversation-archive.md` (default-on behaviour, what leaves the machine, the off switch, backfill and the held embedding, the doctor check, retiring a home-made pipeline).
+- Tests: `test/transcripts-archive-default.test.ts`, `test/transcripts-archive-maintenance.test.ts`, `test/search-archive-rank-prior.test.ts`, `test/doctor-transcript-archive-freshness.test.ts`, `test/upgrade-transcript-archive-notice.test.ts`, `test/transcripts-archive-maintenance-managed.test.ts`, `test/transcripts-archive-run-on-demand.test.ts`, `test/transcripts-archive-rescope-skipped.test.ts`, `test/page-embedding-budget-statements.test.ts`, and the archive line in `test/init-first-run.test.ts`.
+
+## [0.60.725.0] - 2026-11-15
+
+**Doctor's Git checks now finish on large brains, and a check that could not see everything says health unknown instead of ok.**
+
+### Changed
+- `db_ahead_of_git` and `strict_facts_outside_git` read the 800 most recently changed pages of each source instead of every page, and their messages say how far back they looked. `gbrain sources git-gap <source-id>` still reads every page.
+- When that census runs out of its time budget or cannot run, `db_ahead_of_git`, `strict_facts_outside_git` and `git_index_lag` now report a warning with health unknown instead of ok.
+- Doctor runs the checks that catch lost writes before its full scans.
+
+### Fixed
+- `strict_facts_outside_git` no longer says every fact has a Git home when a fenced fact sits on a page older than that window. It reports health unknown, and `gbrain sources git-gap <source-id>` counts the whole source.
+
+<!-- behavior-change: doctor_git_gap_unknown_gbra541 -->
+
+**A batch of small fixes: folder attach retries, dropped webhook events, cut-off stdio replies, and clearer help and doctor text.**
+
+### Fixed
+- Retrying a managed folder attach with the same `--request-id` replays the first attempt's default-search choice instead of failing with `idempotency_conflict`.
+- Two different GitHub events on one item within 30 seconds are both processed; a redelivery of the same event is still deduplicated.
+- Local `serve` and the thin-client bridge deliver a large stdio reply in full when stdin closes right after it.
+- Atoms stamped by `repair visibility` can be adopted by a later generation again, without widening their visibility (#9386).
+- A migration that keeps failing gets the `migrations_pending` notice with the `apply-migrations --force-retry <version>` step.
+- Doctor's `derived_visibility` check counts only active sources, so it no longer suggests a repair that finds nothing.
+- `repair purged-page-facts`: a preview that approves nothing prints an apply command that reports nothing to do.
+- A DNS failure on a Supabase pooler URL points at this machine's DNS and network instead of a paused project (#8531).
+- `sources status --json` prints each held file's fix with the `--brain` pin, so it runs as written (#9319).
+- A hosted install asking setup for the skill resolver is told the command that works without a local brain (#9245).
+
+### Changed
+- `gbrain setup codex` and `--remove` keep a `.bak.<timestamp>` copy of each `config.toml` or `hooks.json` they change and print its path.
+- `gbrain setup codex` prices the search-mode cost matrix with OpenAI models.
+- `embed --help` names the `--stale --facts --source <id>` form for facts saved with `remember`; `upgrade --help` no longer mentions a postinstall step; doctor's consent wording says gbrain makes no provider request on its own.
+- The enrich skill says to leave out empty sections instead of writing `[No data yet]` (#7061).
+
+<!-- behavior-change: setup_codex_backups_gst2779 -->
+
+**Keyless search finds pages that hold most of the question's words.** On a brain with no embedding provider, a question used to miss any page that lacked even one of its words whenever another page held all of them: "SSO Starter plan" found the pricing and decisions pages and never the call notes that mention SSO and Starter. Now, when the first page of results comes back shorter than the limit, search asks the keyword index once more for pages that hold only some of the words and adds them after the rows it already had. Every row search returned before comes back exactly as it did: same pages, chunks, order and scores. The added rows go through the same stages as any other row (the caller's read policy, redirects, superseded-page warnings, the evidence and injection checks when they are on, the alias and facts steps of `search` and `query`, evidence delivery), inside the same request with the same decision time budget. They never repeat a page, never take the page past its limit, score below the rows above them and carry `keyword_fill: true` (also in lean remote rows); `--explain-target` says the page matched only some of the words. If adding them would change any other row, or a check that is on was skipped for them, they are left out and the result is the one search returns today; a row from a source on `decide.egress.deny_sources` is treated like any other row from that source, which today means it is returned and counted as judged (GST-2786); a failed or timed-out lookup is reported like any other incomplete keyword arm. Only the `search` and `query` operations (the CLI commands and MCP tools of those names) add these rows, because they are where the result is checked against the one without them; features that call search internally (think, recall, enrichment, whoknows and the rest) get the rows they got before. Later pages (an offset above zero), questions in Chinese, Japanese or Korean (their keyword match already works term by term) and brains with embeddings are unchanged. There is no new setting.
+
+On LongMemEval S run keyless through the `query` operation (470 scored questions, top 10), recall_all@10 rose from 80.64% to 91.06% (+10.43 points, 95% interval +7.87 to +13.19; 49 questions better, none worse), recall_all@5 from 72.13% to 81.06% and MRR from 0.8726 to 0.8770; none of the 451 questions with a hit ranked it lower, and the rows returned without the added pages were the same in all 500 questions. The search function gives the same numbers when asked for the added rows; with the clock frozen its rows without them were identical in every field in all 500 questions, and when not asked it added nothing. The extra lookup ran on 103 of 500 questions and added a median 37.8 ms (p95 55.3 ms) to the search on PGLite; through the `query` operation those questions took a median 125 ms longer (p95 210 ms), because the operation's later steps run twice to prove the other rows did not change. On Postgres a cold search whose first page is short costs 65 database round trips, the same as a search whose all-words match is empty (master: 55). With the evidence or injection check on, the added rows cost one more provider request.
+
+<!-- behavior-change: keyless_any_word_fill_gst2762 -->
+
+### Itemized changes
+
+- `src/core/search/hybrid.ts`, `src/core/search/hybrid/keyword-only.ts`: the search function adds the rows only for a caller that passes `anyWordFill`, which the `search` and `query` operations do; a Chinese, Japanese or Korean question skips the extra lookup. The keyless path's row stages are one function, called once for the rows search returns today and, when that page is short, once more for the any-word candidates with the first page held as context, so duplicates, collapsed copies and redirect targets of a returned page are dropped. The added rows are scored below the page's lowest row, checked, and appended up to the limit.
+- `src/core/search/decide-stage.ts`: `gateFillRows` runs the evidence and injection checks on the added rows with what is left of the request's one time budget and adds their counts to the request's one record; if the first page's check failed open, or the added rows cannot be judged, none are added and the result says so.
+- `src/core/ops/search.ts`: `search` and `query` run their own steps on the rows without the added pages, then again with them, and return the second result only when every other row, the alias record, the confidence grade and the delivered text are the same. A page the alias step already returns is not added a second time.
+- `src/core/search/keyword-identifier-probe.ts`, `src/core/pglite-engine.ts`, `src/core/postgres-engine.ts`, `src/core/types.ts`: the keyword arm takes `orFill`, which runs only the any-word statement (the all-words rows are already in hand) and tags its rows `keyword_relaxed` and `keyword_fill`; without it the arm behaves as before. On Postgres the extra lookup remembers its own statement timeouts apart from an ordinary search's, so a timed-out extra lookup never makes the next search skip its keyword statement.
+- `src/core/search/lean-rows.ts`, `src/core/search/explain-target.ts`: lean rows keep `keyword_fill`; the explain trace names the added arm and says the page matched only some words.
+- Tests: `test/search/keyless-any-word-fill.test.ts` (PGLite and Postgres) with property tests at the search function and at the `search` and `query` operations that the rows without the added pages come back unchanged; `test/search/keyless-any-word-fill-gates.serial.test.ts` for the checks, the shared time budget and the reported failures; `test/keyword-timeout-negative-cache-6495.test.ts` for the separate timeout memory. The C5 and evidence off-path goldens gain the appended rows and their counts only (the think prompt golden is unchanged), and the export-surface golden gains the new fields.
+
+**Two sync tests are easier to trust: one no longer fails on a busy runner, and the other says why a page failed when it fails.** Neither changes what it checks.
+
+### Tests
+
+- `test/sync-pass-reader-gaps-6712.test.ts`: the delegated-deadline test slept on the real clock and then checked the deadline 50 ms before it expired, so a runner that woke a timer 50 ms late failed it (seen once on CI, 5 of 5 passes locally). It now drives `setTimeout` and `performance.now` with Bun's fake timers, with the same 600 ms deadline, 400 ms window and 450, 350 and 500 ms steps. A probe that stalls the event loop for 60 ms after the first slice fails the old test and passes the new one. A probe that stops a committing slice from extending the deadline still fails the new one.
+- `test/e2e/persistence-preparation-lock-wait-postgres.test.ts`: when the drain doesn't end `synced`, the test prints every page that didn't commit. For a page that failed with `storage_error`, that printout carried only the generic public message, so a CI failure (one page, `storage_error`, while the test held its lock) couldn't be traced: it passed 44 of 44 times locally, 24 of them with four copies running at once. The printout now includes each page's recorded failure detail (the error class, the database error text, the statement and the source frame), so the next failure names its cause.
+
+**Codex starts the gbrain MCP server and hooks even when bun is not on its PATH.**
+
+<!-- behavior-change: launcher_records_bun_gst2784 -->
+
+### Fixed
+- After `gbrain setup codex`, a Codex session started without bun on its PATH (the desktop app, a launcher, a terminal opened before the shell profile changed) failed with `/usr/bin/env: 'bun': No such file or directory` and showed no gbrain tools, with nothing telling you why. gbrain's hook launcher, which every MCP server entry and hook setup writes runs through, now records the Bun that installed gbrain, so those entries start from any PATH. The same gap closes for Claude Code, Hermes and OpenClaw entries that run through the launcher. The compiled binary needs no Bun and is unchanged. (GST-2784)
+- `gbrain doctor` reports a launcher that records no Bun, or one whose Bun is gone, instead of calling the wiring healthy.
+
+### To take this fix
+- `gbrain upgrade` (its post-upgrade step rewrites the default install's launcher), or rerun `gbrain setup codex`. Neither changes config.toml, hooks.json or Codex's trust entries. A launcher under another gbrain home is rewritten by rerunning the setup that wrote it; `gbrain doctor` names it.
+
+**A large source whose sync keeps stopping at its run limit now finishes catching up instead of being reported as abandoned.**
+
+### Fixed
+- A sync pass that saved at least one page or hold before its run limit stopped it now counts as progress, so `gbrain sync status` and `gbrain doctor` no longer report `pass_abandoned` for a source that is still moving. A pass that saved nothing still counts toward the abandoned streak, and the open pass row shows how many entries it has settled so far.
+- On a read-only mirror, a page you edited in gbrain whose file is gone upstream is kept as a database-only page. Sync results and status report these as `carried` instead of listing them as holds to fix, and no command advises `--prefer database` on a mirror, since gbrain never writes a mirror's files.
+- A symlink whose target does not exist is skipped and counted (`skipped.symlink_dangling`) instead of held as an unreadable file, and an older hold for one is released. A dangling link at a path that still has a live page stays held, and so does a committed file whose working copy alone was replaced by a dangling link.
+- The commit notifier no longer starts a sync for a source with sync turned off (`config.syncEnabled=false`). Turning sync back on makes the notifier watch it again.
+
+<!-- behavior-change: notifier_sync_disabled_gst2515 -->
+
+**`gbrain setup claude-code --shape company` (or `both`, and the same for `codex`) gives a brain a company part: a `company` source in a folder gbrain owns, six empty company pages, your docs folder imported read only, and lines in the agent's instructions that say which pages to read.** The pages are `company/facts`, `company/decisions`, `company/pricing`, `company/customers`, `company/calls` and `company/playbooks`. Each is an empty form marked `status: stub`, so nothing about the company is invented, and a re-run never overwrites a page you have edited. `--docs DIR` imports that folder's markdown once without writing into it; above 500 files setup prints the import command instead of running it. On a brain that serves one person the company pages join default search. On a brain more than one person reads they stay out of it, and setup asks you before adding them. `--shape both` sets up the personal and company parts together. `--team` creates nothing for the company part and explains where a shared company brain lives, either in a hosted workspace or on a self-hosted brain that serves several people. If the company folder already holds files, setup leaves it alone, keeps the company lines out of the agent's instructions and asks you to move the files before you run it again.
+
+### Itemized changes
+
+- `src/commands/setup-brain-layout.ts`: the company and both shapes, the company starter pages, the `company` source and its read-only docs import, company lines in the managed `gbrain:brain-layout` block (now version 2), the team route, and new options in the `brain_shape` question. Personal pages are written before the company source is added, so they stay in your default source. A company folder that already exists and is not an empty folder (a file included) is refused instead of adopted. The re-run command setup hands back keeps `--team`, and after a refused company folder it asks you first instead of re-running by itself. Both reply formats of `sources add --json` are read when checking whether the company source joined default search.
+- `src/commands/setup.ts`: `--shape company|both`, `--docs DIR` and `--team` for `claude-code` and `codex`.
+- Docs: `docs/guides/brain-layout.md` covers the company part and a team company brain.
+- Tests: `test/setup-brain-layout.test.ts`.
+
+**Imported conversations no longer keep three kinds of secret that the last cookie and `.netrc` fix still let through.** `gbrain transcripts ingest` now also redacts a `.netrc` password when the entry is written over several lines (`machine`, `login` and `password` each on its own line), a curl cookie passed with `-b` on its own line of a command split with trailing backslashes (what Chrome's "Copy as cURL" produces), and a quoted cookie value inside escaped JSON (`sid=\"…\"`). Before this change all three were copied into the searchable page as plain text. Cookie names, curl's other arguments and ordinary prose near these shapes stay as they were.
+
+What to do: conversations imported earlier keep what they stored. `gbrain doctor` asks for a fresh audit; run `gbrain transcripts audit-secrets --json` to list affected pages (slugs and hit counts, never values). The `sources push` gate and the compiled-context scan are unchanged.
+
+Still not caught: a curl cookie written with bash's `$'…'` quoting (`-b $'sid=…'`, which Chrome's "Copy as cURL (bash)" uses for a cookie holding a quote or non-ASCII text); a `.netrc` entry or curl command split across two messages; and a cookie header whose opening and closing escaped quotes differ in depth (`sid=\\\"…\"`), where that value and the pairs after it stay. In the other direction, a line that is only `default` or `machine <word>` followed by a line that is only `password <word>` has that word redacted even in prose.
+
+### Itemized changes
+
+- `src/core/secret-scan-labeled.ts`: a `password` line inside a multi-line `.netrc` stanza (opened by a `machine` or `default` line, kept open by `login`, `account` and `password` lines, blank lines and `#` comments) is redacted. The line must be only `password <value>`, so prose such as "machine learning" followed by "password managers are useful" stays.
+- `src/core/secret-scan-cookie.ts`: a `-b` on a line that continues a curl command (each earlier line ends in `\`) counts as curl's cookie argument; a cookie value quoted with escaped quotes (`\"`, or `\\\"` one level deeper) is read. A `-b` after a continued line that is not curl (`git checkout -b`) stays.
+- `src/core/secret-scan.ts`: the transcript-lane scan carries the `.netrc` stanza and the curl continuation from line to line.
+- `src/core/transcripts/secret-audit.ts`: `TRANSCRIPT_SECRET_AUDIT_VERSION` 6 → 7, because the audit now finds these shapes on stored pages.
+- Tests: `test/transcripts-secret-cookie-header.test.ts`, `test/transcripts-secret-corpus.test.ts`.
+- Docs: `docs/guides/data-ingestion.md#credential-redaction` and the key-files entries.
+
 ## [0.60.724.0] - 2026-11-15
 
 - `sources_resolve_path` no longer shows that a committed file exists, or its frontmatter slug, to a member who could not read the page that file would become. Before, such a file was hidden only once it had a page. The brain owner's own connections are unchanged.

@@ -126,6 +126,10 @@ describe('doctor with provider keys present', () => {
     expect(fix.consent).toEqual(['paid', 'egress']);
     expect(fix.next).not.toBe('run');
     expect((check.details as { provider_env: string[] }).provider_env).toEqual(['OPENAI_API_KEY']);
+    for (const text of [String(check.message), String((check.fix as { user_message: string }).user_message)]) {
+      expect(text).toContain('on its own');
+      expect(text).toContain('gbrain embed');
+    }
   }, 180_000);
 
   test('control: the opt-in embedding probe contacts the provider when no decision is recorded', async () => {

@@ -1,0 +1,29 @@
+{
+  "ts": 1794721491075,
+  "path": "/home/alice-example/.openclaw/agents/dev/agent/openclaw-agent.sqlite",
+  "count": 1,
+  "totalCount": 3,
+  "limitApplied": 2,
+  "nextOffset": null,
+  "hasMore": false,
+  "sessions": [
+    {
+      "key": "agent:dev:telegram:group:example-group-9",
+      "sessionId": "534a6bcb-e7fa-433e-99ad-086680bcec6f",
+      "agentId": "dev",
+      "kind": "group",
+      "classification": "group",
+      "chatType": "direct",
+      "label": "group test",
+      "displayName": "group test",
+      "createdVia": "operator",
+      "createdAt": 1794721319385,
+      "updatedAt": 1794721319384,
+      "archived": false,
+      "isMain": false,
+      "parentSessionKey": "agent:dev:example-main",
+      "spawnDepth": 0,
+      "visibility": "shared"
+    }
+  ]
+}

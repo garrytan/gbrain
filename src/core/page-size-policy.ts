@@ -48,12 +48,13 @@ export function largePageBodyFilter(alias: string): string {
  * SQL over a `page_embedding_budget` row aliased `budget` joined to its
  * `pages` row aliased `page`: the row is held or capped and still applies.
  * The budget meters large pages only, so a row left on a page edited down to
- * the inline threshold or under no longer applies. The one rule the embedding
+ * the inline threshold or under no longer applies, except a conversation-archive
+ * hold (archive_backfill, archive_open_day; GST-2768), which applies at any size. The one rule the embedding
  * queue, the held list (`gbrain embed --held`) and the held count (doctor
  * `partial_embedding`) share.
  */
 export function budgetRowAppliesFilter(budget: string, page: string): string {
-  return `${budget}.state <> 'open' AND ${largePageBodyFilter(page)}`;
+  return `${budget}.state <> 'open' AND (${largePageBodyFilter(page)} OR ${budget}.reason IN ('archive_backfill', 'archive_open_day'))`;
 }
 
 /** SQL over a `pages` row aliased `alias`: the page has a held or capped budget row that still applies (budgetRowAppliesFilter). */

@@ -49,7 +49,7 @@ export async function gitHeldFilesCheck(engine: BrainEngine, sourceIds?: string[
     const fences = coverage.reduce((sum, source) => sum + coverageRoute(source).fences, 0);
     const auto = fences ? await readFenceAutoRepair(engine) : undefined;
     const sources = coverage.map(source => {
-      const route = coverageRoute(source);
+      const route = { ...coverageRoute(source), ...((listing.get(source.source_id) ?? []).some(hold => hold.read_only_checkout) ? { mirror: true } : {}) };
       const steps = holdRepairSteps(source.source_id, route, auto);
       return { source_id: source.source_id, held: source.missing + source.stale, stale: source.stale, missing: source.missing, ...(route.fences ? { fences: route.fences } : {}), ...(route.concurrent ? { concurrent: route.concurrent } : {}),
         ...(route.stalled ? { stalled: route.stalled } : {}), ...(route.dirty ? { dirty: route.dirty } : {}), ...(route.drift ? { drift: route.drift } : {}),

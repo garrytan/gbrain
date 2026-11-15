@@ -21,7 +21,11 @@ instructions. Do not put secrets in memory pages. A durable decision about a
 setup can be recorded without copying its credentials or assuming that setup is
 active in another harness.
 
-Automatic capture is opt-in. Installing the harness hooks opts into the
+Automatic capture is opt-in, except the [conversation archive](conversation-archive.md): on a
+personal brain it is on by default and keeps one redacted page per conversation
+per day from the harness sessions on this machine (nothing leaves a keyless
+machine; `gbrain transcripts archive off` stops it, and a shared brain is only
+offered it). It extracts no facts. Installing the harness hooks opts into the
 compaction and SessionEnd capture lanes; `gbrain config set
 memory.auto_writeback off` stops every capture lane, and `gbrain bootstrap
 harness --remove` stops the hooks from banking session text at all (see

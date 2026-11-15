@@ -37,6 +37,7 @@ const AUDITED: Record<string, Audit> = {
   'src/core/persistence/sync-prepare.ts': { calls: { importFromContent: 2, screenImportContent: 2 }, disposition: 'held',
     why: 'screenSyncImport screens with the hold first; the two unflagged screens are code files, which carry no frontmatter' },
   'src/core/transcripts/ingest.ts': { calls: { importFromContent: 1 }, disposition: 'derived', why: 'render.ts writes fixed keys; other keys come from the stored page' },
+  'src/core/transcripts/archive.ts': { calls: { importFromContent: 1 }, disposition: 'derived', why: 'archive-day.ts writes fixed keys; readable_by is the owner (and a verified group) the archive resolves, never source text' },
   'src/core/trust/page-handlers.ts': { calls: { importFromContent: 1 }, disposition: 'derived', why: 'a stored version\'s markdown' },
   'src/eval/brainbench/metrics/write-back.ts': { calls: { importFromContent: 1 }, disposition: 'eval', why: 'benchmark brain' },
   'src/eval/brainbench/seed.ts': { calls: { importFromContent: 1 }, disposition: 'eval', why: 'benchmark brain' },

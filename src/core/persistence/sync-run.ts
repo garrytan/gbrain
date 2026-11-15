@@ -1460,7 +1460,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
   /** One cursor's drain (or, #6712 PR 4b, one round batch of a live pass): the freeze, screen, waive, group, admit, await and settle loop. */
   const live: { cursor: Cursor | null } = { cursor: null };
   const drainCursor = async (from: Cursor, startupConfig: Awaited<ReturnType<typeof preparationConfigView>>,
-    sliceBase?: { started: number; pages: number }): Promise<SyncResult | Cursor> => {
+    sliceBase?: { started: number; pages: number; committed?: (index: number) => void }): Promise<SyncResult | Cursor> => {
     let cursor = from;
     try {
       frozenRun.screen = company ? null : await loadSyncScreenRun(startupConfig, cursor.sourceId, cursor.processingOptions ?? processingOptions, authority.writer.remote);
@@ -1508,7 +1508,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
           const next = await freezeNext(engine, cursor, key, assertActive, frozenRun, observedAt);
           if ('saved' in next) {
             cursor = next.saved;
-            opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, ...(next.held ? {} : { total: cursor.entries.length, waived: true }) }); assertActive();
+            opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, ...(next.held ? {} : { total: cursor.entries.length, waived: true }) }); sliceBase?.committed?.(cursor.index); assertActive();
             if (next.held && slice && (cursor.index - sliceFirstIndex >= slice.maxPages || performance.now() - sliceStarted >= slice.maxMs)) return result(cursor, 'partial', 'writer_yield');
             continue;
           }
@@ -1534,7 +1534,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
             holdClear(screened, pending.intent.path, observedAt)), tx => currentCursor(tx, key, screened), signal);
         if (waived) {
           cursor = waived;
-          opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length, waived: true });
+          opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length, waived: true }); sliceBase?.committed?.(cursor.index);
           assertActive();
           // A skipped entry still counts toward the caller's slice, so a sliced run yields at the same positions.
           if (slice && (cursor.index - sliceFirstIndex >= slice.maxPages || performance.now() - sliceStarted >= slice.maxMs)) return result(cursor, 'partial', 'writer_yield');
@@ -1585,7 +1585,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
             remote: authority.writer.remote, waitMs: opts.drainStartedAt ? syncReceiptWait().drain : syncReceiptWait().pass, signal });
           if ('result' in settled) return settled.result;
           cursor = settled.cursor;
-          opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length });
+          opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length }); sliceBase?.committed?.(cursor.index);
           continue;
         }
         if (pending.intent.kind === 'managed_sync_checkpoint' && cursor.passId) return { ...cursor, pending: undefined, done: true };
@@ -1600,7 +1600,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         const next: Cursor = committedPast({ ...cursor, ...committedBreaker(cursor), counts: { ...cursor.counts }, progress: stampProgress(cursor.progress, cursor.index, cursor.index + 1, drainStartedAt) }, pending);
         countCommitted(next.counts, pending, done.outcome);
         cursor = await saveCursor(engine, key, cursor, next);
-        opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length }); if (next.counts.folded) return cursor;
+        opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length }); if (next.counts.folded) return cursor; sliceBase?.committed?.(cursor.index);
         // F4b: PGLite plans the rest of a large sync against fresh statistics (spec Addendum A item 2).
         if (analyzeEvery > 0 && cursor.index % analyzeEvery === 0) await maybeRefreshPlannerStats(engine, 'managed_sync', { throttle: false }).catch(() => undefined);
         assertActive();

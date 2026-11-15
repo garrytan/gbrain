@@ -209,6 +209,7 @@
       "  [OK] global_maintenance_timeouts: Brain-wide maintenance jobs are finishing within their deadline.",
       "  [OK] global_maintenance_stalled: Brain-wide maintenance has not run yet.",
       "  [INFO] unattended_maintenance: Free upkeep has not run on this brain yet; gbrain maintain --unattended runs it (no model calls, no page purge). Nothing deletes on its own.",
+      "  [INFO] transcript_archive_freshness: Conversation archive is on; no readable sessions for claude-code, codex, openclaw, hermes, grok (gbrain transcripts archive status names each reader).",
       "  [OK] embed_backfill_stalled: No automatic embed-backfill is repeating the same failure.",
       "  [OK] content_drift_sweep: The content-drift sweep has not run yet; it runs inside embed --stale and the embed jobs.",
       "  [OK] connector_account_mismatch: No connector source is waiting for its account to be repinned.",

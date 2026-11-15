@@ -152,13 +152,30 @@ test('the maintenance phase serves the least recently scanned source first, so a
 test('a committed symlink with no page is named symlink, not screened as page content; the next sync holds it, so it ends in a terminal state', () => each(async engine => {
   const s = await source(engine, 'unidx7149-link', files('notes', 2));
   await s.sync();
-  symlinkSync('/nonexistent/elsewhere/target.md', join(s.root, 'notes/link.md'));
+  // GST-2515: a link to a file outside the checkout (a link to nothing is skipped by sync; the next test).
+  const elsewhere = mkdtempSync(join(tmpdir(), 'unidx7149-elsewhere-'));
+  writeFileSync(join(elsewhere, 'target.md'), note('Elsewhere'));
+  symlinkSync(join(elsewhere, 'target.md'), join(s.root, 'notes/link.md'));
   await s.legacy({});
   const found = await refreshUnindexedFiles(engine, s.id);
   expect(found.scan).toMatchObject({ complete: true, unindexed: 1, by_code: { symlink: 1 } });
   expect(found.scheduled).toEqual(['notes/link.md']);
   await s.sync();
   expect(((await readGitSourceHolds(engine, { sourceIds: [s.id] }))[0]?.holds ?? []).map(hold => hold.path)).toEqual(['notes/link.md']);
+  expect((await s.doctor()).details).toMatchObject({ sources: [{ source_id: s.id, state: 'ok', still_unindexed: 0, waiting: 0 }] });
+  rmSync(elsewhere, { recursive: true, force: true });
+}), 240_000);
+
+test('GST-2515: a committed symlink to nothing is skipped by sync and is not unindexed: no hold, no schedule, doctor ok', () => each(async engine => {
+  const s = await source(engine, 'unidx7149-dangling', files('notes', 2));
+  await s.sync();
+  symlinkSync('/nonexistent/elsewhere/target.md', join(s.root, 'notes/link.md'));
+  await s.legacy({});
+  const found = await refreshUnindexedFiles(engine, s.id);
+  expect(found.scan).toMatchObject({ complete: true, unindexed: 0 });
+  expect(found.scheduled).toEqual([]);
+  await s.sync();
+  expect(((await readGitSourceHolds(engine, { sourceIds: [s.id] }))[0]?.holds ?? []).map(hold => hold.path)).toEqual([]);
   expect((await s.doctor()).details).toMatchObject({ sources: [{ source_id: s.id, state: 'ok', still_unindexed: 0, waiting: 0 }] });
 }), 240_000);
 
