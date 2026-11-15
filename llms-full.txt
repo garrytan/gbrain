@@ -2808,7 +2808,9 @@ Check which channel you are on with `gbrain doctor`, which prints `channel=<chan
 
 ## How often stable moves
 
-The scheduled check can move it at most twice a day; a maintainer can also promote, or roll back, by hand. If nothing important is waiting, the 7-day rule is the next reason for stable to move, though it still waits for a release that passed the test in step 2. To see the real pace, list every stable release:
+The scheduled check can move it at most twice a day; a maintainer can also promote, or roll back, by hand. An important fix can move it on any day. If nothing important is waiting, the 7-day rule is the next reason for stable to move, though it still waits for a release that passed the test in step 2.
+
+What that has meant so far: the first stable release was v0.60.474.0 on 28 October 2026. Between then and 15 November 2026 stable moved 9 more times: once on 6 November, 9.7 days later, and then on each of the 8 days from 8 to 15 November, because an important fix was waiting on each of those days. Each move carried every change released since the one before. To see the current pace, list every stable release:
 
 ```bash
 git ls-remote --tags --refs https://github.com/garrytan/gbrain 'refs/tags/stable-v*'
@@ -2829,12 +2831,15 @@ Updates are not applied by themselves unless you opt in. The default `self_upgra
 
 ## Pinning a version
 
-Install an exact release tag. The first command checks that the tag exists. The second removes the gbrain you have before adding the pinned one, because installing one tag over another can leave the old version running and damage Bun's global package list:
+Install an exact release tag with this command. Its first line checks that the tag exists. Its second line removes any gbrain Bun already has installed, because installing one tag over another can leave the old version running and damage Bun's global package list. Its third line installs the tag:
 
 ```bash
-git ls-remote --exit-code --tags https://github.com/garrytan/gbrain refs/tags/v<version> && \
-  bun remove -g gbrain && bun add -g --backend=copyfile github:garrytan/gbrain#v<version>   # for example v0.60.722.0
+git ls-remote --exit-code --tags https://github.com/garrytan/gbrain refs/tags/v<version> >/dev/null && \
+  { ! bun pm ls -g 2>/dev/null | grep -q 'gbrain@' || bun remove -g gbrain; } && \
+  bun add -g --backend=copyfile github:garrytan/gbrain#v<version>
 ```
+
+Replace `<version>` with a release number, for example `0.60.722.0`. The second line skips the removal when Bun has no gbrain installed, so the same command works on a machine that never had gbrain.
 
 A tag-pinned install stays on that release through `bun update`. `gbrain upgrade` is what moves it, so don't run it while you want to stay put. To stop update checks and update notices as well:
 
@@ -2847,11 +2852,12 @@ gbrain config set self_upgrade.mode off
 Nothing is rolled back for you. To return to an earlier release, reinstall its tag:
 
 ```bash
-git ls-remote --exit-code --tags https://github.com/garrytan/gbrain refs/tags/v<previous> && \
-  bun remove -g gbrain && bun add -g --backend=copyfile github:garrytan/gbrain#v<previous>
+git ls-remote --exit-code --tags https://github.com/garrytan/gbrain refs/tags/v<previous> >/dev/null && \
+  { ! bun pm ls -g 2>/dev/null | grep -q 'gbrain@' || bun remove -g gbrain; } && \
+  bun add -g --backend=copyfile github:garrytan/gbrain#v<previous>
 ```
 
-The first command checks that the tag exists before anything is removed. If an upgrade fails to start, `gbrain upgrade` prints these exact steps for your install type. A bun-link (git clone) install goes back with `git -C <clone> checkout <previous sha> && bun install`.
+The first line checks that the tag exists before anything is removed. If an upgrade fails to start, `gbrain upgrade` prints the steps for your install type. A bun-link (git clone) install goes back with `git -C <clone> checkout <previous sha> && bun install`.
 
 Know one limit before you go back. Upgrades can move your database to a newer schema, and an older gbrain will then refuse to set up that schema, with the code `client_behind`. Reads and ordinary commands on the older gbrain still work. The fix is to upgrade that copy again.
 
