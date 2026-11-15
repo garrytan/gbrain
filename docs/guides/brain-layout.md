@@ -53,7 +53,7 @@ gbrain setup claude-code --shape both --notes ~/notes --docs ~/acme-example/docs
   for your approval, with the same hold the conversation archive uses. The facts
   backstop skips them; the scheduled atom extraction still reads them when a model key
   is set, within `cycle.extract_atoms.budget_usd`, and so does event extraction
-  (`auto_chronicle`) within its daily limit. Setup's `leaves this machine` line says
+  (`auto_chronicle`) within its daily limit. Setup's `what leaves this machine` line says
   which of these is on for your brain, or that nothing leaves. Each file is imported once: a re-run from the same folder reports it
   unchanged, and a file you changed since keeps its first page (delete the page to
   import it again). Above 500

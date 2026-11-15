@@ -369,7 +369,7 @@ export function callEgress(checks: DoctorChecks): NonNullable<TranscriptsOutcome
   const held = 'embedding waits for your approval';
   return readers.length
     ? { leaves: true, detail: `with a chat model key set, ${readers.join(' and ')} can send call text to your chat provider, within the limits you set; ${held}` }
-    : { leaves: false, detail: `nothing leaves this machine: no extraction reads call pages here, and ${held}` };
+    : { leaves: false, detail: `nothing; no extraction reads call pages here, and ${held}` };
 }
 
 /** What the conversation archive is doing here, from doctor's transcript_archive_freshness check; its first-run notice is not repeated. With `calls`, the same doctor run also reads what can send call text off this machine. */
@@ -518,7 +518,7 @@ export function describeLayout(o: LayoutOutcome, dryRun: boolean): string[] {
       : `  calls    ${would}import ${t.files} call file(s) from ${t.dir} as ${CALLS_PREFIX}/<date>-<title> (read only, credentials redacted)`
         + (t.imported === undefined ? '' : `: ${t.imported} new, ${t.unchanged} unchanged, ${t.kept} kept, ${t.redactions} credential(s) redacted${t.detail ? `; ${t.detail}` : ''}`));
     if (t.readers) lines.push(`           readable by: ${t.readers.detail}`);
-    if (t.egress) lines.push(`           leaves this machine: ${t.egress.detail}`);
+    if (t.egress) lines.push(`           what leaves this machine: ${t.egress.detail}`);
   }
   if (o.archive) lines.push(`  archive  conversation archive ${o.archive.detail}`);
   if (!dryRun && o.shape !== 'none' && o.check.detail !== 'nothing to check') lines.push(`  check    ${o.check.ok ? 'ok' : 'not verified'}: ${o.check.detail}`);

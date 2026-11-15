@@ -389,7 +389,7 @@ describe('setup --transcripts', () => {
     expect(t.argv).toEqual(['gbrain', 'import', calls, '--calls', '--prefix', 'company/calls', '--no-embed', '--source', 'company']);
     expect(t.redactions).toBeGreaterThanOrEqual(1);
     expect(t.readers).toEqual({ members: 'every_source_reader', serves: 'one', detail: 'everyone who can read source company (this brain serves one person)' });
-    expect(t.egress).toEqual({ leaves: false, detail: 'nothing leaves this machine: no extraction reads call pages here, and embedding waits for your approval' });
+    expect(t.egress).toEqual({ leaves: false, detail: 'nothing; no extraction reads call pages here, and embedding waits for your approval' });
     expect(r.doc.brain_layout.archive.state).toBe('on');
     expect(r.doc.brain_layout.archive.detail).toContain('call transcripts are separate');
     expect(await callPages(b)).toEqual([...CALL_SLUGS].sort());
@@ -485,7 +485,7 @@ describe('transcripts units', () => {
       detail: 'with a chat model key set, event extraction (auto_chronicle, at most 25 page(s) a day) and atom extraction (within cycle.extract_atoms.budget_usd) can send call text to your chat provider, within the limits you set; embedding waits for your approval' });
     expect(callEgress([{ name: 'auto_chronicle', details: { enabled: false } }, atomsOn]).detail).toStartWith('with a chat model key set, atom extraction (within cycle.extract_atoms.budget_usd) can send');
     const keyless = { name: 'auto_chronicle', details: { enabled: true, chat_available: false, daily_limit: 25 } };
-    expect(callEgress([keyless, atomsOn])).toEqual({ leaves: false, detail: 'nothing leaves this machine: no extraction reads call pages here, and embedding waits for your approval' });
+    expect(callEgress([keyless, atomsOn])).toEqual({ leaves: false, detail: 'nothing; no extraction reads call pages here, and embedding waits for your approval' });
     expect(callEgress([{ name: 'auto_chronicle', details: { enabled: false } }, { name: 'extract_atoms_backlog', details: { pack_declares_phase: false } }]).leaves).toBe(false);
   });
 
@@ -496,7 +496,7 @@ describe('transcripts units', () => {
       archive: { state: 'offered', detail: 'offered, not on: this brain may serve more than one person (gbrain transcripts archive on turns it on)' } } as any;
     const lines = describeLayout(o, false);
     expect(lines).toContain('           readable by: everyone who can read source company (this brain serves one person)');
-    expect(lines).toContain('           leaves this machine: with a chat model key set, atom extraction (within cycle.extract_atoms.budget_usd) can send call text to your chat provider, within the limits you set; embedding waits for your approval');
+    expect(lines).toContain('           what leaves this machine: with a chat model key set, atom extraction (within cycle.extract_atoms.budget_usd) can send call text to your chat provider, within the limits you set; embedding waits for your approval');
     expect(lines.find((l) => l.startsWith('  calls '))).toContain('2 new, 0 unchanged, 0 kept, 1 credential(s) redacted');
     expect(lines).toContain('  archive  conversation archive offered, not on: this brain may serve more than one person (gbrain transcripts archive on turns it on)');
   });
