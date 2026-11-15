@@ -487,6 +487,9 @@ describe('transcripts units', () => {
     const keyless = { name: 'auto_chronicle', details: { enabled: true, chat_available: false, daily_limit: 25 } };
     expect(callEgress([keyless, atomsOn])).toEqual({ leaves: false, detail: 'nothing; no extraction reads call pages here, and embedding waits for your approval' });
     expect(callEgress([{ name: 'auto_chronicle', details: { enabled: false } }, { name: 'extract_atoms_backlog', details: { pack_declares_phase: false } }]).leaves).toBe(false);
+    const unchecked = { leaves: null, detail: 'could not be checked; gbrain doctor --only auto_chronicle,extract_atoms_backlog shows it' };
+    expect(callEgress([])).toEqual(unchecked);
+    expect(callEgress([{ name: 'transcript_archive_freshness', details: { enabled: true } }, chronicleOn])).toEqual(unchecked);
   });
 
   test('the human report names who reads the call pages and what the archive is doing', () => {

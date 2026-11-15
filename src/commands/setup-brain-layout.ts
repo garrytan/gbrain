@@ -256,7 +256,7 @@ export interface TranscriptsOutcome extends ImportOutcome {
   redactions?: number;
   readers?: { members: 'every_source_reader' | string[] | null; serves: 'one' | 'several' | null; detail: string };
   /** What can send call text off this machine, from doctor's auto_chronicle and extract_atoms_backlog checks. */
-  egress?: { leaves: boolean; detail: string };
+  egress?: { leaves: boolean | null; detail: string };
 }
 
 export interface LayoutOutcome {
@@ -360,6 +360,9 @@ type DoctorChecks = Array<{ name: string; details?: Record<string, unknown> }>;
 
 /** Whether scheduled extraction can send imported call text to a chat provider; embedding stays held either way. */
 export function callEgress(checks: DoctorChecks): NonNullable<TranscriptsOutcome['egress']> {
+  if (!['auto_chronicle', 'extract_atoms_backlog'].every(name => checks.some(c => c.name === name))) {
+    return { leaves: null, detail: 'could not be checked; gbrain doctor --only auto_chronicle,extract_atoms_backlog shows it' };
+  }
   const details = (name: string) => checks.find(c => c.name === name)?.details;
   const chronicle = details('auto_chronicle');
   const chat = chronicle?.chat_available;
