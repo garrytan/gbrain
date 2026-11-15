@@ -10,6 +10,83 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.724.0] - 2026-11-15
+
+- `sources_resolve_path` no longer shows that a committed file exists, or its frontmatter slug, to a member who could not read the page that file would become. Before, such a file was hidden only once it had a page. The brain owner's own connections are unchanged.
+- A page the owner asked to purge, whose purge was held, now writes its purge tombstones when a later consented `gbrain pages purge-deleted` removes it, so the same content is not imported again.
+- The covering commands that `gbrain access rule` prints for open twins now keep `--allow-without-owner` when the rule leaves the owner out, so they are accepted as printed.
+
+**`gbrain doctor` finds the facts that purges left behind before #8859 was fixed, and `gbrain repair purged-page-facts` retires them after you approve the preview.**
+
+### Fixed
+
+- **Facts left active by older purges can be found and retired** (#8859 follow-up). Before the #8859 fix, purging a page left the facts extracted from it and filed on no page active, so recall kept returning claims from a removed page. The new doctor check `purged_page_facts` counts them, and `gbrain repair purged-page-facts` previews each one with its class and expires exactly the previewed rows on `--apply --expect <hash> --yes`. Rows of a page the purge ledger records are retired by default; rows of a page gone with no purge record need `--include-ambiguous`. Nothing changes on upgrade.
+- **Purges match those facts through an index.** A new index on the head of a fact's context (migration v315) keeps a purge from scanning every fact in its source. The doctor check and the repair still read every page-extraction fact filed on no page.
+- **The repair expires rows but writes no purge record**, so the same claim could be saved again later.
+
+### Itemized changes
+
+- `src/core/repair/purged-page-facts.ts`, `src/commands/doctor/checks/purged-page-facts.ts`: the repair kind (explicit-only, preview-bound, destructive consent) and the read-only check.
+- `src/core/facts/gone-page-facts.ts`: the context match uses `contextHeadSql`, the expression v315 indexes.
+- `src/core/schema-migrations/v315-facts-context-head-index.ts`: `idx_facts_context_head`, built concurrently on Postgres.
+- Docs: `docs/guides/repair.md#purged-page-facts`.
+- Tests: new `test/repair-purged-page-facts-8859.test.ts` (managed PGLite and Postgres, unmanaged PGLite).
+
+**GitHub's "Latest" release is now the stable release, with notes covering everything since the previous stable; every batch release is published as a pre-release.** Installs and `gbrain upgrade` already followed the stable tag, so nothing changes for anyone on the documented install. The Releases page and its Latest badge now show that same release, about once a day, instead of every batch release. Anyone who downloads from `releases/latest` by hand now gets the stable release. People watching the repository for releases are still notified of pre-releases, because GitHub has no setting to skip them.
+
+### Changed
+- `.github/workflows/release.yml` publishes each release with `prerelease: true` and `make_latest: false`.
+- `scripts/promote-stable.ts` ends every promotion by marking the release Latest. A forward promotion also replaces its notes with every CHANGELOG entry since the previous stable; the oldest entries drop, with a link, past GitHub's size limit. Latest never moves back to an older release on a forward promotion, so until stable passes the newest batch release published before this change, Latest stays where it is.
+- A hand re-run of the release workflow that would republish the current stable release as a pre-release refuses.
+- Alpha binary self-update reads `VERSION` at the `latest-stable` tag and downloads that exact release instead of `releases/latest`.
+- The upgrade matrix counts pre-releases as releases.
+- The macOS 26 signature check takes its tag from `latest-stable`.
+
+### Added
+- `scripts/release-channel.ts` has three commands. `backfill` brings releases published before this change in line. `undo` takes the rule back out. `preview-promotion` shows what a promotion would write. `backfill` and `undo` only print their plan unless given `--apply`.
+- Docs: docs/RELEASING.md, "Which release GitHub calls Latest".
+
+**`gbrain git commit-push` now commits pages named through a symlinked source path, says why for each path it leaves out, `gbrain embed` stops reading a source id as a page, and `sources writer git-durability --enable` names the exact command to commit the AGENTS.md it writes.**
+
+<!-- behavior-change: commit_push_symlinked_source_gst2767 -->
+
+**Who is affected:** anyone with a scheduled writer (a cron job, hook or agent that runs `gbrain git commit-push`) whose source path is a link into a Git repository, or whose source folder contains a `.git` entry of its own: a leftover folder or file, or a link to the repository's `.git`. Those writes were refused or reported as skipped, so the pages stayed on disk and never reached Git or the remote. After upgrading, run the writer once and check `git status` in the repository: anything it left uncommitted before is committed on that run.
+
+### Fixed
+- A source whose path is a symlink to a folder inside its Git repository (for example a source at `~/source-a` pointing to `repo-a/brain`) can be committed with paths spelled through the link: `gbrain git commit-push --path ~/source-a -- ~/source-a/notes/daily/2026` commits the new and modified files in that folder. Before, a path spelled through the link was refused as outside the checkout, or failed with "beyond a symbolic link" when the link sat inside the repository, so scheduled writes stayed out of Git. A named file that is itself a symlink is still committed as the link.
+- A source folder whose `.git` is a link to its repository's own `.git` (for example `repo-a/brain/.git -> ../.git`) is committed at its real place in the repository. Before, a commit-push run with `--path` pointing at that folder wrote the pages into a copy of the folder at the top of the repository, pushed that, and reported success, while the real files stayed uncommitted; run from the repository root, the same folder was reported as a nested repository and skipped. If a source of yours has such a link, check the repository for a stray top-level copy of the folder after upgrading.
+- An empty or broken `.git` folder, or a `.git` file pointing at a repository that no longer exists, left under a source path no longer makes commit-push report `commit_paths_skipped` or "not inside a git checkout" for a folder its repository already tracks. Only a folder that Git treats as its own repository counts as nested, and that one is still refused with its reason.
+- A folder whose tracked files are staged for removal (as after `git rm --cached`) while the files are still on disk is still refused, and nothing is added back or removed, but the refusal now names that cause as `staged_for_removal` and both ways out: `gbrain git commit-push --untrack` to stop tracking the files, or `git restore --staged` to keep them tracked. It used to be refused as files "already staged by another writer". The "staged for removal" explanation no longer appears for a folder that was skipped for any other reason; before, every skipped folder got it, which pointed people at the wrong fix.
+- `gbrain git commit-push --dry-run` now runs the same skipped-path check as the real run and fails with the same paths and reasons, so a dry run no longer reports success for a run that will fail.
+- Each path commit-push leaves out now says why, in the message and in the JSON detail (`skipped[].why`, next to `reason`), and the push log gets one `[push] SKIPPED, NEEDS ATTENTION` line naming every skipped path and its reason. A wrapper that keeps only the error code still leaves the reason in the log.
+- `gbrain embed --status --source <id>` no longer fails with "Page not found: <id>". Embed has no `--status` flag, so a single-page run now refuses any flag it doesn't take with `unknown_flag` (exit 2) before it asks for spend approval, and names `gbrain embed --stale --dry-run --json` as the free way to read embedding coverage. The page slug is now the first argument that isn't a flag or a flag's value, so `--source`, `--batch-size`, `--priority`, `--max-usd` and `--pace-max-concurrency` values are never read as the slug.
+- `gbrain sources writer git-durability <source> --enable` still commits nothing itself, but whenever the AGENTS.md (or RESOLVER.md) it owns is not committed it now returns the exact `gbrain git commit-push` command as `agents.commit_argv`, with a real commit message. That includes a copy an earlier version left untracked while the block is already current, which used to get no hint at all and stayed untracked.
+- When `gbrain sync` finds no readable repository for a brain folder and creates one, it now refuses instead if a folder above it (through any link) already holds a `.git`, so an unreadable outer repository (for example one Git refuses for its ownership) never gets a second repository nested inside it.
+
+**`gbrain setup claude-code --shape personal` (or `codex`) gives a new brain a starting shape: three empty starter pages about you, your notes folder imported read only, and a short block that tells the agent to read those pages.** The pages are `me/facts`, `me/voice` and `me/how-i-decide`. Each is an empty form marked `status: stub`, so nothing about you is invented, and a re-run never overwrites a page you have edited. `--notes DIR` imports that folder's markdown without writing into it; above 500 files setup prints the import command instead of running it. Setup then checks that keyless search finds one of your notes and prints a question to try in a new session. A brand-new brain set up by an agent without `--shape` gets a `brain_shape` question in its first-run decisions, and nothing is written until it is answered. `--shape none` removes the block and keeps the pages. Every command setup hands back keeps the run's `--scope project` and `--source`, and the import and page writes go to the pinned source. The draft-in-voice skill now treats a stub page as missing.
+
+### Itemized changes
+
+- `src/commands/setup-brain-layout.ts` (new): the starter pages, the managed `gbrain:brain-layout` block, the read-only notes import and search check, and the `brain_shape` decision. A page is written only when `gbrain get` reports `page_not_found`; any other read error is reported as pending instead of overwriting. The notes count skips symlinked folders.
+- `src/commands/setup.ts`: new `--shape personal|none` and `--notes DIR` flags for `claude-code` and `codex`; `--shape company` is refused for now. `--no-instructions` also takes out a layout block an earlier run wrote.
+- `skills/draft-in-voice/SKILL.md` (and the plugin copy): a `status: stub` page counts as missing.
+- Docs: new `docs/guides/brain-layout.md`.
+- Tests: new `test/setup-brain-layout.test.ts`.
+
+**Imported conversations no longer keep cookie values from `Cookie:` and `Set-Cookie:` headers or curl's `-b`/`--cookie`, one-line `.netrc` passwords, or a password sent as its own message after a `password:` line.** `gbrain transcripts ingest` copied these into the searchable page verbatim, because no detector knew a cookie value or a label in one message whose value came in the next. The transcript importer now redacts them. On pages imported earlier, `gbrain transcripts audit-secrets` finds the cookie values and `.netrc` passwords (doctor asks for a fresh audit), but not a password sent as its own message: a stored page no longer marks where one message ends. The `sources push` gate and the compiled-context scan are unchanged. Three cases still reach the page verbatim, as they do today: a `.netrc` entry written over several lines (`machine`, `login` and `password` each on its own line), a `-b` cookie on its own continued line of a multi-line curl command (what Chrome's "Copy as cURL" produces), and a quoted cookie value inside escaped JSON (`sid=\"…\"`).
+
+<!-- behavior-change: transcript_secret_rules_gst2768 -->
+
+### Itemized changes
+
+- `src/core/secret-scan-cookie.ts` (new): the `cookie_header` rule. Values after `Cookie:` / `Set-Cookie:` headers and after curl's `-b`/`--cookie` are redacted; cookie names, `Set-Cookie` attributes, prose, placeholders and values under 8 characters stay. Cookie values have their own echo cap (`ECHO_MAX_UNIQUE_COOKIE`), so a pasted cookie jar never uses up the shared cap for bearer, assignment and labeled values.
+- `src/core/secret-scan-labeled.ts`: transcript-only `.netrc` `password` form, and a key or token label ending its line (`here is my API key:`) whose one-token value (12+ characters, a letter and a digit, not a file name or version) is alone on the next line.
+- `src/core/secret-scan.ts`: new `ScanOpts.transcriptRules` and `ScanOpts.leadingDangling`, both off by default; `TRANSCRIPT_LANE_SCAN_OPTS` and `trailingDanglingLabel` for the transcript lane.
+- `src/core/transcripts/render.ts`: `redactSession` uses the transcript-lane options and carries a label left dangling at the end of a message into the first non-blank line of the next message only.
+- `src/core/transcripts/secret-audit.ts`: `audit-secrets` uses the same options; `TRANSCRIPT_SECRET_AUDIT_VERSION` 5 → 6, so `transcript_secret_exposure` asks for a fresh audit. `src/core/transcripts.ts` (the recent-transcripts read) uses the same options.
+- Tests: `test/transcripts-secret-cookie-header.test.ts`, `test/transcripts-secret-cross-message.test.ts`, `test/transcripts-secret-corpus.test.ts` and `test/secret-scan-push-gate-unchanged.test.ts` (a golden proving the shared scanner's other option sets are byte-identical), over the synthetic corpus `test/fixtures/transcripts/synthetic-credentials.ts`.
+- Docs: `docs/guides/data-ingestion.md#credential-redaction` and the key-files entries.
+
 ## [0.60.723.0] - 2026-11-15
 
 **`gbrain access rule add` no longer lets a hand-typed reader list lock the brain owner out of a folder.** When an owner is set, a rule whose `--readers` leaves the owner out is refused with `readers_omit_owner`, the same check and message `gbrain repair visibility --readers` already uses, and nothing is written. Pass `--allow-without-owner` when the owner really should not read it. A brain with no owner set is unchanged, and it works the same on a repo-less source (rules in the database) and a git source (`.gbrain/access.yml`).
