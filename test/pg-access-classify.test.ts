@@ -216,6 +216,14 @@ describe('supabase enrichment', () => {
     }
   });
 
+  it('#8531: dns_failed on a shared pooler host points at local DNS, not a paused project; a direct host keeps the paused hint', () => {
+    const pooler = classifyPgAccessError(errWithCode('ENOTFOUND'), { url: POOLER }).remediation;
+    expect(pooler).toContain("this machine's DNS/network");
+    expect(pooler).not.toContain('paused');
+    const direct = classifyPgAccessError(errWithCode('ENOTFOUND'), { url: 'postgresql://postgres:pw@db.abc123.supabase.co:5432/postgres' }).remediation; /* allow-pg-url-literal */
+    expect(direct).toContain('paused');
+  });
+
   it('does not flag pausedSuspect on non-pause reasons or non-supabase urls', () => {
     expect(classifyPgAccessError(errWithCode('ECONNREFUSED'), { url: POOLER }).supabase?.pausedSuspect).toBe(false);
     expect(classifyPgAccessError(errWithCode('ENOTFOUND'), { url: 'postgresql://me:pw@localhost:5432/db' }).supabase).toBeUndefined(); /* allow-pg-url-literal */
