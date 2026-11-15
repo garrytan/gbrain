@@ -90,9 +90,10 @@ export async function runTranscriptsArchive(engine: BrainEngine, args: string[],
     return;
   }
   const dryRun = rest.includes('--dry-run');
-  const context = dryRun ? undefined : await dispatch.makeContext?.(engine, { source: sourceId ?? 'conversations' });
+  const makeContext = dispatch.makeContext;
   const result = await archive.runTranscriptArchive(engine, {
-    mode: sub, dryRun, sourceId, context,
+    mode: sub, dryRun, sourceId,
+    ...(makeContext ? { makeContext: (source: string) => makeContext(engine, { source }) } : {}),
     ...(sub === 'backfill' ? { from: flag(rest, '--from'), to: flag(rest, '--to') } : {}),
   });
   out(result, () => {

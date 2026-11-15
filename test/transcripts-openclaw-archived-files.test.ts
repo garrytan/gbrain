@@ -46,10 +46,10 @@ describe('openclaw archived session files', () => {
 
   test('the reset and the zstd deleted file parse to the same messages as the live file', async () => {
     const [base] = await drain(openclawAdapter.parse(live));
-    expect(base).toBeDefined();
+    expect(base?.meta.sessionId).toBeTruthy();
     for (const path of [reset, deleted]) {
       const [s] = await drain(openclawAdapter.parse(path));
-      expect(s?.sessionId).toBe(base!.sessionId);
+      expect(s?.meta.sessionId).toBe(base!.meta.sessionId);
       expect(s?.messages).toEqual(base!.messages);
     }
   });

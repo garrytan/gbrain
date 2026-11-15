@@ -165,6 +165,8 @@ export interface ArchiveRunOpts {
   now?: Date;
   /** The CLI's trusted-local context: managed brains write through the coordinator with it. */
   context?: OperationContext;
+  /** Builds that context for the archive source once it exists (the CLI passes its makeContext); called only on a managed brain. */
+  makeContext?: (sourceId: string) => Promise<OperationContext>;
   /** Test seam: the redaction pass (default redactSession over the whole session). */
   redact?: (session: ParsedSession) => RedactedSession;
   /** Repository path: commit the written files (default gbrain git commit-push -- <paths>). */
@@ -320,7 +322,9 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
   const source = dryRun
     ? (await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [sourceId]))[0] ?? { local_path: null }
     : await ensureSource(engine, sourceId);
-  const managed = !dryRun && !!opts.context && await managedPersistenceEnabled(engine);
+  const context = dryRun ? undefined
+    : opts.context ?? (opts.makeContext && await managedPersistenceEnabled(engine) ? await opts.makeContext(sourceId) : undefined);
+  const managed = !!context && await managedPersistenceEnabled(engine);
   const writeMode: ArchiveRunResult['write_mode'] = managed ? 'coordinator' : (!privacy.shared && isGitRepo(source.local_path) ? 'repo' : 'database');
   const tz = await archiveTimeZone(engine, sourceId);
   if (!tz.pinned && !dryRun) await engine.setConfig(PIN_PREFIX + sourceId, tz.timezone);
@@ -482,7 +486,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
       const page = renderDayIndex(day, tz.timezone, entries, privacy.shared ? [privacy.owner!] : undefined);
       indexWrites.push({ outcome: { harness: 'index', conversation_key_hash: '', day, status: 'planned', slug: page.slug }, parts: [page], harness: 'index', hold: null, staleSlugs: [] });
     }
-    await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path }, [...writes, ...indexWrites]);
+    await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context }, [...writes, ...indexWrites]);
     for (const w of indexWrites) if (w.outcome.status === 'written' || w.outcome.status === 'unchanged') result.index_pages.push(w.outcome.slug!);
   }
 
@@ -513,7 +517,7 @@ async function defaultSync(engine: BrainEngine, sourceId: string, root: string):
 }
 
 /** Writes every rendered page through the brain's one write path, then records raw data, embedding holds and the ledger. */
-async function flushWrites(engine: BrainEngine, opts: ArchiveRunOpts, target: { sourceId: string; writeMode: ArchiveRunResult['write_mode']; root: string | null }, writes: DayWrite[]): Promise<void> {
+async function flushWrites(engine: BrainEngine, opts: ArchiveRunOpts, target: { sourceId: string; writeMode: ArchiveRunResult['write_mode']; root: string | null; context?: OperationContext }, writes: DayWrite[]): Promise<void> {
   const { sourceId, writeMode } = target;
   const provenance = (harness: string) => ({ source_kind: 'transcript:' + harness, source_uri: 'archive:' + harness, ingested_via: INGESTED_VIA });
   if (writeMode === 'repo') {
@@ -545,12 +549,12 @@ async function flushWrites(engine: BrainEngine, opts: ArchiveRunOpts, target: { 
       try {
         for (const part of w.parts) {
           const r = writeMode === 'coordinator'
-            ? await submitTranscriptPart(opts.context!, engine, sourceId, part, provenance(w.harness))
+            ? await submitTranscriptPart(target.context!, engine, sourceId, part, provenance(w.harness))
             : await importFromContent(engine, part.slug, part.content, { sourceId, noEmbed: true, ...provenance(w.harness) });
           if (r.status === 'error') throw new Error('the page write for ' + part.slug + ' returned an error');
         }
         for (const stale of w.staleSlugs) {
-          if (writeMode === 'coordinator') await deleteStaleTranscriptPart(opts.context!, engine, sourceId, stale);
+          if (writeMode === 'coordinator') await deleteStaleTranscriptPart(target.context!, engine, sourceId, stale);
           else await engine.deletePages([stale], { sourceId });
         }
         w.outcome.status = 'written';
