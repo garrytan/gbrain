@@ -5,6 +5,8 @@ important: security
 
 What to do: conversations imported earlier keep what they stored. `gbrain doctor` asks for a fresh audit; run `gbrain transcripts audit-secrets --json` to list affected pages (slugs and hit counts, never values). The `sources push` gate and the compiled-context scan are unchanged.
 
+Still not caught: a curl cookie written with bash's `$'…'` quoting (`-b $'sid=…'`, which Chrome's "Copy as cURL (bash)" uses for a cookie holding a quote or non-ASCII text); a `.netrc` entry or curl command split across two messages; and a cookie header whose opening and closing escaped quotes differ in depth (`sid=\\\"…\"`), where that value and the pairs after it stay. In the other direction, a line that is only `default` or `machine <word>` followed by a line that is only `password <word>` has that word redacted even in prose.
+
 ### Itemized changes
 
 - `src/core/secret-scan-labeled.ts`: a `password` line inside a multi-line `.netrc` stanza (opened by a `machine` or `default` line, kept open by `login`, `account` and `password` lines, blank lines and `#` comments) is redacted. The line must be only `password <value>`, so prose such as "machine learning" followed by "password managers are useful" stays.
