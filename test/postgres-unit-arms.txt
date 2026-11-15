@@ -35,6 +35,7 @@ test/access-page-rule-fileless.test.ts
 test/access-qm-actor.test.ts
 test/access-raw-only-rules.test.ts
 test/access-room.test.ts
+test/access-rule-hints-owner-gst2128.test.ts
 test/access-rule-owner-gst2698.test.ts
 test/access-token-grant-columns.test.ts
 test/access-ungranted-member-writes.test.ts
