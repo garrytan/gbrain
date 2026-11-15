@@ -21,7 +21,7 @@ describe('buildInitFirstRunNotices', () => {
     expect(bundle.decisions!.map(d => d.id)).toEqual(['search_mode', 'writeback', 'skills_scaffold']);
     expect(bundle.user_message).toBe(
       'gbrain is installed. In effect: search mode balanced; agents save only what you ask them to remember, until you turn on automatic saving '
-      + '(gbrain recommends salient: durable facts you state, saved with provenance). '
+      + '(salient is recommended: durable facts you state, saved with provenance). '
       + `${costMatrixSentence()} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
     );
     expect(bundle.user_message).not.toContain("Reply 'defaults'");
@@ -51,7 +51,7 @@ describe('buildInitFirstRunNotices', () => {
   test('writeback is in effect off and recommends salient; every option applies through config set', () => {
     const writeback = buildInitFirstRunNotices({ writeback: true })[0].decisions!.find(d => d.id === 'writeback')!;
     expect(writeback.default).toBe('off');
-    expect(writeback.default_reason).toContain('recommends salient');
+    expect(writeback.default_reason).toContain('salient is recommended');
     expect(writeback.options.map(o => o.id)).toEqual(['salient', 'all', 'off']);
     for (const o of writeback.options) expect(o.argv).toEqual(['gbrain', 'config', 'set', 'memory.auto_writeback', o.id]);
   });
@@ -129,7 +129,7 @@ describe('setupFirstRunNotices (gbrain setup <harness>)', () => {
     const [n] = setupFirstRunNotices(fromInit({ searchMode, writeback: true }), 'Claude Code');
     expect(n.user_message).toBe(
       'gbrain is set up and Claude Code is wired, so memory works now. In effect: search mode balanced; agents save only what you ask them to remember, '
-      + 'until you turn on automatic saving (gbrain recommends salient: durable facts you state, saved with provenance). '
+      + 'until you turn on automatic saving (salient is recommended: durable facts you state, saved with provenance). '
       + 'Report back (Wakeshift): off. gbrain wakeshift enable turns it on. '
       + `${costMatrixSentence()} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
     );

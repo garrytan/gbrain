@@ -102,7 +102,7 @@ function writebackDecision(): Decision {
       { id: 'off', label: 'Save only what the user explicitly asks to remember (records the answer)', argv: set('off') },
     ],
     default: 'off',
-    default_reason: 'In effect now: agents save only what the user asks them to remember. gbrain recommends salient for a personal brain; it is opt-in, so it turns on only when the user picks it.',
+    default_reason: 'In effect now: agents save only what the user asks them to remember. salient is recommended for a personal brain; it is opt-in, so it turns on only when the user picks it.',
   };
 }
 
@@ -146,7 +146,7 @@ export function buildInitFirstRunNotices(inputs: InitFirstRunInputs): Notice[] {
   }];
 }
 
-const WRITEBACK_IN_EFFECT = 'agents save only what you ask them to remember, until you turn on automatic saving (gbrain recommends salient: durable facts you state, saved with provenance)';
+const WRITEBACK_IN_EFFECT = 'agents save only what you ask them to remember, until you turn on automatic saving (salient is recommended: durable facts you state, saved with provenance)';
 
 /**
  * `gbrain setup <harness>`'s form of init's bundle (read from `init --json`).
