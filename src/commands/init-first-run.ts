@@ -82,11 +82,21 @@ function searchModeDecision(applied: { mode: SearchMode; reason: string }): Deci
 function harnessWiringNotice(config: GBrainConfig, surface?: McpSurface): Notice | null {
   const entry = configReadiness(config, { transport: 'cli', ...(surface ? { surface } : {}) }).entries.find(e => e.capability === 'harness_wiring');
   if (!entry?.fix || entry.state === 'ok') return null;
+  const fix = entry.fix;
+  const registration = !!fix.argv && fix.actor === 'agent' && fix.consent.length === 1 && fix.consent[0] === 'persistent_install';
+  if (!registration) {
+    return {
+      code: 'harness_wiring',
+      kind: 'info',
+      why: 'gbrain is not connected to an agent on this host, and connecting it here is not a command the agent runs: relay the fix\'s message in the reply that reports the install.',
+      fix,
+    };
+  }
   return {
     code: 'harness_wiring',
     kind: 'info',
     why: 'Connect gbrain to the agent now, as part of this install: it is an install step, not a setting, so do it before reporting the install. The fix names the command for this host.',
-    fix: { ...entry.fix, actor: 'agent', consent: [], user_message: undefined },
+    fix: { ...fix, actor: 'agent', consent: [], user_message: undefined },
   };
 }
 
