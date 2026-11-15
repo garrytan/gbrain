@@ -77,4 +77,15 @@ run('cold CLI read round trips on Postgres', () => {
       expect(measured.trips).toBeLessThanOrEqual(BUDGET[verb]!);
     }, 120_000);
   }
+
+  // GST-2762: every page holds both words, so the first page is short and the keyless any-word fill runs its lookup. A search whose all-words match is empty runs the same any-word retry from the main keyword arm, so with the fill asking only for the retry the two cost the same round trips.
+  test('the any-word fill costs no more round trips than the any-word retry it runs', async () => {
+    await coldRoundTrips(['search', 'quasar survey', '--json']);
+    const filled = await coldRoundTrips(['search', 'quasar survey', '--json']);
+    const retried = await coldRoundTrips(['search', 'quasar telescope', '--json']);
+    console.log(`[round-trips] search with the fill: ${filled.trips}, search with the retry only: ${retried.trips}`);
+    expect(filled.code, filled.stderr.slice(-2000)).toBe(0);
+    expect(retried.code, retried.stderr.slice(-2000)).toBe(0);
+    expect(filled.trips).toBeLessThanOrEqual(retried.trips);
+  }, 120_000);
 });

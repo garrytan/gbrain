@@ -14,22 +14,33 @@ import { applyAliasHop } from '../alias-hop.ts';
 import { applyExactLookupTier } from '../exact-lookup.ts';
 import { dedupResults, segmentRegions } from '../dedup.ts';
 import { enforceTokenBudget } from '../token-budget.ts';
-import { pushDegraded, stampBudgetStage } from './degraded.ts';
-import { stampEvidence } from '../evidence.ts';
-import { applyEvidenceGate } from '../decide-stage.ts';
+import { isTimeoutError, pushDegraded, stampBudgetStage } from './degraded.ts';
+import { markKeywordHits, stampEvidence } from '../evidence.ts';
+import { applyEvidenceGate, gateFillRows } from '../decide-stage.ts';
+import { isKeywordSkippedAfterTimeout } from '../../postgres-engine/keyword-timeout-cache.ts';
 import { collapsePool, prioritize } from './rank.ts';
 import { readGeneratedPages } from '../provenance-demotion.ts';
 import { warnOncePerProcess } from '../../utils.ts';
+import { hasCJK } from '../../cjk.ts';
+import { clampSearchLimit } from '../../engine.ts';
+import { searchLimitCap } from '../eval-pool-depth.ts';
 
-/** No embedding provider (and no multimodal route): keyword + title + relational only. */
-export async function searchWithoutEmbeddings(
+const pagesOf = (r: SearchResult) => [r.slug, ...(r.collapsed ?? []).map(c => c.slug), ...(r.redirect_to ? [r.redirect_to] : [])].map(slug => `${r.source_id ?? 'default'}:${slug}`);
+
+/**
+ * The keyless path's row stages, from the arms' rows to the pool the evidence
+ * gate reads. `held` is empty for the request's own rows. The any-word fill
+ * (GST-2762) calls it again with the page so far as `held`, so its rows pass
+ * the same stages and never repeat a held page.
+ */
+async function keylessRowStages(
   req: HybridRequest,
-  { earlyModality, keywordResults, titleResults, exactLookupOpts }: LexicalArms,
+  { keywordResults, titleResults, exactLookupOpts }: LexicalArms,
   relationalList: SearchResult[],
   postFusionOpts: PostFusionOpts,
-  providerProbe: string | undefined,
+  held: SearchResult[],
 ): Promise<SearchResult[]> {
-  const { engine, query, opts, resolvedMode, resolvedCol, limit, offset, suggestions, detailResolved, ctBoost, aliasHopOpts, degraded } = req;
+  const { engine, query, opts, resolvedMode, ctBoost, aliasHopOpts } = req;
   // v0.43 — fuse the relational arm with keyword so typed-edge answers
   // survive on the no-embedding-provider path (the relational win is most
   // valuable exactly when vector is unavailable). The title arm fuses here
@@ -39,7 +50,7 @@ export async function searchWithoutEmbeddings(
   // boost skips them (flag survives fusion's result spread).
   await stampUnverifiedExtractions(engine, [...keywordResults, ...titleResults, ...relationalList], opts);
   let noEmbedResults = keywordResults;
-  const trace = opts?.explainTarget;
+  const trace = held.length ? undefined : opts?.explainTarget;
   if (trace) {
     trace.observe('arm:keyword', keywordResults);
     trace.observe('arm:title', titleResults);
@@ -62,12 +73,90 @@ export async function searchWithoutEmbeddings(
   // T3/T4 — alias hop + evidence stamp even without an embedding provider
   // (the named-thing fix is most valuable exactly when vector is unavailable).
   trace?.observe('fused', noEmbedResults);
-  const noEmbedDeduped = prioritize(req, await collapsePool(req, dedupResults(noEmbedResults, { regions: await segmentRegions(engine, noEmbedResults) })));
+  // Dedup and collapse see the held rows, so a fill row that repeats, redirects to or copies a held page folds away; only rows that touch no held page go on.
+  const heldPages = new Set(held.flatMap(pagesOf));
+  const own = (rows: SearchResult[]) => held.length ? rows.filter(r => !pagesOf(r).some(k => heldPages.has(k))) : rows;
+  const pooled = held.length ? [...held, ...noEmbedResults] : noEmbedResults;
+  const noEmbedDeduped = prioritize(req, own(await collapsePool(req, dedupResults(pooled, { regions: await segmentRegions(engine, pooled) }))));
   trace?.observe('deduped', noEmbedDeduped);
   const noEmbedPreExact = await applyAliasHop(engine, noEmbedDeduped, query, aliasHopOpts);
   // #1663 — structural exact-lookup tier (slug / exact-title identity).
-  const noEmbedHopped = await collapsePool(req, await applyExactLookupTier(engine, noEmbedPreExact, query, exactLookupOpts));
+  const noEmbedExact = own(await applyExactLookupTier(engine, noEmbedPreExact, query, exactLookupOpts));
+  const noEmbedHopped = own(await collapsePool(req, held.length ? [...held, ...noEmbedExact] : noEmbedExact));
   stampEvidence(noEmbedHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
+  return noEmbedHopped;
+}
+
+/**
+ * GST-2762: on a brain with no embedding provider, a first page the all-words
+ * rows leave short is filled with pages that hold only some of the words. The
+ * fill rows come from the keyword arm's own statement (SearchOpts.orFill), go
+ * through keylessRowStages behind the page so far and through the evidence
+ * gate's request (gateFillRows), and are returned to be appended: scored at or
+ * below the page's lowest row, marked keyword_fill, never more than the empty
+ * slots. A failed fetch or a check that did not judge them adds nothing and
+ * reports keyword_candidates_incomplete. Only callers that pass
+ * HybridSearchOpts.anyWordFill (the search and query operations) get it.
+ *
+ * Invariant (pinned by the property tests in test/search/keyless-any-word-fill.test.ts):
+ * with the fill on, the response begins with exactly the rows the fill-off
+ * response returns, here and at the search and query operations (chooseFill in
+ * ops/search.ts), and a fill row passes every stage a normal row passes,
+ * visibility and source scope included.
+ */
+async function anyWordFill(req: HybridRequest, lexical: LexicalArms, postFusionOpts: PostFusionOpts, pool: SearchResult[]): Promise<SearchResult[]> {
+  const { engine, query, opts, limit, offset, degraded, searchOpts } = req;
+  const { earlyModality, keywordResults } = lexical;
+  const room = limit - pool.length;
+  // Only a caller that asked gets the fill, and a Chinese, Japanese or Korean question has no any-word form: its keyword arm already matches term by term.
+  if (opts?.anyWordFill !== true || hasCJK(query)) return [];
+  if (opts?.decide?.keywordOnly || offset > 0 || room <= 0 || earlyModality === 'image') return [];
+  if (keywordResults.length === 0 || keywordResults.some(r => r.keyword_relaxed) || keywordResults.length >= (searchOpts.limit ?? Infinity)) return [];
+  const heldPages = new Set(pool.flatMap(pagesOf));
+  let candidates: SearchResult[];
+  try {
+    const anyWord = await engine.searchKeyword(query, { ...searchOpts, ...(opts?.useCache === false ? {} : { keywordTimeoutCache: true }), orFill: true });
+    // Pages the keyword arm returned are left out, the rest fit the arm's limit, each scored below the arm's lowest row.
+    const armPages = new Set(keywordResults.map(r => r.page_id));
+    const floor = Math.min(...keywordResults.map(r => r.score));
+    const top = Math.max(...anyWord.map(r => r.score));
+    candidates = anyWord.filter(r => r.keyword_fill === true && !armPages.has(r.page_id)).slice(0, clampSearchLimit(searchOpts.limit, 20, searchLimitCap()) - keywordResults.length)
+      .map(r => ({ ...r, score: floor * 0.5 * (top > 0 ? r.score / top : 1) })).filter(r => !heldPages.has(pagesOf(r)[0]!));
+  } catch (err) {
+    pushDegraded(degraded, 'keyword_candidates_incomplete', isTimeoutError(err) || isKeywordSkippedAfterTimeout(err) ? 'timeout' : 'provider_error');
+    return [];
+  }
+  if (candidates.length === 0) return [];
+  markKeywordHits(candidates);
+  const staged = await keylessRowStages(req, { ...lexical, keywordResults: candidates, titleResults: [] }, [], postFusionOpts, pool);
+  let ceiling = Math.min(Infinity, ...pool.map(r => r.score).filter(Number.isFinite));
+  const marked = staged.map(r => {
+    const cap = ceiling > 0 ? ceiling * 0.99 : ceiling;
+    ceiling = Number.isFinite(r.score) ? Math.min(r.score, cap) : Number.isFinite(cap) ? cap : 0;
+    return { ...r, keyword_fill: true as const, score: ceiling };
+  });
+  const judged = await gateFillRows(req.decide, query, marked, pool.length);
+  if (judged === null) {
+    pushDegraded(degraded, 'keyword_candidates_incomplete', 'provider_error');
+    return [];
+  }
+  const fill = judged.slice(0, room);
+  opts?.explainTarget?.observe('arm:keyword_fill', fill);
+  return fill;
+}
+
+/** No embedding provider (and no multimodal route): keyword + title + relational only. */
+export async function searchWithoutEmbeddings(
+  req: HybridRequest,
+  lexical: LexicalArms,
+  relationalList: SearchResult[],
+  postFusionOpts: PostFusionOpts,
+  providerProbe: string | undefined,
+): Promise<SearchResult[]> {
+  const { engine, query, opts, resolvedMode, resolvedCol, limit, offset, suggestions, detailResolved, degraded } = req;
+  const { earlyModality, keywordResults } = lexical;
+  const trace = opts?.explainTarget;
+  const noEmbedHopped = await keylessRowStages(req, lexical, relationalList, postFusionOpts, []);
   // System One S3 evidence gate (no-op when the slot is off), at the fused path's position.
   const noEmbedGated = await applyEvidenceGate(req.decide, query, noEmbedHopped);
   // #3995 — guaranteed page-1 relational evidence: a fired arm's answer is
@@ -83,6 +172,8 @@ export async function searchWithoutEmbeddings(
     noEmbedPool = r.pool;
     noEmbedRelSlot = r.decision;
   }
+  const noEmbedFill = await anyWordFill(req, lexical, postFusionOpts, noEmbedPool);
+  if (noEmbedFill.length > 0) noEmbedPool = [...noEmbedPool, ...noEmbedFill];
   trace?.observe('return_pool', noEmbedPool);
   const noEmbedSliced = noEmbedPool.slice(offset, offset + limit);
   trace?.observe('limit_slice', noEmbedSliced);

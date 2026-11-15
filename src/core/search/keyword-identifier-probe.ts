@@ -78,11 +78,17 @@ function appendPages(rows: SearchResult[], more: SearchResult[], limit: number):
  * retry's rows tagged `keyword_relaxed` (the #3617 follow-up: hybrid drops
  * them while the vector arm is healthy). `runProbe` runs the arm's statement
  * with a match and a rank query; `runRelaxed` runs the engine's retry.
+ *
+ * GST-2762: with orFill (the keyless any-word fill's own call) only the retry
+ * runs, on the first page, and its rows come back tagged `keyword_relaxed` and
+ * `keyword_fill`; the caller already holds the strict rows (search/hybrid/keyword-only.ts).
  */
 export async function keywordArmRows<R>(a: {
   query: string;
   strict: R[];
   orFallback?: boolean;
+  /** GST-2762: run only the retry, for the keyless any-word fill (SearchOpts.orFill). */
+  orFill?: boolean;
   limit: number;
   offset: number;
   toResult: (row: R) => SearchResult;
@@ -94,9 +100,10 @@ export async function keywordArmRows<R>(a: {
   onIncomplete?: (reason: 'timeout' | 'provider_error') => void;
 }): Promise<SearchResult[]> {
   const failed = <T>(err: unknown): T[] => { a.onIncomplete?.(isTimeoutError(err) ? 'timeout' : 'provider_error'); return []; };
+  const orQuery = a.orFallback ? buildOrFallbackWebsearchQuery(a.query) : null;
+  if (a.orFill) return orQuery && a.offset === 0 ? (await a.runRelaxed(orQuery)).map(r => ({ ...a.toResult(r), keyword_relaxed: true as const, keyword_fill: true as const })) : [];
   const handles = a.orFallback && a.offset === 0 && a.runHandles ? slugHandles(a.query) : null;
   const named = handles ? await a.runHandles!(handles).catch(failed<SearchResult>) : [];
-  const orQuery = a.orFallback ? buildOrFallbackWebsearchQuery(a.query) : null;
   const probeQuery = orQuery && a.offset === 0 ? identifierProbeQuery(a.query) : null;
   const probe = probeQuery ? (await a.runProbe(probeQuery, orQuery!).catch(failed<R>)).map(a.toResult) : [];
   if (a.strict.length > 0 || !orQuery) return appendPages(named, appendPages(a.strict.map(a.toResult), probe, a.limit), a.limit);

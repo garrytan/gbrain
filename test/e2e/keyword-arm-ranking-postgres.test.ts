@@ -1,6 +1,6 @@
 /**
  * Keyword arm on PostgreSQL: the dual-backend ranking and access pins in
- * test/search/keyword-arm-ranking.test.ts and keyword-arm-access.test.ts, plus
+ * test/search/keyword-arm-ranking.test.ts, keyword-arm-access.test.ts and keyless-any-word-fill.test.ts, plus
  * proofs of the statement shapes searchKeyword runs. For excludePrivate callers
  * with no type, frontmatter or date filter and no source scope that leaves a
  * live source out, the candidates stream from the full-text match through an OFFSET 0 subquery,
@@ -31,7 +31,7 @@ import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { registerPostgresTests, requirePostgresTestDatabase } from '../helpers/test-backends.ts';
 
-await registerPostgresTests(() => import('../search/keyword-arm-ranking.test.ts'), () => import('../search/keyword-arm-access.test.ts'));
+await registerPostgresTests(() => import('../search/keyword-arm-ranking.test.ts'), () => import('../search/keyword-arm-access.test.ts'), () => import('../search/keyless-any-word-fill.test.ts'));
 
 describe('keyword arm plan (postgres)', () => {
   let engine: PostgresEngine;
