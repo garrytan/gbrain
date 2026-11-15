@@ -8,7 +8,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { CyclePhase } from '../cycle.ts';
-import { guestSourceSql, isGuestSource, readGuestSourceIds, storedGuestNote } from './note.ts';
+import { guestSkipDetails, guestSourceSql, guestSourceVerdict, readGuestSourceIds, storedGuestNote } from './note.ts';
 
 export type GuestDerivedProducer = CyclePhase | 'publication_projections' | 'auto_links' | 'remote_links_effect' | 'facts_backstop' | 'think_writeback';
 type GuestDerivedEntry = { guest: 'skip'; sites: readonly string[] } | { guest: 'none'; reason: string };
@@ -73,7 +73,14 @@ export function guestSkippedPhases(): CyclePhase[] {
 
 /** True when `producer` skips `sourceId` because it is a guest source, or because the lookup failed. */
 export async function skipsGuestSource(engine: Pick<BrainEngine, 'executeRaw'>, producer: GuestSkipProducer, sourceId: string): Promise<boolean> {
-  return skips(producer) && isGuestSource(engine, sourceId);
+  return (await guestSourceSkip(engine, producer, sourceId)) !== null;
+}
+
+/** Why `producer` skips `sourceId` (guestSkipDetails: a guest source, or a lookup that failed), or null when it runs. */
+export async function guestSourceSkip(engine: Pick<BrainEngine, 'executeRaw'>, producer: GuestSkipProducer, sourceId: string): Promise<ReturnType<typeof guestSkipDetails> | null> {
+  if (!skips(producer)) return null;
+  const verdict = await guestSourceVerdict(engine, sourceId);
+  return verdict.guest ? guestSkipDetails(sourceId, verdict.lookupError) : null;
 }
 
 /**

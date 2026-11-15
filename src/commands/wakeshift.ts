@@ -14,7 +14,9 @@
  */
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
-import { loadConfigFileOnly, saveConfig, type GBrainConfig } from '../core/config.ts';
+import { loadConfig, loadConfigFileOnly, saveConfig, type GBrainConfig } from '../core/config.ts';
+import { managedFilesystemDatastorePath } from '../core/persistence/filesystem-guard.ts';
+import { SPOOL_MAX_FILES, ingestCronSpool, recordCronRun, spoolCronRun } from '../core/wakeshift/spool.ts';
 import { opError } from '../core/ops/contract.ts';
 import { requireConsent } from '../core/consent.ts';
 import { WakeshiftError, WakeshiftKeyError, normalizeWakeshiftUrl, parseWakeshiftKey, wakeshiftClient, type WakeshiftKey } from '../core/wakeshift/client.ts';
@@ -284,14 +286,42 @@ function emitArgs(args: string[]): { name: string; status: 'ok' | 'failed' } | n
   return null;
 }
 
+/** The datastore path of the PGLite brain this CLI resolved (`brainId` names a mount), or null for Postgres. */
+async function pgliteDatastore(brainId: string | undefined): Promise<string | null> {
+  if (brainId && brainId !== 'host') {
+    const mount = (await import('../core/brain-registry.ts')).loadMounts().find(m => m.id === brainId);
+    return mount?.engine === 'pglite' ? mount.database_path ?? null : null;
+  }
+  const config = loadConfig();
+  return config?.engine === 'pglite' ? config.database_path ?? null : null;
+}
+
 /**
- * The brain could not be opened for `emit` (a live serve holding the PGLite lock, a database outage): the run is not
- * recorded, but the cron script still keeps its own exit status, as the emit contract promises.
+ * The brain could not be opened for `emit`. On a PGLite brain held by `gbrain serve` or `gbrain jobs work`, the run
+ * goes to the brain's spool (spool.ts) for that process's wake drainer to record; otherwise (Postgres, reporting back
+ * off, a full spool) it is not recorded. Either way one stderr line, and the cron script keeps its own exit status.
  */
-export function reportEmitConnectFailure(args: string[], error: unknown): void {
+export async function reportEmitConnectFailure(args: string[], error: unknown, brainId?: string): Promise<null> {
   const parsed = emitArgs(args);
-  if (!parsed) return;
-  console.error(`[wakeshift] could not record the ${parsed.name} run: the brain could not be opened (${error instanceof Error ? error.message.split('\n')[0] : String(error)}).`);
+  if (!parsed) return null;
+  const reason = error instanceof Error ? error.message.split('\n')[0] : String(error);
+  try {
+    const datastore = await pgliteDatastore(brainId);
+    if (datastore && wakeshiftPublished()) {
+      const spooled = spoolCronRun(datastore, parsed);
+      if (spooled !== 'full') {
+        console.error(`[wakeshift] the brain could not be opened (${reason}), so the ${parsed.name} run was spooled: the wake drainer of gbrain serve or gbrain jobs work records it within seconds.`);
+        return null;
+      }
+      console.error(`[wakeshift] could not record the ${parsed.name} run: ${SPOOL_MAX_FILES} runs already wait in the spool, which only gbrain serve or gbrain jobs work drains.`);
+      return null;
+    }
+  } catch (e) {
+    console.error(`[wakeshift] could not spool the ${parsed.name} run: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
+  console.error(`[wakeshift] could not record the ${parsed.name} run: the brain could not be opened (${reason}).`);
+  return null;
 }
 
 async function emit(engine: BrainEngine, args: string[]): Promise<void> {
@@ -303,10 +333,9 @@ async function emit(engine: BrainEngine, args: string[]): Promise<void> {
     return;
   }
   try {
-    await engine.executeRaw('INSERT INTO wake_cron_runs (name, status) VALUES ($1, $2)', [name, status]);
-    await engine.executeRaw("DELETE FROM wake_cron_runs WHERE name = $1 AND finished_at < now() - interval '30 days'", [name]);
-    const registered = await engine.executeRaw('SELECT 1 FROM wake_crons WHERE name = $1', [name]);
-    if (registered.length === 0) console.error(`[wakeshift] cron ${name} is not registered, so no agent can watch it: run gbrain wakeshift cron add ${name}.`);
+    const datastore = managedFilesystemDatastorePath(engine);
+    if (datastore) await ingestCronSpool(engine, datastore).catch(e => console.error(`[wakeshift] could not take the spooled cron runs: ${e instanceof Error ? e.message : String(e)}`));
+    await recordCronRun(engine, { name, status });
   } catch (e) {
     console.error(`[wakeshift] could not record the ${name} run: ${e instanceof Error ? e.message : String(e)}`);
   }
