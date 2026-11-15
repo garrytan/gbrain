@@ -77,6 +77,8 @@ const PIN_PREFIX = 'transcripts.archive.pinned_timezone.';
 const LEGACY_PREFIX = 'transcripts.archive.legacy.';
 /** The audience (personal or shared) the archive last ran under, per configured source. */
 const AUDIENCE_PREFIX = 'transcripts.archive.audience.';
+/** Days whose index page still has to be written (a failed or interrupted index write), per source. */
+const INDEX_PENDING_PREFIX = 'transcripts.archive.index_pending.';
 const INGESTED_VIA = 'cli:transcripts-archive';
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -565,7 +567,8 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
   const quietMs = (await configInt(engine, ARCHIVE_QUIET_MINUTES_KEY, DEFAULT_QUIET_MINUTES)) * 60_000;
   const groups = new Map<string, boolean>();
   const pending: ArchiveDayOutcome[] = [];
-  const touched = new Set<string>();
+  const pendingKey = INDEX_PENDING_PREFIX + sourceId;
+  const touched = new Set<string>(dryRun ? [] : await readDays(engine, pendingKey));
   let batch: DayWrite[] = [];
   let batchBytes = 0;
   const flushBatch = async () => {
@@ -577,6 +580,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
       ledger.set(w.ledger.harness + '.' + w.ledger.conversation_key_hash + '.' + w.ledger.day, w.ledger);
       touched.add(w.outcome.day);
     }
+    if (!dryRun && touched.size) await engine.setConfig(pendingKey, JSON.stringify([...touched].sort()));
     batch = [];
     batchBytes = 0;
   };
@@ -711,6 +715,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
       await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context }, indexWrites);
     }
   }
+  if (!dryRun && touched.size) await engine.setConfig(pendingKey, JSON.stringify(indexWrites.filter(w => w.outcome.status !== 'written' && w.outcome.status !== 'unchanged').map(w => w.outcome.day).sort()));
   for (const w of indexWrites) {
     if (w.outcome.status === 'written' || w.outcome.status === 'unchanged') result.index_pages.push(w.outcome.slug!);
     else if (w.outcome.status === 'error') result.errors.push({ harness: 'index', reader: 'day-index', code: w.outcome.code ?? 'archive_commit_failed', message: 'the day index ' + w.outcome.slug + ' was not written: ' + (w.outcome.message ?? 'no detail') });
@@ -726,6 +731,15 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
   }
   if (result.deferred_days.length) result.info.push(result.deferred_days.length + ' older day(s) wait for the next backfill run (' + ARCHIVE_BACKFILL_CAP_KEY + ' caps one run)');
   return result;
+}
+
+async function readDays(engine: BrainEngine, key: string): Promise<string[]> {
+  try {
+    const days = JSON.parse((await engine.getConfig(key)) ?? '[]') as unknown;
+    return Array.isArray(days) ? days.filter((d): d is string => typeof d === 'string' && DAY_RE.test(d)) : [];
+  } catch {
+    return [];
+  }
 }
 
 async function pageExists(engine: BrainEngine, sourceId: string, slug: string): Promise<boolean> {
