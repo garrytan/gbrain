@@ -112,8 +112,10 @@ for (const stdin of ['devnull', 'silent'] as StdinMode[]) {
       expect(bundles).toHaveLength(1);
       const bundle = bundles[0]!;
       expect(bundle).toMatchObject({ kind: 'ask', contract_version: 1 });
-      expect(bundle.user_message).toContain("Reply 'defaults'");
-      expect(bundle.decisions.map((d: { id: string }) => d.id)).toEqual(expect.arrayContaining(['search_mode', 'harness_wiring']));
+      expect(bundle.user_message).toContain('Nothing needs an answer now');
+      expect(bundle.decisions.map((d: { id: string }) => d.id)).toContain('search_mode');
+      expect(bundle.decisions.map((d: { id: string }) => d.id)).not.toContain('harness_wiring');
+      expect((doc.notices as Array<Record<string, any>>).find(n => n.code === 'harness_wiring')).toMatchObject({ kind: 'info', fix: { actor: 'user', next: 'report' } });
       for (const d of bundle.decisions) {
         expect(d.options.map((o: { id: string }) => o.id), `${d.id}: default is an option`).toContain(d.default);
         expect(d.default_reason, `${d.id}: default_reason`).toBeTruthy();

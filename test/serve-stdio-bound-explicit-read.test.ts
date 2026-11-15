@@ -53,6 +53,8 @@ describe('#5081 — GBRAIN_SOURCE-bound stdio serve, explicit source_id reads', 
     });
     delete env.GBRAIN_SOURCE;
     execFixture(['run', 'src/cli.ts', 'init', '--pglite', '--no-embedding', '--non-interactive'], env);
+    // GST-2732: a shared brain keeps a new source's federated setting unset, the shape this fixture needs.
+    execFixture(['run', 'src/cli.ts', 'config', 'set', 'brain.audience', 'shared'], env);
     for (const [id, flag] of [['work', null], ['notes', '--federated'], ['private', null]] as const) {
       const dir = join(home, id);
       mkdirSync(dir, { recursive: true });

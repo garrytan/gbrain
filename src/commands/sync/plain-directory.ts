@@ -20,14 +20,8 @@ import { assertSourceFilesystemActive } from '../../core/minions/source-filesyst
 import { currentJobSignal } from '../../core/minions/submission-authority.ts';
 import { buildPartialResult } from '../../core/sync-lock.ts';
 import type { SyncOpts, SyncResult } from '../sync.ts';
+import { underGitCheckout } from '../../core/git-remote.ts';
 
-/** Whether `dir` or any directory above it has a `.git` entry (read from the filesystem, no Git process). */
-function underGitCheckout(dir: string): boolean {
-  for (let current = dir; ; current = dirname(current)) {
-    if (existsSync(join(current, '.git'))) return true;
-    if (current === dirname(current)) return false;
-  }
-}
 
 /**
  * The registered root of a plain-directory source, or null when sync's Git path applies: a connector, a path override
