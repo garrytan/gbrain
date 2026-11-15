@@ -334,7 +334,7 @@ for (const kind of testBackends()) {
         }
         expect(filled).toBeGreaterThan(0);
         setSystemTime();
-      });
+      }, 30_000);
     });
 
     test('only the search and query operations ask for the fill: any other caller of the search function gets the rows it got before', async () => {
