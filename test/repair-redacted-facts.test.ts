@@ -226,6 +226,20 @@ ${SOURCE_TEXT}
       await engine.executeRaw('DELETE FROM facts WHERE id=$1', [fenced]);
     }, 120_000);
 
+    test('#8820: a conversation-extractor row on a segmented page with no Facts fence is restored in place', async () => {
+      const conversation = 'conversations/segmented-call';
+      await createSegmentedPage(engine, { slug: conversation, truth: `${'Filler line.\n'.repeat(90_000)}${SOURCE_TEXT}\n` });
+      const id = Number((await engine.executeRaw<{ id: number }>(`INSERT INTO facts
+        (source_id, entity_slug, fact, kind, visibility, source, context, row_num, source_markdown_slug)
+        VALUES ('default', $1, $2, 'fact', 'private', 'cli:extract-conversation-facts', $3, 3, $3) RETURNING id`, [ACME, ABS_DAMAGED, conversation]))[0].id);
+      const preview = await repair(engine, []);
+      const listed = Object.fromEntries(preview.results[0].listing!.map(l => [Number(l.item.split('#')[1]), l.class]));
+      expect(listed[id]).toBe('evidenced');
+      expect((await repair(engine, applyArgs(preview))).results[0].outcomes).toEqual({ restored: 1 });
+      expect(await extractorRow(engine, id)).toEqual({ fact: ABS_RESTORED, row_num: 3, source_markdown_slug: conversation, active: true });
+      await engine.executeRaw('DELETE FROM facts WHERE id=$1', [id]);
+    }, 120_000);
+
     test('#8820: a conversation-extractor row is restored in place; a fenced row number whose fence row is gone is not', async () => {
       await engine.putPage(CONVERSATION, { type: 'note', title: 'Planning call', compiled_truth: SOURCE_TEXT }, { sourceId: 'default' });
       const id = await insertExtractorFact(engine, ABS_DAMAGED, 3);
