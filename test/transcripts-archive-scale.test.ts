@@ -65,6 +65,7 @@ const NOW = new Date('2026-11-14T12:00:00Z');
 
 describe('backfill over a large session folder', () => {
   test('each run writes only the capped days, loads only their conversations, and the next run resumes', async () => {
+    Bun.gc(true);
     const heap0 = process.memoryUsage().heapUsed;
     const t0 = performance.now();
     const seen = new Set<string>();
@@ -83,6 +84,7 @@ describe('backfill over a large session folder', () => {
       expect(days[0]! > result.deferred_days[result.deferred_days.length - 1]!).toBe(true);
     }
     expect(performance.now() - t0).toBeLessThan(60_000);
+    Bun.gc(true);
     expect(process.memoryUsage().heapUsed - heap0).toBeLessThan(256 * 1024 * 1024);
   }, 240_000);
 });
