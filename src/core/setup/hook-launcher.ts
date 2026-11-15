@@ -17,11 +17,18 @@
  * else is in it, the launcher refuses (exit 1, one stderr line) instead of
  * starting Bun next to a file gbrain did not write. `gbrain hook` reads the
  * session directory from GBRAIN_HOOK_CWD where it used process.cwd().
+ *
+ * The script-mode gbrain starts with `#!/usr/bin/env bun`, and a harness may
+ * start the launcher with a PATH that has no bun on it (the Codex desktop app,
+ * a GUI launcher), so the launcher of a script-mode install puts the directory
+ * of the Bun that wrote it first on PATH (GST-2784). A compiled gbrain needs no
+ * Bun, and its launcher stays the plain one.
  */
 import { randomBytes } from 'node:crypto';
-import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, win32 } from 'node:path';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, win32 } from 'node:path';
 import { configDir } from '../config.ts';
+import { isScriptRuntime } from '../cli-preflight.ts';
 import { msysToNativePath } from '../path-confine.ts';
 
 export const HOOK_LAUNCHER_NAME = 'gbrain-hook';
@@ -49,6 +56,28 @@ done
 exec "$@"
 `;
 
+const shellSingleQuote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+const RUNTIME_LINE = /^PATH='((?:[^']|'\\'')*)':\$PATH$/m;
+
+/** The launcher text: the plain one, or for a script-mode install the same with `runtimeDir` (a shell path) put first on PATH before gbrain starts. */
+export function hookLauncherScript(runtimeDir: string | null): string {
+  if (runtimeDir === null) return HOOK_LAUNCHER_SCRIPT;
+  return HOOK_LAUNCHER_SCRIPT.replace('exec "$@"\n', () => `# gbrain runs under the Bun gbrain setup ran under, so a harness started without bun on PATH still starts it.
+PATH=${shellSingleQuote(runtimeDir)}:$PATH
+export PATH
+exec "$@"
+`);
+}
+
+/** The directory of the Bun this gbrain runs under, as a hook shell path; null for a compiled gbrain, which needs none. */
+export function launcherRuntimeDir(): string | null {
+  if (!isScriptRuntime()) return null;
+  const bun = /^bun(\.exe)?$/i.test(basename(process.execPath)) ? process.execPath : Bun.which('bun');
+  return bun && isAbsolute(bun) ? hookShellPath(dirname(bun)) : null;
+}
+
+const bunIn = (dir: string) => join(msysToNativePath(dir), process.platform === 'win32' ? 'bun.exe' : 'bun');
+
 /** The launcher path for an install whose config dir is `home` (default: this process's). */
 export function hookLauncherPath(home: string = configDir()): string {
   return join(home, HOOK_LAUNCHER_DIR, HOOK_LAUNCHER_NAME);
@@ -56,8 +85,12 @@ export function hookLauncherPath(home: string = configDir()): string {
 
 export type HookLauncherState = 'current' | 'missing' | 'stale' | 'foreign';
 
-/** Files only. `foreign`: the launcher's directory holds something gbrain did not write, so the launcher refuses to run. */
-export function hookLauncherState(path: string): { state: HookLauncherState; detail: string } {
+/**
+ * Files only. `foreign`: the launcher's directory holds something gbrain did not write, so the launcher refuses to run.
+ * `runtimeDir`: the Bun directory this gbrain needs (null for a compiled gbrain); a launcher that names a Bun that is
+ * gone, or none when one is needed, is stale.
+ */
+export function hookLauncherState(path: string, runtimeDir: string | null = launcherRuntimeDir()): { state: HookLauncherState; detail: string } {
   let names: string[];
   try { names = readdirSync(dirname(path)); } catch { return { state: 'missing', detail: `no hook launcher at ${path}` }; }
   const other = names.find((n) => n !== HOOK_LAUNCHER_NAME);
@@ -65,8 +98,12 @@ export function hookLauncherState(path: string): { state: HookLauncherState; det
   try {
     const st = lstatSync(path);
     if (!st.isFile()) return { state: 'stale', detail: `${path} is not a regular file` };
-    if (readFileSync(path, 'utf8') !== HOOK_LAUNCHER_SCRIPT) return { state: 'stale', detail: `${path} differs from the launcher this gbrain writes` };
+    const text = readFileSync(path, 'utf8');
+    const recorded = RUNTIME_LINE.exec(text)?.[1]?.replace(/'\\''/g, "'") ?? null;
+    if (text !== hookLauncherScript(recorded)) return { state: 'stale', detail: `${path} differs from the launcher this gbrain writes` };
     if ((st.mode & 0o100) === 0) return { state: 'stale', detail: `${path} is not executable` };
+    if (recorded !== null && !existsSync(bunIn(recorded))) return { state: 'stale', detail: `${path} starts gbrain with ${bunIn(recorded)}, which is no longer there, so a harness started without bun on PATH cannot start gbrain` };
+    if (recorded === null && runtimeDir !== null) return { state: 'stale', detail: `${path} does not record where bun is, so a harness started without bun on PATH (the Codex app, a GUI launcher) cannot start gbrain` };
   } catch { return { state: 'missing', detail: `no hook launcher at ${path}` }; }
   return { state: 'current', detail: `hook launcher ${path}` };
 }
@@ -76,17 +113,17 @@ export function hookLauncherState(path: string): { state: HookLauncherState; det
  * directory holds anything else: gbrain never deletes a file it did not write,
  * and a hook routed through that directory would refuse anyway.
  */
-export function ensureHookLauncher(path: string = hookLauncherPath()): string {
+export function ensureHookLauncher(path: string = hookLauncherPath(), runtimeDir: string | null = launcherRuntimeDir()): string {
   const dir = dirname(path);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   chmodSync(dir, 0o700);
   const other = readdirSync(dir).find((n) => n !== HOOK_LAUNCHER_NAME);
   if (other !== undefined) throw new Error(`${dir} holds ${other}, which gbrain did not write; the hook launcher runs gbrain from that directory, so remove it, then run this again`);
-  if (hookLauncherState(path).state === 'current') return path;
+  if (hookLauncherState(path, runtimeDir).state === 'current') return path;
   // The temp file sits beside the directory, never in it: a hook running meanwhile would refuse to start next to it.
   const tmp = join(dirname(dir), `.${HOOK_LAUNCHER_DIR}.tmp-${randomBytes(6).toString('hex')}`);
   try {
-    writeFileSync(tmp, HOOK_LAUNCHER_SCRIPT, { mode: 0o700 });
+    writeFileSync(tmp, hookLauncherScript(runtimeDir), { mode: 0o700 });
     chmodSync(tmp, 0o700);
     renameSync(tmp, path);
   } catch (e) {
