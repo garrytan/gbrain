@@ -114,12 +114,13 @@ export function cliGatewayTransport(opts: {
   // OpenClaw's own OPENCLAW_GATEWAY_URL/_TOKEN count when gbrain's are unset: a working-folder .env cannot set them (env-trust).
   const { GBRAIN_OPENCLAW_GATEWAY_URL, GBRAIN_OPENCLAW_GATEWAY_TOKEN, OPENCLAW_GATEWAY_URL, OPENCLAW_GATEWAY_TOKEN } = process.env;
   const url = opts.url ?? GBRAIN_OPENCLAW_GATEWAY_URL ?? OPENCLAW_GATEWAY_URL;
+  const urlVar = opts.url !== undefined || GBRAIN_OPENCLAW_GATEWAY_URL !== undefined ? 'GBRAIN_OPENCLAW_GATEWAY_URL' : 'OPENCLAW_GATEWAY_URL';
   const token = opts.token ?? GBRAIN_OPENCLAW_GATEWAY_TOKEN ?? OPENCLAW_GATEWAY_TOKEN;
   const timeoutMs = opts.timeoutMs ?? 60_000;
   return {
     call(method, params) {
       if (url && !/^(wss?|https?):\/\/[^\s]+$/i.test(url)) {
-        return Promise.reject(gatewayError('failed', 'GBRAIN_OPENCLAW_GATEWAY_URL must be a ws://, wss://, http:// or https:// URL; nothing was run'));
+        return Promise.reject(gatewayError('failed', urlVar + ' must use the ws, wss, http or https scheme; nothing was run'));
       }
       const args = ['gateway', 'call', method, '--json', '--params', JSON.stringify(params), '--timeout', String(timeoutMs)];
       // The URL goes through OPENCLAW_GATEWAY_URL: OpenClaw refuses a --url override whose credential comes only from
