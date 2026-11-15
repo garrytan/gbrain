@@ -106,6 +106,8 @@ export async function pruneSegmentedVersions(tx: BrainEngine, pageId: number): P
  * prune, so the versions they count are the versions they edit. Segmented versions keep their own retention.
  */
 export async function pruneHoldingPageVersions(tx: BrainEngine, pageId: number): Promise<void> {
+  // Owners can retain inline holding history without changing other retention policies.
+  if (await tx.getConfig('versions.holding_prune_enabled') === 'false') return;
   const pruned = await tx.executeRaw<{ id: number }>(`DELETE FROM page_versions WHERE id IN (SELECT id FROM (SELECT id FROM page_versions
     WHERE page_id = $1 AND body_storage IS DISTINCT FROM 'segmented' ORDER BY id DESC OFFSET $2) excess ORDER BY id LIMIT $3) RETURNING id`,
   [pageId, LARGE_PAGE_VERSIONS_KEPT, HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE]);

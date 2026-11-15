@@ -153,6 +153,23 @@ for (const backend of testBackends()) describe(`[${backend}] saves to a holding 
     expect(git(root, 'log', '--format=%H', '--', `${HOLD}.md`).trim().split('\n').length).toBeGreaterThanOrEqual(8);
   }), 300_000);
 
+  test('explicitly preserving holding history keeps old versions until pruning is re-enabled', () => strict(async ({ engine, ctx }) => {
+    await engine.setConfig('versions.holding_prune_enabled', 'false');
+    const values = claims(13);
+    for (const claim of values.slice(0, 11)) await remember(ctx, claim);
+    const before = await versionIds(engine, HOLD);
+    expect(before.length).toBeGreaterThanOrEqual(9);
+    await remember(ctx, values[11]!);
+    expect((await versionIds(engine, HOLD)).slice(0, before.length)).toEqual(before);
+    expect(await activeRows(engine, HOLD)).toEqual(values.slice(0, 12));
+    expect(await gapSet(engine, HOLD)).toBe(false);
+    await engine.setConfig('versions.holding_prune_enabled', 'true');
+    await remember(ctx, values[12]!);
+    expect(await storedVersions(engine, HOLD)).toBe(5);
+    expect(await activeRows(engine, HOLD)).toEqual(values);
+    expect(await gapSet(engine, HOLD)).toBe(true);
+  }), 300_000);
+
   test('a folder holding page keeps its newest five saved versions the same way', () => strict(async ({ engine, ctx }) => {
     await proposeRevision(engine, 'default', [{ id: 'partners', prefix: 'partners/', readable_by: ['member:alice-example'] }], { origin: 'cli', store: 'database', approved: false });
     for (const claim of claims(8)) expect(await remember(ctx, claim, ENTITY)).toMatchObject({ status: 'inserted', page: FOLDER_HOLD });
