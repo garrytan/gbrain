@@ -136,7 +136,7 @@ const RELATIONSHIP_TEXT: Record<string, string> = {
   unreadable_state: 'writer state this database role cannot fully read (row-level security hides it or applies to the role, or a singleton row is missing)',
 };
 /** #7780: the tables an unreadable_state raise names in its DETAIL `state` (writer-guard-schema.ts, git-canonical-schema.ts). */
-const UNREADABLE_STATES: ReadonlySet<unknown> = new Set(['persistence_brain', 'git_canonical_brain', 'sources', 'pages']);
+const UNREADABLE_STATES: ReadonlySet<unknown> = new Set(['persistence_brain', 'git_canonical_brain', 'sources', 'pages', 'guest_sources']);
 
 /**
  * #7777: the persistence protocol guards (shared-skills/persistence-schema.ts) raise SQLSTATE 42501, which is also

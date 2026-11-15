@@ -53,7 +53,7 @@ import { readStoredBody } from '../facts/file-body-guard.ts';
 import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { perCallWriteSource } from '../access/attest-sources.ts';
 import type { GuestSource } from '../guests/sources.ts';
-import { admitGuestOperation, assertGuestFrontmatter, assertGuestReaders, GUEST_NOTE_INTENT_KEY, guestPageImmutable, refuseRemoteGuestDelete } from '../guests/admission.ts';
+import { admitGuestOperation, assertGuestFrontmatter, assertGuestReaders, GUEST_NOTE_INTENT_KEY, guestPageImmutable, guestSourcesUnreadable, refuseRemoteGuestDelete, schemaBehindGuests } from '../guests/admission.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { assertStorageSourceWriter } from '../storage-manifest/door.ts';
 
@@ -79,7 +79,7 @@ const flatSql = (sql: string) => sql.replace(/\s+/g, ' ').trim();
  * import's source-root and company-profile checks. All of them are rechecked
  * under lock by the admission transaction or by publication.
  */
-type AdmissionSource = { incarnation: string; archived: boolean; local_path: string | null; kind: string | null; role: string | null; guest_writers: string[] | null; guest_trust_ceiling: string | null };
+type AdmissionSource = { incarnation: string; archived: boolean; local_path: string | null; kind: string | null; role: string | null; guest_writers: string[] | null; guest_trust_ceiling: string | null; guest_sources_hidden: boolean };
 const BATCH_SHARED_READS = new Set([
   ADMISSION_SOURCE_SQL,
   'SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path, s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state, h.local_path,h.coordination_path FROM persistence_source_bindings s JOIN persistence_worktrees w ON w.id=s.worktree_id LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid WHERE s.source_id=$1',
@@ -413,8 +413,9 @@ export async function preparePageAdmission(ctx: OperationContext,
   const [, prior, [source]] = await pipelined(ctx.engine, [
     () => assertPageRequestIdentity(ctx.engine, principal, requestId),
     () => getWriteRequest(ctx.engine, principal, requestId),
-    () => ctx.engine.executeRaw<AdmissionSource>(ADMISSION_SOURCE_SQL, [sourceId]),
+    () => ctx.engine.executeRaw<AdmissionSource>(ADMISSION_SOURCE_SQL, [sourceId]).catch(e => schemaBehindGuests(ctx.engine, e)),
   ]) as [unknown, WriteRequest | null, AdmissionSource[]];
+  if (source?.guest_sources_hidden) throw guestSourcesUnreadable(sourceId);
   const guest: GuestSource | null = source?.guest_writers ? { source_id: sourceId, writers: source.guest_writers, trust_ceiling: source.guest_trust_ceiling! } : null;
   // GBRA-504: a guest source admits only its listed writers' plain put_page, carrying the guest attribution, which joins
   // the intent (and so the replay identity) here; every other write to it is refused before anything is journaled.

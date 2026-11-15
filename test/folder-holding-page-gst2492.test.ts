@@ -366,12 +366,12 @@ for (const backend of testBackends()) describe(`[${backend}] the folder-rule hol
       WHERE p.source_id = 'default' AND p.slug = $1 AND v.timeline IS NULL ORDER BY v.id`, [HOLD]);
     const untimed = await nullTimelines();
     const before = await versionBodies(engine, HOLD);
-    const preview = await cli(engine, ['rule', 'add', '--prefix', 'clients/acme-example/', '--readers', 'alice-example', '--source', 'default', '--json']);
+    const preview = await cli(engine, ['rule', 'add', '--prefix', 'clients/acme-example/', '--readers', 'alice-example', '--allow-without-owner', '--source', 'default', '--json']);
     const carrying = before.filter(v => v.body.includes(claim)).length;
     expect(carrying).toBeGreaterThan(0);
     // The preview counts what the apply's receipt records: the versions carrying the row now, plus the one the move saves.
     expect(preview.held_versions_editing).toEqual({ rows: carrying + 1, versions: carrying + 1, pages: [{ slug: HOLD, rows: carrying + 1, versions: carrying + 1 }] });
-    const applied = await cli(engine, ['rule', 'add', '--prefix', 'clients/acme-example/', '--readers', 'alice-example', '--source', 'default', '--yes', '--expect', String(preview.expect), '--json']);
+    const applied = await cli(engine, ['rule', 'add', '--prefix', 'clients/acme-example/', '--readers', 'alice-example', '--allow-without-owner', '--source', 'default', '--yes', '--expect', String(preview.expect), '--json']);
     expect(applied.held_facts).toEqual({ moved: 1, unmovable: [] });
     await settleManagedGitEffects(engine);
     const after = new Map((await versionBodies(engine, HOLD)).map(v => [v.id, v.body]));
@@ -397,7 +397,7 @@ for (const backend of testBackends()) describe(`[${backend}] the folder-rule hol
     // Git history is never rewritten: the shared page's earlier commit still holds the row.
     expect(git(root, 'log', '-p', '--format=%H', '--', `${HOLD}.md`)).toContain(claim);
     // A second apply finds nothing to move and edits nothing.
-    const again = await cli(engine, ['rule', 'add', '--prefix', 'clients/acme-example/', '--readers', 'alice-example', '--source', 'default', '--json']);
+    const again = await cli(engine, ['rule', 'add', '--prefix', 'clients/acme-example/', '--readers', 'alice-example', '--allow-without-owner', '--source', 'default', '--json']);
     expect(again.held_versions_editing).toEqual({ rows: 0, versions: 0 });
     expect((await cli(engine, ['resume', '--source', 'default', '--json'])).held_facts).toBeUndefined();
     expect((await runExtractFacts(engine, { sourceId: 'default' })).heldFactsMoved ?? 0).toBe(0);
