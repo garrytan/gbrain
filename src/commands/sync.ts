@@ -449,7 +449,12 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   // `sync status|unblock --json` (sync/operator.ts) write through
   // writeJsonDocument, the guard's only stdout path.
   const stopTrace = startMemoryTrace('sync');
-  try { return await (args.includes('--json') ? withHumanLogsToStderr(() => runSyncInner(engine, args)) : runSyncInner(engine, args)); } finally { stopTrace(); }
+  try {
+    const out = await (args.includes('--json') ? withHumanLogsToStderr(() => runSyncInner(engine, args)) : runSyncInner(engine, args));
+    const outOfSearch = await (await import('./sources-add-next.ts')).syncOutOfSearchNotice(engine, args);
+    if (outOfSearch) (await import('../cli/cli-error.ts')).writeCliNotice(outOfSearch);
+    return out;
+  } finally { stopTrace(); }
 }
 
 /**
