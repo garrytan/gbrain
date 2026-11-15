@@ -152,6 +152,14 @@ you still want them. A rule on the whole `conversations/` folder is left in plac
 only by members both allow. Folders written later get no rule, so a group conversation archived on the shared brain
 keeps its group, while a group chat added to a day archived before the switch stays the owner's.
 
+A source holds at most 256 folder rules. When the archive folders written while personal, plus the source's other
+rules, would pass that limit (about three months of history with three harnesses), the re-scope writes one owner-only
+rule on the whole `conversations/` folder instead. Every earlier day is still kept to the owner, but group conversations
+archived afterwards stay owner-only too, because a page has to pass every rule above it: a wider rule on one chat's
+folder does not open it. Widening the `conversations/` rule opens every earlier personal day to the same readers, not
+just one chat. `gbrain transcripts archive status` and `gbrain doctor --only transcript_archive_freshness` say so in
+one line (`archive_rescope_folder_cap`) while that rule stands.
+
 The re-scope waits, and `gbrain transcripts archive status` and `gbrain doctor --only transcript_archive_freshness`
 each say so in one line, when the shared brain names no owner (`archive_rescope_owner_unset`: run
 `gbrain access owner set <member>`) or when the source keeps its access rules in git (`archive_rescope_git_rules`:

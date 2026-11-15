@@ -82,6 +82,7 @@ const PIN_PREFIX = 'transcripts.archive.pinned_timezone.';
 const LEGACY_PREFIX = 'transcripts.archive.legacy.';
 /** The audience (personal or shared) the archive last ran under, per configured source. */
 const AUDIENCE_PREFIX = 'transcripts.archive.audience.';
+const RESCOPE_CAPPED_PREFIX = 'transcripts.archive.rescope_capped.';
 /** Days whose index page still has to be written (a failed or interrupted index write), per source. */
 const INDEX_PENDING_PREFIX = 'transcripts.archive.index_pending.';
 const INGESTED_VIA = 'cli:transcripts-archive';
@@ -329,7 +330,8 @@ async function readersFor(engine: BrainEngine, privacy: Privacy, conv: ArchiveCo
  * and has not published yet), is kept to the owner by a rule (a narrowing, so it applies and
  * restamps at once; a rule already at one of those folders is replaced, a wider one included) before the run writes
  * anything, then the new audience is recorded. Folders written later are not covered, so a group conversation archived
- * on the shared brain keeps its group. A source whose rules live in git is left to its access.yml.
+ * on the shared brain keeps its group. When those folders and the source's other rules would pass MAX_RULES, one owner-only rule on
+ * conversations/ replaces them, so later group conversations stay owner-only too (archive_rescope_folder_cap). A source whose rules live in git is left to its access.yml.
  */
 async function reconcileAudience(engine: BrainEngine, sourceId: string, privacy: Privacy): Promise<void> {
   const now = privacy.shared ? 'shared' : 'personal';
@@ -338,28 +340,30 @@ async function reconcileAudience(engine: BrainEngine, sourceId: string, privacy:
   if (privacy.shared && !privacy.owner) return;
   if (privacy.shared && recorded === 'personal' && (await engine.executeRaw('SELECT 1 FROM sources WHERE id = $1', [sourceId])).length) {
     const policy = await import('../access/policy.ts');
-    const { normalizeRule } = await import('../access/folder-rules.ts');
+    const { MAX_RULES, normalizeRule } = await import('../access/folder-rules.ts');
     if (await policy.readAccessStore(engine, sourceId) === 'git') return;
     const folderOf = (slug: string) => slug.includes('/') ? slug.replace(/[^/]+$/, '') : slug;
     const pageFolders = await engine.executeRaw<{ folder: string }>(
       "SELECT DISTINCT regexp_replace(slug, '[^/]+$', '') AS folder FROM pages WHERE source_id = $1 AND slug LIKE 'conversations/%'", [sourceId]);
     const ledger = await readArchiveLedger(engine, sourceId);
     const folders = [...new Set([...pageFolders.map(r => r.folder), ...ledger.flatMap(e => e.slug ? [folderOf(e.slug)] : []), ...(ledger.length ? ['conversations/days/'] : [])])].sort();
-    const rules = folders.map(folder => {
+    const current = await policy.appliedRules(engine, sourceId);
+    const capped = current.filter(r => !folders.includes(r.prefix)).length + folders.length > MAX_RULES;
+    const rules = (capped ? ['conversations/'] : folders).map(folder => {
       const normalized = normalizeRule(folder.endsWith('/') ? { prefix: folder, readable_by: [privacy.owner] } : { slug: folder, readable_by: [privacy.owner] });
       if ('problem' in normalized) throw new Error('the owner-only archive rule for ' + folder + ' is invalid: ' + normalized.problem);
       return normalized.rule;
     });
-    const current = await policy.appliedRules(engine, sourceId);
     const replaced = new Set(rules.map(r => r.prefix));
     if (rules.some(rule => current.find(r => r.prefix === rule.prefix)?.readable_by.join() !== rule.readable_by.join())) {
       await policy.proposeRevision(engine, sourceId, [...current.filter(r => !replaced.has(r.prefix)), ...rules], { origin: 'cli', store: 'database', proposedBy: 'transcripts-archive' });
     }
+    if (capped) await engine.setConfig(`${RESCOPE_CAPPED_PREFIX}${sourceId}`, String(folders.length));
   }
   await engine.setConfig(`${AUDIENCE_PREFIX}${sourceId}`, now);
 }
 
-export interface ArchiveRescopeSkip { code: 'archive_rescope_owner_unset' | 'archive_rescope_git_rules' | 'archive_rescope_pending'; message: string }
+export interface ArchiveRescopeSkip { code: 'archive_rescope_owner_unset' | 'archive_rescope_git_rules' | 'archive_rescope_pending' | 'archive_rescope_folder_cap'; message: string }
 
 /**
  * Runs the owner-only re-scope for a brain archived while personal that is now shared, whether or not the archive is
@@ -377,7 +381,7 @@ export async function reconcileArchiveAudience(engine: BrainEngine, sourceId?: s
 /** Why the owner-only re-scope (reconcileAudience) has not run on a brain that became shared, or null. */
 export async function archiveRescopeSkipped(engine: BrainEngine, sourceId?: string): Promise<ArchiveRescopeSkip | null> {
   const configured = await configuredSource(engine, sourceId);
-  if (await engine.getConfig(`${AUDIENCE_PREFIX}${configured}`) !== 'personal') return null;
+  if (await engine.getConfig(`${AUDIENCE_PREFIX}${configured}`) !== 'personal') return rescopeCapped(engine, configured);
   const privacy = await resolvePrivacy(engine);
   if (!privacy.shared) return null;
   if (!privacy.owner) {
@@ -389,6 +393,18 @@ export async function archiveRescopeSkipped(engine: BrainEngine, sourceId?: stri
   if (await policy.readAccessStore(engine, configured) !== 'git') return pending;
   if ((await policy.appliedRules(engine, configured)).some(r => r.prefix === 'conversations/')) return null;
   return { code: 'archive_rescope_git_rules', message: 'Conversation archive pages written while this brain was personal are not yet kept to the owner, because source ' + configured + ' keeps its access rules in git; add a rule with prefix conversations/ and readable_by [' + privacy.owner + '] to its .gbrain/access.yml and sync.' };
+}
+
+/**
+ * When the re-scope needed more owner-only folder rules than a source holds (MAX_RULES), it kept the whole
+ * conversations/ folder to the owner instead; reported while that rule stands.
+ */
+async function rescopeCapped(engine: BrainEngine, sourceId: string): Promise<ArchiveRescopeSkip | null> {
+  const folders = await engine.getConfig(`${RESCOPE_CAPPED_PREFIX}${sourceId}`);
+  if (!folders) return null;
+  const [{ appliedRules }, { MAX_RULES }] = await Promise.all([import('../access/policy.ts'), import('../access/folder-rules.ts')]);
+  if (!(await appliedRules(engine, sourceId)).some(r => r.prefix === 'conversations/')) return null;
+  return { code: 'archive_rescope_folder_cap', message: 'Conversation archive pages written while this brain was personal fill ' + folders + ' folders, more than the ' + MAX_RULES + ' rules a source holds, so one rule keeps the whole conversations/ folder of source ' + sourceId + ' to the owner: group conversations archived since stay owner-only too, and widening that conversations/ rule opens every earlier personal day to the same readers, not just one chat.' };
 }
 
 function isGitRepo(path: string | null): boolean {
