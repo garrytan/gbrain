@@ -41,6 +41,9 @@ describe('a label in one message, its value in the next', () => {
     const out = redact(['password:', `${PW}\nand the rest of the note`]);
     expect(out[1]).toBe('<REDACTED:labeled_credential>\nand the rest of the note');
   });
+  test('blank lines before the value in the next message are skipped', () => {
+    expect(redact(['here is my API key:', `\n\n${KEY}`])[1]).toBe('\n\n<REDACTED:labeled_credential>');
+  });
   test('the joined value is scrubbed where it is echoed later', () => {
     const out = redact(['here is my API key:', KEY, `I set it to ${KEY} in the config`]);
     expect(out.join('\n')).not.toContain(KEY);
@@ -68,6 +71,11 @@ describe('bounded lookahead and prose stay intact', () => {
   test('a short or letter-only word after a key label is not claimed', () => {
     expect(redact(['api key:', 'missing'])).toEqual(['api key:', 'missing']);
     expect(redact(['token:', 'abc123'])).toEqual(['token:', 'abc123']);
+  });
+  test('a file path or version after a key label is not claimed', () => {
+    expect(redact(['token:', 'src/core/foo1.ts'])).toEqual(['token:', 'src/core/foo1.ts']);
+    expect(redact([`the token:\nconfig2024.json`])).toEqual([`the token:\nconfig2024.json`]);
+    expect(redact(['token:', 'v2.1.0-rc1-build'])).toEqual(['token:', 'v2.1.0-rc1-build']);
   });
   test('a code identifier after a key label is not claimed', () => {
     expect(redact(['the token:', 'process.env.API_TOKEN_V2'])).toEqual(['the token:', 'process.env.API_TOKEN_V2']);

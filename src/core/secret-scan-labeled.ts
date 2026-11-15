@@ -137,12 +137,19 @@ export function danglingKeyLabel(line: string): boolean {
 
 /**
  * A value alone on the line after a dangling key label: one token of 12+ characters with a
- * letter and a digit that also passes the single-label checks, so prose (`hold on`), short
- * words and code references under a `token:` heading are never claimed.
+ * letter and a digit that is not a file name or version and passes the single-label checks,
+ * so prose (`hold on`), short words, paths and code references under a `token:` heading stay.
  */
 export function keyLabelValueIsCredential(value: string, head = ''): boolean {
-  return value.length >= 12 && !/\s/.test(value) && LETTER_RE.test(value) && /[0-9]/.test(value) && labeledValueIsCredential(value, 'single', head);
+  if (value.length < 12 || /\s/.test(value) || !LETTER_RE.test(value) || !/[0-9]/.test(value)) return false;
+  if (FILE_NAME_RE.test(value) || KEY_VERSION_RE.test(value)) return false;
+  return labeledValueIsCredential(value, 'single', head);
 }
+
+/** A file name or relative path ending in an extension (`src/core/foo1.ts`, `config2.json`) under a key label. */
+const FILE_NAME_RE = /^[\w.-]{1,128}(?:\/[\w.-]{1,128}){0,16}\.[A-Za-z][A-Za-z0-9]{0,4}$/;
+/** A version string (`v2.1.0-rc1-build`). */
+const KEY_VERSION_RE = /^v?\d{1,6}(?:\.\d{1,6}){1,3}(?:[-+][\w.-]{0,64})?$/;
 
 /**
  * The transcript lane's scan options (redactSession, `gbrain transcripts

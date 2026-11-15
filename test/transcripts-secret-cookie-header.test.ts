@@ -71,6 +71,9 @@ describe('cookie_header: prose, placeholders and short preference values stay', 
   test('short preference values (theme=dark) are not claimed', () => {
     expect(one('Cookie: theme=dark; lang=en')).toBe('Cookie: theme=dark; lang=en');
   });
+  test('a -b flag outside a curl command is not a cookie', () => {
+    expect(one('git checkout -b feature=abcdefgh12345')).toBe('git checkout -b feature=abcdefgh12345');
+  });
   test('curl -b with a cookie-jar file name is left alone', () => {
     expect(one('curl -b cookies.txt -c cookies.txt https://app.acme-example.test/')).toBe('curl -b cookies.txt -c cookies.txt https://app.acme-example.test/');
   });

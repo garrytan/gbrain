@@ -10,7 +10,8 @@
  * surface keep it off.
  *
  * After a `Cookie:` header (any case, optionally quoted or JSON-escaped) or a
- * curl `-b` / `--cookie` argument, each `name=value` pair separated by `;` is
+ * curl `-b` / `--cookie` argument (only after `curl` earlier on the line, so
+ * `git checkout -b name=value` is not one), each `name=value` pair separated by `;` is
  * read; only the values are claimed, so cookie names stay readable. After
  * `Set-Cookie:` only the first pair is a cookie: the attributes that follow
  * (`Path=/`, `Max-Age=3600`) are kept. Parsing stops at the first segment
@@ -20,10 +21,11 @@
  * are left alone. Every quantifier is bounded; the parse is linear in the line.
  */
 
-const COOKIE_HEAD_RE = /(?:(?:^|[^A-Za-z0-9_-])(set-)?cookie\\?["'`]?\s{0,4}:|(?:^|\s)(?:-b|--cookie)(?=[\s=]))[\s=]{0,4}\\?["'`]?/gi;
+const COOKIE_HEAD_RE = /(?:(?:^|[^A-Za-z0-9_-])(set-)?cookie\\?["'`]?\s{0,4}:|(?:^|\s)(-b|--cookie)(?=[\s=]))[\s=]{0,4}\\?["'`]?/gi;
 const COOKIE_PAIR_RE = /([!#$%&*+.^_|~0-9A-Za-z-]{1,128})=("?)([^\s;"',\\]{0,4096})/y;
 const COOKIE_SEP_RE = /\s{0,4};\s{0,4}/y;
 const PLACEHOLDER_RE = /^[<$%{[]/;
+const CURL_BEFORE_RE = /(?:^|[^A-Za-z0-9_-])curl(?:\.exe)?(?:\s|$)/i;
 const MASK_RE = /^[.*xX•_-]+$/;
 
 /** Minimum cookie value length claimed. */
@@ -39,6 +41,7 @@ export function cookieHeaderValues(line: string): Array<{ start: number; value: 
   for (let head = COOKIE_HEAD_RE.exec(line); head !== null; head = COOKIE_HEAD_RE.exec(line)) {
     const setCookie = head[1] !== undefined;
     let at = COOKIE_HEAD_RE.lastIndex;
+    if (head[2] !== undefined && !CURL_BEFORE_RE.test(line.slice(Math.max(0, head.index - 512), head.index))) continue;
     for (;;) {
       COOKIE_PAIR_RE.lastIndex = at;
       const m = COOKIE_PAIR_RE.exec(line);

@@ -151,7 +151,9 @@ value of 8+ characters that is not a stoplisted word is also scrubbed where
 the session repeats it bare.
 
 Pages imported before this detector (or a later widening of it) shipped are
-not rewritten automatically, so run the audit again after upgrading. `gbrain transcripts audit-secrets --json` (read-only; all
+not rewritten automatically, so run the audit again after upgrading. The audit
+finds every shape above except a value sent as its own message: a stored page
+no longer marks where one message ends. `gbrain transcripts audit-secrets --json` (read-only; all
 sources, or one with `--source-id`) lists the conversation pages that still
 carry a credential: slug, source, hit count per pattern and line numbers,
 never the text. The doctor check `transcript_secret_exposure` reads the

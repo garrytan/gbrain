@@ -894,11 +894,14 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
   let offset = 0;
   // W4.1: Markdown table state for the labeled lane (credential columns of the table being scanned).
   const table = opts.labeledCredentials === true ? newTableScanState() : null;
+  let leadingLine = 0;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
     const lineStart = offset;
     offset += line.length + 1;
-    const dangling = i > 0 ? danglingFor(lines[i - 1] ?? '', opts) : (opts.leadingDangling ?? null);
+    // The previous message's dangling label reads the first non-blank line here.
+    if (i === leadingLine && opts.leadingDangling && line.trim() === '') leadingLine = i + 1;
+    const dangling = i === leadingLine ? (opts.leadingDangling ?? null) : i > 0 ? danglingFor(lines[i - 1] ?? '', opts) : null;
     const cells = table ? tableCredentialCells(line, lines[i + 1], table) : [];
     if (line.length < 8 && !dangling && cells.length === 0) continue;
     // ENG-12: a line wholly inside a private-key claim is already redacted by
