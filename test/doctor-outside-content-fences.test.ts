@@ -119,6 +119,18 @@ describe('outside_content_fences doctor check', () => {
     expect(items).toEqual([{ source_id: 'arms-google', slug: 'emails/2026/03/arms-thread', type: 'email', facts: 0, world_facts: 0, takes: 1, links: 1 }]);
   }, 60_000);
 
+  test('does not count rows the conversation-facts extractor derived from an imported transcript', async () => {
+    await source('derived-notes', {});
+    await page('derived-notes', 'conversations/derived-example', 'conversation', 'Plain transcript text.', 'transcript_import:\n  harness: example\n  session_id: s2\n');
+    const prefix = 'cli:extract-conversation-facts';
+    await engine.executeRaw(
+      `INSERT INTO facts (source_id, fact, source, source_session, row_num, source_markdown_slug)
+       VALUES ('derived-notes', 'Derived claim', $1, $2, 0, 'conversations/derived-example')`, [prefix, `${prefix}:s2`]);
+    const checks = await outsideContentFencesEntry.run({ engine } as unknown as DoctorContext) as Check[];
+    const items = (checks[0]!.details as { items: Array<{ source_id: string }> }).items.filter(i => i.source_id === 'derived-notes');
+    expect(items).toEqual([]);
+  }, 60_000);
+
   // Value: protects=the check reports an error check instead of throwing when the query fails;
   // fails_when=the try/catch around the query is removed; why_new=no test drives the error path;
   // seam=none; no_claim=real database failures (an engine stub throws).

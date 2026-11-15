@@ -9,10 +9,14 @@
  * the derived rows (`facts.row_num`, `takes`, `links.origin_field = 'links_fence'`), never a page body, so a
  * segmented page is covered too. Contact (person) pages are out of scope: gbrain's own writers put most person facts
  * there, so the list would bury the rare planted row; their rendered name, organization and title are neutralized too.
+
+ * Rows the conversation-facts extractor derived itself (source and source_session both carry its prefix; a fence cell
+ * cannot set source_session) are gbrain's own, not a sender's, and are not counted.
  * Location and counts only, never a cell value. Reads the database only.
  */
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { CONVERSATION_FACTS_SOURCE_PREFIX } from '../../../core/facts/audit-sources.ts';
 import { checkError, doctorVerify } from '../check-fix.ts';
 
 const NAME = 'outside_content_fences';
@@ -28,6 +32,7 @@ async function runOutsideContentFences(ctx: DoctorContext): Promise<Check[]> {
          FROM (SELECT fp.id AS page_id, 1 AS facts, CASE WHEN f.visibility = 'world' THEN 1 ELSE 0 END AS world_facts, 0 AS takes, 0 AS links
                  FROM facts f JOIN pages fp ON fp.source_id = f.source_id AND fp.slug = f.source_markdown_slug
                 WHERE f.row_num IS NOT NULL AND f.expired_at IS NULL
+                  AND NOT (f.source LIKE $1::text || '%' AND COALESCE(f.source_session, '') LIKE $1::text || '%')
                UNION ALL SELECT t.page_id, 0, 0, 1, 0 FROM takes t WHERE t.active
                UNION ALL SELECT l.origin_page_id, 0, 0, 0, 1 FROM links l WHERE l.origin_field = 'links_fence') x
          JOIN pages p ON p.id = x.page_id
@@ -36,7 +41,7 @@ async function runOutsideContentFences(ctx: DoctorContext): Promise<Check[]> {
           AND ((s.config->>'kind' = 'google' AND p.type IN ('email', 'meeting')) OR s.config->>'kind' = 'github'
                OR p.frontmatter ? 'transcript_import')
         GROUP BY p.source_id, p.slug, p.type
-        ORDER BY p.source_id, p.slug`);
+        ORDER BY p.source_id, p.slug`, [CONVERSATION_FACTS_SOURCE_PREFIX]);
     const details = { pages: items.length, items, docs: 'docs/guides/repair.md#outside-content-fences' };
     if (!items.length) {
       checks.push({ name: NAME, status: 'ok', details,
