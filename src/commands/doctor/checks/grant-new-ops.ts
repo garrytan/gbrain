@@ -27,7 +27,6 @@ import { checkError, doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
 const DOCS = 'docs/mcp/ADMIN.md#grants-that-cannot-reach-new-operations';
-const BULK_WRITE = 'put_pages';
 
 interface GrantFinding {
   kind: 'oauth_client' | 'legacy_token';
@@ -44,8 +43,9 @@ interface GrantFinding {
 
 function finding(kind: GrantFinding['kind'], id: string, name: string, profile: string | null, gaps: GrantGaps, target: RescopeTarget,
   snapshot: readonly string[] | null, age: ReturnType<typeof grantAge>, surfaces: { client: McpSurface | null; clientSetBy: string | null; server: McpSurface | null }): GrantFinding {
-  const bulk = gaps.snapshotExcluded.includes(BULK_WRITE);
-  const operations = !bulk ? null : kind === 'legacy_token' ? BULK_WRITE : [...new Set([...(snapshot ?? []), BULK_WRITE])].sort().join(',');
+  const excluded = gaps.snapshotExcluded;
+  const operations = !excluded.length ? null
+    : kind === 'legacy_token' ? excluded.join(',') : [...new Set([...(snapshot ?? []), ...excluded])].sort().join(',');
   const argvs = grantRescopeArgvs(target, gaps, operations);
   const blockers = grantBlockers(gaps, { clientSurface: surfaces.client, clientSurfaceSetBy: surfaces.clientSetBy, serverSurface: surfaces.server });
   return {
