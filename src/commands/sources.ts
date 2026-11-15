@@ -1237,6 +1237,8 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
       say(`  → embed-backfill skipped (cooldown). Manually trigger with: gbrain jobs submit embed-backfill --params '{"sourceId":"${id}"}'`);
     } else if (sub.status === 'spend_capped') {
       say(`  → embed-backfill skipped (24h spend cap $${sub.spendCapUsd} reached for this source).`);
+    } else if (sub.status === 'no_worker_surface' && await (await import('../core/embedding-disabled.ts')).embeddingsDisabled(engine)) {
+      say('  → embed-backfill not queued: embedding is disabled on this brain (keyless by choice; keyword search works).');
     } else if (sub.status === 'no_worker_surface') {
       say(`  → embed-backfill not queued (${sub.engineKind} has no recognized persistent worker); run: gbrain embed --stale --source ${id}`);
     } else if (sub.status === 'stalled') {
@@ -2008,7 +2010,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
 }
 
 function printHelp(): void {
-  console.log(`gbrain sources — manage multi-source brain configuration (v0.26.5)
+  console.log(`gbrain sources — manage multi-source brain configuration
 
 Subcommands:
   inspect <path> [--profile company-brain] [--json] [--out <file>]

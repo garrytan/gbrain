@@ -100,3 +100,25 @@ describe('a brain that is shared or serves several people keeps new sources out,
     }
   });
 });
+
+describe('federating a source on a keyless PGLite brain', () => {
+  test('says embedding is off instead of telling the user to run gbrain embed --stale', async () => {
+    await add(['keyless-a', '--no-federated']);
+    await engine.putPage('notes/keyless', { type: 'note', title: 'K', compiled_truth: 'A page with a chunk to embed.', timeline: '' }, { sourceId: 'keyless-a' });
+    await engine.upsertChunks('notes/keyless', [{ chunk_index: 0, chunk_text: 'A page with a chunk to embed.', chunk_source: 'compiled_truth' }], { sourceId: 'keyless-a' });
+    await engine.setConfig('embedding_disabled', 'true');
+    const out: string[] = [];
+    const log = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { out.push(a.join(' ')); });
+    const err = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { out.push(a.join(' ')); });
+    try {
+      await runSources(engine, ['federate', 'keyless-a']);
+    } finally {
+      log.mockRestore();
+      err.mockRestore();
+      await engine.setConfig('embedding_disabled', 'false');
+    }
+    const text = out.join('\n');
+    expect(text).toContain('embedding is disabled on this brain');
+    expect(text).not.toContain('gbrain embed --stale');
+  });
+});
