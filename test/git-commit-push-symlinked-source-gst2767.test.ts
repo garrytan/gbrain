@@ -96,6 +96,25 @@ for (const kind of ['classic', 'managed'] as const) {
   }, 60_000);
 }
 
+/** The stray `.git` shapes a source folder is left with that git itself ignores: a file, and a directory whose HEAD is broken. */
+const strays: Array<[string, (at: string) => void]> = [
+  ['a .git file pointing nowhere', at => writeFileSync(at, 'gitdir: /nonexistent/example.git\n')],
+  ['a .git directory with a broken HEAD', at => { mkdirSync(join(at, 'objects'), { recursive: true }); mkdirSync(join(at, 'refs')); writeFileSync(join(at, 'HEAD'), 'not a ref\n'); }],
+];
+for (const [shape, make] of strays) {
+  test(`${shape} under the source path and under the named folder: the folder's files commit and nothing is skipped`, async () => {
+    const f = fixture(`stray-${shape.split(' ').slice(1, 3).join('-').replace(/[^a-z-]/g, '')}`, 'managed');
+    make(join(f.repo, 'brain', '.git'));
+    make(join(f.repo, 'brain', 'notes', '.git'));
+    write(f);
+    const r = await commitPush(f, join(f.link, YEAR));
+    expect(r.stdout).not.toContain('commit_paths_skipped');
+    expect(r.exitCode).toBe(0);
+    expect(git(f.repo, 'status', '--porcelain', '--', `brain/${YEAR}`)).toBe('');
+    expect(committed(f, 'HEAD')).toEqual([`brain/${YEAR}/alice-example.md`, `brain/${YEAR}/bob-example.md`]);
+  }, 60_000);
+}
+
 test('a symlink inside the checkout: a pathspec through it names the real directory instead of failing "beyond a symbolic link"', async () => {
   const f = fixture('inside-link', 'classic', 'inside');
   write(f);

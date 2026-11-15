@@ -39,7 +39,12 @@ test('CLI: embed --status --source <id> --json exits 2 with unknown_flag instead
   const r = await runCli(['embed', '--status', '--source', 'source-a', '--json'], { home, timeoutMs: 120_000 });
   expect(r.stdout).not.toContain('Page not found');
   expect(r.exitCode).toBe(2);
-  expect(JSON.parse(r.stdout)).toMatchObject({ code: 'unknown_flag', detail: '--status' });
+  const e = JSON.parse(r.stdout) as { code: string; detail: string; why?: string; fix?: { next?: string; argv?: string[]; consent?: unknown[]; verify?: { argv?: string[] } } };
+  expect(e).toMatchObject({ code: 'unknown_flag', detail: '--status' });
+  expect(e.why).toContain('--status');
+  expect(e.fix).toMatchObject({ next: 'run', consent: [] });
+  expect(e.fix?.argv?.slice(0, 7)).toEqual(['gbrain', 'embed', '--stale', '--dry-run', '--json', '--source', 'source-a']);
+  expect(e.fix?.verify?.argv?.slice(0, 5)).toEqual(['gbrain', 'doctor', '--only', 'embedding_state', '--json']);
 }, 180_000);
 
 test('CLI: embed --source <id> <slug> --dry-run reads the slug, not the source id', async () => {
