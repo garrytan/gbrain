@@ -4,6 +4,9 @@
  * it is without it.
  */
 import type { SearchResult } from '../types.ts';
+import type { BrainEngine } from '../engine.ts';
+import { keepFrontmatterMatches } from '../search/frontmatter-where.ts';
+import { stampDeepResearchIds } from './context.ts';
 
 /** GST-2762: the rows without the keyless any-word fill's rows (the same array when it added none). */
 export const withoutFill = (rows: SearchResult[]): SearchResult[] => rows.some(r => r.keyword_fill) ? rows.filter(r => !r.keyword_fill) : rows;
@@ -36,4 +39,20 @@ export async function chooseFill<T extends { results: SearchResult[] }, D extend
   // Delivery's own per-row record (delivered) is left out: it appears on every row once any row is expanded, and the row's text is compared.
   const text = (rows: SearchResult[]) => rows.map(({ delivered: _record, ...row }: SearchResult & { delivered?: unknown }) => row);
   return same(text(withoutFill(delivered.rows)), text(base.rows)) ? { ...filled, delivered } : { ...reference, delivered: base };
+}
+
+/**
+ * GST-2762, the query op: both runs keep only the rows that match the caller's
+ * frontmatter filter and get their deep-research ids; an escalated CRAG run has
+ * no reference to compare the fill against, so it keeps its rows without the fill.
+ */
+export async function queryFillPage<T extends { results: SearchResult[] }, D extends { rows: SearchResult[] }>(engine: BrainEngine, where: Parameters<typeof keepFrontmatterMatches>[2], found: SearchResult[], reference: T, results: SearchResult[],
+  escalated: boolean | undefined, limit: () => Promise<number>, stages: (hits: SearchResult[]) => Promise<T>, compared: (t: T) => unknown, deliver: (rows: SearchResult[]) => Promise<D>): Promise<T & { delivered?: D }> {
+  const finish = async (rows: SearchResult[]) => {
+    const kept = (await keepFrontmatterMatches(engine, rows, where)).map(r => ({ ...r }));
+    stampDeepResearchIds(kept);
+    return kept;
+  };
+  if (escalated) return { ...reference, results: await finish(results) };
+  return chooseFill(found, { ...reference, results: await finish(results) }, await limit(), async hits => { const again = await stages(hits); return { ...again, results: await finish(again.results) }; }, compared, deliver);
 }

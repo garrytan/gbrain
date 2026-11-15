@@ -70,7 +70,7 @@ import type { TrustTier } from '../trust/tier.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import { invalidParam, paramUse, readFix } from './op-fix.ts';
 import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
-import { chooseFill, withoutFill } from './search-fill.ts';
+import { chooseFill, queryFillPage, withoutFill } from './search-fill.ts';
 import { capVectorOnlyPages, remotePageCap } from '../search/remote-page-cap.ts';
 import {
   parseSourceIdParam,
@@ -863,6 +863,20 @@ const search: Operation = {
   cliHints: { name: 'search', positional: ['query'] },
 };
 
+/** GST-2762: the query op's stages after retrieval, run over the rows without the keyless fill (first, with its notices) and again with them (queryFillPage). */
+function queryOpStages(ctx: OperationContext, p: Record<string, unknown>, queryText: string, { pageCap, timings, querySourceScope, excludePrivate, types, where, plan, queryEmbedding, resolving }: { pageCap: Parameters<typeof capVectorOnlyPages>[1];
+  timings: SearchTimings; querySourceScope: SourceScope; excludePrivate: boolean; types?: string[]; where?: ReturnType<typeof whereOpParam>; plan: EvidencePlan | null; queryEmbedding: Float32Array | null; resolving: ReturnType<typeof startEntityResolution> }) {
+  return async (hits: SearchResult[], first: boolean) => {
+    const { rows: primaryRows, meta: pageCapMeta } = capVectorOnlyPages(hits, pageCap);
+    const declarations = new DeclarationMemo();
+    const fanned = await timings.stage('alias_fanout', () => withAliasFanOut(ctx.engine, primaryRows, queryText, { ...querySourceScope, excludePrivate },
+      { excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...querySourceScope }, () => declarations.scan(primaryRows, queryText), resolving));
+    if (first) await emitFanoutNotices(ctx, fanned.fanout, querySourceScope);
+    const results = await applyQueryArms(ctx.engine, p, queryText, fanned.results, { ...querySourceScope, excludePrivate, requireSafeChunks: ctx.remote !== false, filtered: !!types || !!where, evidencePlan: !!plan, evidenceBudget: plan?.budgetTokens, remote: ctx.remote !== false, queryEmbedding, rowCap: () => resolveEffectiveLimit(ctx, p), timer: timings });
+    return { pageCapMeta, declarations, fanned, results, grade: gradeRetrievalConfidence(results, { query: queryText }) };
+  };
+}
+
 const query: Operation = {
   name: 'query',
   idempotent: true,
@@ -1101,16 +1115,7 @@ const query: Operation = {
       relationalRetrieval: typeof p.relational === 'boolean' ? (p.relational as boolean) : undefined,
       explain: p.explain === true, explainTarget: explainPrep?.trace, _timings: timings,
     });
-    // GST-2762: the stages run over the pipeline's rows less the keyless fill (first, with its notices), then over all of them (chooseFill).
-    const opStages = async (hits: SearchResult[], first: boolean) => {
-      const { rows: primaryRows, meta: pageCapMeta } = capVectorOnlyPages(hits, pageCap);
-      const declarations = new DeclarationMemo();
-      const fanned = await timings.stage('alias_fanout', () => withAliasFanOut(ctx.engine, primaryRows, queryText, { ...querySourceScope, excludePrivate },
-        { excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...querySourceScope }, () => declarations.scan(primaryRows, queryText), resolving));
-      if (first) await emitFanoutNotices(ctx, fanned.fanout, querySourceScope);
-      const results = await applyQueryArms(ctx.engine, p, queryText, fanned.results, { ...querySourceScope, excludePrivate, requireSafeChunks: ctx.remote !== false, filtered: !!types || !!where, evidencePlan: !!plan, evidenceBudget: plan?.budgetTokens, remote: ctx.remote !== false, queryEmbedding, rowCap: () => resolveEffectiveLimit(ctx, p), timer: timings });
-      return { pageCapMeta, declarations, fanned, results, grade: gradeRetrievalConfidence(results, { query: queryText }) };
-    };
+    const opStages = queryOpStages(ctx, p, queryText, { pageCap, timings, querySourceScope, excludePrivate, types, where, plan, queryEmbedding, resolving });
     const reference = await opStages(withoutFill(found), true);
     let { results, pageCapMeta } = reference;
     // #1663 — CRAG confidence gate. Grade what retrieval returned (zero-LLM;
@@ -1235,16 +1240,9 @@ const query: Operation = {
     }
     const latency_ms = Date.now() - startedAt;
 
-    const finish = async (rows: SearchResult[]) => {
-      const kept = (await keepFrontmatterMatches(ctx.engine, rows, where)).map(r => ({ ...r }));
-      stampDeepResearchIds(kept);
-      return kept;
-    };
     const queryScope = { ...querySourceScope, excludePrivate, detail };
-    // An escalated run has no reference to compare the fill against, so it keeps its rows without the fill.
-    const page = crag.escalated ? { ...reference, results: await finish(results) }
-      : await chooseFill(found, { ...reference, results: await finish(results) }, await resolveEffectiveLimit(ctx, p), async hits => { const again = await opStages(hits, false); return { ...again, results: await finish(again.results) }; },
-        t => [t.results, t.fanned.fanout, t.fanned.entity, t.pageCapMeta, t.grade], rows => withEvidence(ctx, p, rows, plan, queryScope, capturedMeta));
+    const page = await queryFillPage(ctx.engine, where, found, reference, results, crag.escalated, () => resolveEffectiveLimit(ctx, p), hits => opStages(hits, false),
+      t => [t.results, t.fanned.fanout, t.fanned.entity, t.pageCapMeta, t.grade], rows => withEvidence(ctx, p, rows, plan, queryScope, capturedMeta));
     results = page.results;
     const { declarations, fanned } = page;
 
