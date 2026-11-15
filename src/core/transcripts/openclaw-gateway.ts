@@ -81,7 +81,8 @@ export function parseGatewayCliOutput(stdout: string, exitCode: number | null): 
     throw gatewayError('unreachable', 'openclaw gateway call exited ' + String(exitCode) + ' without a JSON result: ' + stdout.trim().slice(0, 300));
   }
   const rec = doc && typeof doc === 'object' ? doc as Record<string, unknown> : null;
-  if (!rec || rec.ok !== false) return doc;
+  if ((!rec || rec.ok !== false) && (exitCode === 0 || exitCode === null)) return doc;
+  if (!rec || rec.ok !== false) throw gatewayError('failed', 'openclaw gateway call exited ' + String(exitCode) + ': ' + stdout.trim().slice(0, 300));
   const err = (rec.error && typeof rec.error === 'object' ? rec.error : {}) as Record<string, unknown>;
   const type = String(err.type ?? '');
   const message = String(err.message ?? 'no detail');

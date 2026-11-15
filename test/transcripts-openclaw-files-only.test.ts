@@ -70,12 +70,12 @@ const backfill = () => runTranscriptArchive(engine, { mode: 'backfill', from: '2
 
 describe('openclaw files-only folder with the Gateway unreachable', () => {
   test('discovery reads the reset, deleted and bak.<stamp> files and skips migration and Doctor copies', () => {
-    const found = discoverTranscriptFiles([{ format: 'openclaw', root, extension: '.jsonl' }]).map(d => d.path).sort();
+    const found = discoverTranscriptFiles([{ format: 'openclaw', root, extension: '.jsonl' }], { includeArchived: true }).map(d => d.path).sort();
     expect(found).toEqual([...read].sort());
     for (const p of skipped) expect(found).not.toContain(p);
   });
 
-  test('backfill writes every day from the archived files, reports the Gateway, and a rerun resumes with nothing to write', async () => {
+  test('backfill writes every day from the archived files, reports the Gateway, a rerun writes nothing, and a finished day whose source grew is written again', async () => {
     const first = await backfill();
     expect(first.errors.map(e => e.code)).toEqual(['archive_gateway_unreachable']);
     expect(first.days.filter(d => d.status === 'written').map(d => d.day).sort()).toEqual(['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06']);
@@ -90,5 +90,10 @@ describe('openclaw files-only folder with the Gateway unreachable', () => {
     const again = await backfill();
     expect(again.written).toBe(0);
     expect(await archivedPages(engine)).toEqual(before);
+
+    put('s-reset.jsonl.reset.2026-11-03T10-00-00.000Z', sessionText('s-reset', [['user', '2026-11-02T08:00:00.000Z', 'reset day text'], ['assistant', '2026-11-02T08:01:00.000Z', 'reset reply'], ['user', '2026-11-02T08:02:00.000Z', 'recovered later']]));
+    const refreshed = await backfill();
+    expect(refreshed.days.filter(d => d.status === 'written').map(d => d.day)).toEqual(['2026-11-02']);
+    expect((await archivedPages(engine)).map(p => p.body).join('\n')).toContain('recovered later');
   }, 120_000);
 });

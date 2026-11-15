@@ -12,7 +12,7 @@ import { existsSync, lstatSync } from 'node:fs';
 import { detectAdapter, harnessRoots, type HarnessRoot } from './detect.ts';
 import { discoverTranscriptFiles } from './discover.ts';
 import { openclawGatewayReader } from './openclaw-gateway.ts';
-import type { ArchiveConversation, ArchiveReader } from './archive.ts';
+import { archiveMessageId, type ArchiveConversation, type ArchiveReader } from './archive.ts';
 import type { ParsedSession, TranscriptFormat, TranscriptMessage } from './types.ts';
 
 const NO_SESSIONS = (harness: string) => 'no readable sessions for ' + harness + '; use gbrain connectors or an export with gbrain transcripts ingest';
@@ -25,26 +25,29 @@ export function fileReader(root: HarnessRoot): ArchiveReader {
     ...(present ? {} : { unavailable: NO_SESSIONS(root.format) }),
     async *scan({ sinceMs, minMtimeMs, dayOf }) {
       const floor = minMtimeMs ?? sinceMs;
-      const found = new Map<string, { harness: TranscriptFormat; sessionId: string; days: Set<string>; newest?: string; paths: string[] }>();
-      for (const file of discoverTranscriptFiles([root])) {
+      const found = new Map<string, { harness: TranscriptFormat; sessionId: string; dayIds: Map<string, Set<string>>; newest?: string; paths: string[] }>();
+      for (const file of discoverTranscriptFiles([root], { includeArchived: true })) {
         if (floor !== undefined) {
           try { if (lstatSync(file.path).mtimeMs < floor) continue; } catch { continue; }
         }
         for await (const session of parseFile(file.path, file.format)) {
           const key = session.meta.harness + '\u0000' + session.meta.sessionId;
-          const seen = found.get(key) ?? { harness: session.meta.harness, sessionId: session.meta.sessionId, days: new Set<string>(), paths: [] };
+          const seen = found.get(key) ?? { harness: session.meta.harness, sessionId: session.meta.sessionId, dayIds: new Map<string, Set<string>>(), paths: [] };
           found.set(key, seen);
           if (!seen.paths.includes(file.path)) seen.paths.push(file.path);
           for (const m of session.messages) {
             if (!m.timestamp) continue;
-            seen.days.add(dayOf(m.timestamp));
+            const day = dayOf(m.timestamp);
+            const ids = seen.dayIds.get(day) ?? new Set<string>();
+            seen.dayIds.set(day, ids.add(archiveMessageId(m)));
             if (!seen.newest || m.timestamp > seen.newest) seen.newest = m.timestamp;
           }
         }
       }
       for (const s of found.values()) {
         yield {
-          harness: s.harness, conversationKey: s.sessionId, sessionId: s.sessionId, via: 'file' as const, days: [...s.days], ...(s.newest ? { newest: s.newest } : {}),
+          harness: s.harness, conversationKey: s.sessionId, sessionId: s.sessionId, via: 'file' as const,
+          days: [...s.dayIds.keys()], dayIds: Object.fromEntries([...s.dayIds].map(([d, ids]) => [d, [...ids]])), ...(s.newest ? { newest: s.newest } : {}),
           load: () => loadSession(s.harness, s.sessionId, s.paths),
         };
       }
@@ -77,7 +80,7 @@ async function loadSession(harness: TranscriptFormat, sessionId: string, paths: 
       const last = session.messages[session.messages.length - 1]?.timestamp ?? '';
       if (!meta || last > metaNewest) { meta = session.meta; metaNewest = last; }
       for (const m of session.messages) {
-        const id = m.role + '\u0000' + m.timestamp + '\u0000' + m.text;
+        const id = archiveMessageId(m);
         if (seen.has(id)) continue;
         seen.add(id);
         messages.push(m);

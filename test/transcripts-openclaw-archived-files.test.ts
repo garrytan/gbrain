@@ -33,9 +33,14 @@ describe('openclaw archived session files', () => {
   writeFileSync(deleted, Bun.zstdCompressSync(Buffer.from(text)));
   writeFileSync(checkpoint, text);
 
-  test('discovery lists the live, reset and deleted files and skips the checkpoint', () => {
-    const found = discoverTranscriptFiles([{ format: 'openclaw', root, extension: '.jsonl' }]).map(d => d.path).sort();
+  test('archive discovery lists the live, reset and deleted files and skips the checkpoint', () => {
+    const found = discoverTranscriptFiles([{ format: 'openclaw', root, extension: '.jsonl' }], { includeArchived: true }).map(d => d.path).sort();
     expect(found).toEqual([deleted, live, reset].sort());
+  });
+
+  test('plain discovery (transcripts ingest) lists only the live file, so one session never imports twice', () => {
+    const found = discoverTranscriptFiles([{ format: 'openclaw', root, extension: '.jsonl' }]).map(d => d.path);
+    expect(found).toEqual([live]);
   });
 
   test('detect accepts both archived variants', () => {

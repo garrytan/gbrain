@@ -44,6 +44,12 @@ export interface DiscoverOpts {
    * escape hatch for deliberately auditing the provider's own calls.
    */
   includeSelf?: boolean;
+  /**
+   * GST-2768: also list OpenClaw's retained session files (`.jsonl.reset.*`, `.jsonl.deleted.*.zst`, `.jsonl.bak.*`).
+   * They share a session id with the live file, so only the conversation archive, which merges every file of one
+   * session, asks for them; ingest keeps one file per session.
+   */
+  includeArchived?: boolean;
 }
 
 /** Recursively list regular files under root (lstat: symlinks are skipped). */
@@ -85,7 +91,7 @@ export function discoverTranscriptFiles(roots?: HarnessRoot[], opts: DiscoverOpt
     const files: string[] = [];
     walk(root, files);
     for (const p of files) {
-      if (!p.endsWith(extension) && !(format === 'openclaw' && isOpenclawArchivedFile(p))) continue;
+      if (!p.endsWith(extension) && !(opts.includeArchived && format === 'openclaw' && isOpenclawArchivedFile(p))) continue;
       if (isOpenclawCheckpointFile(p) || (format === 'openclaw' && isOpenclawSkippedArtifact(p))) continue;
       // Grok: only chat_history.jsonl is a session; updates/events/rewind
       // JSONL next to it would otherwise inflate found-counts and freeze

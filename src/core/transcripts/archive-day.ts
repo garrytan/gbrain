@@ -113,6 +113,8 @@ export interface ArchiveDayInput {
   complete: boolean;
   partTargetBytes: number;
   readableBy?: string[];
+  /** The embedding hold the page carries from its first write (archive_backfill, archive_open_day), so no embed runs before the hold row exists. */
+  embeddingHold?: string;
 }
 
 export interface ArchiveDayRender { baseSlug: string; parts: RenderedPart[]; messages: number }
@@ -143,6 +145,7 @@ export function renderArchiveDay(input: ArchiveDayInput): ArchiveDayRender {
     messages: slice.messages.length,
     redactions: redactionCounts(slice.messages),
     complete: input.complete,
+    ...(input.embeddingHold ? { embedding_hold: input.embeddingHold } : {}),
   };
   const parts = rendered.parts.map((part): RenderedPart => {
     const slug = part.part === 1 ? baseSlug : baseSlug + '-p' + part.part;

@@ -69,6 +69,30 @@ describe('the archive never shrinks a day page (pglite)', () => {
     expect(await snapshot()).toEqual(before);
   }, 60_000);
 
+  test('reset in place, then as many new messages the same day: the day page keeps the earlier messages', async () => {
+    const before = await seed();
+    const after: Turn[] = [
+      ['user', '2026-11-10T20:00:00.000Z', 'new a'], ['assistant', '2026-11-10T20:01:00.000Z', 'new b'],
+      ['user', '2026-11-10T20:02:00.000Z', 'new c'], ['assistant', '2026-11-10T20:03:00.000Z', 'new d'],
+    ];
+    const result = await run([staticReader('openclaw', [conversation('openclaw', KEY, after)])]);
+    expect(result.days.map(d => [d.day, d.status])).toEqual([['2026-11-10', 'kept']]);
+    expect(await snapshot()).toEqual(before);
+  }, 60_000);
+
+  test('the same reset with the reset file still on disk: the run merges both and the day grows', async () => {
+    await seed();
+    const after: Turn[] = [['user', '2026-11-10T20:00:00.000Z', 'new a'], ['assistant', '2026-11-10T20:01:00.000Z', 'new b']];
+    const gateway = { ...staticReader('openclaw', [{ ...conversation('openclaw', KEY, after), via: 'gateway' as const }]), name: 'openclaw-gateway' };
+    const file = staticReader('openclaw', [{ ...conversation('openclaw', KEY, FULL), via: 'file' as const }]);
+    const result = await run([gateway, file]);
+    expect(result.errors).toEqual([]);
+    expect(result.days.filter(d => d.status === 'written').map(d => d.day)).toEqual(['2026-11-10']);
+    const tuesday = (await snapshot()).find(p => p.slug.startsWith('conversations/openclaw/2026-11-10'))!;
+    for (const text of ['tuesday one', 'tuesday three', 'new a', 'new b']) expect(tuesday.body).toContain(text);
+    expect(tuesday.body.split('tuesday one').length - 1).toBe(1);
+  }, 60_000);
+
   test('partial history: the Gateway returns only the newest messages, and each shorter day is kept', async () => {
     const before = await seed();
     const result = await run([staticReader('openclaw', [conversation('openclaw', KEY, FULL.slice(3))])]);

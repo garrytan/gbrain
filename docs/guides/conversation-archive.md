@@ -84,7 +84,7 @@ run retries. Checked against OpenClaw 2026.10.9 and 2026.11.3, which list sessio
 
 Session files OpenClaw keeps on disk are read too, even when the Gateway is down: `<id>.jsonl.reset.<stamp>`, the
 zstd-compressed `<id>.jsonl.deleted.<stamp>.<hex>.zst` and the legacy compact backup `<id>.jsonl.bak.<stamp>`.
-Several files of one session merge into one conversation. Migration copies (`*.migrated`, `*.migrated.<n>`,
+Several files of one session merge into one conversation (`gbrain transcripts ingest` reads only live files). Migration copies (`*.migrated`, `*.migrated.<n>`,
 `<id>.jsonl.pre-doctor-*-repair-<stamp>.bak`) and Doctor's recovery copies (`<id>.jsonl.bak-<pid>-<stamp>`) are
 skipped: their sessions live in the Gateway's database, which the next run with the Gateway up reads.
 
@@ -95,8 +95,9 @@ Two OpenClaw limits to know:
 - On 2026.10.9 a session created by an operator has no `chatType`, so the archive treats it as unverified and
   keeps it to the owner.
 - `sessions.reset` keeps the same session id and the Gateway then returns only the messages after the reset. The
-  archive keeps a day page it already wrote whenever the source now holds fewer messages for that day (day status
-  `kept`), so a reset never shrinks the archive.
+  archive merges the `.jsonl.reset.<stamp>` file of the same session with the Gateway's history, each message once,
+  so the earlier messages stay. When neither holds a message the day page already has, the page is kept as it is
+  (day status `kept`), so a reset never shrinks or replaces the archive.
 
 ## Repo-less brains
 

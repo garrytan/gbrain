@@ -53,7 +53,21 @@ describe('backfill embedding hold (pglite)', () => {
     for (const slug of slugs) {
       expect((await planPageEmbedding(engine, await pageRow(slug), stale)).kind).toBe('held');
       expect((await planPageEmbedding(engine, await pageRow(slug), stale, { approvedCapUsd: 0.01 })).kind).not.toBe('held');
+      expect((await planPageEmbedding(engine, await pageRow(slug), stale)).kind).toBe('unmetered');
     }
+  }, 60_000);
+
+  test('a backfilled page published before its hold row is still held on its first embedding plan', async () => {
+    const result = await runTranscriptArchive(engine, {
+      mode: 'backfill', from: '2026-09-01', to: '2026-09-01',
+      readers: [staticReader('codex', [conversation('codex', 'rollout-race', [['user', '2026-09-01T10:00:00.000Z', 'raced work']])])],
+      now: new Date('2026-11-01T00:00:00Z'),
+    });
+    const slug = result.days.find(d => d.status === 'written')!.slug!;
+    const page = await pageRow(slug);
+    await engine.executeRaw('DELETE FROM page_embedding_budget WHERE page_id = $1', [page.id]);
+    expect(await planPageEmbedding(engine, page, stale)).toEqual({ kind: 'held', reason: ARCHIVE_BACKFILL_HOLD_REASON });
+    expect((await readBudgetLimited(engine, { sourceId: 'conversations' })).held_reasons[ARCHIVE_BACKFILL_HOLD_REASON]).toBe(1);
   }, 60_000);
 
   test('an ordinary small page and a forward-run closed day stay unmetered', async () => {

@@ -96,6 +96,8 @@ export interface ArchiveScanEntry {
   via?: 'gateway' | 'file';
   /** Local days (dayOf) that hold at least one message. */
   days: string[];
+  /** Per day, the identities (archiveMessageId) of its messages, so backfill can tell a finished day from a changed one. */
+  dayIds?: Record<string, string[]>;
   newest?: string;
   load(): Promise<ArchiveConversation | null>;
 }
@@ -125,6 +127,10 @@ export interface ArchiveLedgerEntry {
   slug?: string;
   parts?: number;
   messages?: number;
+  /** Identities (archiveMessageId) of the messages the page holds; a rewrite that would drop one is kept instead. */
+  ids?: string[];
+  /** Signature of the source's message identities for the day when it was written; backfill skips a finished day whose source still matches. */
+  source?: string;
   held?: ArchiveHeld;
   updated_at?: string;
 }
@@ -210,6 +216,21 @@ export async function setArchiveEnabled(engine: BrainEngine, on: boolean): Promi
 async function configuredSource(engine: BrainEngine, sourceId?: string): Promise<string> {
   return sourceId ?? ((await engine.getConfig(ARCHIVE_SOURCE_KEY))?.trim() || DEFAULT_ARCHIVE_SOURCE);
 }
+
+/** The source run, status and adopt-legacy all use: on a shared brain whose archive source is a checkout, its owner-only twin. */
+async function effectiveSource(engine: BrainEngine, sourceId?: string): Promise<{ sourceId: string; privacy: Privacy }> {
+  const configured = await configuredSource(engine, sourceId);
+  const privacy = await resolvePrivacy(engine);
+  const [existing] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [configured]);
+  return { sourceId: privacy.shared && existing?.local_path ? configured + '-owner' : configured, privacy };
+}
+
+/** One message's identity across readers and runs: role, timestamp and text, before redaction. */
+export function archiveMessageId(m: { role: string; timestamp: string; text: string }): string {
+  return createHash('sha256').update(m.role + '\u0000' + m.timestamp + '\u0000' + m.text).digest('hex').slice(0, 16);
+}
+
+const daySignature = (ids: Iterable<string>) => sha256([...new Set(ids)].sort().join(','));
 
 async function configInt(engine: BrainEngine, key: string, fallback: number): Promise<number> {
   const n = Number((await engine.getConfig(key))?.trim());
@@ -317,11 +338,41 @@ export async function* scanReader(reader: ArchiveReader, opts: ArchiveScanOpts):
   for (const conv of convs) {
     if (conv.session.messages.length === 0) continue;
     const stamps = conv.session.messages.map(m => m.timestamp).filter(Boolean);
+    const dayIds: Record<string, string[]> = {};
+    for (const m of conv.session.messages) if (m.timestamp) (dayIds[opts.dayOf(m.timestamp)] ??= []).push(archiveMessageId(m));
     yield {
       harness: conv.harness, conversationKey: conv.conversationKey, sessionId: conv.session.meta.sessionId, ...(conv.via ? { via: conv.via } : {}),
-      days: [...new Set(stamps.map(opts.dayOf))], newest: stamps.sort().pop(), load: async () => conv,
+      days: Object.keys(dayIds), dayIds, newest: stamps.sort().pop(), load: async () => conv,
     };
   }
+}
+
+/** A Gateway conversation with the session files of the same session id: its key and channel, every message once, oldest first. */
+function mergeScanEntries(gateway: ArchiveScanEntry, files: ArchiveScanEntry[]): ArchiveScanEntry {
+  const dayIds: Record<string, string[]> = {};
+  for (const e of [gateway, ...files]) for (const [day, ids] of Object.entries(e.dayIds ?? {})) dayIds[day] = [...new Set([...(dayIds[day] ?? []), ...ids])];
+  const days = [...new Set([gateway, ...files].flatMap(e => e.days))];
+  const newest = [gateway, ...files].map(e => e.newest).filter((s): s is string => !!s).sort().pop();
+  return {
+    ...gateway, days, dayIds, ...(newest ? { newest } : {}),
+    async load() {
+      const base = await gateway.load();
+      if (!base) return null;
+      const seen = new Set(base.session.messages.map(archiveMessageId));
+      const messages = [...base.session.messages];
+      for (const f of files) {
+        const conv = await f.load();
+        for (const m of conv?.session.messages ?? []) {
+          const id = archiveMessageId(m);
+          if (seen.has(id)) continue;
+          seen.add(id);
+          messages.push(m);
+        }
+      }
+      messages.sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0));
+      return { ...base, session: { ...base.session, messages } };
+    },
+  };
 }
 
 /** A run writes its pages in batches of this many conversation-days or bytes, so memory stays bounded on a large store. */
@@ -341,18 +392,15 @@ interface DayWrite {
 export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRunOpts): Promise<ArchiveRunResult> {
   const dryRun = opts.dryRun === true;
   const now = opts.now ?? new Date();
-  let sourceId = await configuredSource(engine, opts.sourceId);
   const enabled = await archiveEnabled(engine);
   if (!enabled && !dryRun) {
     return emptyResult(opts.mode, {
-      source_id: sourceId,
+      source_id: await configuredSource(engine, opts.sourceId),
       message: 'The conversation archive is off on this brain, so nothing was read or written. It stays off until the owner turns it on.',
       fix: offFix,
     });
   }
-  const privacy = await resolvePrivacy(engine);
-  const [existing] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [sourceId]);
-  if (privacy.shared && existing?.local_path) sourceId = sourceId + '-owner';
+  const { sourceId, privacy } = await effectiveSource(engine, opts.sourceId);
   const source = dryRun
     ? (await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [sourceId]))[0] ?? { local_path: null }
     : await ensureSource(engine, sourceId);
@@ -405,8 +453,20 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
       result.errors.push({ harness: reader.harness, reader: reader.name, code: e.code ?? 'archive_reader_failed', message: e.message ?? String(err), ...(e.fix ? { fix: e.fix } : {}) });
     }
   }
-  const gatewaySessions = new Set(entries.filter(c => c.via === 'gateway').map(c => c.sessionId));
-  const scanned = entries.filter(c => !(c.harness === 'openclaw' && c.via === 'file' && gatewaySessions.has(c.sessionId)));
+  // A Gateway conversation and the session files of the same session id are one conversation: a reset in place leaves
+  // the earlier messages only in the .jsonl.reset.* file, so the file messages merge in, each message once.
+  const filesBySession = new Map<string, ArchiveScanEntry[]>();
+  for (const e of entries) if (e.harness === 'openclaw' && e.via === 'file') filesBySession.set(e.sessionId, [...(filesBySession.get(e.sessionId) ?? []), e]);
+  const merged = new Set<ArchiveScanEntry>();
+  const scanned: ArchiveScanEntry[] = [];
+  for (const e of entries) {
+    if (e.harness !== 'openclaw' || e.via !== 'gateway' || !filesBySession.has(e.sessionId)) continue;
+    const files = filesBySession.get(e.sessionId)!;
+    files.forEach(f => merged.add(f));
+    merged.add(e);
+    scanned.push(mergeScanEntries(e, files));
+  }
+  scanned.push(...entries.filter(e => !merged.has(e)));
 
   const ledger = new Map((await readArchiveLedger(engine, sourceId)).map(e => [e.harness + '.' + e.conversation_key_hash + '.' + e.day, e]));
   const legacy = await legacyCovered(engine, sourceId);
@@ -425,7 +485,8 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
         continue;
       }
       const done = ledger.get(entry.harness + '.' + hash + '.' + day);
-      if (opts.mode === 'backfill' && done?.hash && !done.held && done.complete && day < today) { result.unchanged++; continue; }
+      const sig = entry.dayIds?.[day] ? daySignature(entry.dayIds[day]!) : undefined;
+      if (opts.mode === 'backfill' && done?.hash && !done.held && done.complete && day < today && sig && done.source === sig) { result.unchanged++; continue; }
       live.push(day);
       allDays.add(day);
     }
@@ -497,14 +558,20 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
     }
     const readableBy = await readersFor(engine, privacy, conv, groups);
     const slices = new Map(sliceSessionByDay(redacted.session.messages, tz.timezone).map(s => [s.day, s]));
+    const raw = conv.session.messages.length === redacted.session.messages.length ? conv.session.messages : redacted.session.messages;
     for (const outcome of outcomes) {
       const slice = slices.get(outcome.day);
       if (!slice) { Object.assign(outcome, { status: 'error', code: 'archive_day_missing', message: 'the redacted session has no messages on this day' }); continue; }
       const complete = outcome.day < today;
-      const rendered = renderArchiveDay({
+      const ids = [...new Set(slice.indexes.map(i => archiveMessageId(raw[i]!)))];
+      const lastTs = slice.messages[slice.messages.length - 1]?.timestamp;
+      const quiet = !!lastTs && now.getTime() - Date.parse(lastTs) >= quietMs;
+      const hold: DayWrite['hold'] = opts.mode === 'backfill' ? 'backfill' : (!complete && !quiet ? 'open' : 'release');
+      const dayInput = {
         harness: conv.harness, conversationKey: conv.conversationKey, channel: conv.channel, day: outcome.day, timezone: tz.timezone,
         redacted, slice, complete, partTargetBytes: pageCeiling, readableBy,
-      });
+      };
+      let rendered = renderArchiveDay(dayInput);
       const contentHash = sha256(rendered.parts.map(p => p.content).join('\u0000'));
       Object.assign(outcome, {
         slug: rendered.baseSlug, parts: rendered.parts.length, messages: rendered.messages,
@@ -512,23 +579,31 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
         ...(readableBy ? { readable_by: readableBy } : {}),
       });
       const before = prior(outcome.day);
-      if (before?.hash && !before.held && (before.messages ?? 0) > rendered.messages) {
+      const lost = before?.ids ? before.ids.some(id => !ids.includes(id)) : (before?.messages ?? 0) > rendered.messages;
+      if (before?.hash && !before.held && lost) {
         outcome.status = 'kept';
-        outcome.message = 'the source now holds fewer messages for this day than the archive wrote (a reset or compaction); the archived page is kept';
+        outcome.message = 'the source no longer holds every message the archive wrote for this day (a reset or compaction); the archived page is kept';
         continue;
       }
       if (dryRun) { outcome.status = 'planned'; continue; }
-      if (before?.hash === contentHash && !before.held && await pageExists(engine, sourceId, rendered.baseSlug)) { outcome.status = 'unchanged'; continue; }
-      const lastTs = slice.messages[slice.messages.length - 1]?.timestamp;
-      const quiet = !!lastTs && now.getTime() - Date.parse(lastTs) >= quietMs;
+      if (before?.hash === contentHash && !before.held && await pageExists(engine, sourceId, rendered.baseSlug)) {
+        outcome.status = 'unchanged';
+        if (hold === 'release') await releaseOpenDayHold(engine, sourceId, rendered.parts.map(p => p.slug));
+        continue;
+      }
+      const embeddingHold = hold === 'backfill' ? ARCHIVE_BACKFILL_HOLD_REASON : hold === 'open' ? ARCHIVE_OPEN_DAY_HOLD_REASON : undefined;
+      if (embeddingHold) rendered = renderArchiveDay({ ...dayInput, embeddingHold });
+      const renamed = before?.slug && before.slug !== rendered.baseSlug
+        ? [before.slug, ...Array.from({ length: Math.max(0, (before.parts ?? 1) - 1) }, (_, i) => before.slug + '-p' + (i + 2))]
+        : [];
       batch.push({
         outcome,
         parts: rendered.parts,
         harness: conv.harness,
         ...(redacted.session.meta.raw ? { raw: redacted.session.meta.raw } : {}),
-        ledger: { source_id: sourceId, harness: conv.harness, conversation_key_hash: hash, day: outcome.day, hash: contentHash, complete, slug: rendered.baseSlug, parts: rendered.parts.length, messages: rendered.messages },
-        hold: opts.mode === 'backfill' ? 'backfill' : (!complete && !quiet ? 'open' : 'release'),
-        staleSlugs: Array.from({ length: Math.max(0, (before?.parts ?? 0) - rendered.parts.length) }, (_, i) => rendered.baseSlug + '-p' + (rendered.parts.length + i + 1)),
+        ledger: { source_id: sourceId, harness: conv.harness, conversation_key_hash: hash, day: outcome.day, hash: contentHash, complete, slug: rendered.baseSlug, parts: rendered.parts.length, messages: rendered.messages, ids, source: daySignature(ids) },
+        hold,
+        staleSlugs: renamed.length ? renamed : Array.from({ length: Math.max(0, (before?.parts ?? 0) - rendered.parts.length) }, (_, i) => rendered.baseSlug + '-p' + (rendered.parts.length + i + 1)),
       });
       batchBytes += rendered.parts.reduce((n, p) => n + p.content.length, 0);
     }
@@ -559,7 +634,10 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
       await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context }, indexWrites);
     }
   }
-  for (const w of indexWrites) if (w.outcome.status === 'written' || w.outcome.status === 'unchanged') result.index_pages.push(w.outcome.slug!);
+  for (const w of indexWrites) {
+    if (w.outcome.status === 'written' || w.outcome.status === 'unchanged') result.index_pages.push(w.outcome.slug!);
+    else if (w.outcome.status === 'error') result.errors.push({ harness: 'index', reader: 'day-index', code: w.outcome.code ?? 'archive_commit_failed', message: 'the day index ' + w.outcome.slug + ' was not written: ' + (w.outcome.message ?? 'no detail') });
+  }
 
   pending.sort((a, b) => b.day.localeCompare(a.day));
   result.days.push(...pending);
@@ -588,6 +666,14 @@ async function defaultSync(engine: BrainEngine, sourceId: string, root: string):
 }
 
 /** Writes every rendered page through the brain's one write path, then records raw data, embedding holds and the ledger. */
+/** A closed or quiet day's open-day hold is opened, not deleted, so the page's frontmatter marker never holds it again. */
+async function releaseOpenDayHold(engine: BrainEngine, sourceId: string | null, slugs: string[], pageId?: number): Promise<void> {
+  const ids = pageId !== undefined ? [pageId]
+    : (await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id = $1 AND slug = ANY($2::text[]) AND deleted_at IS NULL', [sourceId, slugs])).map(r => r.id);
+  if (!ids.length) return;
+  await engine.executeRaw("UPDATE page_embedding_budget SET state = 'open', reason = NULL, updated_at = now() WHERE page_id = ANY($1::int[]) AND state = 'held' AND reason = $2", [ids, ARCHIVE_OPEN_DAY_HOLD_REASON]);
+}
+
 async function flushWrites(engine: BrainEngine, opts: ArchiveRunOpts, target: { sourceId: string; writeMode: ArchiveRunResult['write_mode']; root: string | null; context?: OperationContext }, writes: DayWrite[]): Promise<void> {
   const { sourceId, writeMode } = target;
   const provenance = (harness: string) => ({ source_kind: 'transcript:' + harness, source_uri: 'archive:' + harness, ingested_via: INGESTED_VIA });
@@ -644,7 +730,7 @@ async function flushWrites(engine: BrainEngine, opts: ArchiveRunOpts, target: { 
       for (const { id } of ids) {
         if (w.hold === 'backfill') await holdPageEmbedding(engine, id, ARCHIVE_BACKFILL_HOLD_REASON);
         else if (w.hold === 'open') await holdPageEmbedding(engine, id, ARCHIVE_OPEN_DAY_HOLD_REASON);
-        else await engine.executeRaw("DELETE FROM page_embedding_budget WHERE page_id = $1 AND state = 'held' AND reason = $2", [id, ARCHIVE_OPEN_DAY_HOLD_REASON]);
+        else await releaseOpenDayHold(engine, null, [], id);
       }
     }
     if (w.ledger) await writeLedger(engine, w.ledger);
@@ -666,7 +752,7 @@ export interface ArchiveStatus {
 }
 
 export async function archiveStatus(engine: BrainEngine, opts: { sourceId?: string; readers?: ArchiveReader[] } = {}): Promise<ArchiveStatus> {
-  const sourceId = await configuredSource(engine, opts.sourceId);
+  const { sourceId } = await effectiveSource(engine, opts.sourceId);
   const pinned = (await engine.getConfig(PIN_PREFIX + sourceId))?.trim() || null;
   const configured = (await engine.getConfig(ARCHIVE_TIMEZONE_KEY))?.trim() || machineTimeZone();
   const entries = await readArchiveLedger(engine, sourceId);
@@ -734,7 +820,7 @@ function frontmatterField(head: string, field: string): string | null {
  * apply it records each day as covered-by-legacy, so run and backfill skip it. Never edits, moves or deletes a file.
  */
 export async function adoptLegacyArchive(engine: BrainEngine, opts: { dir: string; apply: boolean; sourceId?: string }): Promise<AdoptLegacyResult> {
-  const sourceId = await configuredSource(engine, opts.sourceId);
+  const { sourceId } = await effectiveSource(engine, opts.sourceId);
   if (!existsSync(opts.dir) || !statSync(opts.dir).isDirectory()) {
     const { opError } = await import('../ops/contract.ts');
     throw opError('invalid_params', opts.dir + ' is not a folder, so nothing was adopted.', 'Pass the old archive folder with --dir <folder>.');
