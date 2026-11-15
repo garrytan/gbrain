@@ -114,7 +114,8 @@ describe('#7649 the cold claim committed probe', () => {
       const probe = committedProbe(plan);
       expect(probe.length).toBeGreaterThan(0);
       expect(probe.flatMap(scan => scan.indexes)).not.toContain(INDEX.name);
-      expect(Math.max(...probe.map(scan => scan.removed))).toBeGreaterThan(RECEIPTS / 2);
+      // The probe's worktree holds half the receipts; with persistence_requests_worktree_sequence it reads only those, nearly all sync.
+      expect(Math.max(...probe.map(scan => scan.removed))).toBeGreaterThan(RECEIPTS * 0.45);
     }
     await migration!.handler!(engine);
     expect((await readRequestIndexStates(engine, [INDEX]))[0]!.state).toBe('valid');
