@@ -240,6 +240,26 @@ ${SOURCE_TEXT}
       await engine.executeRaw('DELETE FROM facts WHERE id=$1', [id]);
     }, 120_000);
 
+    test('#8820: an extractor row whose text sits in a segmented holding page\'s entity-column fence stays on the fence route and is left unchanged', async () => {
+      const hold = 'memory/unattributed';
+      const conversation = 'conversations/held-call';
+      await engine.putPage(conversation, { type: 'note', title: 'Held call', compiled_truth: SOURCE_TEXT }, { sourceId: 'default' });
+      await createSegmentedPage(engine, { slug: hold, truth: [`${'Filler line.\n'.repeat(90_000)}`, '## Facts', '', '<!--- gbrain:facts:begin -->',
+        '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context | entity |',
+        '|---|---|---|---|---|---|---|---|---|---|---|',
+        `| 2 | ${ABS_DAMAGED} | fact | 1.0 | private | medium | 2026-11-11 |  | chat 2026-11-11 |  | ${ACME} |`,
+        '<!--- gbrain:facts:end -->', ''].join('\n') });
+      const id = Number((await engine.executeRaw<{ id: number }>(`INSERT INTO facts
+        (source_id, entity_slug, fact, kind, visibility, source, context, row_num, source_markdown_slug)
+        VALUES ('default', $1, $2, 'fact', 'private', 'cli:extract-conversation-facts', $3, 2, $4) RETURNING id`, [ACME, ABS_DAMAGED, conversation, hold]))[0].id);
+      const preview = await repair(engine, []);
+      const listed = Object.fromEntries(preview.results[0].listing!.map(l => [Number(l.item.split('#')[1]), l.class]));
+      expect(listed[id]).toBe('segmented');
+      expect(preview.results[0].residuals.evidenced).toBe(0);
+      expect((await factText(engine, id)).fact).toBe(ABS_DAMAGED);
+      await engine.executeRaw('DELETE FROM facts WHERE id=$1', [id]);
+    }, 120_000);
+
     test('#8820: a conversation-extractor row is restored in place; a fenced row number whose fence row is gone is not', async () => {
       await engine.putPage(CONVERSATION, { type: 'note', title: 'Planning call', compiled_truth: SOURCE_TEXT }, { sourceId: 'default' });
       const id = await insertExtractorFact(engine, ABS_DAMAGED, 3);

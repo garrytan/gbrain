@@ -50,7 +50,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { parseFactsFence } from '../facts-fence.ts';
+import { parseFactsFence, parseFactsFenceFor } from '../facts-fence.ts';
 import { strikeFenceRow } from '../facts/forget.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { digest } from '../persistence/digest.ts';
@@ -118,7 +118,7 @@ const contextSlug = (context: string | null) => {
   return /^[^\s|]+$/.test(first) ? first : null;
 };
 
-interface PageTexts { segmented: boolean; fenceRows: Map<number, string> | null; texts: Array<{ label: string; text: string }> }
+interface PageTexts { segmented: boolean; fenceRows: Map<number, string>; fenceUncertain: boolean; texts: Array<{ label: string; text: string }> }
 
 /** A segmented body's stored text, read segment by segment; null when it is over TEXT_MAX_BYTES (it proves nothing). */
 async function segmentedText(db: BrainEngine, pageId: number): Promise<string | null> {
@@ -141,7 +141,7 @@ async function segmentedText(db: BrainEngine, pageId: number): Promise<string | 
  */
 async function pageTexts(db: BrainEngine, sourceId: string, slug: string): Promise<PageTexts> {
   const snapshot = await db.readPageSnapshot(slug, { sourceId }).catch(() => null);
-  if (!snapshot) return { segmented: false, fenceRows: new Map(), texts: [] };
+  if (!snapshot) return { segmented: false, fenceRows: new Map(), fenceUncertain: false, texts: [] };
   const texts: PageTexts['texts'] = [];
   const segmented = isSegmentedPage(snapshot.page);
   let fenceBody: string | null;
@@ -155,8 +155,9 @@ async function pageTexts(db: BrainEngine, sourceId: string, slug: string): Promi
   const versions = await db.executeRaw<{ id: number | string; compiled_truth: string }>(`SELECT id, compiled_truth FROM page_versions
     WHERE page_id=$1 AND compiled_truth IS NOT NULL ORDER BY id DESC LIMIT ${VERSIONS_PER_PAGE}`, [snapshot.page.id]);
   for (const v of versions) texts.push({ label: `${slug}@version:${v.id}`, text: v.compiled_truth });
-  const fenceRows = fenceBody === null ? null : new Map(parseFactsFence(fenceBody).facts.filter(row => row.active).map(row => [row.rowNum, row.claim.trim()]));
-  return { segmented, fenceRows, texts };
+  const fence = fenceBody === null ? null : parseFactsFenceFor(fenceBody, { slug });
+  const fenceRows = new Map((fence?.facts ?? []).filter(row => row.active).map(row => [row.rowNum, row.claim.trim()]));
+  return { segmented, fenceRows, fenceUncertain: !fence || fence.warnings.length > 0, texts };
 }
 
 /** Read-only: every active fact of these sources whose text holds a redaction marker, classified, in (source, page, id) order. */
@@ -190,7 +191,7 @@ export async function classifyRedactedFacts(db: BrainEngine, sourceIds: string[]
     const proved = !conflicting && proofs.size === 1;
     const holder = row.row_num !== null && row.source_markdown_slug !== null ? await sourceTexts(row.source_id, row.source_markdown_slug) : null;
     const extractor = (row.source ?? '').startsWith('cli:extract-conversation-facts');
-    const inFence = !!holder && (holder.fenceRows === null || holder.fenceRows.get(Number(row.row_num)) === row.fact.trim() || holder.segmented && !extractor);
+    const inFence = !!holder && (holder.fenceRows.get(Number(row.row_num)) === row.fact.trim() || holder.segmented && !extractor || extractor && holder.fenceUncertain);
     const route = row.row_num === null || !inFence && extractor ? 'database' : 'fence';
     const fenceGone = route === 'fence' && !inFence;
     const [klass, reason]: [RedactedFactClass, string] = conflicting || proofs.size > 1 ? ['ambiguous', 'conflicting_sources']
