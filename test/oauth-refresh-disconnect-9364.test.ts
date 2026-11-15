@@ -100,8 +100,8 @@ for (const backend of testBackends()) describe(`[${backend}] OAuth refresh disco
           ccRateLimiter: (_req, _res, next) => next(),
           issuerUrl: new URL('http://127.0.0.1:8989'),
           mcpResourceUrl: new URL('http://127.0.0.1:8989/mcp'),
-          resourceMetadataUrl: new URL('http://127.0.0.1:8989/.well-known/oauth-protected-resource/mcp'),
-        } as ServeHttpContext);
+          resourceMetadataUrl: 'http://127.0.0.1:8989/.well-known/oauth-protected-resource/mcp',
+        } satisfies Partial<ServeHttpContext> as unknown as ServeHttpContext);
         let server: Server | undefined;
         try {
           server = app.listen(0, '127.0.0.1');
