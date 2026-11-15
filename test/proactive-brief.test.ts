@@ -4,7 +4,7 @@
  * telemetry rows, and the default-off guarantee (with the key unset every
  * surface answers exactly as before). Synthetic data only.
  */
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { normalizeAlias } from '../src/core/search/alias-normalize.ts';
@@ -28,6 +28,7 @@ import {
   assembleBrief,
   sessionStartBrief,
   turnBrief,
+  TURN_BRIEF_CUTOFF_MS,
   withBriefDeadline,
   type Brief,
   type BriefClock,
@@ -550,6 +551,21 @@ describe('telemetry', () => {
     const rows = await engine.executeRaw<{ channel: string; match_arm: string; rationale: string; slug: string; session_id: string }>(
       `SELECT channel, match_arm, rationale, slug, session_id FROM context_volunteer_events WHERE channel = 'brief'`);
     expect(rows).toEqual([{ channel: 'brief', match_arm: 'brief-lexicon', rationale: `change:F${id}`, slug: 'people/alice-example', session_id: 'st' }]);
+  });
+
+  test('without a clock, turn_context stops brief work 300 ms into the request', async () => {
+    await fact('Moved to Acme Example as CFO.', 'people/alice-example');
+    const req = { kind: 'turn_context', protocol: 2, secret: 'x', sessionId: 'cut', window: [{ role: 'user', text: 'Draft a reply to Alice Example' }] } as const;
+    const start = Date.now();
+    let calls = 0;
+    const now = spyOn(Date, 'now').mockImplementation(() => (calls++ === 0 ? start : start + TURN_BRIEF_CUTOFF_MS + 1));
+    try {
+      expect(TURN_BRIEF_CUTOFF_MS).toBe(300);
+      expect((await turnContextWithBrief(engine, 'default', req)).brief).toBeUndefined();
+      expect((await turnContextWithBrief(engine, 'default', req, clock(start))).brief?.trigger).toBe('lexicon');
+    } finally {
+      now.mockRestore();
+    }
   });
 });
 
