@@ -413,6 +413,8 @@ describe('#7619 split rules', () => {
       'src/core/git-head.ts': 'git child argv',
       'src/core/git-remote.ts': 'git child argv',
       'src/core/git/commit-push.ts': 'git child argv',
+      'src/core/git/skipped-paths.ts': 'git child argv',
+      'src/core/persistence/git-durability-administration.ts': 'git child argv',
       'src/core/git/range-secret-scan.ts': 'git child argv',
       'src/core/git/reconcile.ts': 'git child argv',
       'src/core/git/upstream-history.ts': 'git child argv',

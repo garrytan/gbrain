@@ -33,6 +33,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { v234 } from '../src/core/schema-migrations/v234-persistence-git-durability.ts';
 import { PERSISTENCE_GIT_DURABILITY_COLUMN_SQL, PERSISTENCE_SCHEMA_STATEMENTS } from '../src/core/persistence/schema.ts';
 import { gitAsync } from './helpers/git-publication.ts';
+import { runCli } from './helpers/cli-spawn.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 
@@ -284,3 +285,25 @@ describe('[R7ii] writer git-durability verb', () => {
       .rejects.toMatchObject({ code: 'invalid_params', message: expect.stringContaining('--pat-file cannot be combined with --disable') });
   }), 120_000);
 });
+
+
+describe('GST-2767 the durability block the verb writes is never left untracked without the exact commit command', () => {
+  test('enable names the door command for the AGENTS.md it writes and for an untracked copy an earlier run left; the command commits it', () => isolated(async home => {
+    const root = await gitRoot(home, { remote: true });
+    const { sourceId } = await claimedSource(root);
+    const argv = ['gbrain', 'git', 'commit-push', '--path', root, '-m', `gbrain: durability rules for source ${sourceId}`, '--', 'AGENTS.md'];
+    const head = (await gitAsync(root, 'rev-parse', 'HEAD')).trim();
+    const applied = await runPersistenceAdministration(engine, 'writer_git_durability', { source_id: sourceId, enable: true, ...await reviewedWriterIntent(engine, 'writer_git_durability') }) as Record<string, any>;
+    expect(applied.agents).toMatchObject({ status: 'fixed', file: 'AGENTS.md', commit_argv: argv });
+    expect((await gitAsync(root, 'rev-parse', 'HEAD')).trim()).toBe(head);
+    // The block is already current on the next run, and the untracked file still gets the command (it used to get nothing).
+    const again = await runPersistenceAdministration(engine, 'writer_git_durability', { source_id: sourceId, enable: true, ...await reviewedWriterIntent(engine, 'writer_git_durability') }) as Record<string, any>;
+    expect(again.agents).toMatchObject({ status: 'ok', commit_argv: argv, commit: expect.stringContaining('gbrain git commit-push') });
+    const run = await runCli(argv.slice(1), { home, cwd: root, timeoutMs: 120_000 });
+    expect(run.exitCode).toBe(0);
+    expect((await gitAsync(root, 'status', '--porcelain', '--untracked-files=all', '--', 'AGENTS.md')).trim()).toBe('');
+    const settled = await runPersistenceAdministration(engine, 'writer_git_durability', { source_id: sourceId, enable: true, ...await reviewedWriterIntent(engine, 'writer_git_durability') }) as Record<string, any>;
+    expect(settled.agents.commit_argv).toBeUndefined();
+  }), 180_000);
+});
+
