@@ -22,7 +22,9 @@ git diff --name-only HEAD~1 | gbrain sources resolve-path default --stdin --json
 
 MCP: `sources_resolve_path` with `{ id, paths }` (read scope, confined to the caller's sources). At most 200 paths per call. Paths
 are relative to the source root, or to the Git top level when they start with the source's subpath. Read-only: Git object reads
-and bounded lookups on existing indexes; nothing is scheduled or written.
+and bounded lookups on existing indexes; nothing is scheduled or written. Over MCP the caller's read policy applies: a path
+whose page the caller may not read (live or deleted) answers exactly as a path with no file and no page, and `slug_owner` never
+names a page it may not read. A plain directory with no Git history refuses `sync_not_applicable` (reason `plain_directory`).
 
 Each path returns the `slug` sync gives it, `in_synced_commit` / `at_head`, `skipped` (with `typed_frontmatter` for a metafile),
 `hold`, `page` (id, chunks, unembedded), `embedding_hold` (a large page's held or capped embedding budget), `slug_owner` (a live page that owns the slug with another origin), `frontmatter_slug`

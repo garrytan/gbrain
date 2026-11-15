@@ -25,13 +25,16 @@
  * (#7010; the owner's Git effects publish this way). CLI-only; never exposed
  * over MCP (it pushes with host credentials).
  */
-import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { rangeSecretRefusal, scanRange } from './range-secret-scan.ts';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { execFileSync } from '../spawn.ts';
-import { gitChildEnv, literalPathspecs } from '../git-env.ts';
-import { GIT_ENV, GIT_ENV_AUTH, GIT_SSRF_SUBCOMMAND_FLAGS, ownRemoteTransportFlags as transportFlags } from '../git-transport.ts';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { literalPathspecs } from '../git-env.ts';
+import { git, gitOk, type GitRun } from './git-run.ts';
+export type { SkippedPath } from './skipped-paths.ts';
+import { checkoutBehindStrayGitfile, directoryStatus, worktreeOfGitdir, flaggedChanges, stagedRemovals, STAGED_FOR_REMOVAL_WHY, unindexedFiles, unstagedPaths, type SkippedPath } from './skipped-paths.ts';
+import { GIT_SSRF_SUBCOMMAND_FLAGS, ownRemoteTransportFlags as transportFlags } from '../git-transport.ts';
+import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesystemRootFor, type ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
 import { acquireNativeLock, acquireNativeLockSync, type NativeLockSyncHandle } from '../persistence/native-lock.ts';
 import { recordCommit, recordIntent } from './commit-ledger.ts';
@@ -150,38 +153,6 @@ interface Ctx {
   scanProgress?: (line: string) => void;
 }
 
-interface GitRun { code: number; stdout: string; stderr: string }
-
-function git(root: string, args: string[], opts: { auth?: boolean; timeoutMs?: number; env?: NodeJS.ProcessEnv; input?: string; maxBuffer?: number } = {}): GitRun {
-  const base = opts.auth ? { ...GIT_ENV_AUTH } : { ...GIT_ENV };
-  try {
-    const stdout = execFileSync('git', ['-C', root, ...args], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      input: opts.input ?? '',
-      timeout: opts.timeoutMs ?? 60_000,
-      ...(opts.maxBuffer ? { maxBuffer: opts.maxBuffer } : {}),
-      env: gitChildEnv({ ...base, LC_ALL: 'C', LANGUAGE: 'C', ...opts.env }),
-    }).toString();
-    return { code: 0, stdout, stderr: '' };
-  } catch (e) {
-    const err = e as { status?: number | null; stdout?: Buffer | string; stderr?: Buffer | string; message?: string };
-    return {
-      code: typeof err.status === 'number' ? err.status : -1,
-      stdout: String(err.stdout ?? ''),
-      stderr: String(err.stderr ?? err.message ?? ''),
-    };
-  }
-}
-
-function gitOk(root: string, args: string[], what: string, opts: Parameters<typeof git>[2] = {}): string {
-  const r = git(root, args, opts);
-  if (r.code !== 0) {
-    throw opError('git_unavailable', `git ${what} failed in ${root}: ${r.stderr.trim().slice(0, 300) || `exit ${r.code}`}`,
-      `Run git status in ${root}, fix what git reports, then rerun the same gbrain git commit-push command.`);
-  }
-  return r.stdout.trim();
-}
-
 /** Remote operations: transport hardening on every call, credentials allowed, no prompt. */
 function remoteGit(root: string, sub: 'fetch' | 'push', args: string[], timeoutMs = 120_000): GitRun {
   return git(root, [...transportFlags(), sub, ...GIT_SSRF_SUBCOMMAND_FLAGS, ...args], { auth: true, timeoutMs });
@@ -206,11 +177,12 @@ export function commitPushCommand(root: string, paths: readonly string[], messag
 
 export function checkoutRoot(dir: string): string {
   const r = git(dir, ['rev-parse', '--show-toplevel']);
-  if (r.code !== 0 || !r.stdout.trim()) {
+  const top = (r.code === 0 && r.stdout.trim()) || checkoutBehindStrayGitfile(dir);
+  if (!top) {
     throw opError('commit_paths_invalid', `${dir} is not inside a git checkout.`,
       'Run the command inside the brain checkout or pass --path <checkout>.');
   }
-  return r.stdout.trim();
+  return worktreeOfGitdir(top);
 }
 
 function resolveCtx(root: string): Ctx {
@@ -324,7 +296,10 @@ export function scopePaths(root: string, paths: string[], cwd: string): string[]
   }
   const out: string[] = [];
   for (const p of paths) {
-    const abs = resolve(cwd, p);
+    // GST-2767: a path reached through a symlinked directory (a source path linked to a subdirectory of the checkout) names
+    // the file at its real location; only the parent is resolved, so a named symlink file stays itself.
+    const named = resolve(cwd, p);
+    const abs = join(canonicalFilesystemPath(dirname(named)), basename(named));
     const rel = relative(root, abs);
     if (rel === '' || rel === '.' || rel.startsWith('..') || isAbsolute(rel)) {
       throw opError('commit_paths_invalid', `Path ${p} is ${rel === '' || rel === '.' ? 'the whole checkout' : 'outside the checkout'}.`,
@@ -437,101 +412,21 @@ function restoreIndex(root: string, rel: string[], before: string[], flagged: st
 interface CommitScope { roots: string[]; lockPath: string; markHeld: boolean; bases?: ReadonlyMap<string, string>; untrack?: 'any' | { dbOnly: ManagedFilesystemRoot } }
 
 /** A named path `git add -A` left out of the index while still exiting 0 (GST-2116). */
-export interface SkippedPath { path: string; reason: 'assume_unchanged' | 'skip_worktree' | 'not_staged' }
-
-/** The flagged index entries in `listed` (`ls-files -v`: lower case for assume-unchanged, S for skip-worktree) whose bytes on disk HEAD lacks. A skip-worktree entry absent from disk is a sparse checkout, not a change. */
-function flaggedChanges(root: string, listed: string[]): SkippedPath[] {
-  const changed: SkippedPath[] = [];
-  const flagged = listed.filter(entry => /^[a-zS] /.test(entry));
-  const gitlinks = new Set(flagged.length
-    ? gitOk(root, ['ls-files', '-s', '-z', '--', ...literalPathspecs(flagged.map(line => line.slice(2)))], 'ls-files -s')
-      .split('\0').filter(entry => entry.startsWith('160000 ')).map(entry => entry.slice(entry.indexOf('\t') + 1))
-    : []);
-  for (const line of flagged) {
-    const path = line.slice(2);
-    if (gitlinks.has(path)) continue;
-    const abs = join(root, path);
-    const reason = /^[sS]/.test(line) ? 'skip_worktree' as const : 'assume_unchanged' as const;
-    const stat = (() => { try { return lstatSync(abs); } catch { return null; } })();
-    if (!stat && reason === 'skip_worktree') continue;
-    const hashed = !stat ? null : stat.isSymbolicLink()
-      ? git(root, ['hash-object', '--stdin'], { input: readlinkSync(abs) })
-      : git(root, ['hash-object', '--', path]);
-    // An entry git cannot hash (a missing required filter, an unreadable file, a directory now) counts as changed, so it is reported, never dropped.
-    const disk = hashed && (hashed.code === 0 ? hashed.stdout.trim() : undefined);
-    const committed = git(root, ['rev-parse', '--verify', '--quiet', `HEAD:${path}`]).stdout.trim() || null;
-    if (disk !== committed) changed.push({ path, reason });
-  }
-  return changed;
-}
-
-/**
- * GST-2116: the named paths whose bytes on disk HEAD still lacks once the commit step is done. `git add -A` stages
- * nothing and exits 0 for a modified entry flagged assume-unchanged or skip-worktree (`ls-files -v`: lower case, or S;
- * `commit --only` may still pick one up beside another path, so the check reads HEAD) and for a file inside an untracked
- * nested repository. A skip-worktree entry absent from disk is a sparse checkout, not a change, and a flagged gitlink
- * is left out (its commit lives in the nested repository, which hash-object cannot read). Ignored files under a named
- * directory are left out as git leaves them; a named ignored file is refused by `git add` itself.
- */
-function unstagedPaths(root: string, rel: string[], listed: string[], dirtyBefore: Map<string, string>, sha: string | null): SkippedPath[] {
-  const skipped = new Map(flaggedChanges(root, listed).map(s => [s.path, s.reason]));
-  for (const path of unindexedFiles(root, rel, listed)) if (!skipped.has(path)) skipped.set(path, 'not_staged');
-  // Only a named directory can hide an unstaged change from the two checks above (a nested repository inside it).
-  const dirs = rel.filter(path => { try { return lstatSync(join(root, path)).isDirectory(); } catch { return false; } });
-  // Status lists nothing under a directory that sits inside an untracked nested repository.
-  for (const path of dirs) {
-    const parents = path.split('/').slice(0, -1).map((_, i, parts) => parts.slice(0, i + 1).join('/'));
-    if (!skipped.has(path) && parents.some(parent => existsSync(join(root, parent, '.git')))) skipped.set(path, 'not_staged');
-  }
-  // GST-2128: an entry that was clean before the add, or a tracked one this commit carried, is another writer's later change, not a skip.
-  const status = directoryStatus(root, dirs);
-  const carried = sha && status.size ? committedModes(root, sha) : new Map<string, string>();
-  for (const [path, xy] of status) {
-    if (xy[1] === ' ' || skipped.has(path) || !dirtyBefore.has(path)) continue;
-    if (xy !== '??' && carried.has(path) && carried.get(path) !== '160000') continue;
-    skipped.set(path, 'not_staged');
-  }
-  return [...skipped].map(([path, reason]) => ({ path, reason })).sort((a, b) => a.path.localeCompare(b.path));
-}
-
-/** The `git status` entries under the named paths that are directories, as path (a nested repository keeps its trailing /) to XY code. */
-function directoryStatus(root: string, rel: string[]): Map<string, string> {
-  const dirs = rel.filter(path => { try { return lstatSync(join(root, path)).isDirectory(); } catch { return false; } });
-  const status = dirs.length ? gitOk(root, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames', '--', ...literalPathspecs(dirs)], 'status') : '';
-  return new Map(status.split('\0').filter(Boolean).map(entry => [entry.slice(3), entry.slice(0, 2)]));
-}
-
-/** The paths commit `sha` changed, each with its new mode (160000 for a gitlink, 000000 for a removal). */
-function committedModes(root: string, sha: string): Map<string, string> {
-  const fields = gitOk(root, ['diff-tree', '--root', '-r', '--no-renames', '--no-commit-id', '-z', sha], 'diff-tree').split('\0');
-  const modes = new Map<string, string>();
-  for (let i = 0; i + 1 < fields.length; i += 2) if (fields[i]!.startsWith(':')) modes.set(fields[i + 1]!, fields[i]!.split(' ')[1]!);
-  return modes;
-}
-
-/** Named paths that are files on disk yet absent from the index (`listed`: `ls-files -v` after `git add -A`), as a file inside a nested repository is. */
-function unindexedFiles(root: string, rel: string[], listed: string[]): string[] {
-  const indexed = new Set(listed.map(line => line.slice(2)));
-  return rel.filter(path => {
-    if (indexed.has(path)) return false;
-    try { return !lstatSync(join(root, path)).isDirectory(); } catch { return false; }
-  });
-}
 
 /**
  * GST-2116: a run that left a named path uncommitted fails, after committing (and, on a classic checkout, pushing) the
  * rest, so a write is never reported as saved when it is not. In a managed canonical worktree a skipped page is the
  * owner's to save (`writer_coordinator_required`); anything else is `commit_paths_skipped`.
  */
-function skippedPathsError(root: string, skipped: SkippedPath[], result: CommitPushResult, managed?: ManagedFilesystemRoot, publish?: unknown): OperationError {
-  const list = `${skipped.slice(0, 20).map(s => `${s.path} (${s.reason})`).join(', ')}${skipped.length > 20 ? ', ...' : ''}`;
+function skippedPathsError(root: string, skipped: SkippedPath[], result: CommitPushResult, managed?: ManagedFilesystemRoot, publish?: unknown, dryRun = false): OperationError {
+  const list = `${skipped.slice(0, 20).map(s => `${s.path} (${s.reason}: ${s.why})`).join(', ')}${skipped.length > 20 ? ', ...' : ''}`;
   const pushed = !!result.committed && (result.outcome === 'pushed' || result.outcome === 'pushed_checkout_lagging');
   const done = result.committed
     ? `The other named paths were committed as ${result.committed.slice(0, 7)}${pushed ? ` and pushed to ${result.remote}/${result.branch}` : ', not pushed'}.`
     : 'Nothing was committed.';
   const failed = publish as { code?: string; message?: string; detail?: string } | undefined;
   const rest = `${done}${failed ? ` The push failed too (${failed.code ?? 'error'}): ${failed.message ?? String(publish)}` : ''}`;
-  const detail = JSON.stringify({ skipped, committed: result.committed, ...(pushed ? { pushed: result.sha } : {}), branch: result.branch,
+  const detail = JSON.stringify({ ...(dryRun ? { dry_run: true } : {}), skipped, committed: result.committed, ...(pushed ? { pushed: result.sha } : {}), branch: result.branch,
     ...(failed ? { publish: { code: failed.code ?? null, detail: failed.detail ?? null } } : {}) });
   const docs = 'docs/guides/shared-checkout-git.md#outcomes';
   const flagged = skipped.filter(s => s.reason !== 'not_staged');
@@ -544,14 +439,18 @@ function skippedPathsError(root: string, skipped: SkippedPath[], result: CommitP
   const flagNote = 'an assume-unchanged or skip-worktree flag; an editor, an indexer or a sparse checkout can leave one, and people also set skip-worktree on purpose to keep local edits out of commits, so clearing it commits those edits';
   const chain = (steps: string[][], last?: Action): Action | undefined => steps.reduceRight<Action | undefined>((then, argv) =>
     ({ argv, consent: [], actor: 'agent', requires_exclusive: false, why: 'Clears the flag so git sees the edit on disk; the file keeps its bytes.', ...(then ? { then } : {}) }), last);
-  const named = skipped.map(s => s.path);
-  const indexed = new Set(git(root, ['ls-files', '-z', '--', ...literalPathspecs(named)]).stdout.split('\0').filter(Boolean));
-  const atHead = new Set(git(root, ['ls-tree', '-z', '--name-only', 'HEAD', '--', ...literalPathspecs(named)]).stdout.split('\0').filter(Boolean));
-  const removals = skipped.filter(s => s.reason === 'not_staged' && atHead.has(s.path) && !indexed.has(s.path) && existsSync(join(root, s.path))).map(s => s.path);
+  const removals = skipped.filter(s => s.reason === 'staged_for_removal').map(s => s.path);
   if (removals.length && removals.length === skipped.length) {
-    return opError('commit_paths_skipped', `git did not commit ${skipped.length} named path(s) in ${root}: ${list}. They are staged for removal from Git (git rm --cached) while the files stay on disk, and commit-push does not commit that removal. ${rest}`,
-      `To stop tracking them and keep the files, run gbrain git commit-push --untrack -m <msg> -- ${removals.map(p => shellQuote([p])).join(' ')}; to keep them tracked, git -C ${shellQuote([root])} restore --staged -- ${removals.map(p => shellQuote([p])).join(' ')}.`,
-      { docs: 'docs/guides/shared-checkout-git.md#untrack', detail });
+    const quoted = removals.map(p => shellQuote([p])).join(' ');
+    return opError('commit_paths_skipped', 'git did not commit ' + skipped.length + ' named path(s) in ' + root + ': ' + list + '. They are staged for removal from Git (git rm --cached) while the files stay on disk, and commit-push does not commit that removal. ' + rest,
+      'To stop tracking them and keep the files, run gbrain git commit-push --untrack -m <msg> -- ' + quoted + '; to keep them tracked, git -C ' + shellQuote([root]) + ' restore --staged -- ' + quoted + '.',
+      { docs: 'docs/guides/shared-checkout-git.md#untrack', detail,
+        why: 'Something took these files out of the index while leaving them on disk; committing would either publish that removal or quietly add back what someone removed, and only the user knows which was meant.',
+        fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+          argv: ['git', '-C', root, 'restore', '--staged', '--', ...literalPathspecs(removals)],
+          why: 'Puts the files back in the index as HEAD has them, so the next commit-push commits their edits; the bytes on disk are untouched.',
+          user_message: 'Git has ' + removals.slice(0, 10).join(', ') + ' staged for removal while the files are still on disk, so they were not committed. Keep them in Git (git restore --staged), or stop tracking them and keep the files (gbrain git commit-push --untrack)?',
+          verify: { argv: ['git', '-C', root, 'status', '--porcelain', '--', ...literalPathspecs(removals)] } } });
   }
   const pages = managed ? skipped.filter(s => isSyncable(s.path)) : [];
   if (managed && pages.length) {
@@ -601,7 +500,7 @@ function scopeBases(root: string, opts: CommitPushOptions, rel: string[]): Map<s
  * What commitPaths refuses before anything is staged (and the dry run with it): a path outside the source root(s), a
  * `--base` blob HEAD no longer holds, and a file another writer already staged under a named directory (name it to claim it).
  */
-function admitPaths(root: string, rel: string[], roots: string[], bases?: ReadonlyMap<string, string>): void {
+function admitPaths(root: string, rel: string[], roots: string[], bases?: ReadonlyMap<string, string>, dryRun = false): void {
   const outside = rel.filter(p => !insideSourceRoots(p, roots));
   if (outside.length) throw outsideRootError(root, roots, outside, 'Refusing to commit');
   for (const [path, base] of bases ?? []) {
@@ -611,6 +510,12 @@ function admitPaths(root: string, rel: string[], roots: string[], bases?: Readon
       { detail: JSON.stringify({ path, base, head }), docs: 'docs/guides/shared-checkout-git.md#base-check' });
   }
   const swept = stagedPaths(root).filter(p => !rel.includes(p) && rel.some(spec => covers(spec, p)));
+  const removed = new Set(stagedRemovals(root, swept));
+  if (swept.length && swept.every(p => removed.has(p))) {
+    const branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).stdout.trim();
+    throw skippedPathsError(root, swept.map(path => ({ path, reason: 'staged_for_removal' as const, why: STAGED_FOR_REMOVAL_WHY })),
+      { outcome: 'nothing_to_commit', sha: null, committed: null, branch, remote: '', paths: rel, integrated: 0, checkout: 'unchanged' }, undefined, undefined, dryRun);
+  }
   if (swept.length) {
     const list = `${swept.slice(0, 10).join(', ')}${swept.length > 10 ? ', ...' : ''}`;
     throw opError('commit_prestaged_paths', `${swept.length} file(s) under the named path(s) were already staged by another writer: ${list}.`,
@@ -774,8 +679,8 @@ function previewRoots(root: string, allowOutsideSourceRoot?: boolean): { managed
  * worktree as they were (git may add loose objects for the staged files); each refusal carries the real run's code and text.
  */
 export function previewPaths(root: string, rel: string[], opts: { allowOutsideSourceRoot?: boolean; bases?: Map<string, string>; cwd?: string } = {}): void {
-  const { roots } = previewRoots(root, opts.allowOutsideSourceRoot);
-  admitPaths(root, rel, roots, scopeBases(root, { repo: root, bases: opts.bases, cwd: opts.cwd }, rel));
+  const { managed, roots } = previewRoots(root, opts.allowOutsideSourceRoot);
+  admitPaths(root, rel, roots, scopeBases(root, { repo: root, bases: opts.bases, cwd: opts.cwd }, rel), true);
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-preview-'));
   try {
     const index = join(dir, 'index');
@@ -785,6 +690,10 @@ export function previewPaths(root: string, rel: string[], opts: { allowOutsideSo
     stagePaths(root, rel, indexEntries(root, rel), flaggedEntries(root, rel), env, true);
     const partners = withRenamePartners(root, rel, env).filter(p => !insideSourceRoots(p, roots));
     if (partners.length) throw outsideRootError(root, roots, partners, 'A staged rename would commit');
+    const listed = gitOk(root, ['ls-files', '-v', '-z', '--', ...literalPathspecs(rel)], 'ls-files -v', { env }).split('\0').filter(Boolean);
+    const skipped = unstagedPaths(root, rel, listed, new Map(), null);
+    const branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).stdout.trim();
+    if (skipped.length) throw skippedPathsError(root, skipped, { outcome: 'nothing_to_commit', sha: null, committed: null, branch, remote: '', paths: rel, integrated: 0, checkout: 'unchanged' }, managed ?? undefined, undefined, true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -370,3 +370,28 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
   });
 
 });
+
+describe('GST-2767: the self-heal never initializes a brain dir that sits inside another repository', () => {
+  let engine: PGLiteEngine;
+  let outer: string;
+  beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 60_000);
+  afterAll(async () => { await engine.disconnect(); }, 60_000);
+  afterEach(() => { if (outer) rmSync(outer, { recursive: true, force: true }); });
+
+  for (const via of ['real', 'link'] as const) {
+    test('a brain dir under a repository git cannot read (both probes throw), reached by its ' + via + ' path, is refused and gets no .git of its own', async () => {
+      await resetPgliteState(engine);
+      const { performSync } = await import('../src/commands/sync.ts');
+      const { mkdirSync, symlinkSync } = await import('fs');
+      outer = mkdtempSync(join(tmpdir(), 'gbrain-2767-outer-'));
+      mkdirSync(join(outer, 'repo-a', 'brain'), { recursive: true });
+      writeFileSync(join(outer, 'repo-a', '.git'), 'gitdir: /nonexistent-gitdir-2767\n');
+      writeFileSync(join(outer, 'repo-a', 'brain', 'page1.md'), mdPage('Page 1'));
+      const brain = via === 'real' ? join(outer, 'repo-a', 'brain') : join(outer, 'source-a');
+      if (via === 'link') symlinkSync(join(outer, 'repo-a', 'brain'), brain);
+      await engine.setConfig('sync.repo_path', brain);
+      await expect(performSync(engine, { repoPath: brain, noPull: true, noEmbed: true, full: true })).rejects.toThrow(/sits above it and git cannot open it/);
+      expect(existsSync(join(outer, 'repo-a', 'brain', '.git'))).toBe(false);
+    });
+  }
+});

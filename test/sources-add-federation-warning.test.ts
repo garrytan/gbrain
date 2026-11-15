@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runSources } from '../src/commands/sources.ts';
+import { syncOutOfSearchNotice } from '../src/commands/sources-add-next.ts';
 
 let engine: PGLiteEngine;
 const dirs: string[] = [];
@@ -34,11 +35,13 @@ async function add(args: string[]): Promise<{ stdout: string; stderr: string }> 
   const err: string[] = [];
   const log = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { out.push(a.join(' ')); });
   const warn = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { err.push(a.join(' ')); });
+  const raw = spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => { err.push(String(chunk)); return true; }) as never);
   try {
     await runSources(engine, ['add', args[0]!, '--path', dir, '--force', ...args.slice(1)]);
   } finally {
     log.mockRestore();
     warn.mockRestore();
+    raw.mockRestore();
   }
   return { stdout: out.join('\n'), stderr: err.join('\n') };
 }
@@ -52,6 +55,8 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({ engine: 'pglite' } as never);
   await engine.initSchema();
+  // GST-2732 B: a personal brain federates a new source by default (test/sources-add-default-search.test.ts); these cases are the shared brain.
+  await engine.setConfig('brain.audience', 'shared');
 }, 60_000);
 
 afterAll(async () => {
@@ -67,7 +72,17 @@ describe('sources add federation warning', () => {
     expect(stderr).toContain('no source grant');
     expect(stderr).toContain('gbrain sources federate source-a');
     expect(stderr).toContain('gbrain auth rescope --token <name> --sources source-a');
+    expect(stderr).toContain('source_not_in_default_search');
+    expect(stderr).toContain('not in default search');
     expect(await federated('source-a')).not.toBe(true);
+  });
+
+  test('--json carries the not-in-default-search notice with the federate fix, and keeps the existing fields', async () => {
+    const { stdout } = await add(['source-n', '--json']);
+    const out = JSON.parse(stdout);
+    expect(out).toMatchObject({ id: 'source-n', federated: false });
+    expect(out.notices).toHaveLength(1);
+    expect(out.notices[0]).toMatchObject({ code: 'source_not_in_default_search', kind: 'info', fix: { argv: ['gbrain', 'sources', 'federate', 'source-n'] } });
   });
 
   test('--federated adds without the warning', async () => {
@@ -153,5 +168,26 @@ describe('sources add next step when the no-grant floor holds no page', () => {
     const json = JSON.parse((await add(['source-g', '--json'])).stdout);
     expect(json).toMatchObject({ id: 'source-g', federated: false });
     expect(json.next).toBeUndefined();
+  });
+});
+
+describe('gbrain sync --source names a source that default search leaves out', () => {
+  test('a synced source with pages and no federated setting gets the notice; a federated one, the default source and status do not', async () => {
+    await add(['source-m']);
+    expect(await syncOutOfSearchNotice(engine, ['--source', 'source-m'])).toBeNull();
+    await engine.putPage('notes/m', { type: 'note', title: 'M', compiled_truth: 'A page in source-m.', timeline: '' }, { sourceId: 'source-m' });
+    const notice = await syncOutOfSearchNotice(engine, ['--source', 'source-m', '--no-pull']);
+    expect(notice).toMatchObject({ code: 'source_not_in_default_search', fix: { argv: ['gbrain', 'sources', 'federate', 'source-m'], ask_user: true } });
+    expect(await syncOutOfSearchNotice(engine, ['status', '--source', 'source-m'])).toBeNull();
+    expect(await syncOutOfSearchNotice(engine, ['--source', 'default'])).toBeNull();
+    await engine.executeRaw(`UPDATE sources SET config = config || '{"federated": false}'::jsonb WHERE id = 'source-m'`);
+    expect(await syncOutOfSearchNotice(engine, ['--source', 'source-m'])).toBeNull();
+  });
+
+  test('a source a remote MCP caller added stays out without a federate step after sync', async () => {
+    await add(['source-r']);
+    await engine.executeRaw(`UPDATE sources SET config = (config - 'federated') || '{"added_by_remote_caller": true}'::jsonb WHERE id = 'source-r'`);
+    await engine.putPage('notes/r', { type: 'note', title: 'R', compiled_truth: 'A page in source-r.', timeline: '' }, { sourceId: 'source-r' });
+    expect(await syncOutOfSearchNotice(engine, ['--source', 'source-r'])).toBeNull();
   });
 });
