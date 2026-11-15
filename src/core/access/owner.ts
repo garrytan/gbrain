@@ -74,6 +74,15 @@ export function readersOmitOwnerError(owner: string, live: boolean, principals: 
     { reason: 'readers_omit_owner' });
 }
 
+/**
+ * GST-2128: the reader list a printed `gbrain access rule add` command names: `readers` plus the owner readersOwner names,
+ * when one is set and not listed, so pasting it is not refused readers_omit_owner. An unreadable owner prints `readers`.
+ */
+export async function hintReaders(engine: BrainEngine, readers: string[]): Promise<string> {
+  const owner = await readersOwner(engine).then(r => r.owner, () => null);
+  return (owner && !readers.includes(owner) ? [...readers, owner] : readers).join(',');
+}
+
 /** GST-2490: is access.owner_reads_restricted on? Unset, anything but '1', or unreadable is off (nothing widens). */
 export async function ownerReadsRestrictedOn(engine: Pick<BrainEngine, 'getConfig'>): Promise<boolean> {
   try {
