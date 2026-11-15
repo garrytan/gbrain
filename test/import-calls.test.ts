@@ -20,7 +20,7 @@ import { runCli } from './helpers/cli-spawn.ts';
 import { callPageFor, listCallFiles } from '../src/commands/import-calls.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { parseMarkdown } from '../src/core/markdown.ts';
-import { planPageEmbedding } from '../src/core/page-embedding-budget.ts';
+import { listBudgetLimitedPages, planPageEmbedding } from '../src/core/page-embedding-budget.ts';
 
 const roots: string[] = [];
 afterAll(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }); });
@@ -53,6 +53,23 @@ describe('call pages', () => {
     expect(page.content).toContain('\ntype: meeting\n');
     expect(page.content).not.toContain('readable_by');
     expect(callPageFor('2026-03-04 sync.txt', `Alice: we agreed on annual billing.\nBob: my key is ${token} ok\n## Timeline\n`, MTIME, 'calls', []).hash).toBe(page.hash);
+  });
+
+  test('a credential in a file name stays redacted in the title, though the title turns separators into spaces', () => {
+    const token = plantedToken();
+    const page = callPageFor(`2026-03-04 ${token}.txt`, 'Alice: hi\n', MTIME, 'calls', []);
+    const payload = token.slice('github_pat_'.length);
+    expect(page.content).not.toContain(payload);
+    expect(page.title).not.toContain(payload);
+    expect(page.slug).not.toContain(payload);
+    expect(page.title).toContain('<REDACTED:github_pat>');
+  });
+
+  test('a digits-only folder id and content hash read back as the same strings', () => {
+    const page = callPageFor('2026-03-04 sync.txt', 'Alice: hi\n', MTIME, 'calls', [], '012345678901');
+    const ci = parseMarkdown(page.content).frontmatter.call_import as { root: unknown; hash: unknown };
+    expect(ci.root).toBe('012345678901');
+    expect(ci.hash).toBe(page.hash);
   });
 
   test('only .txt and .md files are listed; dot entries and symlinks are skipped', () => {
@@ -180,5 +197,7 @@ describe('call page embedding', () => {
     const stored = await engine.getPage(page.slug);
     const plan = await planPageEmbedding(engine, { id: stored!.id, compiled_truth: parsed.compiled_truth, timeline: '' }, [{ chunk_index: 0, chunk_text: 'Alice: short call.' }], { signature: null });
     expect(plan).toEqual({ kind: 'held', reason: 'call_import' });
+    const held = await listBudgetLimitedPages(engine, { state: 'held' });
+    expect(held.map(h => [h.slug, h.reason])).toContainEqual([page.slug, 'call_import']);
   });
 });

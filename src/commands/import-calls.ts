@@ -106,13 +106,14 @@ function firstLine(text: string): string {
 
 /** The page one call file becomes: slug, title, date, and the redacted, structure-neutral content. */
 export function callPageFor(rel: string, text: string, mtimeMs: number, prefix: string, patterns: ImportRedactionPattern[], root?: string): CallPage {
-  const name = basename(rel).replace(CALL_FILE_RE, '');
+  const redact = (s: string): string => redactCallPath(s, patterns).file;
+  const name = redact(basename(rel).replace(CALL_FILE_RE, ''));
   const lead = LEADING_DATE_RE.exec(name);
-  const line = firstLine(text);
+  const line = redact(firstLine(text));
   const fromName = validDay(lead?.[1]);
   const fromLine = fromName ? null : validDay(ANY_DATE_RE.exec(line)?.[1]);
   const date = fromName ?? fromLine ?? localDay(mtimeMs);
-  const nameTitle = (fromName ? lead![2]! : name).replace(/[_-]+/g, ' ').trim();
+  const nameTitle = (fromName ? lead![2]! : name).split(/(<REDACTED:[^>]*>)/).map((part, i) => i % 2 ? part : part.replace(/[_-]+/g, ' ')).join('').trim();
   const lineTitle = line.replace(ANY_DATE_RE, '').replace(/^[\s:|,.-]+|[\s:|,.-]+$/g, '').trim();
   const rawTitle = ((fromName ? nameTitle || lineTitle : lineTitle || nameTitle) || 'call').slice(0, 120);
   const path = redactCallPath(rel, patterns);
@@ -129,8 +130,8 @@ export function callPageFor(rel: string, text: string, mtimeMs: number, prefix: 
     'facts_backstop: false',
     'call_import:',
     `  file: ${JSON.stringify(path.file)}`,
-    ...(root ? [`  root: ${root}`] : []),
-    `  hash: ${hash}`,
+    ...(root ? [`  root: ${JSON.stringify(root)}`] : []),
+    `  hash: ${JSON.stringify(hash)}`,
     `  redactions: ${redacted.redactionCount + path.redactions}`,
     '  embedding_hold: call_import',
     '---',
