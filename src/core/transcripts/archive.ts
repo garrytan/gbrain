@@ -281,13 +281,14 @@ async function archiveTimeZone(engine: BrainEngine, sourceId: string): Promise<{
   return pinned ? { timezone: pinned, pinned: true, configured } : { timezone: assertTimeZone(configured), pinned: false, configured };
 }
 
-interface Privacy { shared: boolean; owner: string | null }
+/** unproven: the brain reads as personal only because its client-usage check failed, so it may still be shared. */
+interface Privacy { shared: boolean; owner: string | null; unproven?: boolean }
 
 async function resolvePrivacy(engine: BrainEngine): Promise<Privacy> {
   const audience = await classifyBrainAudience(engine);
   const enabled = (await listMembers(engine)).filter(m => m.status === 'enabled').length;
   const shared = audience.audience !== 'personal' || enabled >= 2;
-  return { shared, owner: shared ? (await ownerView(engine)).owner : null };
+  return { shared, owner: shared ? (await ownerView(engine)).owner : null, ...(!shared && audience.unproven ? { unproven: true } : {}) };
 }
 
 async function readersFor(engine: BrainEngine, privacy: Privacy, conv: ArchiveConversation, groups: Map<string, boolean>): Promise<string[] | undefined> {
@@ -408,6 +409,11 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
   }
   const { sourceId, privacy } = await effectiveSource(engine, opts.sourceId);
   if (dryRun) return archiveSource(engine, opts, { enabled, sourceId, privacy });
+  if (privacy.unproven) {
+    const { opError } = await import('../ops/contract.ts');
+    throw opError('archive_audience_unproven', 'The brain\'s audience could not be checked (its client-usage read failed), so the conversation archive wrote nothing: a page written as personal could be open to other members.',
+      'Rerun gbrain transcripts archive run; if it repeats, declare the audience with gbrain config set brain.audience personal|shared.');
+  }
   // One run per source at a time: a run decides from the ledger it read at its start, so an overlapping run could publish
   // older history over what the other run just wrote.
   const { withRefreshingLock, LockUnavailableError } = await import('../db-lock.ts');
