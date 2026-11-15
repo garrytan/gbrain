@@ -674,7 +674,7 @@ export async function executeMigrationFlow(
     }
 
     const lockedCensus = await engine.executeRaw<{ id: string; incarnation: string; archived: boolean }>('SELECT id,incarnation::text,archived FROM sources ORDER BY id');
-    if (JSON.stringify(lockedCensus.map(s => s.id)) !== JSON.stringify(sourceIds)) {
+    if (JSON.stringify(lockedCensus.map(s => s.id).sort()) !== JSON.stringify(sourceIds)) {
       return { status: 'apply_failed', reason: 'Source census changed while acquiring locks; no embedding work performed. Retry the scoped preview.' };
     }
     expectedSources = JSON.stringify(lockedCensus);

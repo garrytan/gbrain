@@ -55,7 +55,11 @@ export interface RetrievalCoverage {
   capped?: true;
   /** The top result is the page the query named (exact slug, title or alias) and its projection is current: pending pages are not counted as able to affect this answer. */
   top_hit_exact?: true;
+  /** #9192: while the upgrade's index rebuild (v153 activation) drains, pages in scope done of total and the rate measured since it started. */
+  rebuild?: ProjectionRebuildProgress;
 }
+
+export interface ProjectionRebuildProgress { done: number; total: number; pages_per_second: number | null }
 
 export interface ScopedCount {
   total: number; could_affect: number; capped: boolean;
@@ -149,4 +153,28 @@ export function countPendingProjections(engine: Pick<BrainEngine, 'executeRaw'>,
 export function countEmbeddingHeld(engine: Pick<BrainEngine, 'executeRaw'>, scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null> {
   return countInScope(engine, scope, relevance, 'JOIN page_embedding_budget b ON b.page_id = p.id',
     `${budgetRowAppliesFilter('b', 'p')} AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`);
+}
+
+/**
+ * #9192: progress of the index rebuild an upgrade's activation queued (rows still queued with reason
+ * `protocol_activation`), over the pages in scope: how many are done of the total, and the rate measured from the
+ * start of the rebuild. Null when no such rebuild is running or the count fails.
+ */
+export async function countProjectionRebuild(engine: Pick<BrainEngine, 'executeRaw'>, scope: ProjectionReadinessScope): Promise<ProjectionRebuildProgress | null> {
+  const params: unknown[] = [];
+  const filters = coverageScopeFilters(scope, params);
+  try {
+    const [row] = await engine.executeRaw<{ seconds: number | null; total: number; done: number }>(
+      `WITH started AS (SELECT EXTRACT(EPOCH FROM now() - min(updated_at))::float8 AS seconds FROM page_projection_jobs WHERE reason = 'protocol_activation')
+      SELECT started.seconds, count(p.id)::int AS total,
+        count(p.id) FILTER (WHERE p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision)::int AS done
+      FROM started LEFT JOIN (pages p JOIN sources s ON s.id = p.source_id) ON started.seconds IS NOT NULL AND p.deleted_at IS NULL
+        AND ${projectionClassSql('p', 's')} NOT IN ('protected','archived') AND ${filters.join(' AND ')}
+      GROUP BY started.seconds`, params);
+    if (row?.seconds === null || row?.seconds === undefined) return null;
+    const done = Number(row.done), total = Number(row.total), seconds = Number(row.seconds);
+    return { done, total, pages_per_second: seconds > 0 && done > 0 ? done / seconds : null };
+  } catch {
+    return null;
+  }
 }
