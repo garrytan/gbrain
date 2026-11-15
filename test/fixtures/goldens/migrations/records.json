@@ -2316,7 +2316,14 @@
         "version": 152
       },
       {
-        "handler": "absent",
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "migrationNotice",
+            "quietMigrationNotices"
+          ],
+          "sha256": "4fd47425063a5a78da6ded62f86e56cb1d0587604a99289e4dce3d1834105df6"
+        },
         "idempotent": true,
         "name": "verified_text_projection_activation",
         "sql": {
