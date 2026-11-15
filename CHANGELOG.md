@@ -10,6 +10,19 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.727.0] - 2026-11-15
+
+- v0.60.726.0 was not published, so this is the first release you can install with the conversation archive; it carries everything in the [0.60.726.0 section of the changelog](https://github.com/garrytan/gbrain/blob/v0.60.727.0/CHANGELOG.md), plus one test fix.
+- The conversation archive is now on by default for personal brains; turn it off with `gbrain transcripts archive off` ([#9433](https://github.com/garrytan/gbrain/pull/9433))
+- New `gbrain transcripts archive` saves each day of your agent conversations, OpenClaw included, as one redacted, searchable page ([#9432](https://github.com/garrytan/gbrain/pull/9432))
+- Archive pages rank a little below your own notes, and `gbrain doctor` warns when the archive falls behind ([#9433](https://github.com/garrytan/gbrain/pull/9433))
+- Tests only: the archive upgrade-notice test keeps passing after a release ([#9437](https://github.com/garrytan/gbrain/pull/9437), [#9441](https://github.com/garrytan/gbrain/pull/9441))
+
+**The upgrade-notice test for the conversation archive keeps passing after a release folds its changelog entry (#9437).**
+
+### Fixed
+- `test/upgrade-transcript-archive-notice.test.ts` no longer reads the `changelog.d` fragment that every release deletes, so the full test suite passes on a release commit again. Tests only; no behavior change.
+
 ## [0.60.726.0] - 2026-11-15
 
 - The conversation archive is now on by default for personal brains; turn it off with `gbrain transcripts archive off` ([#9433](https://github.com/garrytan/gbrain/pull/9433))
