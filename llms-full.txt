@@ -3075,7 +3075,7 @@ stdout (`--json`):
       "code": "first_run_decisions",
       "kind": "ask",
       "why": "The brain is ready and these first-run settings are in effect as listed; none blocks memory. Relay them once, in the reply that reports the install, as the current settings and how to change them; do not hold the install open or end it waiting on an answer. When the user picks an option, run its command. Nothing paid turns on from these settings without a key the user supplied.",
-      "user_message": "gbrain is installed. In effect: search mode conservative; agents save only what you ask them to remember, until you turn on automatic saving (salient is recommended: durable facts you state, saved with provenance). Upkeep: free upkeep runs on its own while your agent's gbrain session is open. Nothing is deleted or paid for without you. Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule. Estimated downstream input cost of the retrieved payload at 10K queries/month (Haiku 5.5 / Sonnet 5.5 / Opus 5.5): conservative $4 / $80 / $160, balanced $10 / $200 / $400, tokenmax $20 / $400 / $800 per month. Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.",
+      "user_message": "gbrain is installed. In effect: search mode conservative; agents save only what you ask them to remember, until you turn on automatic saving (salient is recommended: durable facts you state, saved with provenance). Upkeep: free upkeep runs on its own while your agent's gbrain session is open. Nothing is deleted or paid for without you. Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule. Conversation archive: on. gbrain keeps one redacted page per conversation per day from your agent sessions (Claude Code, Codex, OpenClaw, Hermes, Grok) in the conversations source, written by the maintenance pass. Without an embedding key nothing leaves this machine. Turn off: gbrain transcripts archive off. Estimated downstream input cost of the retrieved payload at 10K queries/month (Haiku 5.5 / Sonnet 5.5 / Opus 5.5): conservative $4 / $80 / $160, balanced $10 / $200 / $400, tokenmax $20 / $400 / $800 per month. Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.",
       "decisions": [
         {
           "id": "search_mode",
@@ -3181,6 +3181,28 @@ stdout (`--json`):
           ],
           "default": "on",
           "default_reason": "In effect now: the agent's gbrain serve runs the free upkeep tier while idle; nothing needs an answer."
+        },
+        {
+          "id": "conversation_archive",
+          "question": "Conversation archive: on. gbrain keeps one redacted page per conversation per day from your agent sessions (Claude Code, Codex, OpenClaw, Hermes, Grok) in the conversations source, written by the maintenance pass. Without an embedding key nothing leaves this machine. Turn off: gbrain transcripts archive off.",
+          "options": [
+            {
+              "id": "on",
+              "label": "Keep the conversation archive on (in effect now)"
+            },
+            {
+              "id": "off",
+              "label": "Turn the conversation archive off",
+              "argv": [
+                "gbrain",
+                "transcripts",
+                "archive",
+                "off"
+              ]
+            }
+          ],
+          "default": "on",
+          "default_reason": "In effect now: on by default on a personal brain; nothing needs an answer."
         }
       ],
       "contract_version": 1
@@ -3190,7 +3212,7 @@ stdout (`--json`):
 }
 ```
 
-stdout is one document; the brain is ready and nothing blocks using it. The agent first does the `harness_wiring` step: connecting gbrain to itself is part of the install, not a setting. It then reports the install and relays the `first_run_decisions` `user_message` ("gbrain is installed. In effect: search mode conservative; agents save only what you ask them to remember, until you turn on automatic saving (salient is recommended: durable facts you state, saved with provenance). Upkeep: free upkeep runs on its own while your agent's gbrain session is open. Nothing is deleted or paid for without you. Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule. Estimated downstream input cost of the retrieved payload at 10K queries/month (Haiku 5.5 / Sonnet 5.5 / Opus 5.5): conservative $4 / $80 / $160, balanced $10 / $200 / $400, tokenmax $20 / $400 / $800 per month. Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.") once in that reply, without waiting for an answer. The settings in effect are `search_mode` (default `conservative`), `writeback` (default `off`), `upkeep` (default `on`); each option carries the exact argv to apply it when the user picks one.
+stdout is one document; the brain is ready and nothing blocks using it. The agent first does the `harness_wiring` step: connecting gbrain to itself is part of the install, not a setting. It then reports the install and relays the `first_run_decisions` `user_message` ("gbrain is installed. In effect: search mode conservative; agents save only what you ask them to remember, until you turn on automatic saving (salient is recommended: durable facts you state, saved with provenance). Upkeep: free upkeep runs on its own while your agent's gbrain session is open. Nothing is deleted or paid for without you. Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule. Conversation archive: on. gbrain keeps one redacted page per conversation per day from your agent sessions (Claude Code, Codex, OpenClaw, Hermes, Grok) in the conversations source, written by the maintenance pass. Without an embedding key nothing leaves this machine. Turn off: gbrain transcripts archive off. Estimated downstream input cost of the retrieved payload at 10K queries/month (Haiku 5.5 / Sonnet 5.5 / Opus 5.5): conservative $4 / $80 / $160, balanced $10 / $200 / $400, tokenmax $20 / $400 / $800 per month. Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.") once in that reply, without waiting for an answer. The settings in effect are `search_mode` (default `conservative`), `writeback` (default `off`), `upkeep` (default `on`), `conversation_archive` (default `on`); each option carries the exact argv to apply it when the user picks one.
 
 ### 5. A caller mistake over stdio MCP, recorded: `run` (journey)
 
