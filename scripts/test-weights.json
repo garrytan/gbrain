@@ -4025,8 +4025,6 @@
   "test/setup-harness-lane-scope-7771.test.ts": 4832,
   "test/setup-pi-skill-extension.test.ts": 13725,
   "test/setup-serves-several.test.ts": 137591,
-  "test/setup-serves-stdio-member.test.ts": 36885,
-  "test/setup-serves-upgrade.test.ts": 46053,
   "test/setup-skill-loading.test.ts": 86047,
   "test/setup-skill-resolver-hermes.test.ts": 10122,
   "test/setup-skill-resolver.test.ts": 35342,

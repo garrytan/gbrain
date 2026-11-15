@@ -4,4 +4,4 @@
 
 - `test/enforced-member.serial.test.ts` keeps the reads and refusals. Writes and the git commit-push suite move to `test/enforced-member-writes.serial.test.ts`, and the `access.enforced_member_writes` case moves to `test/enforced-member-writes-setting.serial.test.ts`. Each file seeds its own brain through `test/helpers/enforced-member-brain.ts`.
 - The spawned `gbrain setup` cases split out of `test/setup-serves-several.test.ts` into `test/setup-serves-stdio-member.test.ts` and `test/setup-serves-upgrade.test.ts`, with the shared box in `test/helpers/setup-serves-box.ts`.
-- New manifest and weight rows for the new files go in `scripts/serial-files.tsv`, `test/postgres-unit-arms.txt`, `scripts/serial-weights.json`, `scripts/postgres-arm-weights.json` and `scripts/test-weights.json`.
+- The new serial files get rows in `scripts/serial-files.tsv`, `test/postgres-unit-arms.txt` and `scripts/postgres-arm-weights.json`. The unit and serial weight maps get no hand-added rows, because they must match the miner's metadata, so new files use the p75 estimate until the next re-mine.
