@@ -15,6 +15,8 @@
  *   #106 score note    a comment + a test that only #107 makes green → does_not_discriminate
  *                      (a whole-file revert would also drop #107's fix and call it discriminating)
  *   #107 fix score     product fix, no test change            → not_audited (no_tests)
+ *                      (landed as one squashed `Fix score (#107)` commit, the shape
+ *                      master's PRs land in; the others are "Merge pull request" merges)
  *   PR #105            rewrites the clamp line #101 fixed     → conflict
  *
  * No package.json, so nothing installs and nothing touches the network.
@@ -32,12 +34,17 @@ export function buildFixture(dir: string): Fixture {
   const write = (rel: string, body: string) => { mkdirSync(dirname(join(dir, rel)), { recursive: true }); writeFileSync(join(dir, rel), body); };
   const as = (who: string) => { git('config', 'user.name', who); git('config', 'user.email', `${who}@example.invalid`); };
   const commit = (msg: string) => { git('add', '-A'); git('commit', '-qm', msg); };
-  const mergePr = (n: number, branch: string, who: string, change: () => void) => {
+  const mergePr = (n: number, branch: string, who: string, change: () => void, squashTitle?: string) => {
     git('checkout', '-qb', branch, 'master');
     as(who);
     change();
     commit(`${branch}: contributor change`);
     git('checkout', '-q', 'master');
+    if (squashTitle) {
+      git('merge', '-q', '--squash', branch);
+      git('commit', '-qm', `${squashTitle} (#${n})`);
+      return;
+    }
     as('maintainer-example');
     git('merge', '-q', '--no-ff', branch, '-m', `Merge pull request #${n} from ${who}/${branch}`);
   };
@@ -71,7 +78,7 @@ export function buildFixture(dir: string): Fixture {
     write('src/score.ts', SCORE);
     write('test/score.test.ts', "import { expect, test } from 'bun:test';\nimport { score } from '../src/score';\n\ntest('scores two', () => {\n  expect(score()).toBe(2);\n});\n");
   });
-  mergePr(107, 'fix-score', 'hana-example', () => write('src/score.ts', SCORE.replace('return 0;', 'return a + b;')));
+  mergePr(107, 'fix-score', 'hana-example', () => write('src/score.ts', SCORE.replace('return 0;', 'return a + b;')), 'Fix score');
   const head = git('rev-parse', 'HEAD');
 
   git('checkout', '-qb', 'pr-105', base);

@@ -142,6 +142,18 @@ master since the last release one version and writes all the stamps at once.
 `.gstack/ship-policy.json` turns this on (`changelog_fragments`,
 `merge: "direct"`), and gstack's /ship, receipt and land commands follow it.
 
+**How a PR lands.** Every PR, release PRs included, lands on master as one
+squashed commit whose subject is the PR title followed by `(#<number>)`, so
+`git log --oneline master` reads as a list of changes, with no
+"Merge pull request" lines and none of a branch's own housekeeping commits.
+The maintainer's merge step makes that commit; its body is the PR's
+summary lines, and everyone else who wrote commits on the branch is
+credited with a `Co-authored-by:` trailer. Only the landing squashes. A
+branch brings master in with a merge commit and is never rebased or
+force-pushed; `history: "merge-only"` in `.gstack/ship-policy.json` makes
+/ship refuse a plan that would. Write the PR title as the one line a
+reader of the log should see.
+
 **What a PR carries.**
 
 - `changelog.d/<branch-slug>.md`: the PR's CHANGELOG entry with no version
