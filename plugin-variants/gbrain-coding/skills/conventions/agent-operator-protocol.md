@@ -272,7 +272,7 @@ stdout (`--json`):
     {
       "code": "harness_wiring",
       "kind": "info",
-      "why": "gbrain is not connected to an agent on this host, and connecting it here is not a command the agent runs: relay the fix's message in the reply that reports the install.",
+      "why": "gbrain is not connected to an agent here, and this step is not a command the agent runs by itself; say so in the reply that reports the install, without waiting on it. Which agent app should get gbrain memory? The install guide has a one-line command for each. For Claude Code or Codex, run `gbrain setup claude-code` or `gbrain setup codex` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).",
       "fix": {
         "consent": [
           "persistent_install"

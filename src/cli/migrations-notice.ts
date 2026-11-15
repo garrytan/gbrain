@@ -21,8 +21,10 @@ export async function pendingUpgradeMigrationsNotice(engine: BrainEngine, comman
     const { declinedMigrations, migrationLedgerSummary } = await import('../core/migration-ledger.ts');
     const { loadCompletedMigrations } = await import('../core/preferences.ts');
     if (loadCompletedMigrations().length === 0) return null;
-    const pending = migrationLedgerSummary(version, await declinedMigrations(engine)).pending;
+    const summary = migrationLedgerSummary(version, await declinedMigrations(engine));
+    const pending = [...summary.pending, ...summary.partial];
     if (pending.length === 0) return null;
-    return migrationsNotice(`${pending.length} upgrade migration(s) have not run on this brain yet (${pending.join(', ')}); the command ran, and gbrain apply-migrations --yes finishes the upgrade.`);
+    const notice = migrationsNotice(`${pending.length} upgrade migration(s) have not finished on this brain yet (${pending.join(', ')}); the command ran, and gbrain apply-migrations --yes --no-autopilot-install finishes the upgrade.`);
+    return { ...notice, fix: { ...notice.fix!, argv: ['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install'] } };
   } catch { return null; }
 }

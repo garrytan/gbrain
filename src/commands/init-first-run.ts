@@ -88,7 +88,7 @@ function harnessWiringNotice(config: GBrainConfig, surface?: McpSurface): Notice
     return {
       code: 'harness_wiring',
       kind: 'info',
-      why: 'gbrain is not connected to an agent on this host, and connecting it here is not a command the agent runs: relay the fix\'s message in the reply that reports the install.',
+      why: `gbrain is not connected to an agent here, and this step is not a command the agent runs by itself; say so in the reply that reports the install, without waiting on it. ${fix.user_message ?? ''} ${fix.why ?? ''}`.trim(),
       fix,
     };
   }
@@ -137,7 +137,7 @@ export function buildInitFirstRunNotices(inputs: InitFirstRunInputs): Notice[] {
   if (inputs.writeback) decisions.push(writebackDecision());
   if (inputs.skillsScaffold?.missing.length) decisions.push(skillsScaffoldDecision(inputs.skillsScaffold));
   const wiring = inputs.config ? harnessWiringNotice(inputs.config, inputs.surface) : null;
-  if (decisions.length === 0) return wiring ? [wiring] : [];
+  if (decisions.length === 0 && !(wiring && inputs.upkeep)) return wiring ? [wiring] : [];
   if (inputs.upkeep) decisions.push(upkeepDecision(inputs.upkeep.embedding));
   const searchMode = decisions.find(d => d.id === 'search_mode');
   const upkeep = decisions.find(d => d.id === 'upkeep');
