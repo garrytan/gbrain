@@ -55,6 +55,8 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({ engine: 'pglite' } as never);
   await engine.initSchema();
+  // GST-2732 B: a personal brain federates a new source by default (test/sources-add-default-search.test.ts); these cases are the shared brain.
+  await engine.setConfig('brain.audience', 'shared');
 }, 60_000);
 
 afterAll(async () => {

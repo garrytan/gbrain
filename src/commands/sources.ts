@@ -465,7 +465,11 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   say(
     `  federated: ${fed}${fed ? ' — appears in cross-source default search' : ' — only searched when explicitly named via --source'}`,
   );
-  const outOfSearch = !fed && federated === null ? notInDefaultSearchNotice(id, false) : null;
+  if (created.local_path && !finalRemoteUrl && !ghKind && !gKind && existsSync(created.local_path) && !(await import('../core/git-remote.ts')).isInsideGitRepo(created.local_path)) {
+    say('  plain folder (not a git repository): sync imports its files without Git, so git history is off and a file removed from it keeps its page');
+  }
+  if (federated === null && fed && !ghKind && !gKind) say(`  this brain serves one person, so a new source joins default search; \`gbrain sources unfederate ${id}\` takes it out`);
+  const outOfSearch = !fed && federated === null ? notInDefaultSearchNotice(id, true) : null;
   if (outOfSearch && !json) writeCliNotice(outOfSearch);
   const next = !fed && federated === null ? await noGrantFloorNext(engine, id).catch(() => null) : null;
   if (next) say(`  next: ${next.command} — ${next.why}`);

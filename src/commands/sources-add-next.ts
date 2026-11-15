@@ -10,6 +10,7 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import type { Notice } from '../core/agent-output.ts';
+import { newSourceJoinsDefaultSearch } from '../core/source-default-search.ts';
 import { localFederatedSourceIds } from '../core/source-resolver.ts';
 import { privatePagesFilterFragment, resolveExcludePrivatePages } from '../core/search/private-visibility.ts';
 import { quarantineFilterFragment } from '../core/quarantine.ts';
@@ -34,25 +35,6 @@ export async function noGrantFloorNext(engine: BrainEngine, id: string): Promise
     argv,
     why: `Connections with no source grant read only the default source and federated sources, and none of them holds a page, so their reads are refused until "${id}" is federated or they are granted sources.`,
   };
-}
-
-/**
- * GST-2732 B (Garry, 2026-11-15: "Do it"): a source added with no --federated / --no-federated choice joins default
- * search only on a single-user brain: access.serves reads one, brain.audience classifies personal, and this is not a
- * thin client. Any other answer, a failed read included, leaves it out, and the add prints the notice below.
- */
-export async function newSourceJoinsDefaultSearch(engine: BrainEngine): Promise<boolean> {
-  try {
-    const { loadConfig, isThinClient } = await import('../core/config.ts');
-    const cfg = loadConfig();
-    if (isThinClient(cfg)) return false;
-    const { brainServes } = await import('../core/access/serves.ts');
-    if ((await brainServes(engine)).serves !== 'one') return false;
-    const { classifyBrainAudience } = await import('../core/facts/writeback-audience.ts');
-    return (await classifyBrainAudience(engine, cfg)).audience === 'personal';
-  } catch {
-    return false;
-  }
 }
 
 /** The notice for a source left out of default search; shared says the brain's shape kept it out, so federating is the user's call. */

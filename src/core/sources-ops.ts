@@ -461,6 +461,7 @@ export async function addSource(
   engine: BrainEngine,
   opts: AddSourceOpts,
 ): Promise<SourceRow> {
+  opts = await (await import('./source-default-search.ts')).withDefaultSearchChoice(engine, opts);
   if(await managedPersistenceEnabled(engine))return (await import('./persistence/managed-sources.ts')).addManagedSource(engine,opts);
   await assertUnmanagedCanonicalWriter(engine, 'sources add');
   validateSourceId(opts.id);
@@ -707,8 +708,9 @@ export async function addSource(
     // report ("plain directory accepted, sync fails later") rather than a
     // broader "does this path exist" check nobody asked for.
     //
-    // Both isInsideGitRepo AND hasTrackedContent must hold. isInsideGitRepo
-    // alone lets through a `git init`ed-but-never-committed directory (fails
+    // GST-2732: a plain folder outside any git repository registers as a plain
+    // directory (sync imports its files without Git, #7973). Inside a
+    // repository, hasTrackedContent must hold: isInsideGitRepo alone lets through a `git init`ed-but-never-committed directory (fails
     // sync's "No commits in repo ..."), AND an empty-commit-then-untracked-
     // files directory (git resolves HEAD fine but the tree is empty — the
     // exact silent-staleness footgun #2707(c) describes: sync "succeeds"
@@ -718,7 +720,8 @@ export async function addSource(
       opts.localPath &&
       !opts.force &&
       existsSync(opts.localPath) &&
-      (!isInsideGitRepo(opts.localPath) || !hasTrackedContent(opts.localPath))
+      isInsideGitRepo(opts.localPath) &&
+      !hasTrackedContent(opts.localPath)
     ) {
       const q = shellQuote(opts.localPath);
       throw new SourceOpError(

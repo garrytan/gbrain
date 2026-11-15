@@ -270,7 +270,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       'Add the source with gbrain sources add, which builds the typed options; a resident-proxy caller sends params.options as a JSON object.');
     const { managedSourceAddInput } = await import('./managed-sources.ts');
     const { runManagedSourceLifecycle } = await import('./source-lifecycle.ts');
-    const options = params.options as import('../sources-ops.ts').AddSourceOpts;
+    const options = await (await import('../source-default-search.ts')).withDefaultSearchChoice(engine, params.options as import('../sources-ops.ts').AddSourceOpts);
     if (options.requestId !== params.request_id || !isWriteRequestId(params.request_id)) throw invalid('Source add request identity must match its options.',
       'Send one UUID as both params.request_id and options.requestId; gbrain sources add sets both from one request id, so run the add through it.');
     return runManagedSourceLifecycle(engine, { ...managedSourceAddInput(options), dryRun: params.dry_run === true });
