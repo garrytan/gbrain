@@ -529,7 +529,7 @@
                 "explicit_retention_days": null,
                 "over_target": false,
                 "target_bytes": 8589934592,
-                "used_bytes": 198727
+                "used_bytes": 199663
               },
               "inspected": 2,
               "outstanding": [],
@@ -539,7 +539,7 @@
               "verify": "gbrain doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 198727 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 199663 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -4503,6 +4503,13 @@
           },
           {
             "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Every fact line on 0 facts page(s) carries a date.",
+            "name": "facts_undated_lines",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
             "details": {
               "auto_repair": {
                 "active": false,
@@ -5114,14 +5121,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "Active pack gbrain-base-v2@1.6.0+b2cec967 is current (no successor declared)",
+            "message": "Active pack gbrain-base-v2@1.7.0+e142684a is current (no successor declared)",
             "name": "pack_upgrade_available",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "5 distinct typed values (pack gbrain-base-v2 declares 24)",
+            "message": "5 distinct typed values (pack gbrain-base-v2 declares 25)",
             "name": "type_proliferation",
             "status": "ok"
           },
@@ -5975,7 +5982,7 @@
                 "explicit_retention_days": null,
                 "over_target": false,
                 "target_bytes": 8589934592,
-                "used_bytes": 198727
+                "used_bytes": 199663
               },
               "inspected": 2,
               "outstanding": [],
@@ -5985,7 +5992,7 @@
               "verify": "gbrain doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 198727 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 199663 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -9961,6 +9968,13 @@
           },
           {
             "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Every fact line on 0 facts page(s) carries a date.",
+            "name": "facts_undated_lines",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
             "details": {
               "auto_repair": {
                 "active": false,
@@ -10572,14 +10586,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "Active pack gbrain-base-v2@1.6.0+b2cec967 is current (no successor declared)",
+            "message": "Active pack gbrain-base-v2@1.7.0+e142684a is current (no successor declared)",
             "name": "pack_upgrade_available",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "5 distinct typed values (pack gbrain-base-v2 declares 24)",
+            "message": "5 distinct typed values (pack gbrain-base-v2 declares 25)",
             "name": "type_proliferation",
             "status": "ok"
           },

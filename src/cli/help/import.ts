@@ -3,7 +3,7 @@ import type { CliHelpSpec } from '../command-table.ts';
 
 export const help: CliHelpSpec = {
   summary: 'Import a directory (or one file) of markdown into the brain.',
-  usage: 'gbrain import <dir> [--source <id> | --source-id <id>] [--no-embed] [--workers <n>] [--fresh] [--include-gitignored] [--allow-noncanonical-root] [--log-noop] [--json]',
+  usage: 'gbrain import <dir> [--source <id> | --source-id <id>] [--no-embed] [--workers <n>] [--fresh] [--include-gitignored] [--allow-noncanonical-root] [--log-noop] [--calls [--prefix <slug prefix>]] [--json]',
   flags: [
     { name: '--source', type: 'string', desc: 'Write into this source id (must already exist; see `gbrain sources list`).' },
     { name: '--source-id', type: 'string', desc: 'Same as --source; pass one or the other.' },
@@ -13,11 +13,14 @@ export const help: CliHelpSpec = {
     { name: '--include-gitignored', type: 'boolean', desc: 'Also import files git ignores.' },
     { name: '--allow-noncanonical-root', type: 'boolean', desc: 'Import even when the directory is not the source\'s configured root.' },
     { name: '--log-noop', type: 'boolean', desc: 'Write an ingest_log row even when nothing changed.' },
+    { name: '--calls', type: 'boolean', desc: 'Import .txt and .md call or meeting transcripts once each as <prefix>/<date>-<title> pages, credentials redacted, keyword-only.' },
+    { name: '--prefix', type: 'string', desc: 'With --calls: the slug folder for the call pages (default calls).' },
     { name: '--json', type: 'boolean', desc: 'Print the import summary as JSON on stdout (progress stays on stderr).' },
   ],
   examples: [
     'gbrain import ~/notes',
     'gbrain import ~/notes --source notes --no-embed',
     'gbrain import ./brain --workers 4 --json',
+    'gbrain import ~/call-exports --calls --prefix company/calls --source company --no-embed',
   ],
 };

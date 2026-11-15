@@ -60,7 +60,9 @@ writer's page type under `extracts/`, a non-extractable annotation), so
 imported code and extraction receipts never read as undeclared types and
 the catch-all retype leaves them alone. Since 1.6.0 it declares
 `stored-object` (a storage shelf card, a non-extractable annotation with no
-folder prefix) for the same reason.
+folder prefix) for the same reason, and since 1.7.0 `facts` (the type gbrain
+setup stamps on the me/facts and company/facts starter pages: one dated line
+per fact; a non-extractable annotation with no folder prefix).
 
 ## Subtypes (declared in frontmatter post-unify)
 
