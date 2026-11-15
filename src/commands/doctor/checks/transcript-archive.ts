@@ -64,6 +64,7 @@ export async function checkTranscriptArchiveFreshness(
           : agentFix(['gbrain', 'transcripts', 'archive', 'run'], 'Archives the last ' + (runWindow + 1) + ' local days from every readable harness now.', name);
       }
     }
+    if (status.rescope) problems.push(status.rescope.message.replace(/\.$/, ''));
     for (const e of status.errors) problems.push(e.reader + ' could not be read (' + e.code + '): ' + e.message.slice(0, 200));
     if (status.held.length) problems.push(status.held.length + ' day(s) held: ' + status.held.slice(0, 10).map(h => h.harness + ' ' + h.day + ' (' + h.code + ')').join(', ') + (status.held.length > 10 ? ', ...' : ''));
     const record = await readArchiveMaintenance(engine);

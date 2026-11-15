@@ -141,6 +141,22 @@ more enabled members), every page names its readers:
 On a shared brain whose archive source is a git checkout, pages go to a database-only `<source>-owner` source so
 private conversations never land in the shared repository.
 
+### When a personal brain becomes shared
+
+Pages archived while the brain was personal name no readers. The first archive run after the brain becomes shared
+keeps them to the owner before it writes anything: every folder that holds an archive page at that moment (one per
+harness and day, such as `conversations/codex/2026-10-01/`, plus `conversations/days/`) gets an access rule readable
+only by the owner. This re-scope **replaces any existing rule on those folders, including one the owner made wider on
+purpose**; re-add the wider readers afterwards (`gbrain access rule add`, which waits for `gbrain access apply`) if
+you still want them. A rule on the whole `conversations/` folder is left in place, and a page under both rules is read
+only by members both allow. Folders written later get no rule, so a group conversation archived on the shared brain
+keeps its group, while a group chat added to a day archived before the switch stays the owner's.
+
+The re-scope waits, and `gbrain transcripts archive status` and `gbrain doctor --only transcript_archive_freshness`
+each say so in one line, when the shared brain names no owner (`archive_rescope_owner_unset`: run
+`gbrain access owner set <member>`) or when the source keeps its access rules in git (`archive_rescope_git_rules`:
+add a rule with prefix `conversations/` and the owner as its reader to the source's `.gbrain/access.yml`).
+
 ## OpenClaw
 
 Current OpenClaw keeps live sessions in a database owned by its Gateway. gbrain reads them with

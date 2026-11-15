@@ -62,6 +62,7 @@ export async function runTranscriptsArchive(engine: BrainEngine, args: string[],
       console.log('  archived days: ' + status.archived_days + (status.legacy_days ? ', covered by a legacy archive: ' + status.legacy_days : ''));
       for (const h of status.held) console.log('  held: ' + h.harness + ' ' + h.day + ' (' + h.code + ')');
       for (const e of status.errors) console.log('  error: ' + e.reader + ' ' + e.code + ': ' + e.message);
+      if (status.rescope) console.log('  not kept to the owner yet (' + status.rescope.code + '): ' + status.rescope.message);
     });
     if (status.errors.length) setCliExitVerdict(1);
     return;

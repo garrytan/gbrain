@@ -10,10 +10,10 @@ import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { addMember, bindCredential } from '../src/core/access/members.ts';
+import { addGroup, addMember, bindCredential } from '../src/core/access/members.ts';
 import { setOwner } from '../src/core/access/owner.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { ARCHIVE_TIMEZONE_KEY, runTranscriptArchive, setArchiveEnabled } from '../src/core/transcripts/archive.ts';
+import { ARCHIVE_TIMEZONE_KEY, archiveGroupPrincipal, runTranscriptArchive, setArchiveEnabled } from '../src/core/transcripts/archive.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
@@ -56,6 +56,30 @@ describe('archive and the brain audience (pglite, remote=true)', () => {
     expect(text(await dispatchToolCall(engine, 'get_page', { slug }, ctx(other)))).not.toContain(CANARY);
     expect(text(await dispatchToolCall(engine, 'search', { query: CANARY }, ctx(other)))).not.toContain(slug);
     expect(text(await dispatchToolCall(engine, 'get_page', { slug }, ctx(owner)))).toContain(CANARY);
+  }, 120_000);
+
+  test('after the re-scope, a group conversation archived on the shared brain keeps its group: the group member reads it, the personal-era day stays the owner\'s', async () => {
+    await engine.setConfig('brain.audience', 'personal');
+    const dm = staticReader('openclaw', [conversation('openclaw', 'agent:main:main', [['user', '2026-10-01T10:00:00.000Z', CANARY + ' private note']], { chatType: 'direct', verified: true })]);
+    await runTranscriptArchive(engine, { mode: 'backfill', from: '2026-10-01', to: '2026-10-01', readers: [dm], now: new Date('2026-10-05T00:00:00Z') });
+    await engine.setConfig('brain.audience', 'shared');
+    for (const id of ['alice-example', 'bob-example', 'carol-example']) await addMember(engine, id);
+    await setOwner(engine, 'alice-example');
+    const groupKey = 'agent:main:telegram:group:example-group-9';
+    await addGroup(engine, archiveGroupPrincipal('openclaw', groupKey), ['bob-example']);
+    const group = staticReader('openclaw', [conversation('openclaw', groupKey, [['user', '2026-11-04T11:00:00.000Z', 'canary-group-after-0009 team note']], { chatType: 'group', verified: true })]);
+    const next = await runTranscriptArchive(engine, { mode: 'run', readers: [group], now: new Date('2026-11-05T00:00:00Z') });
+    expect(next.privacy).toBe('shared');
+    const pages = await archivedPages(engine, SRC);
+    const groupSlug = pages.find(p => p.body.includes('canary-group-after-0009'))!.slug;
+    const dmSlug = pages.find(p => p.body.includes(CANARY))!.slug;
+    const [owner, member, other] = [await token('alice-example'), await token('bob-example'), await token('carol-example')];
+    const ctx = (auth: AuthInfo) => ({ remote: true, transport: 'http' as const, auth, sourceId: SRC, takesHoldersAllowList: ['world'] });
+    expect(text(await dispatchToolCall(engine, 'get_page', { slug: groupSlug }, ctx(member)))).toContain('canary-group-after-0009');
+    expect(text(await dispatchToolCall(engine, 'get_page', { slug: groupSlug }, ctx(owner)))).toContain('canary-group-after-0009');
+    expect(text(await dispatchToolCall(engine, 'get_page', { slug: groupSlug }, ctx(other)))).not.toContain('canary-group-after-0009');
+    expect(text(await dispatchToolCall(engine, 'get_page', { slug: dmSlug }, ctx(member)))).not.toContain(CANARY);
+    expect(text(await dispatchToolCall(engine, 'get_page', { slug: dmSlug }, ctx(owner)))).toContain(CANARY);
   }, 120_000);
 
   test('a run whose audience lookup failed writes no day page and ends archive_audience_unproven', async () => {

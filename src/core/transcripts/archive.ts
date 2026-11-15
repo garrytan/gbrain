@@ -318,9 +318,11 @@ async function readersFor(engine: BrainEngine, privacy: Privacy, conv: ArchiveCo
 }
 
 /**
- * Pages written while the brain was personal name no readers. When the brain has become shared, the source's whole archive
- * folder is kept to the owner by a folder rule (a narrowing, so it applies and restamps at once) before the run writes
- * anything, then the new audience is recorded. A source whose rules live in git is left to its access.yml.
+ * Pages written while the brain was personal name no readers. When the brain has become shared, every folder (or root
+ * page) that holds a page of the source at that moment is kept to the owner by a rule (a narrowing, so it applies and
+ * restamps at once; a rule already at one of those folders is replaced, a wider one included) before the run writes
+ * anything, then the new audience is recorded. Folders written later are not covered, so a group conversation archived
+ * on the shared brain keeps its group. A source whose rules live in git is left to its access.yml.
  */
 async function reconcileAudience(engine: BrainEngine, sourceId: string, privacy: Privacy): Promise<void> {
   const key = AUDIENCE_PREFIX + sourceId;
@@ -332,16 +334,37 @@ async function reconcileAudience(engine: BrainEngine, sourceId: string, privacy:
     const policy = await import('../access/policy.ts');
     const { normalizeRule } = await import('../access/folder-rules.ts');
     if (await policy.readAccessStore(engine, sourceId) === 'git') return;
-    const normalized = normalizeRule({ prefix: 'conversations/', readable_by: [privacy.owner] });
-    if ('problem' in normalized) throw new Error('the owner-only archive rule is invalid: ' + normalized.problem);
-    const rule = normalized.rule;
+    const folders = await engine.executeRaw<{ folder: string }>(
+      "SELECT DISTINCT CASE WHEN strpos(slug, '/') > 0 THEN regexp_replace(slug, '[^/]+$', '') ELSE slug END AS folder FROM pages WHERE source_id = $1 ORDER BY 1", [sourceId]);
+    const rules = folders.map(({ folder }) => {
+      const normalized = normalizeRule(folder.endsWith('/') ? { prefix: folder, readable_by: [privacy.owner] } : { slug: folder, readable_by: [privacy.owner] });
+      if ('problem' in normalized) throw new Error('the owner-only archive rule for ' + folder + ' is invalid: ' + normalized.problem);
+      return normalized.rule;
+    });
     const current = await policy.appliedRules(engine, sourceId);
-    const kept = current.find(r => r.prefix === rule.prefix);
-    if (!kept || kept.readable_by.join() !== rule.readable_by.join()) {
-      await policy.proposeRevision(engine, sourceId, [...current.filter(r => r.prefix !== rule.prefix), rule], { origin: 'cli', store: 'database', proposedBy: 'transcripts-archive' });
+    const replaced = new Set(rules.map(r => r.prefix));
+    if (rules.some(rule => current.find(r => r.prefix === rule.prefix)?.readable_by.join() !== rule.readable_by.join())) {
+      await policy.proposeRevision(engine, sourceId, [...current.filter(r => !replaced.has(r.prefix)), ...rules], { origin: 'cli', store: 'database', proposedBy: 'transcripts-archive' });
     }
   }
   await engine.setConfig(key, now);
+}
+
+export interface ArchiveRescopeSkip { code: 'archive_rescope_owner_unset' | 'archive_rescope_git_rules'; message: string }
+
+/** Why the owner-only re-scope (reconcileAudience) has not run on a brain that became shared, or null. */
+export async function archiveRescopeSkipped(engine: BrainEngine, sourceId?: string): Promise<ArchiveRescopeSkip | null> {
+  const configured = await configuredSource(engine, sourceId);
+  if (await engine.getConfig(AUDIENCE_PREFIX + configured) !== 'personal') return null;
+  const privacy = await resolvePrivacy(engine);
+  if (!privacy.shared) return null;
+  if (!privacy.owner) {
+    return { code: 'archive_rescope_owner_unset', message: 'Conversation archive pages written while this brain was personal are not yet kept to the owner, because the shared brain names no owner; run gbrain access owner set <member> and the next archive run applies the owner-only rules.' };
+  }
+  const policy = await import('../access/policy.ts');
+  if ((await engine.executeRaw('SELECT 1 FROM sources WHERE id = $1', [configured])).length === 0 || await policy.readAccessStore(engine, configured) !== 'git') return null;
+  if ((await policy.appliedRules(engine, configured)).some(r => r.prefix === 'conversations/')) return null;
+  return { code: 'archive_rescope_git_rules', message: 'Conversation archive pages written while this brain was personal are not yet kept to the owner, because source ' + configured + ' keeps its access rules in git; add a rule with prefix conversations/ and readable_by [' + privacy.owner + '] to its .gbrain/access.yml and sync.' };
 }
 
 function isGitRepo(path: string | null): boolean {
@@ -875,6 +898,8 @@ export interface ArchiveStatus {
   held: Array<{ harness: string; day: string; code: string }>;
   legacy_days: number;
   errors: ArchiveReaderError[];
+  /** The brain became shared but the pages archived while personal could not be kept to the owner yet. */
+  rescope?: ArchiveRescopeSkip;
 }
 
 export async function archiveStatus(engine: BrainEngine, opts: { sourceId?: string; readers?: ArchiveReader[] } = {}): Promise<ArchiveStatus> {
@@ -908,6 +933,8 @@ export async function archiveStatus(engine: BrainEngine, opts: { sourceId?: stri
       out.harnesses.push(row);
     }
   }
+  const rescope = await archiveRescopeSkipped(engine, opts.sourceId);
+  if (rescope) out.rescope = rescope;
   return out;
 }
 
