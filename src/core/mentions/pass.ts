@@ -235,18 +235,27 @@ export async function writePageAliases(tx: BrainEngine, slug: string, sourceId: 
 
 /** Turn the index off for one source: plain mention links, derived aliases, entries and page state go; typed_ner rows stay. */
 async function disableSource(engine: BrainEngine, managed: boolean, sourceId: string): Promise<number> {
-  let removed = 0;
-  await aliasWrite(engine, managed, sourceId, async tx => {
-    const rows = await tx.executeRaw<{ id: number }>(
-      `DELETE FROM links l USING pages f
-        WHERE f.id = l.from_page_id AND f.source_id = $1 AND l.link_source = 'mentions'
-          AND (l.link_kind IS NULL OR l.link_kind = 'plain') RETURNING l.id`, [sourceId]);
-    removed = rows.length;
-    await tx.executeRaw(`DELETE FROM page_aliases WHERE source_id = $1 AND origin IN ('declared','subject')`, [sourceId]);
-    await tx.executeRaw('DELETE FROM mention_gazetteer_entries WHERE source_id = $1', [sourceId]);
-    await tx.executeRaw('DELETE FROM page_mention_state WHERE source_id = $1', [sourceId]);
-    await writeStatus(tx, sourceId, { state: 'disabled', pending: 0, error: null, bumpGeneration: true, fingerprint: null });
+  const { removed, beliefs } = await aliasWrite(engine, managed, sourceId, async tx => {
+    const sourcePages = await tx.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id = $1 ORDER BY slug', [sourceId]);
+    await tx.lockPageKeys(sourcePages.map(p => ({ sourceId, slug: p.slug })));
+    const rows = await tx.executeRaw<{ id: number; slug: string }>(
+      `SELECT l.id, f.slug FROM links l JOIN pages f ON f.id = l.from_page_id
+        WHERE f.source_id = $1 AND f.slug = ANY($2::text[]) AND l.link_source = 'mentions'
+          AND (l.link_kind IS NULL OR l.link_kind = 'plain')`, [sourceId, sourcePages.map(p => p.slug)]);
+    const write = async () => {
+      if (rows.length) await tx.executeRaw('DELETE FROM links WHERE id = ANY($1::int[])', [rows.map(r => Number(r.id))]);
+      await tx.executeRaw(`DELETE FROM page_aliases WHERE source_id = $1 AND origin IN ('declared','subject')`, [sourceId]);
+      await tx.executeRaw('DELETE FROM mention_gazetteer_entries WHERE source_id = $1', [sourceId]);
+      await tx.executeRaw('DELETE FROM page_mention_state WHERE source_id = $1', [sourceId]);
+      await writeStatus(tx, sourceId, { state: 'disabled', pending: 0, error: null, bumpGeneration: true, fingerprint: null });
+      return rows.length;
+    };
+    const beliefs = rows.length && (await beliefCoveredSources(tx, [sourceId])).has(sourceId)
+      ? unmanagedBeliefPoint(sourceId, rows.map(r => r.slug), 'mention_pass') : null;
+    const removed = beliefs ? await beliefs.run(tx, write) : await write();
+    return { removed, beliefs };
   });
+  await beliefs?.commit(engine);
   return removed;
 }
 
