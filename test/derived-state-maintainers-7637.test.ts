@@ -34,7 +34,7 @@ const BYPASS = `gbrain_maint_bypass_7637_${suffix}`;
 const UNREADABLE = /writer_coordinator_required: writer state is unreadable to this database role/;
 const ROLLBACK = 'maintainer-probe-rollback';
 /** The tables the maintainers read or write besides the one being written. */
-const MAINTAINER_TABLES = ['page_retrievals', 'extract_atoms_page_state', 'page_projection_jobs', 'trust_policy_state', 'timeline_entries', 'pages', 'sources'];
+const MAINTAINER_TABLES = ['page_retrievals', 'extract_atoms_page_state', 'page_projection_jobs', 'trust_policy_state', 'timeline_entries', 'pages', 'sources', 'guest_sources'];
 
 beforeAll(async () => {
   configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: {} });

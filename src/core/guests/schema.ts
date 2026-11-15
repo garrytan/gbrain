@@ -14,16 +14,24 @@
  * A guest source is database-only: gbrain_guard_guest_records refuses a
  * local_path on it, and refuses listing a source that has one.
  */
+import { requireMaintainerPoliciesSql } from '../derived-state-maintainers.ts';
 import { TRUST_TIERS } from '../trust/tier.ts';
 
 export const GUEST_RECORD_TABLES = ['guest_sources', 'guest_marks', 'guest_promotions'] as const;
 
-const GUARD_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_guard_guest_records() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
+/**
+ * `failClosed` (follow-up 3 of #9354; the guest-notes migration installed the body without it) refuses a path change on
+ * a source by a role that row-level security keeps from reading guest_sources, instead of reading it empty.
+ */
+const guardFunction = (failClosed: boolean) => `CREATE OR REPLACE FUNCTION gbrain_guard_guest_records() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
   IF TG_TABLE_NAME = 'guest_marks' THEN
     RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='guest_mark_immutable: a guest mark is never changed; it leaves only with its page',
       TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='guest_source_guard';
-  ELSIF TG_TABLE_NAME = 'sources' THEN
+  ELSIF TG_TABLE_NAME = 'sources' THEN${failClosed ? `
+    IF NEW.local_path IS NOT NULL THEN
+      ${requireMaintainerPoliciesSql('guest_sources', ['SELECT'], '      ')}
+    END IF;` : ''}
     IF NEW.local_path IS NOT NULL AND EXISTS (SELECT 1 FROM guest_sources g WHERE g.source_id = NEW.id) THEN
       RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='guest_source_database_only: a guest source is database-only and takes no local path or repository',
         TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='guest_source_guard', DETAIL=jsonb_build_object('source',NEW.id)::text;
@@ -34,6 +42,9 @@ BEGIN
   END IF;
   RETURN NEW;
 END $fn$`;
+
+/** The guest-record guard as it stands now, for migrations after the guest-notes one. */
+export const GUEST_RECORDS_GUARD_FUNCTION = guardFunction(true);
 
 export const GUEST_NOTES_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS guest_sources (
@@ -67,7 +78,7 @@ CREATE TABLE IF NOT EXISTS guest_promotions (
   request_id TEXT
 );
 CREATE INDEX IF NOT EXISTS guest_promotions_guest_page_idx ON guest_promotions (guest_page_id);
-${GUARD_FUNCTION};
+${guardFunction(false)};
 DROP TRIGGER IF EXISTS guest_marks_immutable ON guest_marks;
 CREATE TRIGGER guest_marks_immutable BEFORE UPDATE ON guest_marks FOR EACH ROW EXECUTE FUNCTION gbrain_guard_guest_records();
 DROP TRIGGER IF EXISTS guest_source_database_only ON sources;
