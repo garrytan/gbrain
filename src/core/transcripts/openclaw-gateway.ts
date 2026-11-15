@@ -102,8 +102,10 @@ export function cliGatewayTransport(opts: { bin?: string; url?: string; token?: 
       if (url && !/^(wss?|https?):\/\/[^\s]+$/i.test(url)) {
         return Promise.reject(gatewayError('failed', 'GBRAIN_OPENCLAW_GATEWAY_URL must be a ws://, wss://, http:// or https:// URL; nothing was run'));
       }
-      const args = ['gateway', 'call', method, '--json', '--params', JSON.stringify(params), '--timeout', String(timeoutMs), ...(url ? ['--url', url] : [])];
-      const env = token ? { ...process.env, OPENCLAW_GATEWAY_TOKEN: token } : process.env;
+      const args = ['gateway', 'call', method, '--json', '--params', JSON.stringify(params), '--timeout', String(timeoutMs)];
+      // The URL goes through OPENCLAW_GATEWAY_URL: OpenClaw refuses a --url override whose credential comes only from
+      // the environment (gateway_credentials_required, 2026.10.9 and 2026.11.3), and accepts the environment pair.
+      const env = { ...process.env, ...(url ? { OPENCLAW_GATEWAY_URL: url } : {}), ...(token ? { OPENCLAW_GATEWAY_TOKEN: token } : {}) };
       return new Promise((resolve, reject) => {
         execFile(bin, args, { env, timeout: timeoutMs + 10_000, maxBuffer: 256 * 1024 * 1024 }, (error, stdout) => {
           const code = error && typeof (error as NodeJS.ErrnoException).code === 'string' ? (error as NodeJS.ErrnoException).code : null;

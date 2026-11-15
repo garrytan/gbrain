@@ -13,6 +13,7 @@ import { detectAdapter, harnessRoots, type HarnessRoot } from './detect.ts';
 import { discoverTranscriptFiles } from './discover.ts';
 import { openclawGatewayReader } from './openclaw-gateway.ts';
 import type { ArchiveConversation, ArchiveReader } from './archive.ts';
+import type { ParsedSession, TranscriptFormat, TranscriptMessage } from './types.ts';
 
 const NO_SESSIONS = (harness: string) => 'no readable sessions for ' + harness + '; use gbrain connectors or an export with gbrain transcripts ingest';
 
@@ -22,27 +23,70 @@ export function fileReader(root: HarnessRoot): ArchiveReader {
     harness: root.format,
     name: root.format + '-files',
     ...(present ? {} : { unavailable: NO_SESSIONS(root.format) }),
-    async list({ sinceMs }) {
-      const out: ArchiveConversation[] = [];
+    async *scan({ sinceMs, minMtimeMs, dayOf }) {
+      const floor = minMtimeMs ?? sinceMs;
+      const found = new Map<string, { harness: TranscriptFormat; sessionId: string; days: Set<string>; newest?: string; paths: string[] }>();
       for (const file of discoverTranscriptFiles([root])) {
-        if (sinceMs !== undefined) {
-          try { if (lstatSync(file.path).mtimeMs < sinceMs) continue; } catch { continue; }
+        if (floor !== undefined) {
+          try { if (lstatSync(file.path).mtimeMs < floor) continue; } catch { continue; }
         }
-        const detected = detectAdapter(file.path, { explicitFormat: file.format });
-        if (!detected.ok) continue;
-        const gen = detected.adapter.parse(file.path);
-        try {
-          for (let step = await gen.next(); !step.done; step = await gen.next()) {
-            const session = step.value;
-            if (session.messages.length) out.push({ harness: session.meta.harness, conversationKey: session.meta.sessionId, session, via: 'file' });
+        for await (const session of parseFile(file.path, file.format)) {
+          const key = session.meta.harness + '\u0000' + session.meta.sessionId;
+          const seen = found.get(key) ?? { harness: session.meta.harness, sessionId: session.meta.sessionId, days: new Set<string>(), paths: [] };
+          found.set(key, seen);
+          if (!seen.paths.includes(file.path)) seen.paths.push(file.path);
+          for (const m of session.messages) {
+            if (!m.timestamp) continue;
+            seen.days.add(dayOf(m.timestamp));
+            if (!seen.newest || m.timestamp > seen.newest) seen.newest = m.timestamp;
           }
-        } catch {
-          // One unreadable or oversized file never stops the harness; ingest's drift report names it.
         }
       }
-      return out;
+      for (const s of found.values()) {
+        yield {
+          harness: s.harness, conversationKey: s.sessionId, sessionId: s.sessionId, via: 'file' as const, days: [...s.days], ...(s.newest ? { newest: s.newest } : {}),
+          load: () => loadSession(s.harness, s.sessionId, s.paths),
+        };
+      }
     },
   };
+}
+
+async function* parseFile(path: string, format: TranscriptFormat): AsyncGenerator<ParsedSession> {
+  const detected = detectAdapter(path, { explicitFormat: format });
+  if (!detected.ok) return;
+  const gen = detected.adapter.parse(path);
+  try {
+    for (let step = await gen.next(); !step.done; step = await gen.next()) {
+      if (step.value.messages.length) yield step.value;
+    }
+  } catch {
+    // One unreadable or oversized file never stops the harness; ingest's drift report names it.
+  }
+}
+
+/** One session read again from every file that holds it (live, rotated, reset, deleted), messages merged once each, oldest first. */
+async function loadSession(harness: TranscriptFormat, sessionId: string, paths: string[]): Promise<ArchiveConversation | null> {
+  let meta: ParsedSession['meta'] | undefined;
+  let metaNewest = '';
+  const seen = new Set<string>();
+  const messages: TranscriptMessage[] = [];
+  for (const path of paths) {
+    for await (const session of parseFile(path, harness)) {
+      if (session.meta.harness !== harness || session.meta.sessionId !== sessionId) continue;
+      const last = session.messages[session.messages.length - 1]?.timestamp ?? '';
+      if (!meta || last > metaNewest) { meta = session.meta; metaNewest = last; }
+      for (const m of session.messages) {
+        const id = m.role + '\u0000' + m.timestamp + '\u0000' + m.text;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        messages.push(m);
+      }
+    }
+  }
+  if (!meta || messages.length === 0) return null;
+  messages.sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0));
+  return { harness, conversationKey: sessionId, session: { meta, messages }, via: 'file' };
 }
 
 export function fileArchiveReaders(roots?: HarnessRoot[]): ArchiveReader[] {

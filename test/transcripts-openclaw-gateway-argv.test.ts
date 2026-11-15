@@ -2,7 +2,7 @@
  * GST-2768 PR 2: the "openclaw gateway call" child process. Arguments go as an array with no shell, the binary is a
  * fixed name, the method is fixed, and every Gateway-supplied value (a session key that looks like an option, shell
  * metacharacters) reaches the child only inside the JSON value of --params, so it can never become an option or change
- * what runs. The token goes through the environment, never argv. A fake openclaw records its argv.
+ * what runs. The token and the Gateway URL go through the environment, never argv. A fake openclaw records its argv.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -18,7 +18,7 @@ const HOSTILE = ['--url=ws://attacker.invalid', '-rf', '$(touch ' + join(dir, 'p
 writeFileSync(bin, `#!${process.execPath}
 const fs = require('node:fs');
 const argv = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv, token: process.env.OPENCLAW_GATEWAY_TOKEN ?? null }) + '\\n');
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv, token: process.env.OPENCLAW_GATEWAY_TOKEN ?? null, url: process.env.OPENCLAW_GATEWAY_URL ?? null }) + '\\n');
 const method = argv[2];
 const params = JSON.parse(argv[argv.indexOf('--params') + 1]);
 if (method === 'sessions.list') {
@@ -34,18 +34,19 @@ describe('openclaw gateway call child process', () => {
     const reader = openclawGatewayReader({ transport: cliGatewayTransport({ bin, url: 'ws://127.0.0.1:18789', token: 'tok-synthetic-0001', timeoutMs: 5_000 }) });
     const convs = await reader.list();
     expect(convs.map(c => c.conversationKey)).toEqual(HOSTILE);
-    const calls = readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l) as { argv: string[]; token: string | null });
+    const calls = readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l) as { argv: string[]; token: string | null; url: string | null });
     expect(calls.length).toBe(1 + HOSTILE.length);
-    for (const { argv, token } of calls) {
+    for (const { argv, token, url } of calls) {
       expect(token).toBe('tok-synthetic-0001');
+      expect(url).toBe('ws://127.0.0.1:18789');
       expect(argv.join(' ')).not.toContain('tok-synthetic-0001');
-      expect(argv.length).toBe(10);
+      expect(argv.length).toBe(8);
       expect(argv.slice(0, 2)).toEqual(['gateway', 'call']);
       expect(['sessions.list', 'chat.history']).toContain(argv[2]);
       expect(argv[3]).toBe('--json');
       expect(argv[4]).toBe('--params');
       expect(argv[5]!.startsWith('{')).toBe(true);
-      expect(argv.slice(6)).toEqual(['--timeout', '5000', '--url', 'ws://127.0.0.1:18789']);
+      expect(argv.slice(6)).toEqual(['--timeout', '5000']);
     }
     const historyKeys = calls.filter(c => c.argv[2] === 'chat.history').map(c => (JSON.parse(c.argv[5]!) as { sessionKey: string }).sessionKey);
     expect(historyKeys).toEqual(HOSTILE);

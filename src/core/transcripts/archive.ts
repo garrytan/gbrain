@@ -88,11 +88,27 @@ export interface ArchiveConversation {
   via?: 'gateway' | 'file';
 }
 
+/** One conversation found by a scan: its days and how to read it again; no message is held between the two. */
+export interface ArchiveScanEntry {
+  harness: TranscriptFormat;
+  conversationKey: string;
+  sessionId: string;
+  via?: 'gateway' | 'file';
+  /** Local days (dayOf) that hold at least one message. */
+  days: string[];
+  newest?: string;
+  load(): Promise<ArchiveConversation | null>;
+}
+
+export interface ArchiveScanOpts { sinceMs?: number; minMtimeMs?: number; dayOf: (ts: string) => string }
+
 export interface ArchiveReader {
   harness: TranscriptFormat;
   name: string;
   /** Every readable conversation (sinceMs narrows by activity). Throws a coded error; yields nothing partial. */
-  list(opts: { sinceMs?: number }): Promise<ArchiveConversation[]>;
+  list?(opts: { sinceMs?: number }): Promise<ArchiveConversation[]>;
+  /** Streaming form for large stores: one entry per conversation, parsed one file at a time and loaded again only for the days a run writes. */
+  scan?(opts: ArchiveScanOpts): AsyncIterable<ArchiveScanEntry>;
   /** Set when the harness has nothing to read on this machine: an informational line, never an error. */
   unavailable?: string;
 }
@@ -294,6 +310,24 @@ export async function defaultArchiveReaders(): Promise<ArchiveReader[]> {
   return fileArchiveReaders();
 }
 
+/** A list reader's conversations as scan entries (in memory already); a scan reader as it is. A list reader that throws yields nothing. */
+export async function* scanReader(reader: ArchiveReader, opts: ArchiveScanOpts): AsyncGenerator<ArchiveScanEntry> {
+  if (reader.scan) { yield* reader.scan(opts); return; }
+  const convs = reader.list ? await reader.list({ sinceMs: opts.sinceMs }) : [];
+  for (const conv of convs) {
+    if (conv.session.messages.length === 0) continue;
+    const stamps = conv.session.messages.map(m => m.timestamp).filter(Boolean);
+    yield {
+      harness: conv.harness, conversationKey: conv.conversationKey, sessionId: conv.session.meta.sessionId, ...(conv.via ? { via: conv.via } : {}),
+      days: [...new Set(stamps.map(opts.dayOf))], newest: stamps.sort().pop(), load: async () => conv,
+    };
+  }
+}
+
+/** A run writes its pages in batches of this many conversation-days or bytes, so memory stays bounded on a large store. */
+const FLUSH_DAYS = 200;
+const FLUSH_BYTES = 8 * 1024 * 1024;
+
 interface DayWrite {
   outcome: ArchiveDayOutcome;
   parts: RenderedPart[];
@@ -356,44 +390,46 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
 
   const readers = opts.readers ?? await defaultArchiveReaders();
   const sinceMs = opts.mode === 'run' ? Date.parse(from + 'T00:00:00.000Z') - 2 * 86_400_000 : undefined;
-  const conversations: ArchiveConversation[] = [];
+  const minMtimeMs = opts.mode === 'backfill' ? Date.parse(from + 'T00:00:00.000Z') - 2 * 86_400_000 : sinceMs;
+  const dayOf = (ts: string) => localDay(ts, tz.timezone);
+  const entries: ArchiveScanEntry[] = [];
   for (const reader of readers) {
     if (reader.unavailable) { result.info.push(reader.unavailable); continue; }
     try {
-      const convs = await reader.list({ sinceMs });
-      if (convs.length === 0) result.info.push('no readable sessions for ' + reader.harness + '; use gbrain connectors or an export with gbrain transcripts ingest');
-      conversations.push(...convs);
+      let found = 0;
+      for await (const entry of scanReader(reader, { sinceMs, minMtimeMs, dayOf })) { entries.push(entry); found++; }
+      if (found === 0) result.info.push('no readable sessions for ' + reader.harness + '; use gbrain connectors or an export with gbrain transcripts ingest');
     } catch (err) {
       if (classifyItemFailure(err).scope === 'run') throw err;
       const e = err as { code?: string; message?: string; fix?: Action };
       result.errors.push({ harness: reader.harness, reader: reader.name, code: e.code ?? 'archive_reader_failed', message: e.message ?? String(err), ...(e.fix ? { fix: e.fix } : {}) });
     }
   }
-  const gatewaySessions = new Set(conversations.filter(c => c.via === 'gateway').map(c => c.session.meta.sessionId));
-  const convs = conversations.filter(c => !(c.harness === 'openclaw' && c.via === 'file' && gatewaySessions.has(c.session.meta.sessionId)));
+  const gatewaySessions = new Set(entries.filter(c => c.via === 'gateway').map(c => c.sessionId));
+  const scanned = entries.filter(c => !(c.harness === 'openclaw' && c.via === 'file' && gatewaySessions.has(c.sessionId)));
 
   const ledger = new Map((await readArchiveLedger(engine, sourceId)).map(e => [e.harness + '.' + e.conversation_key_hash + '.' + e.day, e]));
   const legacy = await legacyCovered(engine, sourceId);
   const covered = (harness: string, day: string) => legacy.has(harness + '.' + day) || legacy.has('*.' + day);
 
-  interface Item { conv: ArchiveConversation; hash: string; days: string[] }
+  interface Item { entry: ArchiveScanEntry; hash: string; days: string[] }
   const items: Item[] = [];
   const allDays = new Set<string>();
-  for (const conv of convs) {
-    if (conv.session.messages.length === 0) continue;
-    const hash = transcriptFullId(conv.conversationKey);
-    const days = sliceSessionByDay(conv.session.messages, tz.timezone).map(s => s.day).filter(d => d >= from && d <= to);
+  for (const entry of scanned) {
+    const hash = transcriptFullId(entry.conversationKey);
     const live: string[] = [];
-    for (const day of days) {
-      if (covered(conv.harness, day)) {
-        result.days.push({ harness: conv.harness, conversation_key_hash: hash, day, status: 'skipped_legacy' });
+    for (const day of entry.days.filter(d => d >= from && d <= to)) {
+      if (covered(entry.harness, day)) {
+        result.days.push({ harness: entry.harness, conversation_key_hash: hash, day, status: 'skipped_legacy' });
         result.skipped_legacy++;
-      } else {
-        live.push(day);
-        allDays.add(day);
+        continue;
       }
+      const done = ledger.get(entry.harness + '.' + hash + '.' + day);
+      if (opts.mode === 'backfill' && done?.hash && !done.held && done.complete && day < today) { result.unchanged++; continue; }
+      live.push(day);
+      allDays.add(day);
     }
-    if (live.length) items.push({ conv, hash, days: live });
+    if (live.length) items.push({ entry, hash, days: live });
   }
   let allowed: Set<string> | null = null;
   if (opts.mode === 'backfill') {
@@ -408,22 +444,47 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
   const pageCeiling = dryRun ? Math.floor(PAGE_MAX_BYTES * PAGE_CEILING_FILL) : await transcriptPageCeiling(engine);
   const quietMs = (await configInt(engine, ARCHIVE_QUIET_MINUTES_KEY, DEFAULT_QUIET_MINUTES)) * 60_000;
   const groups = new Map<string, boolean>();
-  const writes: DayWrite[] = [];
   const pending: ArchiveDayOutcome[] = [];
+  const touched = new Set<string>();
+  let batch: DayWrite[] = [];
+  let batchBytes = 0;
+  const flushBatch = async () => {
+    if (!batch.length) return;
+    await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context }, batch);
+    for (const w of batch) {
+      if (w.outcome.status !== 'written' || !w.ledger) continue;
+      ledger.set(w.ledger.harness + '.' + w.ledger.conversation_key_hash + '.' + w.ledger.day, w.ledger);
+      touched.add(w.outcome.day);
+    }
+    batch = [];
+    batchBytes = 0;
+  };
 
   const hold = async (outcome: ArchiveDayOutcome, held: ArchiveHeld, prior: ArchiveLedgerEntry | undefined) => {
     Object.assign(outcome, { status: 'held', code: held.code, message: held.message });
     if (!dryRun) await writeLedger(engine, { ...(prior ?? {}), source_id: sourceId, harness: outcome.harness, conversation_key_hash: outcome.conversation_key_hash, day: outcome.day, held });
   };
 
-  for (const { conv, hash, days } of items) {
+  for (const { entry, hash, days } of items) {
     const todo = [...(allowed ? days.filter(d => allowed!.has(d)) : days)].sort().reverse();
     if (todo.length === 0) continue;
-    const outcomes = todo.map(day => ({ harness: conv.harness, conversation_key_hash: hash, day, status: 'planned' as ArchiveDayStatus } as ArchiveDayOutcome));
+    const outcomes = todo.map(day => ({ harness: entry.harness, conversation_key_hash: hash, day, status: 'planned' as ArchiveDayStatus } as ArchiveDayOutcome));
     pending.push(...outcomes);
-    const prior = (day: string) => ledger.get(conv.harness + '.' + hash + '.' + day);
+    const prior = (day: string) => ledger.get(entry.harness + '.' + hash + '.' + day);
     if (privacy.shared && !privacy.owner) {
       for (const o of outcomes) await hold(o, { code: 'archive_owner_unset', message: 'The brain is shared and names no owner member.' }, prior(o.day));
+      continue;
+    }
+    let conv: ArchiveConversation | null;
+    try {
+      conv = await entry.load();
+    } catch (err) {
+      conv = null;
+      for (const o of outcomes) Object.assign(o, { status: 'error', code: 'archive_reader_failed', message: (err instanceof Error ? err.message : String(err)).slice(0, 300) });
+      continue;
+    }
+    if (!conv) {
+      for (const o of outcomes) Object.assign(o, { status: 'error', code: 'archive_day_missing', message: 'the conversation could not be read again for this run' });
       continue;
     }
     let redacted: RedactedSession;
@@ -460,7 +521,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
       if (before?.hash === contentHash && !before.held && await pageExists(engine, sourceId, rendered.baseSlug)) { outcome.status = 'unchanged'; continue; }
       const lastTs = slice.messages[slice.messages.length - 1]?.timestamp;
       const quiet = !!lastTs && now.getTime() - Date.parse(lastTs) >= quietMs;
-      writes.push({
+      batch.push({
         outcome,
         parts: rendered.parts,
         harness: conv.harness,
@@ -469,26 +530,36 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
         hold: opts.mode === 'backfill' ? 'backfill' : (!complete && !quiet ? 'open' : 'release'),
         staleSlugs: Array.from({ length: Math.max(0, (before?.parts ?? 0) - rendered.parts.length) }, (_, i) => rendered.baseSlug + '-p' + (rendered.parts.length + i + 1)),
       });
+      batchBytes += rendered.parts.reduce((n, p) => n + p.content.length, 0);
+    }
+    if (batch.length >= FLUSH_DAYS || batchBytes >= FLUSH_BYTES) await flushBatch();
+  }
+  const indexFor = (days: Set<string>, view: Map<string, ArchiveLedgerEntry>): DayWrite[] => [...days].sort().map(day => {
+    const dayEntries: DayIndexEntry[] = [];
+    for (const e of view.values()) {
+      if (e.day !== day || !e.slug || e.held) continue;
+      dayEntries.push({ slug: e.slug, harness: e.harness, messages: e.messages ?? 0 });
+    }
+    const page = renderDayIndex(day, tz.timezone, dayEntries, privacy.shared ? [privacy.owner!] : undefined);
+    return { outcome: { harness: 'index', conversation_key_hash: '', day, status: 'planned', slug: page.slug }, parts: [page], harness: 'index', hold: null, staleSlugs: [] };
+  });
+  let indexWrites: DayWrite[] = [];
+  if (writeMode === 'repo') {
+    // A repo commit carries the last batch's days with their index pages, so a small run is one commit.
+    const view = new Map(ledger);
+    const days = new Set(touched);
+    for (const w of batch) if (w.ledger) { view.set(w.ledger.harness + '.' + w.ledger.conversation_key_hash + '.' + w.ledger.day, w.ledger); days.add(w.outcome.day); }
+    indexWrites = indexFor(days, view);
+    batch.push(...indexWrites);
+    await flushBatch();
+  } else {
+    await flushBatch();
+    if (touched.size) {
+      indexWrites = indexFor(touched, ledger);
+      await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context }, indexWrites);
     }
   }
-
-  if (writes.length) {
-    const touched = new Set(writes.map(w => w.outcome.day));
-    const indexWrites: DayWrite[] = [];
-    for (const day of touched) {
-      const entries: DayIndexEntry[] = [];
-      const pendingByKey = new Map(writes.filter(w => w.outcome.day === day).map(w => [w.harness + '.' + w.outcome.conversation_key_hash, w]));
-      for (const e of ledger.values()) {
-        if (e.day !== day || !e.slug || e.held || pendingByKey.has(e.harness + '.' + e.conversation_key_hash)) continue;
-        entries.push({ slug: e.slug, harness: e.harness, messages: e.messages ?? 0 });
-      }
-      for (const w of pendingByKey.values()) entries.push({ slug: w.outcome.slug!, harness: w.harness, messages: w.outcome.messages ?? 0 });
-      const page = renderDayIndex(day, tz.timezone, entries, privacy.shared ? [privacy.owner!] : undefined);
-      indexWrites.push({ outcome: { harness: 'index', conversation_key_hash: '', day, status: 'planned', slug: page.slug }, parts: [page], harness: 'index', hold: null, staleSlugs: [] });
-    }
-    await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context }, [...writes, ...indexWrites]);
-    for (const w of indexWrites) if (w.outcome.status === 'written' || w.outcome.status === 'unchanged') result.index_pages.push(w.outcome.slug!);
-  }
+  for (const w of indexWrites) if (w.outcome.status === 'written' || w.outcome.status === 'unchanged') result.index_pages.push(w.outcome.slug!);
 
   pending.sort((a, b) => b.day.localeCompare(a.day));
   result.days.push(...pending);
@@ -610,10 +681,15 @@ export async function archiveStatus(engine: BrainEngine, opts: { sourceId?: stri
     const row = { harness: reader.harness, reader: reader.name, conversations: 0, newest_session_day: null as string | null, newest_archived_day: archived[archived.length - 1] ?? null };
     if (reader.unavailable) { out.harnesses.push({ ...row, info: reader.unavailable }); continue; }
     try {
-      const convs = await reader.list({});
-      const newest = convs.flatMap(c => c.session.messages.map(m => m.timestamp)).filter(Boolean).sort().pop();
-      out.harnesses.push({ ...row, conversations: convs.length, newest_session_day: newest ? localDay(newest, pinned ?? configured) : null,
-        ...(convs.length ? {} : { info: 'no readable sessions for ' + reader.harness + '; use gbrain connectors or an export with gbrain transcripts ingest' }) });
+      const zone = pinned ?? configured;
+      let conversations = 0;
+      let newest: string | undefined;
+      for await (const entry of scanReader(reader, { dayOf: ts => localDay(ts, zone) })) {
+        conversations++;
+        if (entry.newest && (!newest || entry.newest > newest)) newest = entry.newest;
+      }
+      out.harnesses.push({ ...row, conversations, newest_session_day: newest ? localDay(newest, zone) : null,
+        ...(conversations ? {} : { info: 'no readable sessions for ' + reader.harness + '; use gbrain connectors or an export with gbrain transcripts ingest' }) });
     } catch (err) {
       const e = err as { code?: string; message?: string; fix?: Action };
       out.errors.push({ harness: reader.harness, reader: reader.name, code: e.code ?? 'archive_reader_failed', message: e.message ?? String(err), ...(e.fix ? { fix: e.fix } : {}) });

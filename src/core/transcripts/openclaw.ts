@@ -49,14 +49,29 @@ export function isOpenclawCheckpointFile(path: string): boolean {
 }
 
 /**
- * GST-2768: the documented archived transcript variants OpenClaw keeps under sessions/: `<id>.jsonl.reset.<stamp>`
- * and `<id>.jsonl.deleted.<stamp>`, which OpenClaw 2026.11.3 writes zstd-compressed with a `.zst` suffix (recorded:
- * `<id>.jsonl.deleted.2026-11-15T05-43-50.473Z.<hex>.zst`). Same line format as a live session file.
+ * GST-2768: the retained transcript archives OpenClaw keeps under sessions/ (its isRetainedSessionTranscriptArchiveName,
+ * OpenClaw 2026.10.9 and 2026.11.3): `<id>.jsonl.reset.<stamp>`, `<id>.jsonl.deleted.<stamp>` and the legacy
+ * pre-compaction backup `<id>.jsonl.bak.<stamp>`, each optionally `.<32 hex>` and zstd `.zst` (recorded on both
+ * versions: `<id>.jsonl.deleted.2026-11-15T06-38-21.539Z.<hex>.zst`). Same line format as a live session file, so they
+ * are read; two files of one session merge in the archive reader.
  */
-const ARCHIVED_RE = /\.jsonl\.(?:reset|deleted)\.[^/\\]+$/;
+const ARCHIVED_RE = /\.jsonl\.(?:reset|deleted|bak)\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:\.\d{3})?Z(?:\.[0-9a-f]{32})?(?:\.zst)?$/;
 
 export function isOpenclawArchivedFile(path: string): boolean {
   return ARCHIVED_RE.test(path);
+}
+
+/**
+ * Files OpenClaw keeps beside sessions that are never read as conversations: migration rollback copies
+ * (`*.migrated`, `*.migrated.<n>` and `<id>.jsonl.pre-doctor-<kind>-repair-<stamp>.bak`, its
+ * isMigrationArchiveArtifactName: the original of a transcript already imported into the session database, which
+ * the Gateway serves) and Doctor's recovery copies of a zero-byte transcript (`<id>.jsonl.bak-<pid>-<timestamp>`).
+ * Reading them would count one conversation twice.
+ */
+const SKIPPED_RE = /(?:\.migrated(?:\.\d+)?|\.jsonl\.pre-doctor-[a-z-]+-repair-[0-9TZ:.-]+\.bak|\.jsonl\.bak-\d+-[0-9TZ:.-]+)$/;
+
+export function isOpenclawSkippedArtifact(path: string): boolean {
+  return SKIPPED_RE.test(path);
 }
 
 async function readSessionText(path: string): Promise<string> {

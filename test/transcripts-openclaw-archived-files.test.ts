@@ -26,7 +26,7 @@ describe('openclaw archived session files', () => {
   const text = readFileSync(AGENT_FIXTURE, 'utf8');
   const live = join(root, 'live-1.jsonl');
   const reset = join(root, 'reset-1.jsonl.reset.2026-11-15T05-40-00.000Z');
-  const deleted = join(root, 'deleted-1.jsonl.deleted.2026-11-15T05-43-50.473Z.9f3a1c.zst');
+  const deleted = join(root, 'deleted-1.jsonl.deleted.2026-11-15T05-43-50.473Z.9f3a1c0d4e5b6a7f8091a2b3c4d5e6f7.zst');
   const checkpoint = join(root, 'live-1.checkpoint.11111111-aaaa-bbbb-cccc-222222222222.jsonl');
   writeFileSync(live, text);
   writeFileSync(reset, text);

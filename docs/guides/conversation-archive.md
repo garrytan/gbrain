@@ -37,8 +37,10 @@ days already written. `run` covers today and the previous `transcripts.archive.r
 
 `backfill` needs `--from` (and takes `--to`, default today). One run writes at most
 `transcripts.archive.backfill_days_per_run` days, newest first; `status` and the run output say how many wait for
-the next run. Backfilled pages are searchable by keyword at once, and their embedding is held until you approve its
-cost with `gbrain embed --held`.
+the next run, and the next run skips the days already finished. A run reads each session file once to learn its
+days, then reads again only the conversations on the days it writes, and writes them in batches, so a folder of
+thousands of sessions stays bounded in memory. Backfilled pages are searchable by keyword at once, and their
+embedding is held until you approve its cost with `gbrain embed --held`.
 
 ## Old archive folders
 
@@ -75,16 +77,23 @@ private conversations never land in the shared repository.
 Current OpenClaw keeps live sessions in a database owned by its Gateway. gbrain reads them with
 `openclaw gateway call` (`sessions.list`, then `chat.history` per session), so the `openclaw` CLI must be on
 `PATH`. Point it at a Gateway with `GBRAIN_OPENCLAW_GATEWAY_URL` and pass its token with
-`GBRAIN_OPENCLAW_GATEWAY_TOKEN`. Errors map to `archive_gateway_unreachable`, `archive_gateway_auth` and
-`archive_gateway_failed`; a failed read leaves the archive ledger unchanged, so the next run retries.
+`GBRAIN_OPENCLAW_GATEWAY_TOKEN`; gbrain hands both to `openclaw` through its environment (`OPENCLAW_GATEWAY_URL`,
+`OPENCLAW_GATEWAY_TOKEN`), never on the command line. Errors map to `archive_gateway_unreachable`,
+`archive_gateway_auth` and `archive_gateway_failed`; a failed read leaves the archive ledger unchanged, so the next
+run retries. Checked against OpenClaw 2026.10.9 and 2026.11.3, which list sessions and return history the same way.
 
-Session files OpenClaw archives on disk are read too: `<id>.jsonl.reset.<stamp>` and the zstd-compressed
-`<id>.jsonl.deleted.<stamp>.<hex>.zst`.
+Session files OpenClaw keeps on disk are read too, even when the Gateway is down: `<id>.jsonl.reset.<stamp>`, the
+zstd-compressed `<id>.jsonl.deleted.<stamp>.<hex>.zst` and the legacy compact backup `<id>.jsonl.bak.<stamp>`.
+Several files of one session merge into one conversation. Migration copies (`*.migrated`, `*.migrated.<n>`,
+`<id>.jsonl.pre-doctor-*-repair-<stamp>.bak`) and Doctor's recovery copies (`<id>.jsonl.bak-<pid>-<stamp>`) are
+skipped: their sessions live in the Gateway's database, which the next run with the Gateway up reads.
 
 Two OpenClaw limits to know:
 
 - `sessions.list` does not list archived sessions, so a session archived before gbrain first read it is only
   found through its file on disk.
+- On 2026.10.9 a session created by an operator has no `chatType`, so the archive treats it as unverified and
+  keeps it to the owner.
 - `sessions.reset` keeps the same session id and the Gateway then returns only the messages after the reset. The
   archive keeps a day page it already wrote whenever the source now holds fewer messages for that day (day status
   `kept`), so a reset never shrinks the archive.
