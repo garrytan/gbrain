@@ -1547,7 +1547,8 @@ export class PGLiteEngine implements BrainEngine {
        ORDER BY score DESC, page_id ASC, chunk_id ASC
        LIMIT $3 OFFSET $4`;
 
-    const { rows: strict } = await this.db.query(keywordSql, params);
+    // GST-2762: the any-word fill's call runs only the retry; the strict rows are the caller's already.
+    const { rows: strict } = opts?.orFill ? { rows: [] } : await this.db.query(keywordSql, params);
     // D2 fix (fix/title-retrieval-arm): when the strict AND finds nothing,
     // retry ONCE with OR-of-terms. Opt-in via SearchOpts.orFallback (Reviewer
     // F1): only hybridSearch's recall arm relaxes; precision consumers keep

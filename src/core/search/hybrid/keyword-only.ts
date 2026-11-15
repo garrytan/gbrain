@@ -22,6 +22,8 @@ import { collapsePool, prioritize } from './rank.ts';
 import { readGeneratedPages } from '../provenance-demotion.ts';
 import { warnOncePerProcess } from '../../utils.ts';
 import { hasCJK } from '../../cjk.ts';
+import { clampSearchLimit } from '../../engine.ts';
+import { searchLimitCap } from '../eval-pool-depth.ts';
 
 const pagesOf = (r: SearchResult) => [r.slug, ...(r.collapsed ?? []).map(c => c.slug), ...(r.redirect_to ? [r.redirect_to] : [])].map(slug => `${r.source_id ?? 'default'}:${slug}`);
 
@@ -113,8 +115,13 @@ async function anyWordFill(req: HybridRequest, lexical: LexicalArms, postFusionO
   const heldPages = new Set(pool.flatMap(pagesOf));
   let candidates: SearchResult[];
   try {
-    candidates = (await engine.searchKeyword(query, { ...searchOpts, ...(opts?.useCache === false ? {} : { keywordTimeoutCache: true }), orFill: true }))
-      .filter(r => r.keyword_fill === true && !heldPages.has(pagesOf(r)[0]!));
+    const anyWord = await engine.searchKeyword(query, { ...searchOpts, ...(opts?.useCache === false ? {} : { keywordTimeoutCache: true }), orFill: true });
+    // Pages the keyword arm returned are left out, the rest fit the arm's limit, each scored below the arm's lowest row.
+    const armPages = new Set(keywordResults.map(r => r.page_id));
+    const floor = Math.min(...keywordResults.map(r => r.score));
+    const top = Math.max(...anyWord.map(r => r.score));
+    candidates = anyWord.filter(r => r.keyword_fill === true && !armPages.has(r.page_id)).slice(0, clampSearchLimit(searchOpts.limit, 20, searchLimitCap()) - keywordResults.length)
+      .map(r => ({ ...r, score: floor * 0.5 * (top > 0 ? r.score / top : 1) })).filter(r => !heldPages.has(pagesOf(r)[0]!));
   } catch (err) {
     pushDegraded(degraded, 'keyword_candidates_incomplete', isTimeoutError(err) || isKeywordSkippedAfterTimeout(err) ? 'timeout' : 'provider_error');
     return [];

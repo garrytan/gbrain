@@ -1234,7 +1234,8 @@ export class PostgresEngine implements BrainEngine {
         const boundParams = params.map((v, i) => i === 0 ? collapseWebsearchDashRuns(queryText) : i === rankIdx && !opts?.rankQuery ? collapseWebsearchDashRuns(rankText) : v);
         return tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
       }, { alwaysTransaction: true, jitOff: true, settings: relaxed || candidates !== pageJoin ? { statement_timeout: statementTimeout, enable_seqscan: 'off', ...KEYWORD_STATEMENT_SETTINGS } : { statement_timeout: statementTimeout, ...KEYWORD_STATEMENT_SETTINGS } }));
-    const strict = await runKeyword(query);
+    // GST-2762: the any-word fill's call runs only the retry; the strict rows are the caller's already.
+    const strict = opts?.orFill ? [] : await runKeyword(query);
     if (Number(strict[0]?.bounded_rows) >= KEYWORD_RANK_CANDIDATES) opts?.onKeywordIncomplete?.('candidate_budget');
     // D2 fix (fix/title-retrieval-arm): when the strict AND finds nothing,
     // retry ONCE with OR-of-terms through the SAME scoped wrapper (a fresh

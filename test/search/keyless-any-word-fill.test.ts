@@ -12,7 +12,7 @@
  */
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import type { SearchResult } from '../../src/core/types.ts';
+import type { HybridSearchMeta, SearchResult } from '../../src/core/types.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { operationsByName } from '../../src/core/operations.ts';
 import { chooseFill } from '../../src/core/ops/search-fill.ts';
@@ -368,6 +368,19 @@ for (const kind of testBackends()) {
       expect(rows.map(r => r.slug)).not.toContain(CAROL);
     });
 
+    test('a failed any-word lookup keeps the all-words rows and reports the keyword arm incomplete', async () => {
+      setSystemTime(new Date('2026-11-15T00:00:00Z'));
+      const timeout = Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+      const failing = new Proxy(engine, { get: (target, prop) => prop === 'searchKeyword'
+        ? (q: string, o?: { orFill?: boolean }) => o?.orFill ? Promise.reject(timeout) : target.searchKeyword(q, o as never)
+        : Reflect.get(target, prop, target) });
+      let meta: HybridSearchMeta | undefined;
+      const rows = await filledSearch(failing, QUERY, { limit: 20, expansion: false, onMeta: m => { meta = m; } });
+      expect(rows).toEqual(await hybridSearch(fillOff(engine), QUERY, { limit: 20, expansion: false }));
+      expect(meta?.degraded?.find(d => d.stage === 'keyword_candidates_incomplete')?.reason).toBe('timeout');
+      setSystemTime();
+    });
+
     test('without orFill the keyword arm keeps its strict rows only (the path brains with embeddings take)', async () => {
       const rows = await engine.searchKeyword(QUERY, { limit: 50, orFallback: true });
       expect(rows.map(r => r.slug).sort()).toEqual(['company/decisions', 'company/pricing']);
@@ -376,17 +389,21 @@ for (const kind of testBackends()) {
   });
 }
 
-test('a failed any-word fill keeps the all-words rows and reports the keyword arm incomplete', async () => {
-  const reasons: string[] = [];
+test('with orFill the keyword arm runs only the any-word retry: no strict rows, probe or handle read, and every row tagged as fill', async () => {
+  const calls: string[] = [];
   const row = { page_id: 1, slug: 'company/pricing', score: 0.5 } as never;
   const rows = await keywordArmRows<never>({
-    query: 'sso starter plan', strict: [row], orFallback: true, orFill: true, limit: 10, offset: 0, toResult: r => r,
-    runProbe: async () => [],
-    runRelaxed: async () => { throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }); },
-    onIncomplete: reason => reasons.push(reason),
+    query: 'sso starter people/alice-example', strict: [row], orFallback: true, orFill: true, limit: 10, offset: 0, toResult: r => r,
+    runProbe: async () => { calls.push('probe'); return []; },
+    runHandles: async () => { calls.push('handles'); return []; },
+    runRelaxed: async () => { calls.push('relaxed'); return [{ page_id: 2, slug: 'company/calls/carol-example', score: 0.2 }] as never[]; },
   });
-  expect(rows.map(r => r.slug)).toEqual(['company/pricing']);
-  expect(reasons).toEqual(['timeout']);
+  expect(calls).toEqual(['relaxed']);
+  expect(rows.map(r => [r.slug, r.keyword_relaxed, r.keyword_fill])).toEqual([['company/calls/carol-example', true, true]]);
+  await expect(keywordArmRows<never>({
+    query: 'sso starter plan', strict: [], orFallback: true, orFill: true, limit: 10, offset: 0, toResult: r => r, runProbe: async () => [],
+    runRelaxed: async () => { throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }); },
+  })).rejects.toThrow('statement timeout');
 });
 
 describe('chooseFill: the fill is returned only when it leaves every other row as it was', () => {
