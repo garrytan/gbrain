@@ -102,6 +102,8 @@ for (const kind of testBackends()) {
       __setEmbedTransportForTests(null);
       resetGateway();
       await engine.executeRaw("DELETE FROM config WHERE key LIKE 'maintenance.%' OR key = 'autopilot.last_global_at'");
+      // GST-2768: the conversation archive is its own upkeep item on a personal brain (test/transcripts-archive-maintenance.test.ts); these suites pin the cycle and embed steps without it.
+      await engine.setConfig('transcripts.archive.enabled', 'false');
       await engine.executeRaw("DELETE FROM sources WHERE id <> 'default'");
       await engine.executeRaw("UPDATE sources SET config = '{}'::jsonb WHERE id = 'default'");
       await engine.executeRaw('DELETE FROM facts');

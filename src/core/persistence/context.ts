@@ -95,6 +95,10 @@ export async function withCoordinatedWrite<T>(engine: BrainEngine, sourceIds: st
     catch (error) { if (!failed) throw error; }
   }
 }
+/** True inside a coordinated write (the coordinator publishing): a writer here must not submit and wait on its own coordinator. */
+export function insideCoordinatedWrite(): boolean {
+  return publication.getStore()?.active === true;
+}
 /**
  * #5984 bulk: inside one coordinated write that publishes several requests,
  * names the next request as the actor of the rows it writes. One statement; the
