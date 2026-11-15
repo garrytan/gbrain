@@ -1,0 +1,23 @@
+{
+  "sessionKey": "agent:dev:example-scratch-alpha",
+  "sessionId": "318c6a69-4cfa-4aba-bda5-8babbb465c4e",
+  "hasMore": false,
+  "totalMessages": 3,
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "hello from synthetic user"
+        }
+      ],
+      "timestamp": 1794721281750,
+      "__openclaw": {
+        "id": "44f47e7a-6b14-4125-bd59-4fc4432647b0",
+        "seq": 1,
+        "recordTimestampMs": 1794721281750
+      }
+    }
+  ]
+}

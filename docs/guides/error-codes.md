@@ -342,6 +342,76 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | The change needs the owner's explicit approval before it can proceed. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
 
+### archive_audience_unproven
+
+<a id="archive_audience_unproven"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The conversation archive could not check whether the brain is shared (its client-usage read failed), so it wrote nothing this run. | A brain with no audience declared counts as shared when several clients use it; without that read a page written as personal could be open to other members, so the run publishes nothing. | Rerun gbrain transcripts archive run; if it repeats, declare the audience with gbrain config set brain.audience personal\|shared. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/conversation-archive.md#privacy](../../docs/guides/conversation-archive.md#privacy)
+
+### archive_gateway_auth
+
+<a id="archive_gateway_auth"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The OpenClaw Gateway refused the credential the conversation archive used, so no OpenClaw conversation was read this run; the archive ledger is unchanged. | The Gateway token or device pairing belongs to the user; gbrain never mints or edits one. | Ask the user to give gbrain the Gateway token (GBRAIN_OPENCLAW_GATEWAY_TOKEN, or gateway.auth in the OpenClaw config on this machine), then rerun gbrain transcripts archive run. Run: gbrain transcripts archive status --json | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/conversation-archive.md#openclaw](../../docs/guides/conversation-archive.md#openclaw)
+
+### archive_gateway_failed
+
+<a id="archive_gateway_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The OpenClaw Gateway answered the conversation archive with an error, so no OpenClaw conversation was read this run; the archive ledger is unchanged. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Rerun gbrain transcripts archive run; if it repeats, report the redacted message from gbrain transcripts archive status --json. Run: gbrain transcripts archive status --json | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/conversation-archive.md#openclaw](../../docs/guides/conversation-archive.md#openclaw)
+
+### archive_gateway_unreachable
+
+<a id="archive_gateway_unreachable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The conversation archive could not reach the OpenClaw Gateway, so no OpenClaw conversation was read this run; the archive ledger is unchanged, so the next run retries safely. | Current OpenClaw keeps live sessions in SQLite owned by its Gateway, and gbrain reads them only through the Gateway's documented RPCs (openclaw gateway call), never the file. | Start the Gateway (openclaw gateway) or point gbrain at it with GBRAIN_OPENCLAW_GATEWAY_URL, then rerun gbrain transcripts archive run. Run: gbrain transcripts archive status --json | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/conversation-archive.md#openclaw](../../docs/guides/conversation-archive.md#openclaw)
+
+### archive_owner_unset
+
+<a id="archive_owner_unset"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| On a shared brain the conversation archive held every day and wrote nothing, because no owner member is named and an archive page without readable_by would be open to the whole source. | Only the operator of the brain host can change what blocks this. | Ask the user which enabled member owns the brain, run gbrain access owner set <member>, then rerun the archive; held days are written then. Run: gbrain access owner | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/conversation-archive.md#privacy](../../docs/guides/conversation-archive.md#privacy)
+
+### archive_redaction_failed
+
+<a id="archive_redaction_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Redaction failed for a conversation, so the conversation archive held its days instead of writing them; the next run retries them. | Archive pages are written only after redaction succeeded over the whole session; a day is never written unredacted and never dropped. | Rerun gbrain transcripts archive run; if the day stays held, check the user redaction pattern file named in the held message. Run: gbrain transcripts archive status --json | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/conversation-archive.md#privacy](../../docs/guides/conversation-archive.md#privacy)
+
+### archive_run_busy
+
+<a id="archive_run_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another conversation archive run holds this source, so this run read and wrote nothing. | A run decides each day from the archive ledger it read when it started, so two runs at once could publish older history over newer; runs on one source take turns on a database lease. | Wait for the other run to finish, then rerun gbrain transcripts archive run. Run: gbrain status --section locks --json | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/conversation-archive.md#openclaw](../../docs/guides/conversation-archive.md#openclaw)
+
 ### atom_drain_incomplete
 
 <a id="atom_drain_incomplete"></a>

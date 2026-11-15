@@ -116,6 +116,37 @@ async function segmentedSampleWindows(engine: BrainEngine, pageId: number): Prom
   return [await forward(0), await forward(Math.max(0, middle)), tail.slice(-JUNK_SAMPLE_CHARS)];
 }
 
+/**
+ * GST-2768: holds that apply to a page of any size. A small page is otherwise unmetered, so the conversation archive's
+ * backfill (archive_backfill: waits for the owner's approval of the previewed cost) and its open day (archive_open_day:
+ * waits until the day closes or goes quiet) name the page here and the embed paths skip it until then.
+ */
+export const ANY_SIZE_HOLD_REASONS: readonly string[] = ['archive_backfill', 'archive_open_day'];
+
+async function smallPageHold(engine: BrainEngine, pageId: number, approved: boolean): Promise<PageEmbedDecision> {
+  const [row] = await engine.executeRaw<{ reason: string }>(
+    "SELECT reason FROM page_embedding_budget WHERE page_id = $1 AND state = 'held' AND reason = ANY($2::text[])", [pageId, [...ANY_SIZE_HOLD_REASONS]]);
+  if (!row) return { kind: 'unmetered' };
+  if (!approved) return { kind: 'held', reason: row.reason };
+  await engine.executeRaw("UPDATE page_embedding_budget SET state = 'open', reason = NULL, updated_at = now() WHERE page_id = $1", [pageId]);
+  return { kind: 'unmetered' };
+}
+
+/**
+ * An archive page names its hold in frontmatter (transcript_archive.embedding_hold) from its first write. The first
+ * embedding plan for it, before any budget row exists, records that hold, so a page published ahead of its hold row
+ * is never embedded without the owner's approval. An approved page keeps its row (open), so the marker holds once.
+ */
+async function frontmatterHold(engine: BrainEngine, pageId: number): Promise<string | null> {
+  const [row] = await engine.executeRaw<{ marker: string | null; has_row: boolean }>(
+    `SELECT p.frontmatter->'transcript_archive'->>'embedding_hold' AS marker,
+       EXISTS (SELECT 1 FROM page_embedding_budget b WHERE b.page_id = p.id) AS has_row
+     FROM pages p WHERE p.id = $1`, [pageId]);
+  if (!row?.marker || row.has_row || !ANY_SIZE_HOLD_REASONS.includes(row.marker)) return null;
+  await engine.executeRaw("INSERT INTO page_embedding_budget (page_id, state, reason) VALUES ($1, 'held', $2) ON CONFLICT (page_id) DO NOTHING", [pageId, row.marker]);
+  return row.marker;
+}
+
 /** Hold a large page's embedding until the user approves it (`reason` names why). Idempotent; never touches open spend. */
 export async function holdPageEmbedding(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, reason: string): Promise<void> {
   await engine.executeRaw(`INSERT INTO page_embedding_budget (page_id, state, reason) VALUES ($1, 'held', $2)
@@ -131,8 +162,13 @@ export async function holdPageEmbedding(engine: Pick<BrainEngine, 'executeRaw'>,
 export async function planPageEmbedding(engine: BrainEngine, page: BudgetPage,
   stale: ReadonlyArray<{ chunk_index: number; chunk_text: string }>,
   opts: { signature?: string | null; approvedCapUsd?: number; maxMarkupRatio?: number } = {}): Promise<PageEmbedDecision> {
-  if (!isLargePageBytes(pageBodyBytes(page)) || stale.length === 0) return { kind: 'unmetered' };
+  if (stale.length === 0) return { kind: 'unmetered' };
   const approved = opts.approvedCapUsd !== undefined;
+  if (!approved) {
+    const marker = await frontmatterHold(engine, page.id);
+    if (marker) return { kind: 'held', reason: marker };
+  }
+  if (!isLargePageBytes(pageBodyBytes(page))) return smallPageHold(engine, page.id, approved);
   const configured = await resolvePageEmbedCapUsd(engine);
   const { rate, priced } = ledgerPricePerMTok(opts.signature);
   return engine.transaction(async tx => {

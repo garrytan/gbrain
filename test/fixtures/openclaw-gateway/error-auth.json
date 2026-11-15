@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "type": "gateway_request_error",
+    "code": "INVALID_REQUEST",
+    "message": "unauthorized: gateway token mismatch (use this gateway's gateway.auth.token or pair the device)",
+    "details": {
+      "code": "AUTH_TOKEN_MISMATCH",
+      "authReason": "token_mismatch",
+      "canRetryWithDeviceToken": false,
+      "recommendedNextStep": "update_auth_credentials"
+    },
+    "retryable": false
+  }
+}

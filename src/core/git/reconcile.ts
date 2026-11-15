@@ -90,12 +90,12 @@ const MOVED_REMOTE_ATTEMPTS = 4;
 /** The bound on one `gbrain git commit-push` child (a fetch, an in-memory merge and a push, repeated while the remote keeps moving). */
 export const COMMIT_PUSH_CHILD_TIMEOUT_MS = 600_000;
 
-/** Run `gbrain git commit-push <args> --path <root> --json` in a bounded child; its JSON document, or its refusal rethrown. */
-export async function commitPushChild(root: string, args: string[], timeoutMs = COMMIT_PUSH_CHILD_TIMEOUT_MS): Promise<Record<string, unknown>> {
+/** Run `gbrain git commit-push <args> --path <root> --json [-- <paths>]` in a bounded child; its JSON document, or its refusal rethrown. */
+export async function commitPushChild(root: string, args: string[], timeoutMs = COMMIT_PUSH_CHILD_TIMEOUT_MS, paths: readonly string[] = []): Promise<Record<string, unknown>> {
   const cli = resolveChildCliInvocation(process.env, process.execPath, process.argv[1], () => null);
   if (!cli) throw opError('git_push_unavailable', `This process could not locate its own CLI executable to reconcile ${root}; nothing changed.`,
     `Set ${CHILD_ENV.childCliOverride} to the path of the CLI executable and retry.`);
-  const child = await execFileBounded(cli.cmd, [...cli.argsPrefix, 'git', 'commit-push', ...args, '--path', root, '--json'],
+  const child = await execFileBounded(cli.cmd, [...cli.argsPrefix, 'git', 'commit-push', ...args, '--path', root, '--json', ...(paths.length ? ['--', ...paths] : [])],
     { timeout: timeoutMs, termGraceMs: 10_000, maxBuffer: 1024 * 1024, env: process.env, killTree: true });
   let doc: Record<string, unknown> | null = null;
   try { doc = JSON.parse(String(child.stdout).trim()); } catch { /* reported below */ }

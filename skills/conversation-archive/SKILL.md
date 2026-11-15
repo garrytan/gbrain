@@ -75,6 +75,7 @@ gbrain transcripts ingest ~/Downloads/conversations.json   # unzip first
 gbrain transcripts ingest                                  # discover harness logs
 gbrain transcripts ingest --max-bytes 4gb <store>          # oversized store (omit = per-format caps)
 gbrain transcripts status                                  # found vs imported gaps
+gbrain transcripts archive run                             # one page per conversation per local day (off until `archive on`)
 ```
 
 `--max-bytes` note: the cap is part of the `--since last` checkpoint

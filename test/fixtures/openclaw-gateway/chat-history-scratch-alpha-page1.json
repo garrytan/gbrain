@@ -1,0 +1,33 @@
+{
+  "sessionKey": "agent:dev:example-scratch-alpha",
+  "sessionId": "318c6a69-4cfa-4aba-bda5-8babbb465c4e",
+  "hasMore": true,
+  "nextOffset": 2,
+  "totalMessages": 3,
+  "messages": [
+    {
+      "role": "user",
+      "content": "what is the capital of acme-example land",
+      "timestamp": 1794721320954,
+      "provenance": {
+        "kind": "external_user"
+      },
+      "__openclaw": {
+        "id": "7e7446df-a66b-422d-81e3-83d4bcaa5aa9",
+        "seq": 2,
+        "recordTimestampMs": 1794721321423
+      }
+    },
+    {
+      "role": "custom",
+      "content": "Your request couldn't be completed: No route-compatible authentication source is configured for openai.",
+      "timestamp": 1794721322162,
+      "customType": "run-failed-before-reply",
+      "__openclaw": {
+        "id": "2db6c3a7-e0d9-4bbe-8b4c-26967c2d315a",
+        "seq": 3,
+        "recordTimestampMs": 1794721322162
+      }
+    }
+  ]
+}

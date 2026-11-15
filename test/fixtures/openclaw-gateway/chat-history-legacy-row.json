@@ -1,0 +1,18 @@
+{
+  "_note": "DOC-SHAPED history for the row without chatType.",
+  "sessionKey": "agent:main:webhook:example-legacy-row",
+  "sessionId": "00000000-0000-4000-8000-000000000102",
+  "hasMore": false,
+  "totalMessages": 1,
+  "messages": [
+    {
+      "role": "user",
+      "content": "webhook ping from source-a",
+      "timestamp": 1794700200000,
+      "__openclaw": {
+        "id": "00000000-0000-4000-8000-0000000001b1",
+        "seq": 1
+      }
+    }
+  ]
+}
