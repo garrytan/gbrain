@@ -1,0 +1,1 @@
+The commit notifier now honours a source's sync setting: a source with sync turned off (config.syncEnabled=false) is no longer synced when HEAD moves, and a retry it owed is dropped. An explicit sync request still runs. To have commits sync that source again, turn sync back on with gbrain sources set-sync <id> on.

@@ -287,7 +287,9 @@ it and kept going; the receipt lists the hold (`held`, `held_count`) and
 - A symlink whose target does not exist is not a page: sync skips it and
   counts it (`skipped.symlink_dangling`) instead of holding it as unreadable,
   and releases an unreadable hold an older release wrote for it. A dangling
-  link at the path of a live page stays held, so the page is never deleted.
+  link at the path of a live page stays held, so the page is never deleted,
+  and so does a committed file whose working copy alone was replaced by a
+  dangling link.
 - The other repair codes (`invalid_frontmatter`, `rename_held`) stay
   consent-gated: unblock refuses them with the frontmatter repair preview to
   run ([held files](write-refusals.md#held-files-and-content-refusals)).
