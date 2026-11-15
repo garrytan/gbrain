@@ -22,6 +22,10 @@ GBrain is MIT-licensed and free to self-host, and it starts with no API keys: se
 | MCP from its guide | [ChatGPT](docs/mcp/CHATGPT.md), [Claude Desktop](docs/mcp/CLAUDE_DESKTOP.md), [Claude Cowork](docs/mcp/CLAUDE_COWORK.md), [Perplexity](docs/mcp/PERPLEXITY.md), [Grok Build](docs/mcp/GROK.md), [Grok Bot](docs/guides/grok-bot.md), [Muse](docs/guides/muse.md), [Windsurf and other stdio clients](#connect-gbrain-to-your-ai-client-mcp) |
 | Any other coding agent | Paste the [install prompt](#heres-how-to-self-host-it) below |
 
+## Stability
+
+New releases come out many times a day, but the install command below gives you the **stable channel**: a release reaches it only after the full test suite and a two-hour, 600,000-page load test pass on that exact release, and only when an important fix is waiting or stable is a week old. Updates are never installed without your say-so unless you turn on automatic upgrades. After an upgrade, gbrain shows a one-time notice listing what changed in behaviour. [docs/STABILITY.md](docs/STABILITY.md) explains how often stable moves, how to pin a version or go back, and what the faster alpha channel is for.
+
 ## Install
 
 > [!TIP]

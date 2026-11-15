@@ -97,6 +97,11 @@ export const SECTIONS: DocSection[] = [
         path: "INSTALL_FOR_AGENTS.md",
       },
       {
+        title: "docs/STABILITY.md",
+        description: "Which release the default install follows (the stable channel), how a release becomes stable, how often stable moves, staying on stable, pinning a version, going back, where behaviour changes are announced, and what the alpha channel is for.",
+        path: "docs/STABILITY.md",
+      },
+      {
         title: "docs/protocol/AGENT_OPERATOR_v1.md",
         description:
           "The agent operator contract: read `code`, follow `fix.next` (run / ask_user / tell_user_to_run / wait / report), run `fix.verify`. Error envelope, notices and mute, effects/actor/next table, consent and preapproval, exit codes, marker grammar, compatibility policy, first run, and how to make gbrain work better for your user.",
