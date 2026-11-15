@@ -18,9 +18,8 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -32,30 +31,17 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { labelSeveral, receiptOk, servesStatus, type ServesReceipt } from '../src/commands/access-serves.ts';
 import { setupRerunArgv } from '../src/core/setup/launcher-lanes.ts';
 import { servesPreflight } from '../src/commands/setup-serves.ts';
-import { refreshHookLaunchers } from '../src/core/setup/hook-launcher-refresh.ts';
-import { ownedEntryFingerprint } from '../src/core/bootstrap/adopted-connections.ts';
-import { readdirSync } from 'node:fs';
 import { addMember } from '../src/core/access/members.ts';
 import { unlabeledPeopleFoldersEntry } from '../src/commands/doctor/checks/unlabeled-people-folders.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import { addFolderRules } from '../src/commands/access-rules.ts';
 import { renderBrainFirstBlock, renderBrainFirstTurnRule, SERVES_SEVERAL_LINE } from '../src/core/setup/brain-first.ts';
-import { runCli, type CliResult } from './helpers/cli-spawn.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { brainWithPages, box, claudeMd, CLI, entryArgs, gbrain, PAGES, pageText, removeTempDirs, ROSTER, setup, setupReceipts, stdioKey, tempDir } from './helpers/setup-serves-box.ts';
 
-const ROSTER = ['alice-example', 'bob-example'];
-const PAGES: Record<string, string> = {
-  'people/alice-example/plan': 'alicecanary',
-  'people/bob-example/plan': 'bobcanary',
-  'people/carol-public': 'carolcanary',
-  'notes/world-topic': 'worldcanary',
-};
-const pageText = (slug: string, canary: string) => `---\ntype: note\ntitle: ${slug}\n---\n# ${slug}\n\nHarbor ledger notes ${canary}.\n`;
-const roots: string[] = [];
-afterAll(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }); });
-const tempDir = (prefix: string) => { const d = mkdtempSync(join(tmpdir(), prefix)); roots.push(d); return d; };
+afterAll(removeTempDirs);
 const mode = (path: string) => (statSync(path).mode & 0o777).toString(8);
 
 describe('brain-first text for the two shapes', () => {
@@ -278,65 +264,6 @@ describe('labelling refuses or reports what it cannot make safe (pglite, repo-le
   }, 60_000);
 });
 
-const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
-const CLEAN = { CLAUDE_CONFIG_DIR: undefined, CODEX_HOME: undefined, GBRAIN_SOURCE: undefined, GBRAIN_SURFACE: undefined, GBRAIN_HOOKS: undefined, GBRAIN_SETUP_ABORT_AFTER: undefined };
-interface Box { root: string; home: string; bin: string }
-
-function box(): Box {
-  const root = tempDir('gbrain-setup-serves-');
-  const home = join(root, 'home');
-  mkdirSync(home, { recursive: true });
-  const bin = join(root, 'bin', 'gbrain');
-  mkdirSync(join(root, 'bin'));
-  writeFileSync(bin, `#!/bin/sh\nexec '${process.execPath}' --no-env-file '${CLI}' "$@"\n`);
-  chmodSync(bin, 0o755);
-  return { root, home, bin };
-}
-const gbrain = (b: Box, args: string[], env: Record<string, string | undefined> = {}) => runCli(args, { env: { ...CLEAN, HOME: b.home, GBRAIN_HOME: b.home, OPENCLAW_STATE_DIR: join(b.root, 'openclaw-state'), OPENCLAW_PROFILE: undefined, HERMES_HOME: join(b.root, 'hermes-home'), ...env }, timeoutMs: 120_000 });
-async function setup(b: Box, args: string[]): Promise<CliResult & { doc: any }> {
-  const r = await gbrain(b, ['setup', ...args, '--gbrain-bin', b.bin]);
-  let doc: any = null;
-  if (args.includes('--json')) { try { doc = JSON.parse(r.stdout); } catch { doc = null; } }
-  return { ...r, doc };
-}
-async function brainWithPages(b: Box): Promise<void> {
-  expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
-  for (const [slug, canary] of Object.entries(PAGES)) expect((await gbrain(b, ['put', slug, '--content', pageText(slug, canary)])).exitCode).toBe(0);
-}
-const entry = (b: Box) => JSON.parse(readFileSync(join(b.home, '.claude.json'), 'utf8')).mcpServers.gbrain as { command: string; args: string[] };
-const entryArgs = (b: Box) => entry(b).args;
-/** setup's claude-code entry as it was before the launcher (#8426), still owned by its receipt, so post-upgrade rewrites it. */
-function staleEntry(b: Box): void {
-  const cfgPath = join(b.home, '.claude.json');
-  const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
-  cfg.mcpServers.gbrain = { ...cfg.mcpServers.gbrain, command: b.bin };
-  writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
-  const receiptPath = join(b.home, '.gbrain-connection-claude-code-gbrain.json');
-  const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
-  writeFileSync(receiptPath, JSON.stringify({ ...receipt, entry_hash: ownedEntryFingerprint(cfg.mcpServers.gbrain) }, null, 2));
-}
-const stdioKey = async (b: Box) => { const r = await gbrain(b, ['config', 'get', 'mcp.stdio_member']); return r.exitCode === 0 ? r.stdout.trim() : ''; };
-function fakeOpenclaw(b: Box): string {
-  const dir = join(b.root, 'oc-bin');
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'openclaw'), '#!/bin/sh\nexit 0\n');
-  chmodSync(join(dir, 'openclaw'), 0o755);
-  return dir;
-}
-/** Every setup connection receipt under the box's HOME. */
-function setupReceipts(b: Box): any[] {
-  const found: any[] = [];
-  const walk = (d: string) => { for (const e of readdirSync(d, { withFileTypes: true })) {
-    const p = join(d, e.name);
-    if (e.isDirectory()) walk(p);
-    else if (e.name.endsWith('.json')) { try { const j = JSON.parse(readFileSync(p, 'utf8')); if (j?.connection === 'local-stdio' && j?.setup_receipt_version) found.push(j); } catch { /* not JSON */ } }
-  } };
-  walk(b.home);
-  return found;
-}
-const claudeMd = (b: Box) => readFileSync(join(b.home, '.claude', 'CLAUDE.md'), 'utf8');
-const normalized = (doc: any) => JSON.parse(JSON.stringify(doc).replace(/\d{4}-\d\d-\d\dT[\d:.]+Z/g, 'T'));
-
 describe('gbrain setup --serves (spawned, PGLite)', () => {
   test('--serves several labels each person, proves it with bound reads, prints key paths never values; a re-run keeps it all', async () => {
     const b = box();
@@ -395,78 +322,6 @@ describe('gbrain setup --serves (spawned, PGLite)', () => {
     }
   }, 480_000);
 
-  test('--stdio-member refuses an unknown member, off claude-code and codex, with --instructions-only or --no-stdio-member, and on a host with OpenClaw or Hermes; nothing is written', async () => {
-    const b = box();
-    await brainWithPages(b);
-    for (const m of ROSTER) expect((await gbrain(b, ['access', 'member', 'add', m])).exitCode).toBe(0);
-    expect((await gbrain(b, ['access', 'owner', 'set', 'alice-example'])).exitCode).toBe(0);
-    const workspace = join(b.root, 'oc-workspace');
-    mkdirSync(workspace);
-    expect(existsSync(join(b.root, 'openclaw-state'))).toBe(false);
-    const refusals: Array<[string[], string, Record<string, string>]> = [
-      [['openclaw', '--serves', 'several', '--members', ROSTER.join(','), '--workspace', workspace, '--stdio-member', 'alice-example'], 'claude-code or codex', {}],
-      [['claude-code', '--instructions-only', '--serves', 'several', '--stdio-member', 'alice-example'], 'claude-code or codex', {}],
-      [['claude-code', '--stdio-member', 'alice-example', '--no-stdio-member'], 'not both', {}],
-      [['claude-code', '--stdio-member', 'Alice Example'], 'needs a member id', {}],
-      [['claude-code', '--stdio-member', 'alice-example'], 'OpenClaw is installed on this host', { PATH: `${fakeOpenclaw(b)}:${process.env.PATH}` }],
-      [['codex', '--serves', 'several', '--members', ROSTER.join(','), '--stdio-member', 'alice-example'], 'Hermes is installed on this host', { HERMES_HOME: b.root }],
-    ];
-    for (const [args, says, env] of refusals) {
-      const r = await gbrain(b, ['setup', ...args, '--gbrain-bin', b.bin], env);
-      expect(r.exitCode).toBe(2);
-      expect(r.stderr).toContain(says);
-      if (says.endsWith('on this host')) expect(r.stderr).toContain('gbrain auth create <name> --member <id>');
-      expect(await stdioKey(b)).toBe('');
-      expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
-    }
-    const unknown = await setup(b, ['claude-code', '--stdio-member', 'carol-example', '--json']);
-    expect(unknown.exitCode).not.toBe(0);
-    expect(unknown.stdout).toContain('not an enabled member of this brain');
-    expect(unknown.stdout).toContain('alice-example, bob-example');
-    expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
-    const labelled = await setup(b, ['openclaw', '--serves', 'several', '--members', ROSTER.join(','), '--workspace', workspace]);
-    expect(labelled.stdout + labelled.stderr).not.toContain('reads as alice-example');
-    expect(await stdioKey(b)).toBe('');
-  }, 360_000);
-
-  test('codex keeps an entry member on a bare re-run and --no-stdio-member removes it on a several-person brain; a plugin-served harness and serve on a shared host refuse the flag', async () => {
-    const b = box();
-    await brainWithPages(b);
-    for (const m of ROSTER) expect((await gbrain(b, ['access', 'member', 'add', m])).exitCode).toBe(0);
-    const codexArgs = () => (Bun.TOML.parse(readFileSync(join(b.home, '.codex', 'config.toml'), 'utf8')) as any).mcp_servers.gbrain.args as string[];
-    expect((await setup(b, ['codex', '--stdio-member', 'alice-example'])).exitCode).toBe(0);
-    expect(codexArgs().slice(-2)).toEqual(['--stdio-member', 'alice-example']);
-    const rerun = await setup(b, ['codex', '--json']);
-    expect(rerun.exitCode).toBe(0);
-    expect(rerun.doc.serves.stdio).toMatchObject({ member: 'alice-example', action: 'keep' });
-    expect(codexArgs().slice(-2)).toEqual(['--stdio-member', 'alice-example']);
-    const removed = await setup(b, ['codex', '--no-stdio-member', '--json']);
-    expect(removed.exitCode).toBe(0);
-    expect(removed.doc.serves.stdio).toMatchObject({ member: null, action: 'remove' });
-    expect(codexArgs()).not.toContain('--stdio-member');
-    expect(await stdioKey(b)).toBe('');
-
-    mkdirSync(join(b.home, '.claude'), { recursive: true });
-    writeFileSync(join(b.home, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'gbrain@gbrain': true } }));
-    const plugin = await gbrain(b, ['setup', 'claude-code', '--stdio-member', 'alice-example', '--gbrain-bin', b.bin]);
-    expect(plugin.exitCode).toBe(2);
-    expect(plugin.stderr).toContain("plugin serves this claude-code gbrain MCP server");
-    expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
-
-    const serveRefusals: Array<[string[], string, Record<string, string>]> = [
-      [['--stdio-member', 'alice-example', '--http'], 'binds a stdio serve only', {}],
-      [['--stdio-member', 'Alice Example'], 'needs a member id', {}],
-      [['--stdio-member', 'alice-example', '--stdio-member=bob-example'], 'was given 2 times', {}],
-      [['--stdio-member', 'alice-example'], 'OpenClaw is installed on this host', { PATH: `${fakeOpenclaw(b)}:${process.env.PATH}` }],
-      [['--stdio-member', 'alice-example'], 'Hermes is installed on this host', { HERMES_HOME: b.root }],
-    ];
-    for (const [args, says, env] of serveRefusals) {
-      const r = await gbrain(b, ['serve', ...args], env);
-      expect(r.exitCode).not.toBe(0);
-      expect(r.stderr).toContain(says);
-    }
-  }, 360_000);
-
   test('--stdio-member is checked against --members when this run labels them, and needs a brain otherwise; the engine no longer matters', () => {
     const outside = servesPreflight({ serves: 'several', members: 'alice-example,bob-example', stdioMember: 'carol-example', dryRun: false }, '/nonexistent/gbrain', 'claude-code', false, false);
     expect(outside).toMatchObject({ code: 'invalid_params' });
@@ -475,36 +330,6 @@ describe('gbrain setup --serves (spawned, PGLite)', () => {
     expect((noBrain as Error).message).toContain('this brain does not exist yet');
     expect(servesPreflight({ serves: 'several', members: 'alice-example,bob-example', stdioMember: 'alice-example', dryRun: true }, '/nonexistent/gbrain', 'claude-code', false, false)).toMatchObject({ roster: ROSTER, status: null });
   });
-
-  test('upgrade paths carry an entry\'s --stdio-member forward and never add one: post-upgrade rewrites, setup re-runs from the receipt, --no-stdio-member removes it', async () => {
-    const b = box();
-    await brainWithPages(b);
-    expect((await setup(b, ['claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--stdio-member', 'alice-example'])).exitCode).toBe(0);
-    const refresh = async () => { const lines: string[] = []; await withEnv({ ...CLEAN, HOME: b.home, GBRAIN_HOME: b.home }, () => refreshHookLaunchers((l) => lines.push(l))); return lines; };
-    staleEntry(b);
-    expect((await refresh()).join('\n')).toContain('now start gbrain from its own directory');
-    expect(entryArgs(b).slice(-2)).toEqual(['--stdio-member', 'alice-example']);
-    expect(entry(b).command).not.toBe(b.bin);
-    for (const r of setupReceipts(b)) {
-      const argv = setupRerunArgv('claude-code', r);
-      expect(argv).not.toContain('--stdio-member');
-      const rerun = await gbrain(b, [...argv.slice(1), '--json']);
-      expect(rerun.exitCode).toBe(0);
-      expect(entryArgs(b).slice(-2)).toEqual(['--stdio-member', 'alice-example']);
-    }
-    expect((await gbrain(b, ['apply-migrations', '--yes', '--no-autopilot-install'])).exitCode).toBe(0);
-    expect(entryArgs(b).slice(-2)).toEqual(['--stdio-member', 'alice-example']);
-    const removed = await setup(b, ['claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--no-stdio-member', '--json']);
-    expect(removed.exitCode).toBe(0);
-    expect(removed.doc.serves.stdio).toMatchObject({ member: null, action: 'remove' });
-    expect(removed.doc.serves.stdio.detail).toContain('removed --stdio-member alice-example from this claude-code entry');
-    expect(entryArgs(b)).not.toContain('--stdio-member');
-    staleEntry(b);
-    await refresh();
-    expect(entryArgs(b)).not.toContain('--stdio-member');
-    expect(entry(b).command).not.toBe(b.bin);
-    expect(await stdioKey(b)).toBe('');
-  }, 480_000);
 
   test('a brain setup cannot read refuses and writes nothing', async () => {
     const b = box();
@@ -539,45 +364,6 @@ exec '${process.execPath}' --no-env-file '${CLI}' "$@"
     expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
     expect(existsSync(join(b.home, '.gbrain'))).toBe(false);
   }, 120_000);
-
-  test('--serves one on a one-person brain is the default install: the same document, no serves key, the one-person block', async () => {
-    const plain = box();
-    const explicit = box();
-    for (const b of [plain, explicit]) expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
-    const a = await setup(plain, ['claude-code', '--json']);
-    const c = await setup(explicit, ['claude-code', '--serves', 'one', '--json']);
-    expect(a.exitCode).toBe(0);
-    expect(c.exitCode).toBe(0);
-    expect(a.doc.serves).toBeUndefined();
-    expect(normalized(c.doc).serves).toBeUndefined();
-    const strip = (doc: any, b: Box) => JSON.parse(JSON.stringify(normalized(doc)).replaceAll(b.root, '<root>'));
-    expect(strip(c.doc, explicit)).toEqual(strip(a.doc, plain));
-    expect(claudeMd(plain)).toContain(renderBrainFirstBlock('claude-code', { kind: 'mcp', server: 'gbrain', surface: 'verbs' }).split('\n').slice(1).join('\n'));
-  }, 240_000);
-
-  test('a plain setup on a brain that serves several people refuses and writes nothing; once an owner is named it binds this harness to the owner', async () => {
-    const b = box();
-    expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
-    for (const m of ROSTER) expect((await gbrain(b, ['access', 'member', 'add', m])).exitCode).toBe(0);
-    const refused = await setup(b, ['claude-code', '--json']);
-    expect(refused.exitCode).not.toBe(0);
-    expect(refused.stdout).toContain('setup_serves_several');
-    expect(refused.stdout).toContain('2 enabled members (alice-example, bob-example)');
-    expect(refused.stdout).toContain('gbrain setup claude-code --serves several --members alice-example,bob-example');
-    expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
-    expect((await gbrain(b, ['access', 'owner', 'set', 'alice-example'])).exitCode).toBe(0);
-    const owner = await setup(b, ['claude-code', '--json']);
-    expect(owner.exitCode).not.toBe(0);
-    expect(owner.stdout).toContain('setup_serves_several');
-    expect(await stdioKey(b)).toBe('');
-    expect((await gbrain(b, ['apply-migrations', '--yes', '--no-autopilot-install'])).exitCode).toBe(0);
-    expect(await stdioKey(b)).toBe('');
-    expect((await gbrain(b, ['config', 'set', 'mcp.stdio_member', 'alice-example'])).exitCode).toBe(0);
-    const bound = await setup(b, ['claude-code', '--json']);
-    expect(bound.exitCode).toBe(0);
-    expect(bound.doc.serves).toMatchObject({ mode: 'one', brain_serves: 'several', stdio: { member: 'alice-example', action: 'keep' } });
-    expect(claudeMd(b)).toContain(`- ${SERVES_SEVERAL_LINE}`);
-  }, 300_000);
 
   test('a repo brain commits the folder rules to .gbrain/access.yml through the commit door, and the bound reads hold', async () => {
     const b = box();
