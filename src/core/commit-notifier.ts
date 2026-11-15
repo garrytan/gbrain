@@ -529,9 +529,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
     if (stopped) return;
     for (const rt of sources.values()) {
       const w = enabled && !excluded.has(rt.sourceId) && !rt.syncDisabled;
-      const drop = w !== rt.watched ? !w : !!rt.syncDisabled;
-      if (w !== rt.watched) { rt.watched = w; if (w) listedAt = -Infinity; else closeWatch(rt); }
-      if (drop && (rt.state === 'retry' || rt.state === 'due') && !rt.markers.length) await transition(rt, { state: 'idle', reason: null, firstDue: 'clear', attempts: 0, error: null });
+      if (w !== rt.watched) { rt.watched = w; if (w) listedAt = -Infinity; else closeWatch(rt); } else if (!rt.syncDisabled) continue; if (!w && (rt.state === 'retry' || rt.state === 'due') && !rt.markers.length) await transition(rt, { state: 'idle', reason: null, firstDue: 'clear', attempts: 0, error: null });
     }
     const wasNudged = nudged;
     nudged = false;
