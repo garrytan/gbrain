@@ -9,9 +9,9 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { EXPECTED_BUILDER_IDS, expectedAssetName } from '../src/core/binary-self-update.ts';
 
 const ROOT = join(import.meta.dir, '..');
@@ -190,6 +190,74 @@ Release summary line.
   test('a version that is a string prefix of another does not false-match', () => {
     // "0.42.67" is a prefix of "0.42.67.0" but has no entry of its own.
     expect(run('0.42.67').code).not.toBe(0);
+  });
+});
+
+describe('scripts/changelog-entry.sh --pr-list', () => {
+  function git(cwd: string, ...args: string[]): string {
+    return execFileSync('git', args, { cwd, encoding: 'utf-8' });
+  }
+  function commit(repo: string, subject: string, files: Record<string, string | null>): void {
+    for (const [path, text] of Object.entries(files)) {
+      if (text === null) git(repo, 'rm', '-q', path);
+      else {
+        mkdirSync(join(repo, dirname(path)), { recursive: true });
+        writeFileSync(join(repo, path), text);
+        git(repo, 'add', path);
+      }
+    }
+    git(repo, 'commit', '-q', '-m', subject);
+  }
+  const section = (v: string, body: string) => `# Changelog\n\n## [${v}] - 2026-11-15\n\n${body}\n`;
+  function fixture(): string {
+    const repo = mkdtempSync(join(tmpdir(), 'gbrain-prlist-'));
+    git(repo, 'init', '-q', '-b', 'master');
+    git(repo, 'config', 'user.email', 't@t.co');
+    git(repo, 'config', 'user.name', 't');
+    git(repo, 'config', 'commit.gpgsign', 'false');
+    commit(repo, 'v0.1.0.0 release (#1)', { VERSION: '0.1.0.0\n', 'CHANGELOG.md': section('0.1.0.0', 'First.'), 'changelog.d/README.md': 'How fragments work.\n' });
+    git(repo, 'tag', 'v0.1.0.0');
+    commit(repo, 'Sync is faster (#11)', { 'changelog.d/b-beta.md': '**Sync is faster.**\n\n### Changed\n- beta\n' });
+    commit(repo, 'Search finds old pages again (#12)', { 'changelog.d/a-alpha.md': '---\nimportant: regression\n---\n**Search finds old pages again (#12).**\n\n### Fixed\n- alpha\n' });
+    return repo;
+  }
+  function run(repo: string, ...args: string[]): string {
+    return execFileSync('bash', [join(ROOT, 'scripts/changelog-entry.sh'), ...args], { cwd: repo, encoding: 'utf-8' });
+  }
+
+  test('opens the body with one line per folded fragment, in fold order, each with the PR that added it', () => {
+    const repo = fixture();
+    try {
+      commit(repo, 'v0.1.1.0 release (#13)', { VERSION: '0.1.1.0\n', 'CHANGELOG.md': section('0.1.1.0', 'Folded text.'), 'changelog.d/a-alpha.md': null, 'changelog.d/b-beta.md': null });
+      expect(run(repo, '--pr-list', '0.1.1.0')).toBe('- Search finds old pages again (#12)\n- Sync is faster (#11)\n\n\nFolded text.\n');
+      expect(run(repo, '0.1.1.0')).toBe('\nFolded text.\n');
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('a release that never published is listed in the next one, and a commit with no PR number gets a bare line', () => {
+    const repo = fixture();
+    try {
+      commit(repo, 'v0.1.1.0 release (#13)', { VERSION: '0.1.1.0\n', 'CHANGELOG.md': section('0.1.1.0', 'Unpublished.'), 'changelog.d/a-alpha.md': null, 'changelog.d/b-beta.md': null });
+      commit(repo, 'Direct fix', { 'changelog.d/c-gamma.md': '**The test passes after a release.**\n' });
+      commit(repo, 'v0.1.2.0 release (#15)', { VERSION: '0.1.2.0\n', 'CHANGELOG.md': section('0.1.2.0', 'Second.'), 'changelog.d/c-gamma.md': null });
+      expect(run(repo, '--pr-list', '0.1.2.0')).toBe('- Search finds old pages again (#12)\n- Sync is faster (#11)\n- The test passes after a release\n\n\nSecond.\n');
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('with no earlier release tag the body is the plain entry', () => {
+    const repo = fixture();
+    try {
+      git(repo, 'tag', '-d', 'v0.1.0.0');
+      commit(repo, 'v0.1.1.0 release (#13)', { VERSION: '0.1.1.0\n', 'CHANGELOG.md': section('0.1.1.0', 'Folded text.'), 'changelog.d/a-alpha.md': null, 'changelog.d/b-beta.md': null });
+      expect(run(repo, '--pr-list', '0.1.1.0')).toBe('\nFolded text.\n');
+      expect(() => run(repo, '--pr-list', '9.9.9.9')).toThrow();
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });
 

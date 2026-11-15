@@ -2,7 +2,11 @@
 
 One file per PR: the PR's CHANGELOG entry, without a version heading. gstack
 `/ship` writes it as `changelog.d/<branch-slug>.md`; nobody edits VERSION,
-the package.json version or CHANGELOG.md in a PR.
+the package.json version or CHANGELOG.md in a PR. Every PR needs one, a
+tests-only PR included: the release folds only fragments, so a change without
+one is missing from the release notes, and a release with nothing to fold is
+refused. The fragment's first bold line becomes that change's line at the top
+of the GitHub release notes.
 
 ```markdown
 **What changed, in one sentence.**

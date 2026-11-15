@@ -236,6 +236,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ needs.ci-gate.outputs.sha }}
+          # Full history and tags: the notes list reads the fragments every
+          # release commit since the previous v* tag folded.
+          fetch-depth: 0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           path: artifacts
@@ -250,7 +253,7 @@ jobs:
           RELEASE_VERSION: ${{ needs.version.outputs.version }}
         run: |
           v="$RELEASE_VERSION"
-          if ! bash scripts/changelog-entry.sh "$v" > /tmp/release-notes.md || ! [ -s /tmp/release-notes.md ]; then
+          if ! bash scripts/changelog-entry.sh --pr-list "$v" > /tmp/release-notes.md || ! [ -s /tmp/release-notes.md ]; then
             echo "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/master/CHANGELOG.md) for v$v." > /tmp/release-notes.md
           fi
       # A re-run that repairs a half-published release republishes it as a
