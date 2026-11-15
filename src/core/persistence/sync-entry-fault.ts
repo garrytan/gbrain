@@ -22,7 +22,7 @@
  *   Deliberate refusals (an `OperationError`) keep their own route; a run where most freezes fault is systemic and
  *   stops instead of holding every file.
  */
-import { lstatSync, realpathSync } from 'node:fs';
+import { lstatSync, readlinkSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { OperationError, opError } from '../ops/contract.ts';
 import { classifyItemFailure, ITEM_BREAKER_MIN_ITEMS } from '../item-failure.ts';
@@ -40,9 +40,16 @@ import type { GitHoldRecord } from './sync-holds.ts';
 type HoldEntry = Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld' | 'action'>;
 type HeldFault = Pick<GitHoldRecord, 'path' | 'source_path' | 'slug' | 'page_id' | 'code' | 'message' | 'upstream_version' | 'meta'>;
 
-/** GBRA-542: whether `path` (relative to `root`) is a symlink whose target does not exist (a dangling link). */
-export function danglingLink(root: string, path: string): boolean {
-  try { if (!lstatSync(join(root, path)).isSymbolicLink()) return false; } catch { return false; }
+/**
+ * GBRA-542: whether `path` (relative to `root`) is a symlink whose target does not exist (a dangling link). With
+ * `levelOid` (committed mode) the link must also be the committed blob itself, so an uncommitted link never stands in
+ * for a committed file.
+ */
+export function danglingLink(root: string, path: string, levelOid?: string | null): boolean {
+  try {
+    if (!lstatSync(join(root, path)).isSymbolicLink()) return false;
+    if (levelOid !== undefined && gitBlobOid(readlinkSync(join(root, path), 'buffer'), levelOid?.length === 64 ? 'sha256' : 'sha1') !== levelOid) return false;
+  } catch { return false; }
   try { realpathSync(join(root, path)); return false; } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT'; }
 }
 

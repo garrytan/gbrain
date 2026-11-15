@@ -136,4 +136,17 @@ describe.each(testBackends())('GST-2515: dangling symlinks (%s)', backend => {
     expect(held.map(h => h.path)).toContain('keep/k0.md');
     expect(Number((await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pages WHERE slug='keep/k0' AND deleted_at IS NULL"))[0]!.n)).toBe(1);
   }, seed(3, databaseUrl)), 600_000);
+  test('an uncommitted dangling link over a committed file is not skipped: the committed file is imported or held', () => managedBrain(async ({ engine, root }) => {
+    await performManagedSync(engine, OPTS);
+    mkdirSync(join(root, 'fresh'), { recursive: true });
+    writeFileSync(join(root, 'fresh', 'b.md'), note('fresh/b', 'Committed body.'));
+    git(root, 'add', '-A'); git(root, 'commit', '-qm', 'upstream adds b');
+    rmSync(join(root, 'fresh', 'b.md'));
+    symlinkSync(join(root, 'nowhere', 'b.md'), join(root, 'fresh', 'b.md'));
+    const result: any = await performManagedSync(engine, OPTS);
+    expect(result.skipped?.symlink_dangling?.count ?? 0).toBe(0);
+    const held = (await engine.executeRaw<{ path: string }>("SELECT completed_keys->0->>'path' AS path FROM op_checkpoints WHERE op='sync-hold'")).map(h => h.path);
+    const page = Number((await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pages WHERE slug='fresh/b' AND deleted_at IS NULL"))[0]!.n);
+    expect(page === 1 || held.includes('fresh/b.md')).toBe(true);
+  }, seed(3, databaseUrl)), 600_000);
 });

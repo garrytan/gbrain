@@ -285,7 +285,7 @@ async function skipDanglingLinks(engine: BrainEngine, level: ShadowLevel, input:
     if (step.due()) await step.pause();
     const r = entry.result, held = entry.state.hold !== null;
     if (r.inFlight || entry.state.page?.live || entry.state.level === null || (!held && (r.settled || (r.action !== 'import' && r.action !== 'hold')))) continue;
-    if (!danglingLink(level.gitRoot, entry.path)) continue;
+    if (!danglingLink(level.gitRoot, entry.path, level.mode === 'committed' ? entry.state.level : undefined)) continue;
     const { path, sourcePath } = passEntryPaths(level, entry.path);
     links.push({ entry, path, slug: resolveSlugForPath(sourcePath) });
   }
