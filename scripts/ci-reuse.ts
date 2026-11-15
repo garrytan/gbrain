@@ -71,6 +71,8 @@ export interface ReuseDeps {
   recentSuccessfulRuns(file: string): Promise<FullRun[]>;
   /** The newest workflow_dispatch and push runs of `file`, whatever their status (a failed run counts against its tree too). */
   recentRuns(file: string): Promise<FullRun[]>;
+  /** Head commits of the pull requests GitHub associates with commit `sha` (a squashed landing names its pull request); a fork head's runs are refused like any fork run. */
+  pullHeads(sha: string): Promise<string[]>;
   jobs(runId: number, attempt: number): Promise<JobRow[]>;
   artifact(runId: number, name: string): Promise<{ value?: unknown; reason?: string }>;
 }
@@ -142,16 +144,27 @@ export async function decide(deps: ReuseDeps, p: Profile, sha: string, repo: str
   return { reuse: false, reason: rejected[0]!.reason, detail: rejected.map(r => r.detail).join('; '), tree, rejected };
 }
 
-/** A one-parent push (a squashed landing) has no merged head: the newest full run of any head with its tree decides. */
+/**
+ * A one-parent push (a squashed landing) has no merged head. The heads with its tree are the landed pull request's
+ * head (looked up by commit, so a busy queue cannot push it out of the recent-runs page) and the heads of recent
+ * dispatch and push runs; every run on those heads is read by head, and the newest one decides.
+ */
 async function decideOneParent(deps: ReuseDeps, p: Profile, sha: string, tree: string, repo: string, rejected: Rejection[]): Promise<Decision> {
   const trees = new Map<string, string>();
+  const heads: string[] = [];
+  const consider = async (head: string) => {
+    if (head === sha || trees.has(head)) return;
+    trees.set(head, (await deps.commit(head)).tree);
+    if (trees.get(head) === tree) heads.push(head);
+  };
+  for (const head of await deps.pullHeads(sha)) await consider(head);
   for (const run of (await deps.recentRuns(p.file)).sort((a, b) => b.id - a.id)) {
-    if (!isCandidate(run) || run.head_sha === sha || run.head_repository?.full_name !== repo) continue;
-    if (!trees.has(run.head_sha)) {
-      if (trees.size >= MAX_FALLBACK_HEADS) continue;
-      trees.set(run.head_sha, (await deps.commit(run.head_sha)).tree);
-    }
-    if (trees.get(run.head_sha) !== tree) continue;
+    if (!isCandidate(run) || run.head_repository?.full_name !== repo || trees.has(run.head_sha)) continue;
+    if (trees.size >= MAX_FALLBACK_HEADS) break;
+    await consider(run.head_sha);
+  }
+  const runs = (await Promise.all(heads.map(async head => (await deps.runsForHead(p.file, head)).filter(r => r.head_sha === head && isCandidate(r) && r.head_repository?.full_name === repo)))).flat().sort((a, b) => b.id - a.id);
+  for (const run of runs) {
     const full = (await deps.jobs(run.id, run.run_attempt)).filter(j => j.name === p.job);
     if (full.some(j => j.conclusion === 'skipped') || (run.status === 'completed' && full.length === 0)) {
       rejected.push({ run_id: run.id, reason: 'full_suite_missing', detail: `run ${run.id} attempt ${run.run_attempt} did not run ${p.job} (not a full-profile run)` });
@@ -328,6 +341,9 @@ export function apiDeps(client: GitHubClient): ReuseDeps {
     async recentRuns(file) {
       const pages = await Promise.all(CANDIDATE_EVENTS.map(event => client.request<{ workflow_runs: FullRun[] }>('GET', `repos/{repo}/actions/workflows/${file}/runs?event=${event}&per_page=100`)));
       return pages.flatMap(p => p.workflow_runs);
+    },
+    async pullHeads(sha) {
+      return (await client.request<Array<{ head: { sha: string } }>>('GET', `repos/{repo}/commits/${sha}/pulls`)).map(pr => pr.head.sha);
     },
     jobs: (runId, attempt) => attemptJobs(client, runId, attempt),
     artifact: (runId, name) => fetchArtifactJson(client, runId, name, TREE_FILE),

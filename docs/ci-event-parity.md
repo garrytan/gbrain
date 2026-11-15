@@ -135,8 +135,10 @@ complete full-suite run of the same workflow (`scripts/ci-reuse.ts`, in Test
 
 The push must be a merge commit or a one-parent commit. A merge commit tries the
 runs on its merged head first, newest first, then other heads with the same
-tree. A one-parent commit (a squashed landing) has no merged head, so the
-newest dispatch or push run of any head with its tree decides, as in the
+tree. A one-parent commit (a squashed landing) has no merged head. Its heads
+are the landed pull request's head, which GitHub names for the commit, and the
+heads of recent dispatch and push runs with the same tree; every run on those
+heads is read, and the newest one decides, as in the
 [remote gate](#remote-gate-reuse): if that run failed or is still running, the
 push runs in full; a cancelled run, or one that skipped its full job, is passed
 over for the next older one. Anything else, an API error or a

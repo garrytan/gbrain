@@ -39,6 +39,9 @@ interface Fixture {
   jobs?: Record<string, JobRow[]>;
   artifacts?: Record<number, { value?: unknown; reason?: string }>;
   fail?: 'runs' | 'jobs' | 'commit';
+  /** recentRuns' page when it differs from `runs` (a run that dropped off it is still read by head). */
+  recent?: FullRun[];
+  pulls?: Record<string, string[]>;
 }
 
 function fixture(f: Fixture): ReuseDeps & { jobCalls: string[] } {
@@ -57,7 +60,8 @@ function fixture(f: Fixture): ReuseDeps & { jobCalls: string[] } {
       return runs.filter(r => r.head_sha === sha);
     },
     async recentSuccessfulRuns() { return runs.filter(r => r.conclusion === 'success'); },
-    async recentRuns() { return runs; },
+    async recentRuns() { return f.recent ?? runs; },
+    async pullHeads(sha) { return f.pulls?.[sha] ?? []; },
     async jobs(runId, attempt) {
       if (f.fail === 'jobs') throw new Error('GitHub API GET jobs -> 500');
       jobCalls.push(`${runId}/${attempt}`);
@@ -275,6 +279,21 @@ describe('ci-reuse decision', () => {
       expect(await decide(squash([prRun(), failedFork]), PROFILES.test, M, REPO)).toMatchObject({ reuse: true, source: { run_id: 500 } });
     });
 
+    test('the landed pull request head is found by commit even when its runs fell off the recent-runs page', async () => {
+      const run = prRun();
+      expect(await decide(squash([run], { recent: [] }), PROFILES.test, M, REPO)).toMatchObject({ reuse: false, reason: 'no_candidate' });
+      expect(await decide(squash([run], { recent: [], pulls: { [M]: [H] } }), PROFILES.test, M, REPO)).toMatchObject({ reuse: true, source: { run_id: 500, sha: H } });
+      const failed = prRun({ id: 600, conclusion: 'failure' });
+      const older = prRun({ id: 400, head_sha: H2 });
+      expect(await decide(squash([older, failed], { recent: [older], pulls: { [M]: [H] } }), PROFILES.test, M, REPO)).toMatchObject({ reuse: false, reason: 'run_failed' });
+    });
+
+    test('every run of a same-tree head is read by head, so a newer failure there refuses even when the page shows only an older pass', async () => {
+      const passed = prRun({ id: 500 });
+      const failed = prRun({ id: 600, conclusion: 'failure' });
+      expect(await decide(squash([passed, failed], { recent: [passed] }), PROFILES.test, M, REPO)).toMatchObject({ reuse: false, reason: 'run_failed' });
+    });
+
     test('a passed run whose artifact records another tree is rejected, never reused', async () => {
       const run = prRun();
       const deps = squash([run], { artifacts: { 500: { value: treeJson(run, { tree: OTHER }) } } });
@@ -404,6 +423,7 @@ describe('ci-reuse remote-gate decision', () => {
       async runsForHead(file, sha) { return o.runs.filter(r => r.file === file && r.head_sha === sha); },
       async recentSuccessfulRuns(file) { return o.runs.filter(r => r.file === file && r.conclusion === 'success'); },
       async recentRuns(file) { return o.runs.filter(r => r.file === file); },
+      async pullHeads() { return []; },
       async jobs(runId, attempt) {
         const r = o.runs.find(x => x.id === runId)!;
         return o.jobs?.[`${runId}/${attempt}`] ?? [{ name: files[r.file].job, status: 'completed', conclusion: 'success' }];
