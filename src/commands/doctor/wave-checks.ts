@@ -402,6 +402,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async (engine, scope) => (await import('./checks/unwithdrawn-facts.ts')).unwithdrawnFactsCheck(engine, scope.sourceIds),
   },
   {
+    id: 'purged_page_facts', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Retiring facts left by purged pages is a host-side, explicit-only repair.',
+    count: d => Number(d.evidenced ?? 0) + Number(d.ambiguous ?? 0),
+    impact: 'Some facts extracted from pages that were purged are still active, and recall still returns them',
+    run: async (engine, scope) => (await import('./checks/purged-page-facts.ts')).purgedPageFactsCheck(engine, scope.sourceIds),
+  },
+  {
     id: 'conversation_label_facts', resolution: 'repair', registration: 'wave',
     hostOnly: 'Retiring label-misattributed conversation facts is a host-side, explicit-only repair.',
     count: d => Number(d.evidenced ?? 0),

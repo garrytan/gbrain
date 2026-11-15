@@ -606,6 +606,7 @@ test/repair-frontmatter.test.ts
 test/repair-ghost-database-ahead-gbra133.test.ts
 test/repair-lost-fence-rows.test.ts
 test/repair-private-labels-batch.test.ts
+test/repair-purged-page-facts-8859.test.ts
 test/repair-quoted-markers-8059.test.ts
 test/repair-receipt-compaction.test.ts
 test/repair-rename-identity-6729.test.ts

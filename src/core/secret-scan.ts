@@ -35,7 +35,11 @@ import {
   LABELED_CREDENTIAL_PATTERNS,
   ECHO_MIN_CHARS_LABELED,
   LABELED_PRECHECK_RE,
-  danglingLabel,
+  TRANSCRIPT_LABELED_PATTERNS,
+  NETRC_PRECHECK_RE,
+  danglingFor,
+  keyLabelValueIsCredential,
+  type DanglingForm,
   labeledEchoEligible,
   labeledValueIsCredential,
   neutralizeRedactionMarkers,
@@ -88,6 +92,13 @@ export interface ScanOpts {
    * transcript audit only. Default false.
    */
   labeledCredentials?: boolean;
+  /**
+   * Opt-in transcript-lane rules (GST-2768): `cookie_header` (secret-scan-cookie.ts), the `.netrc` password and the
+   * key-label next-line value (secret-scan-labeled.ts). Only via `TRANSCRIPT_LANE_SCAN_OPTS`. Default false.
+   */
+  transcriptRules?: boolean;
+  /** Label form the previous message left dangling (`trailingDanglingLabel`): line 1 here is read as its value. Default none. */
+  leadingDangling?: DanglingForm | null;
   /** Work counters the scan fills in (secret-scan-work.ts); absent means no counting. */
   work?: ScanWork;
 }
@@ -103,6 +114,8 @@ import {
 } from './secret-scan-assignment.ts';
 import type { ScanWork } from './secret-scan-work.ts';
 export { createScanWork, type ScanWork } from './secret-scan-work.ts';
+import { COOKIE_PRECHECK_RE, cookieHeaderValues } from './secret-scan-cookie.ts';
+export { TRANSCRIPT_LANE_SCAN_OPTS, trailingDanglingLabel } from './secret-scan-labeled.ts';
 
 // ── Patterns ────────────────────────────────────────────────────────────────
 //
@@ -134,7 +147,7 @@ interface CompiledPattern {
   /** See CorePattern.validate; `head` is the match text before the value. */
   validate?: (value: string, head: string) => boolean;
   /** Runs only on the line after one that ends in a dangling credential label of this form. */
-  continuation?: 'single' | 'pair';
+  continuation?: DanglingForm;
   /** The text the regex reads instead of the line, the same length (offsets and reported values come from the line). */
   subject?: (line: string) => string;
   /** An ESCAPE_BOUNDARY twin: runs only on a line ESCAPE_IN_LINE_RE matches. */
@@ -661,7 +674,7 @@ export function privateKeySpans(text: string): Array<{ start: number; end: numbe
 const compiledPatterns = new Map<string, CompiledPattern[]>();
 
 function compilePatterns(opts: ScanOpts): CompiledPattern[] {
-  const key = `${opts.highEntropy === true}|${opts.labeledCredentials === true}`;
+  const key = `${opts.highEntropy === true}|${opts.labeledCredentials === true}|${opts.transcriptRules === true}`;
   let compiled = compiledPatterns.get(key);
   if (!compiled) compiledPatterns.set(key, compiled = buildPatterns(opts));
   return compiled;
@@ -702,6 +715,18 @@ function buildPatterns(opts: ScanOpts): CompiledPattern[] {
         re: new RegExp(p.source, 'gi'),
         ...(p.continuation ? { continuation: p.continuation } : { precheck: (line: string) => LABELED_PRECHECK_RE.test(line) }),
         validate: (value: string, head: string) => labeledValueIsCredential(value, p.form, head),
+        subject: neutralizeRedactionMarkers,
+      });
+    }
+  }
+  if (opts.transcriptRules) {
+    for (const p of TRANSCRIPT_LABELED_PATTERNS) {
+      out.push({
+        name: 'labeled_credential',
+        // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- compile-time literal; bounded quantifiers, pinned by test/secret-scan-perf.test.ts
+        re: new RegExp(p.source, 'gi'),
+        ...(p.continuation ? { continuation: p.continuation } : { precheck: (line: string) => NETRC_PRECHECK_RE.test(line) }),
+        validate: p.form === 'key' ? keyLabelValueIsCredential : (value: string, head: string) => labeledValueIsCredential(value, 'single', head),
         subject: neutralizeRedactionMarkers,
       });
     }
@@ -869,11 +894,14 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
   let offset = 0;
   // W4.1: Markdown table state for the labeled lane (credential columns of the table being scanned).
   const table = opts.labeledCredentials === true ? newTableScanState() : null;
+  let leadingLine = 0;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
     const lineStart = offset;
     offset += line.length + 1;
-    const dangling = opts.labeledCredentials === true && i > 0 ? danglingLabel(lines[i - 1] ?? '') : null;
+    // The previous message's dangling label reads the first non-blank line here.
+    if (i === leadingLine && opts.leadingDangling && line.trim() === '') leadingLine = i + 1;
+    const dangling = i === leadingLine ? (opts.leadingDangling ?? null) : i > 0 ? danglingFor(lines[i - 1] ?? '', opts) : null;
     const cells = table ? tableCredentialCells(line, lines[i + 1], table) : [];
     if (line.length < 8 && !dangling && cells.length === 0) continue;
     // ENG-12: a line wholly inside a private-key claim is already redacted by
@@ -954,6 +982,17 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
       }
     }
     for (const c of cells) if (!taken || !anyTaken(taken, c.start, c.start + c.value.length)) { taken ??= new Uint8Array(line.length); claim('labeled_credential', c.value, c.start, c.start); }
+    // GST-2768: cookie values (transcript lane), union coverage around anything already claimed.
+    if (opts.transcriptRules === true && COOKIE_PRECHECK_RE.test(line)) {
+      for (const c of cookieHeaderValues(line)) {
+        taken ??= new Uint8Array(line.length);
+        for (let a = c.start, k = c.start, end = c.start + c.value.length; k <= end; k++) {
+          if (k < end && !taken[k]) continue;
+          if (a < k) claim('cookie_header', line.slice(a, k), a, c.from);
+          a = k + 1;
+        }
+      }
+    }
   }
   return hits;
 }
@@ -1321,6 +1360,8 @@ function addEchoValue(into: EchoDictionary, pattern: string, value: string): voi
         ? ECHO_MIN_CHARS_ENTROPY
         : pattern === 'labeled_credential'
           ? ECHO_MIN_CHARS_LABELED
+          : pattern === 'cookie_header'
+            ? ECHO_MIN_CHARS_ENTROPY
           : VENDOR_ECHO_PATTERNS.has(pattern) ? ECHO_MIN_CHARS_VENDOR : Infinity;
   if (value.length < floor || value.length > ECHO_MAX_VALUE_CHARS || into.has(value)) return;
   const vendor = VENDOR_ECHO_PATTERNS.has(pattern);

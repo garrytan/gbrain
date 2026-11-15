@@ -26,7 +26,7 @@ import { SYNC_DELETE_TOMBSTONE_OP } from '../src/core/persistence/sync-delete-to
 import { runPages } from '../src/commands/pages.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
-import { purgeDeletedPagesCoordinated } from '../src/core/persistence/purge-deleted.ts';
+import { consentedPurgeDeletedPages, purgeDeletedPagesCoordinated } from '../src/core/persistence/purge-deleted.ts';
 import * as preparedMaintenance from '../src/core/persistence/prepared-maintenance.ts';
 import { readDerivedOriginParks } from '../src/core/persistence/derived-origin-hold.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
@@ -65,7 +65,7 @@ function fileText(k: string, shape: Shape): string {
   };
   return ['---', `title: ${k} ${shape}`, ...fm[shape], '---', '', `Harbor ledger planning notes ${canaryOf(k, shape)} for the roadmap.`, ''].join('\n');
 }
-const KEYS = ['gitrm', 'purge', 'remote', 'midpurge', 'preview', 'finish'];
+const KEYS = ['gitrm', 'purge', 'remote', 'midpurge', 'preview', 'finish', 'retain'];
 /** A private origin, a public meeting, an event derived from the origin whose depth is the meeting, and an event whose depth is the origin. */
 const EVENT_SLUGS = { origin: 'notes/event-origin', depth: 'notes/event-depth', event: 'notes/event-event', closed: 'notes/event-closed' };
 const EVENT_FILES: Record<keyof typeof EVENT_SLUGS, string[]> = {
@@ -271,6 +271,25 @@ for (const backend of testBackends()) {
       const written = await tombstones();
       expect(written.length).toBeGreaterThan(0);
       expect(new Set(written)).toEqual(new Set([second]));
+      await expectCarried(engine, root, k, files);
+    }, { setup, databaseUrl }), 300_000);
+
+    test('a held explicit purge that a consented purge-deleted later removes still writes its purge tombstones (GST-2128)', () => managedBrain(async ({ engine, root, ctx }) => {
+      await performManagedSync(engine, OPTS);
+      const k = 'retain', origin = slugOf(k, 'origin');
+      const files = await before(engine, root, k);
+      const failing = spyOn(preparedMaintenance, 'publishMaintenancePages').mockImplementation(async () => { throw new Error('forced label failure'); });
+      let held: Record<string, any>;
+      try {
+        held = await operationsByName.delete_page!.handler(ctx, { slug: origin, purge: true, request_id: randomUUID(),
+          expected_revision: (await engine.readPageSnapshot(origin, { sourceId: 'default', includeDeleted: true }))!.revision }) as Record<string, any>;
+      } finally { failing.mockRestore(); }
+      expect(held.purge_held?.code).toBe('derived_origin_parked');
+      const out = await consentedPurgeDeletedPages(engine, 0, true) as { slugs: string[] };
+      expect(out.slugs).toContain(origin);
+      expect((await page(engine, origin)) ?? null).toBeNull();
+      const [{ n }] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM page_purges WHERE source_id = 'default' AND slug = $1", [origin]);
+      expect(n).toBeGreaterThan(0);
       await expectCarried(engine, root, k, files);
     }, { setup, databaseUrl }), 300_000);
 
