@@ -70,9 +70,9 @@ Postgres, thin clients, API keys and upgrades: [docs/INSTALL.md](docs/INSTALL.md
 Point GBrain at two folders of Markdown files: your own notes (an Obsidian vault works) and your company's docs. In the company folder, keep `facts.md` (numbers and statements agents may repeat), `decisions.md` (each decision with its date, its reason and who made it) and call transcripts saved as `.md` files.
 
 ```bash
-gbrain sources add notes --path ~/notes --federated --force       # your own notes
-gbrain sources add company --path ~/company --federated --force   # your company's docs
-gbrain sync --all                                                 # read both now; run it again after you edit files
+gbrain sources add notes --path ~/notes --federated --force      # your notes
+gbrain sources add company --path ~/company --federated --force  # company docs
+gbrain sync --all                                                # rerun after edits
 ```
 
 Then open a new agent session and ask *"What did we decide about a free plan, and why?"*: the answer comes from your decisions log. `--federated` puts the folder in default search, and `--force` accepts a folder that isn't a git repository; in a folder that is one, GBrain reads only committed files, so commit your edits before you sync. To see the shape first, `gbrain sources demo company-brain` runs a fictional company in a few seconds without touching your brain. Before you share a company brain with a team, read the [company-brain tutorial](docs/tutorials/company-brain.md).
