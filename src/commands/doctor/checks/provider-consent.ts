@@ -27,8 +27,8 @@ export function providerConsentFix(record: LocalSetupRecord): Action {
     argv,
     consent: ['paid', 'egress'],
     actor: 'user',
-    why: 'Setup recorded provider use as declined, so gbrain contacts no model provider. Re-running setup with --providers records it as accepted; provider calls then follow the configured keys.',
-    user_message: `gbrain is not contacting any AI provider because you declined provider use at setup. To allow it, run \`${argv.join(' ')}\`${record.scope === 'project' ? ' in that project directory' : ''}.`,
+    why: 'Setup recorded provider use as declined, so gbrain contacts no model provider on its own. Re-running setup with --providers records it as accepted; provider calls then follow the configured keys.',
+    user_message: `gbrain contacts no AI provider on its own because you declined provider use at setup; a command you run yourself with a provider key, such as gbrain embed, still uses it. To allow it, run \`${argv.join(' ')}\`${record.scope === 'project' ? ' in that project directory' : ''}.`,
     verify: doctorVerify('provider_consent'),
     docs: DOCS,
     requires_exclusive: false,
@@ -56,7 +56,7 @@ async function runProviderConsent(_ctx: DoctorContext): Promise<Check[]> {
     const env = keys.length ? ` even though ${keys.join(', ')} ${keys.length === 1 ? 'is' : 'are'} set in this environment` : '';
     const fix = providerConsentFix(declined);
     checks.push(infoCheck('provider_consent',
-      `Provider check skipped by consent: gbrain setup recorded provider use as declined (${declined.path}), so gbrain sends no request to a model provider${env}, model discovery and the embedding probe included. The user decides; to allow provider use they run: ${fix.argv!.join(' ')}`,
+      `Provider check skipped by consent: gbrain setup recorded provider use as declined (${declined.path}), so gbrain sends no request to a model provider on its own${env}: model discovery and the embedding probe are skipped, while a command the user runs with a provider key, such as gbrain embed, still uses it. The user decides; to allow provider use they run: ${fix.argv!.join(' ')}`,
       'disabled_by_choice', fix,
       { decision: 'declined', receipt: declined.path, harness: declined.harness, provider_env: keys, probed: false }));
     return checks;

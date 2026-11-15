@@ -122,7 +122,9 @@ table with its `trusted_hash`, otherwise Codex lists it and silently skips it.
   `env GBRAIN_HOOK_LANE=setup … <hook launcher> <launcher> hook session-start|user-prompt --harness codex`
   (the hook launcher, `<gbrain config dir>/hook-launcher/gbrain-hook`, starts
   gbrain from its own directory so the session directory's `bunfig.toml` and
-  `.env` never load; SECURITY.md)
+  `.env` never load, and on a `bun install -g` install puts the Bun setup ran
+  under first on PATH, so the Codex app starts gbrain without bun on its PATH;
+  SECURITY.md)
   (15 s), plus the detached `hook session-end --harness codex` capture command
   (3 s) only after `--capture`;
 - one trust table per group.

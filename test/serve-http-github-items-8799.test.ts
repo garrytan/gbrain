@@ -51,11 +51,11 @@ afterAll(async () => {
   await engine?.disconnect();
 }, 60_000);
 
-async function issueEvent(number: number, action: string, repo = REPO) {
+async function issueEvent(number: number, action: string, repo = REPO, delivery?: string) {
   const payload = JSON.stringify({ action, repository: { full_name: repo }, issue: { number } });
   const res = await fetch(`${base}/webhooks/github`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-github-event': 'issues',
+    headers: { 'content-type': 'application/json', 'x-github-event': 'issues', ...(delivery ? { 'x-github-delivery': delivery } : {}),
       'x-hub-signature-256': `sha256=${createHmac('sha256', SECRET).update(payload).digest('hex')}` },
     body: payload,
   });
@@ -90,6 +90,20 @@ describe('#8799 GitHub item webhooks', () => {
     const [job] = await engine.executeRaw<{ item: unknown }>("SELECT data->'github_item' AS item FROM minion_jobs WHERE id = $1", [deleted.body.job_id]);
     const item = (typeof job!.item === 'string' ? JSON.parse(job!.item) : job!.item) as { number: number; deleted?: boolean };
     expect(item).toMatchObject({ number: 1, deleted: true });
+  });
+
+  test('a second event after the first refresh started gets its own refresh; a redelivery of it does not', async () => {
+    const first = await issueEvent(7, 'edited', REPO, 'delivery-a');
+    expect(first.status).toBe(202);
+    await engine.executeRaw("UPDATE minion_jobs SET status = 'completed' WHERE id = $1", [first.body.job_id]);
+    const second = await issueEvent(7, 'labeled', REPO, 'delivery-b');
+    expect(second.status).toBe(202);
+    expect(second.body.job_id).not.toBe(first.body.job_id);
+    const redelivered = await issueEvent(7, 'labeled', REPO, 'delivery-b');
+    expect(redelivered.body.job_id).toBe(second.body.job_id);
+    expect((await issueEvent(7, 'assigned', REPO, 'delivery-c')).body.job_id).toBe(second.body.job_id);
+    await engine.executeRaw("UPDATE minion_jobs SET status = 'completed' WHERE id = $1", [second.body.job_id]);
+    expect((await issueEvent(7, 'edited', REPO, 'delivery-a')).body.job_id).toBe(first.body.job_id);
   });
 
   test('a full backlog refuses the event with 429 instead of answering with another item', async () => {

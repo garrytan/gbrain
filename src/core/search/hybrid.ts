@@ -841,6 +841,13 @@ function stampSuperseded(results: SearchResult[], supersededBy: Map<number, stri
 
 export interface HybridSearchOpts extends SearchOpts {
   expansion?: boolean;
+  /**
+   * GST-2762: ask for the keyless any-word fill (search/hybrid/keyword-only.ts).
+   * Only the search and query operations set it, because they check the filled
+   * page against the unfilled one (chooseFill in ops/search.ts); every other
+   * caller of the search function gets all-words rows only.
+   */
+  anyWordFill?: boolean;
   /** System One: remote spend accounting, call site, S1-only re-runs (see search/decide-stage.ts). */
   decide?: import('./decide-stage.ts').DecideSearchOpts;
   /**
