@@ -278,7 +278,7 @@ stdout (`--json`):
         "actor": "agent",
         "next": "report",
         "why": "For Claude Code or Codex, run `gbrain setup claude-code` or `gbrain setup codex` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).",
-        "docs": "{{DOCS_BASE}}/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
+        "docs": "https://github.com/garrytan/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
         "requires_exclusive": false
       },
       "contract_version": 1

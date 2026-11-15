@@ -67,7 +67,7 @@ function withNext(fix: Json, ctx: RenderContext): Json {
   const next = deriveNext(fix as unknown as Action, ctx);
   const out: Json = {};
   for (const [k, v] of Object.entries(fix)) {
-    out[k] = k === 'then' && v && typeof v === 'object' ? withNext(v as Json, ctx) : v;
+    out[k] = k === 'then' && v && typeof v === 'object' ? withNext(v as Json, ctx) : typeof v === 'string' ? hydrate(v, ctx) : v;
     if (k === 'actor') out.next = next;
   }
   return out;
