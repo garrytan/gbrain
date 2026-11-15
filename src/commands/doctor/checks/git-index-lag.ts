@@ -4,7 +4,8 @@
  * commit a finished sync pass indexed (`sources.last_commit`) and the seconds since the oldest of them was committed
  * (sync-freshness.ts `readGitBehind`). Warns when that oldest commit is older than
  * `GBRAIN_DOCTOR_GIT_INDEX_LAG_WARN_SECONDS` (default 900) or the source was never indexed; the fix is the sync that indexes
- * it. A source that is not strict is not read. Counts and seconds only, never a sha or path.
+ * it. A source that is not strict is not read; a lag that cannot be read at all is the unknown convention (`warn`,
+ * `health: unknown`), never ok. Counts and seconds only, never a sha or path.
  */
 import { existsSync } from 'node:fs';
 import type { Check } from '../../doctor.ts';
@@ -60,7 +61,7 @@ async function runGitIndexLag(ctx: DoctorContext): Promise<Check[]> {
         why: `Indexes the commits of ${first} that the database has not read yet; the sync reads committed blobs only and Git wins. Repeat for each source in details.sources.`,
         verify: doctorVerify('git_index_lag') } });
   } catch (error) {
-    checks.push({ name: 'git_index_lag', status: 'ok', details: { health: 'unknown', docs: DOCS },
+    checks.push({ name: 'git_index_lag', status: 'warn', details: { health: 'unknown', docs: DOCS },
       message: `Could not read the index lag of strict sources (${error instanceof Error ? error.message : String(error)}); gbrain sources status --json shows each source's watermark.` });
   }
   return checks;

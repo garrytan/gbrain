@@ -13,7 +13,8 @@ import { gitBlobOid } from '../src/core/persistence/digest.ts';
 import { recordSyncImportProvenance } from '../src/core/persistence/sync-holds.ts';
 import { compareInlineExportFile, compareSegmentedExportBlob, declaredDatabaseOnly, ignoredPaths } from '../src/core/persistence/git-gap.ts';
 import { censusGitGap, describeGitGap, parseGitGapArgs } from '../src/commands/sources-git-gap.ts';
-import { dbAheadOfGitEntry } from '../src/commands/doctor/checks/db-ahead-of-git.ts';
+import { censusWindow, dbAheadOfGitEntry, doctorGitGapCensus, DOCTOR_GIT_GAP_NEWEST } from '../src/commands/doctor/checks/db-ahead-of-git.ts';
+import { withStatementDeadline } from '../src/core/statement-deadline.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { createSegmentedPage } from './helpers/segmented-page.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -389,7 +390,64 @@ for (const backend of testBackends()) describe(`git-gap census (git-canonical G1
     expect(check!.message).not.toContain('notes/');
     const [late] = await withEnv({ GBRAIN_DOCTOR_GIT_GAP_TIMEOUT_MS: '1' }, () =>
       dbAheadOfGitEntry.run({ engine, progress: { heartbeat: () => {} }, entryDeadlineAt: Date.now() } as never)) as Array<{ status: string; details: any }>;
-    expect(late).toMatchObject({ status: 'ok', details: { partial_sources: ['default'] } });
+    expect(late).toMatchObject({ status: 'warn', details: { partial_sources: ['default'], health: 'unknown', reason: 'bound', bound: 'git_gap_timeout' } });
+  });
+
+  test('GBRA-541: a doctor census the budget stopped or could not run is health unknown, never ok', async () => {
+    const root = tempDir('git-gap-doctor-stopped-');
+    git(root, 'init', '-q');
+    await useCheckout(root);
+    await engine.putPage('notes/a', { type: 'note', title: 'A', compiled_truth: 'Body A.', timeline: '' });
+    put(root, 'notes/a.md', await rendered('notes/a'));
+    commitAll(root, 'init');
+    const [late] = await withEnv({ GBRAIN_DOCTOR_GIT_GAP_TIMEOUT_MS: '1' }, () =>
+      dbAheadOfGitEntry.run({ engine, progress: { heartbeat: () => {} }, entryDeadlineAt: Date.now() } as never)) as Array<{ status: string; message: string; details: any }>;
+    expect(late!.status).toBe('warn');
+    expect(late!.details).toMatchObject({ health: 'unknown', reason: 'bound' });
+    expect(late!.message).toContain('Health unknown, not clear');
+    const failing = { executeRaw: async () => { throw new Error('connection reset'); } };
+    const [errored] = await dbAheadOfGitEntry.run({ engine: failing, progress: { heartbeat: () => {} } } as never) as Array<{ status: string; details: any }>;
+    expect(errored).toMatchObject({ status: 'warn', details: { health: 'unknown' } });
+  });
+
+  test('GBRA-541: the newest-pages census reads only the most recently changed pages and names how far back it looked', async () => {
+    const root = tempDir('git-gap-newest-');
+    git(root, 'init', '-q');
+    await useCheckout(root);
+    for (const slug of ['notes/a', 'notes/b', 'notes/c', 'notes/d']) {
+      await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `Body of ${slug}.`, timeline: '' });
+      put(root, `${slug}.md`, await rendered(slug));
+    }
+    commitAll(root, 'init');
+    await engine.putPage('notes/a', { type: 'note', title: 'notes/a', compiled_truth: 'Written to the database, never committed.', timeline: '' });
+    await engine.executeRaw("UPDATE pages SET updated_at = now() - make_interval(days => 10) WHERE source_id='default' AND slug IN ('notes/b','notes/c')");
+    await engine.executeRaw("UPDATE pages SET updated_at = now() - make_interval(days => 2) WHERE source_id='default' AND slug='notes/d'");
+    await engine.executeRaw("UPDATE pages SET updated_at = now() WHERE source_id='default' AND slug='notes/a'");
+    const census = await censusGitGap(engine, 'default', { sample: 0, newest: 2 });
+    expect(census).toMatchObject({ complete: true, pages: 2, live_pages: 4, newest: 2, states: { database_ahead: 1, equal: 1 } });
+    const [since] = await engine.executeRaw<{ at: string }>("SELECT to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS at FROM pages WHERE source_id='default' AND slug='notes/d'");
+    expect(census.newest_since).toBe(since!.at);
+    expect(censusWindow(census)).toBe(`checked the 2 most recently changed of 4 live page(s), back to ${since!.at}`);
+    expect(censusWindow(await censusGitGap(engine, 'default', { sample: 0, newest: 10 }))).toBe('4 live page(s)');
+    expect((await censusGitGap(engine, 'default', { sample: 0 })).newest).toBeUndefined();
+  });
+
+  test('GBRA-541: one doctor run reads a source\'s complete newest-pages census once and never keeps a partial one', async () => {
+    const root = tempDir('git-gap-memo-');
+    git(root, 'init', '-q');
+    await useCheckout(root);
+    await engine.putPage('notes/a', { type: 'note', title: 'A', compiled_truth: 'Body A.', timeline: '' });
+    put(root, 'notes/a.md', await rendered('notes/a'));
+    commitAll(root, 'init');
+    const memo = new Map<string, Promise<unknown>>();
+    const scope = () => ({ startedAt: Date.now(), deadlineAt: null, expired: false, memo });
+    const partial = await withStatementDeadline(scope(), () => doctorGitGapCensus(engine, 'default', Date.now() - 1));
+    expect(partial.complete).toBe(false);
+    expect(memo.size).toBe(0);
+    const first = await withStatementDeadline(scope(), () => doctorGitGapCensus(engine, 'default', Date.now() + 60_000));
+    const second = await withStatementDeadline(scope(), () => doctorGitGapCensus(engine, 'default', Date.now() + 60_000));
+    expect(first).toMatchObject({ complete: true, pages: 1, newest: DOCTOR_GIT_GAP_NEWEST });
+    expect(second).toBe(first);
   });
 });
 
