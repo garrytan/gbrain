@@ -1535,7 +1535,7 @@ export class PostgresEngine implements BrainEngine {
       const bound = [...stmt.params];
       bound[stmt.innerLimitIdx] = exact ? null : innerLimit;
       return run(tx, (scopeScan && stmt.scopeScanSql) || (walk && stmt.indexWalkSql) || (exact ? stmt.exactSql : stmt.sql), bound as Parameters<typeof tx.unsafe>[1]);
-    }, { alwaysTransaction: true, jitOff: true, settings: () => vectorScanSettings(iterative, innerLimit, maxScanTuples, deadline, opts?.hnswIterativeScan, walk ? shape.indexWalkOverfetch : undefined, !!shape.indexWalkSql && !shape.scopeScanFirst && !walk && !(scopeScan && shape.scopeScanSql) && !exact) });
+    }, { alwaysTransaction: true, jitOff: true, settings: () => vectorScanSettings(iterative, innerLimit, maxScanTuples, deadline, opts?.hnswIterativeScan, walk ? shape.indexWalkOverfetch : undefined, !!shape.indexWalkSql && !walk && !(scopeScan && shape.scopeScanSql) && !exact) });
   }
 
   async getEmbeddingsByChunkIds(ids: number[], column: string = 'embedding'): Promise<Map<number, Float32Array>> {

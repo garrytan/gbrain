@@ -25,7 +25,7 @@ import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import * as vectorPool from '../../src/core/search/vector-pool.ts';
 import * as vectorSettings from '../../src/core/search/vector-settings.ts';
-import { buildVectorSearchStatement, INDEX_WALK_MIN_SCOPE_SHARE, INDEX_WALK_SETTINGS, PAGE_SOURCE_STATS_SQL, sourceScope, sourceScopeShare, type PageSourceStats } from '../../src/core/search/vector-statement.ts';
+import { buildVectorSearchStatement, INDEX_WALK_MIN_SCOPE_SHARE, INDEX_WALK_SETTINGS, JOINED_STATEMENT_SETTINGS, PAGE_SOURCE_STATS_SQL, sourceScope, sourceScopeShare, type PageSourceStats } from '../../src/core/search/vector-statement.ts';
 import type { SearchOpts } from '../../src/core/types.ts';
 import { column, planNodes, seedVectorWalkFixture, vec, type PlanNode } from '../helpers/vector-index-walk-fixture.ts';
 
@@ -287,6 +287,36 @@ describe('vector index walk (PGLite)', () => {
       await engine.executeRaw('RESET enable_indexscan');
       walkSpy.mockRestore();
       poolSpy.mockRestore();
+      loader.vectorScope = originalScope;
+    }
+  });
+
+  test('when the scope scan and the walk both time out, the joined statement runs with materialization off', async () => {
+    const opts: SearchOpts = { limit: 10, embeddingColumn: column, sourceId: 'side', excludePrivate: true };
+    const [stats] = await engine.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL);
+    const scope = sourceScope(stats, opts)!;
+    const loader = engine as unknown as { vectorScope: (o?: SearchOpts) => Promise<unknown> };
+    const originalScope = loader.vectorScope;
+    loader.vectorScope = async () => scope;
+    const kinds: string[] = [];
+    const original = vectorPool.searchIndexWalk;
+    const walkSpy = spyOn(vectorPool, 'searchIndexWalk').mockImplementation((s, limit, run) => original(s, limit, attempt => {
+      kinds.push(attempt.scopeScan ? 'scan' : 'walk');
+      return Promise.reject(Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }));
+    }));
+    const applied: Array<Record<string, string>> = [];
+    const settings = spyOn(vectorSettings, 'withVectorSettings').mockImplementation(async (_query, iterative, limit, maxScanTuples, run, deadline, mode, walkOverfetch, joined) => {
+      applied.push(vectorSettings.vectorScanSettings(iterative, limit, maxScanTuples, deadline, mode, walkOverfetch, joined));
+      return run();
+    });
+    try {
+      const hits = await engine.searchVector(vec(7), opts);
+      expect(kinds).toEqual(['scan', 'walk']);
+      expect(applied[0]).toMatchObject(JOINED_STATEMENT_SETTINGS);
+      expect(hits).toHaveLength(10);
+    } finally {
+      walkSpy.mockRestore();
+      settings.mockRestore();
       loader.vectorScope = originalScope;
     }
   });
