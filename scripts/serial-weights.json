@@ -178,6 +178,8 @@
   "test/embedding-rejection-refund.serial.test.ts": 2,
   "test/embedding-truth-predicates.serial.test.ts": 5,
   "test/embedding-zero-norm-4616.serial.test.ts": 4,
+  "test/enforced-member-writes-setting.serial.test.ts": 33,
+  "test/enforced-member-writes.serial.test.ts": 47,
   "test/enforced-member.serial.test.ts": 123,
   "test/eval-brainbench-decide.serial.test.ts": 83,
   "test/eval-longmemeval-call-plan.serial.test.ts": 5,
