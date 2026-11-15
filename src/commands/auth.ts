@@ -938,22 +938,11 @@ async function rescopeClientWith(engine: BrainEngine, clientId: string, parsed: 
 
 /** A grant's axes, one line each; with `before` (a preview) a changed axis reads `before -> after`. */
 function printClientGrantAxes(grant: ClientGrant, before?: ClientGrant) {
-  const axes: Array<[string, (g: ClientGrant) => string]> = [
-    ['Scopes', g => g.scopes.join(' ') || '<none>'],
-    ['Write source', g => g.sourcesNone ? 'none (every read and write refused)' : String(g.sourceId)],
-    ['Federated reads', g => g.federatedRead.join(', ') || '<none>'],
-    ['Operations', g => g.allowedOperations === null ? 'all (no snapshot)' : g.allowedOperations.join(', ') || 'none'],
-    ['Slug prefixes', g => g.boundSlugPrefixes?.join(', ') || '<none>'],
-    ['Takes holders', g => g.takesHolders === null ? 'world (default)' : g.takesHolders.join(', ') || 'none (every take hidden)'],
-    ['Private pages', g => renderPrivatePages(g.privatePages)],
-    ['Tool surface', g => g.surface ?? '<server default>'],
-    ['Delegated spending', g => g.budgetUsdPerDay === null ? 'unlimited' : '$' + g.budgetUsdPerDay + '/day'],
-  ];
-  for (const [label, render] of axes) {
-    const after = render(grant);
-    const was = before ? render(before) : after;
-    console.log(`  ${label}: ${was === after ? after : `${was} -> ${after}`}`);
-  }
+  const axes: Array<[string, (g: ClientGrant) => string]> = [['Scopes', g => g.scopes.join(' ') || '<none>'], ['Write source', g => g.sourcesNone ? 'none (every read and write refused)' : String(g.sourceId)],
+    ['Federated reads', g => g.federatedRead.join(', ') || '<none>'], ['Operations', g => g.allowedOperations === null ? 'all (no snapshot)' : g.allowedOperations.join(', ') || 'none'],
+    ['Slug prefixes', g => g.boundSlugPrefixes?.join(', ') || '<none>'], ['Takes holders', g => g.takesHolders === null ? 'world (default)' : g.takesHolders.join(', ') || 'none (every take hidden)'],
+    ['Private pages', g => renderPrivatePages(g.privatePages)], ['Tool surface', g => g.surface ?? '<server default>'], ['Delegated spending', g => g.budgetUsdPerDay === null ? 'unlimited' : '$' + g.budgetUsdPerDay + '/day']];
+  for (const [label, render] of axes) { const after = render(grant), was = before ? render(before) : after; console.log(`  ${label}: ${was === after ? after : `${was} -> ${after}`}`); }
 }
 
 function printTokenRescope(result: RescopeTokenResult, json: boolean, bound?: BindingResult) {
