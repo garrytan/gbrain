@@ -45,14 +45,16 @@ const hashOf = (json: RepairJson) => json.results[0]!.apply_command.match(/--exp
 const active = async (engine: BrainEngine, ids: number[]) => (await engine.executeRaw<{ id: number }>(
   'SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND expired_at IS NULL ORDER BY id', [ids])).map(r => Number(r.id));
 
-/** Rows as an older gbrain left them: written under replica role, so no current writer guard applies. */
+/** Rows as an older gbrain left them: written under replica role, so no current writer guard applies, and dated before
+ * the purges the tests then record unless `recent`. */
 const legacy = <T>(engine: BrainEngine, sql: string, params: unknown[]) => engine.transaction(async tx => {
   await tx.executeRaw('SET LOCAL session_replication_role = replica');
   return tx.executeRaw<T>(sql, params);
 });
-async function fact(engine: BrainEngine, text: string, context: string, opts: { source?: string; superseded_by?: number } = {}) {
-  const [row] = await legacy<{ id: number }>(engine, `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, source, context, valid_from, superseded_by)
-    VALUES ('default', NULL, $1, 'fact', 'private', 'high', $3, $2, now(), $4) RETURNING id`, [text, context, opts.source ?? 'mcp:put_page', opts.superseded_by ?? null]);
+async function fact(engine: BrainEngine, text: string, context: string, opts: { source?: string; superseded_by?: number; recent?: boolean } = {}) {
+  const [row] = await legacy<{ id: number }>(engine, `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, source, context, valid_from, superseded_by, created_at)
+    VALUES ('default', NULL, $1, 'fact', 'private', 'high', $3, $2, now(), $4, now() - $5::interval) RETURNING id`,
+    [text, context, opts.source ?? 'mcp:put_page', opts.superseded_by ?? null, opts.recent ? '0 days' : '3 days']);
   return Number(row!.id);
 }
 
@@ -103,6 +105,38 @@ async function exercise(engine: BrainEngine, s: Seeded) {
   expect((await purgedPageFactsCheck(engine, ['default'])).status).toBe('ok');
 }
 
+/** Cells the main flow leaves out: every exclusion reason, a root-level slug, a fact newer than its slug's purge, and an unbounded context. */
+async function edgeCases(engine: BrainEngine) {
+  const old = async (text: string, context: string) => {
+    const [row] = await legacy<{ id: number }>(engine, `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, source, context, valid_from, created_at)
+      VALUES ('default', NULL, $1, 'fact', 'private', 'high', 'mcp:put_page', $2, now(), now() - interval '3 days') RETURNING id`, [text, context]);
+    return Number(row!.id);
+  };
+  const withdrawn = await old('A withdrawn example claim', PURGED);
+  await legacy(engine, "INSERT INTO fact_withdrawals (source_id, visibility, fact_hash) VALUES ('default', 'private', gbrain_fact_fingerprint($1))", ['A withdrawn example claim']);
+  const referenced = await old('A replaced example claim', PURGED);
+  await fact(engine, 'Its replacement', LIVE, { superseded_by: referenced, source: 'mcp:remember' });
+  const looped = await old('An example commitment', PURGED);
+  await legacy(engine, `INSERT INTO open_loops (source_id, dedup_key, loop_type, summary, detector, fact_id)
+    VALUES ('default', 'example-loop', 'commitment_owed_by_me', 'An example commitment', 'manual', $1)`, [looped]);
+  const root = await old('A root page claim', 'rootexample');
+  const unrecordedRoot = await old('An unrecorded root claim', 'otherroot');
+  const renamed = await fact(engine, 'A claim written after the purge', 'notes/reused-example', { recent: true });
+  const long = await fact(engine, 'A claim with a long context', 'x'.repeat(6000));
+  const longPath = await fact(engine, 'A claim with a long path context', `notes/` + 'y'.repeat(6000));
+  await legacy(engine, "INSERT INTO page_purges (source_id, content_hash, slug, purged_at) VALUES ('default', $1, $4, now() - interval '1 day'), ('default', $2, $5, now() - interval '1 day'), ('default', $3, $6, now() - interval '1 day')",
+    ['1'.repeat(64), '2'.repeat(64), '3'.repeat(64), PURGED, 'rootexample', 'notes/reused-example']);
+
+  const preview = await repair(engine, []);
+  expect(preview.results[0]!.listing!.map(l => [l.item, l.class]).sort()).toEqual([
+    [`default:${PURGED}#${withdrawn}`, 'excluded:withdrawn'], [`default:${PURGED}#${referenced}`, 'excluded:superseded_by_reference'],
+    [`default:${PURGED}#${looped}`, 'excluded:open_loop_reference'], [`default:rootexample#${root}`, 'evidenced'],
+    [`default:notes/reused-example#${renamed}`, 'ambiguous'], [`default:notes/${'y'.repeat(6000)}#${longPath}`, 'ambiguous']].sort());
+  await repair(engine, ['--include-ambiguous', '--apply', '--expect', hashOf(await repair(engine, ['--include-ambiguous'])), '--yes']);
+  expect(await active(engine, [withdrawn, referenced, looped, root, unrecordedRoot, renamed, long, longPath]))
+    .toEqual([withdrawn, referenced, looped, unrecordedRoot, long].sort((a, b) => a - b));
+}
+
 async function putPage(ctx: OperationContext, slug: string) {
   await submitPageMutation(ctx, { operation: 'put_page', params: { slug, source_id: 'default', request_id: randomUUID(),
     content: `---\ntype: note\ntitle: Example\n---\nA synthetic page at ${slug}.\n` } });
@@ -124,6 +158,7 @@ for (const backend of testBackends()) {
       });
       await exercise(engine, seeded);
     }, opts), 240_000);
+    test('exclusions, root slugs, reused slugs and long contexts', () => managedBrain(async ({ engine }) => edgeCases(engine), opts), 240_000);
   });
 }
 
@@ -141,5 +176,9 @@ describe('#8859 purged-page-facts repair, unmanaged PGLite', () => {
       });
       await exercise(engine, seeded);
     }
+  }, 120_000);
+  test('exclusions, root slugs, reused slugs and long contexts', async () => {
+    await engine.executeRaw("UPDATE facts SET expired_at = now() WHERE expired_at IS NULL");
+    await edgeCases(engine);
   }, 120_000);
 });

@@ -5,11 +5,13 @@
  * extractedFromPageSql) used to outlive its page: neither a direct purge nor the retention expiry of a soft-deleted page
  * took it. Those purges are fixed; the rows they left behind stay active and recallable until this repair retires them.
  *
- * Candidates: active page-extraction facts filed on no page whose context head is a page slug (recordedPageSlug) that no
- * page row of the source holds, live or soft-deleted. Each is classified:
+ * Candidates: active page-extraction facts filed on no page whose context head is a page slug (recordedPageSlug: no
+ * whitespace and a '/', or any single-segment slug the purge ledger records) that no page row of the source holds, live
+ * or soft-deleted. Each is classified:
  *   - excluded (listed, never retired): the claim was withdrawn, the row is superseded, another fact's `superseded_by`
  *     or an open loop references it;
- *   - evidenced: the page purge ledger (`page_purges`) records a purge of that slug in the source;
+ *   - evidenced: the page purge ledger (`page_purges`) records a purge of that slug in the source after the fact was
+ *     written (a fact written after the purge belongs to a later page under the slug, say one renamed away since);
  *   - ambiguous: no purge record (a retention purge of a soft-deleted page leaves none, and neither does a rename that
  *     did not carry the facts); retired only with `--include-ambiguous` and that preview's hash.
  *
@@ -63,8 +65,9 @@ interface BatchItem extends RepairItem { batch: Approved; request_id: string; ha
 
 const HEAD = contextHeadSql('f');
 const SOURCES = PAGE_EXTRACTION_SOURCE_LIST.map(s => `'${s}'`).join(', ');
+const PURGED_SQL = `EXISTS (SELECT 1 FROM page_purges pp WHERE pp.source_id = f.source_id AND pp.slug = ${HEAD} AND pp.purged_at >= f.created_at)`;
 const CANDIDATE_WHERE = `f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.source_markdown_slug IS NULL AND f.source IN (${SOURCES})
-     AND strpos(${HEAD}, '/') > 0 AND ${HEAD} !~ '[[:space:]]'
+     AND ${HEAD} <> '' AND ${HEAD} !~ '[[:space:]]' AND (strpos(${HEAD}, '/') > 0 OR ${PURGED_SQL})
      AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = ${HEAD})`;
 const EXCLUDED_SQL = {
   withdrawn: `EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
@@ -73,7 +76,6 @@ const EXCLUDED_SQL = {
   referenced: 'EXISTS (SELECT 1 FROM facts g WHERE g.superseded_by = f.id)',
   open_loop: 'EXISTS (SELECT 1 FROM open_loops o WHERE o.fact_id = f.id)',
 };
-const PURGED_SQL = `EXISTS (SELECT 1 FROM page_purges pp WHERE pp.source_id = f.source_id AND pp.slug = ${HEAD})`;
 
 interface CandidateRow {
   id: number | string; source_id: string; slug: string; fact: string; context: string; entity_slug: string | null; visibility: string; source: string;
@@ -111,8 +113,8 @@ const DETAILS: Record<string, string> = {
   superseded: 'a newer fact superseded it',
   superseded_by_reference: 'another fact names it in superseded_by',
   open_loop_reference: 'an open loop references it (open_loops.fact_id)',
-  page_purge_recorded: 'its page was purged (the page purge ledger records the slug) and the purge left it active',
-  no_purge_record: 'its page is gone with no purge record (a retention purge of a deleted page, or a rename that did not carry its facts)',
+  page_purge_recorded: 'its page was purged after it was written (the page purge ledger records the slug) and the purge left it active',
+  no_purge_record: 'its page is gone with no purge record from after it was written (a retention purge of a deleted page, or a rename that did not carry its facts)',
 };
 
 async function previewCommand(engine: BrainEngine, sourceIds: string[], includeAmbiguous: boolean): Promise<string> {
@@ -223,7 +225,8 @@ async function expireManaged(engine: BrainEngine, config: Parameters<typeof wait
 export async function preparePurgedPageFactsExpiry(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
   const batch = (row.intent as { batch?: Approved } | null)?.batch;
   if (row.slug !== PURGED_PAGE_FACTS_ANCHOR_SLUG || !batch || batch.source_id !== row.source_id || !Array.isArray(batch.facts) || !batch.facts.length
-    || batch.facts.some(f => !Number.isSafeInteger(f?.id) || typeof f.slug !== 'string' || typeof f.fact_hash !== 'string')) {
+    || batch.facts.some(f => !Number.isSafeInteger(f?.id) || typeof f.slug !== 'string' || typeof f.fact_hash !== 'string'
+      || (f.class !== 'evidenced' && f.class !== 'ambiguous'))) {
     throw opError('invalid_params', 'The purged-page-facts intent does not name its facts.',
       `Request ${row.request_id} in source ${row.source_id} does not name the facts it retires, so nothing changed. Preview the repair again and apply the new preview after the user approves.`,
       { fix: previewFix(row.source_id) });

@@ -2601,10 +2601,11 @@ gbrain repair purged-page-facts --include-ambiguous   # also rows of pages gone 
 
 A candidate is an active fact written by page extraction, filed on no page,
 whose context starts with the slug of a page that no longer exists in its
-source (not even as a deleted page, which a restore could bring back).
+source (not even as a deleted page, which a restore could bring back). A
+slug with no `/` counts only when the purge ledger records it.
 
-- **evidenced**: the purge ledger records a purge of that page. Retired by
-  default.
+- **evidenced**: the purge ledger records a purge of that page after the fact
+  was written. Retired by default.
 - **ambiguous**: the page is gone with no purge record. A retention purge
   leaves none, and neither does a rename that did not carry its facts, so
   these are retired only with `--include-ambiguous` on both the preview and
@@ -2616,7 +2617,8 @@ The apply needs the preview's hash and your consent (`--yes`, or a terminal
 prompt). It expires exactly the previewed rows that are still active,
 unchanged and still without a page; anything else is reported as
 `changed_since_preview` and kept, and a row that appeared after the preview
-is never touched. Rows are expired, not deleted, so their history stays. On a
+is never touched. Rows are expired, not deleted, so their history stays. The
+repair writes no purge record, so the same claim could be saved again later. On a
 managed brain each batch of up to 200 facts is one database-only
 `managed_maintenance_expire_purged_page_facts` request. It works the same on
 a repo-less brain: no page or file is written.
@@ -4726,7 +4728,7 @@ Then recover what doctor names, in this order (skip a step whose check is ok):
 | `[gbrain] warning: OPENAI_API_KEY in this process's environment differs from openai_api_key …`; doctor `embedding_key_source` warns | `embedding_key_source` ([provider key source](#embedding-key-source)) | `gbrain doctor` (`embedding_key_source`) | remove the variable and restart that process, or `gbrain config unset openai_api_key` | the warning no longer prints; `gbrain doctor` shows `embedding_key_source` ok | user (owns the key) | `credentials` |
 | `The OpenAI embedding provider rejected its key (HTTP 401)` | [`embedding_auth_failed`](write-refusals.md#embedding_auth_failed) | `gbrain doctor` (`embedding_key_source`, `embedding_provider`) | the printed fix for the key source in effect, then `gbrain embed --stale` | `gbrain doctor` shows `embedding_provider` ok | user (owns the key) | `credentials`; `paid` for `embed --stale` |
 | Conversation facts missing from recall after managed writes | `extractor_facts_expired` | `gbrain repair extractor-facts` | `gbrain repair extractor-facts --apply --expect <hash>` (ambiguous: add `--include-ambiguous` to both) | `gbrain doctor` | brain host, after the user agrees | `destructive` (rewrites expired facts) |
-| Recall still returns claims from a page you purged; doctor `purged_page_facts` warns | `purged_page_facts` ([purged page facts](#purged-page-facts)) | `gbrain repair purged-page-facts` | `gbrain repair purged-page-facts --apply --expect <hash> --yes` (no purge record: add `--include-ambiguous` to both) | `gbrain doctor` | brain host, after the user agrees | none |
+| Recall still returns claims from a page you purged; doctor `purged_page_facts` warns | `purged_page_facts` ([purged page facts](#purged-page-facts)) | `gbrain repair purged-page-facts` | `gbrain repair purged-page-facts --apply --expect <hash> --yes` (no purge record: add `--include-ambiguous` to both) | `gbrain doctor` | brain host, after the user agrees | destructive (`--yes`) |
 | Facts missing from recall after a page write or `extract_facts` run, although no fence of their page held them; doctor `unwithdrawn_facts` warns | `unwithdrawn_facts` ([unwithdrawn facts](#unwithdrawn-facts)) | `gbrain repair unwithdrawn-facts` | `gbrain repair unwithdrawn-facts --apply --expect <hash>` (ambiguous: add `--include-ambiguous` to both) | `gbrain doctor` | brain host, after the user agrees | none |
 | Recall returns conversation facts such as "Date said …" or "Attendees said …", or facts dated 1970-01-01; doctor `conversation_label_facts` warns; the upgrade banner prints `conversation_label_facts: N (explicit_kind_required; …)` | `gbrain repair conversation-labels` (ambiguous: add `--include-ambiguous`) | `gbrain repair conversation-labels --apply --expect <hash> --yes`, then the printed `gbrain extract-conversation-facts --slugs … --dry-run` | `gbrain doctor --only conversation_label_facts --json` | brain host, after the user agrees | `destructive` (retires facts; no model calls) |
 
