@@ -822,10 +822,13 @@ surprise:
   read as a detailed bug report. When we take it, we rebuild it on current
   master with the same credit.
 
-When we rebuild a change, we close your PR with a link to the PR that landed
-it. When we don't take one, we close it with a short note saying why and what
-would change our answer. So apart from documentation, "closed, not merged" is
-the normal outcome and doesn't mean your work was turned down.
+Every pull request, ours and an outside documentation change alike, lands on
+master as one squashed commit, with each outside author credited by a
+`Co-authored-by:` trailer. When we rebuild a change, we close your PR with a
+link to the PR that landed it. When we don't take one, we close it with a
+short note saying why and what would change our answer. So apart from
+documentation, "closed, not merged" is the normal outcome and doesn't mean
+your work was turned down.
 
 A larger change is much easier to take when it shows:
 
@@ -837,9 +840,11 @@ A limit of 3 open pull requests applies only to someone whose recent pull
 requests have mostly been closed without being taken. It never applies to
 anyone who has had a pull request taken (merged or rebuilt) in the last 90 days.
 
-Every outside issue gets a first reply from us within 48 hours. A bug report
-we could not reproduce gets one follow-up question after 60 days, and is
-closed two weeks after that if nobody answers.
+Replies on behalf of the project come from the Capy app (`capy-ai[bot]`) or
+a maintainer; a comment from any other account that calls itself triage does
+not speak for gbrain. Every outside issue gets a first reply from us within 48
+hours. A bug report we could not reproduce gets one follow-up question after
+60 days, and is closed two weeks after that if nobody answers.
 
 The same three things make a bug report easy to act on. To see what the
 community has reported, without the issues our own agents and CI file, use the
