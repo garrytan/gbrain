@@ -21,7 +21,7 @@
       "updatedAt": 1794721432561,
       "archived": false,
       "isMain": false,
-      "parentSessionKey": "agent:dev:main",
+      "parentSessionKey": "agent:dev:example-main",
       "spawnDepth": 0,
       "visibility": "shared"
     },
@@ -39,7 +39,7 @@
       "updatedAt": 1794721322173,
       "archived": false,
       "isMain": false,
-      "parentSessionKey": "agent:dev:main",
+      "parentSessionKey": "agent:dev:example-main",
       "spawnDepth": 0,
       "visibility": "shared",
       "lastInteractionAt": 1794721320980,

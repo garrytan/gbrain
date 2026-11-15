@@ -21,7 +21,7 @@
       "updatedAt": 1794721319384,
       "archived": false,
       "isMain": false,
-      "parentSessionKey": "agent:dev:main",
+      "parentSessionKey": "agent:dev:example-main",
       "spawnDepth": 0,
       "visibility": "shared"
     }
