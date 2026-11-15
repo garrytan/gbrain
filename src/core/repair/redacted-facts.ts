@@ -27,6 +27,12 @@
  *   - segmented: proved, but the row sits in the facts fence of a page
  *     stored in segments, which this repair does not rewrite; listed with
  *     its restoration, never changed.
+ * A row with a row number is a fence row only while its page's `## Facts`
+ * fence holds an active row with its text at that number. A conversation-extractor row keeps the
+ * row number the extractor gave it on a page with no such row (#8820) and is
+ * restored like a database-only row; any other row whose fence row is gone
+ * is unproven (`fence_row_missing`), listed with its restoration, never
+ * changed.
  * A segmented source page is read as evidence through the segment reader
  * (up to 16 MiB).
  *
@@ -34,7 +40,8 @@
  * previewed. A fenced row (`row_num` on its page) gets its claim rewritten in
  * the page's `## Facts` fence by one revision-bound `put_page` per page, so
  * the canonical projection replaces the row and the page's chunks are
- * re-embedded by its publication. A database-only row gets its text rewritten
+ * re-embedded by its publication. A database-only or conversation-extractor
+ * row gets its text rewritten
  * by one database-only maintenance request on a managed brain (one
  * transaction on an unmanaged brain); its vector is then stale by its text
  * hash and `gbrain embed` re-embeds it. Page history keeps the damaged
@@ -43,7 +50,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { parseFactsFence } from '../facts-fence.ts';
+import { parseFactsFence, parseFactsFenceFor } from '../facts-fence.ts';
 import { strikeFenceRow } from '../facts/forget.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { digest } from '../persistence/digest.ts';
@@ -76,8 +83,10 @@ export interface RedactedFactCandidate {
   /** The page the fact lives on (fenced rows) or its entity key (database-only rows). */
   slug: string;
   row_num: number | null;
+  /** `fence`: rewritten in its page's Facts fence; `database`: rewritten in place (no row number, or a conversation-extractor row with no fence row). */
+  route: 'fence' | 'database';
   class: RedactedFactClass;
-  /** `restorable`, `conflicting_sources`, `no_source_page`, `not_in_source` or `segmented_page`. */
+  /** `restorable`, `conflicting_sources`, `no_source_page`, `not_in_source`, `segmented_page` or `fence_row_missing`. */
   reason: string;
   /** The stored text, and the restored text when evidenced (or proved on a segmented page). */
   fact: string;
@@ -98,7 +107,7 @@ interface PageItem extends RepairItem { page: RedactedFactsPage; hash: string; l
 
 interface FactRow {
   id: number | string; source_id: string; fact: string; visibility: string; entity_slug: string | null;
-  row_num: number | null; source_markdown_slug: string | null; context: string | null;
+  row_num: number | null; source_markdown_slug: string | null; context: string | null; source: string | null;
 }
 
 const factHash = (row: FactRow) => digest(['redacted-fact-v1', row.fact, row.visibility, row.entity_slug, row.row_num, row.source_markdown_slug]);
@@ -109,7 +118,7 @@ const contextSlug = (context: string | null) => {
   return /^[^\s|]+$/.test(first) ? first : null;
 };
 
-interface PageTexts { segmented: boolean; texts: Array<{ label: string; text: string }> }
+interface PageTexts { segmented: boolean; fenceRows: Map<number, string>; fenceUncertain: boolean; writableRows: Map<number, string>; texts: Array<{ label: string; text: string }> }
 
 /** A segmented body's stored text, read segment by segment; null when it is over TEXT_MAX_BYTES (it proves nothing). */
 async function segmentedText(db: BrainEngine, pageId: number): Promise<string | null> {
@@ -132,25 +141,31 @@ async function segmentedText(db: BrainEngine, pageId: number): Promise<string | 
  */
 async function pageTexts(db: BrainEngine, sourceId: string, slug: string): Promise<PageTexts> {
   const snapshot = await db.readPageSnapshot(slug, { sourceId }).catch(() => null);
-  if (!snapshot) return { segmented: false, texts: [] };
+  if (!snapshot) return { segmented: false, fenceRows: new Map(), fenceUncertain: false, writableRows: new Map(), texts: [] };
   const texts: PageTexts['texts'] = [];
   const segmented = isSegmentedPage(snapshot.page);
+  let fenceBody: string | null;
   if (segmented) {
-    const text = await segmentedText(db, snapshot.page.id);
-    if (text !== null) texts.push({ label: slug, text });
+    fenceBody = await segmentedText(db, snapshot.page.id);
+    if (fenceBody !== null) texts.push({ label: slug, text: fenceBody });
   } else {
+    fenceBody = snapshot.page.compiled_truth ?? '';
     texts.push({ label: slug, text: [snapshot.page.compiled_truth ?? '', snapshot.page.timeline ?? ''].join('\n') });
   }
   const versions = await db.executeRaw<{ id: number | string; compiled_truth: string }>(`SELECT id, compiled_truth FROM page_versions
     WHERE page_id=$1 AND compiled_truth IS NOT NULL ORDER BY id DESC LIMIT ${VERSIONS_PER_PAGE}`, [snapshot.page.id]);
   for (const v of versions) texts.push({ label: `${slug}@version:${v.id}`, text: v.compiled_truth });
-  return { segmented, texts };
+  const activeRows = (parsed: ReturnType<typeof parseFactsFence> | null) => new Map((parsed?.facts ?? []).filter(row => row.active).map(row => [row.rowNum, row.claim.trim()]));
+  const fence = fenceBody === null ? null : parseFactsFenceFor(fenceBody, { slug });
+  const writable = fenceBody === null ? null : parseFactsFence(fenceBody);
+  return { segmented, fenceRows: activeRows(fence), fenceUncertain: !fence || fence.warnings.length > 0,
+    writableRows: activeRows(writable?.warnings.length ? null : writable), texts };
 }
 
 /** Read-only: every active fact of these sources whose text holds a redaction marker, classified, in (source, page, id) order. */
 export async function classifyRedactedFacts(db: BrainEngine, sourceIds: string[], opts: { ids?: number[] } = {}): Promise<RedactedFactCandidate[]> {
   const rows = await db.executeRaw<FactRow>(`
-    SELECT f.id, f.source_id, f.fact, f.visibility, f.entity_slug, f.row_num, f.source_markdown_slug, f.context
+    SELECT f.id, f.source_id, f.fact, f.visibility, f.entity_slug, f.row_num, f.source_markdown_slug, f.context, f.source
       FROM facts f
      WHERE f.source_id=ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
        AND f.fact LIKE '%[redacted%' AND ($2::bigint[] IS NULL OR f.id=ANY($2::bigint[]))
@@ -176,12 +191,16 @@ export async function classifyRedactedFacts(db: BrainEngine, sourceIds: string[]
       }
     }
     const proved = !conflicting && proofs.size === 1;
-    const held = proved && row.row_num !== null && row.source_markdown_slug !== null
-      && (await sourceTexts(row.source_id, row.source_markdown_slug)).segmented;
+    const holder = row.row_num !== null && row.source_markdown_slug !== null ? await sourceTexts(row.source_id, row.source_markdown_slug) : null;
+    const extractor = (row.source ?? '').startsWith('cli:extract-conversation-facts');
+    const inFence = !!holder && (holder.fenceRows.get(Number(row.row_num)) === row.fact.trim() || holder.segmented && !extractor || extractor && holder.fenceUncertain);
+    const route = row.row_num === null || !inFence && extractor ? 'database' : 'fence';
+    const fenceGone = route === 'fence' && holder?.writableRows.get(Number(row.row_num)) !== row.fact.trim();
     const [klass, reason]: [RedactedFactClass, string] = conflicting || proofs.size > 1 ? ['ambiguous', 'conflicting_sources']
-      : held ? ['segmented', 'segmented_page'] : proved ? ['evidenced', 'restorable'] : ['unproven', read ? 'not_in_source' : 'no_source_page'];
+      : proved && holder?.segmented && route === 'fence' ? ['segmented', 'segmented_page'] : proved && fenceGone ? ['unproven', 'fence_row_missing']
+        : proved ? ['evidenced', 'restorable'] : ['unproven', read ? 'not_in_source' : 'no_source_page'];
     const [restored, evidence] = proved ? [...proofs][0]! : [null, [...proofs.values()].flat()];
-    candidates.push({ id: Number(row.id), source_id: row.source_id, slug: targetSlug(row), row_num: row.row_num === null ? null : Number(row.row_num),
+    candidates.push({ id: Number(row.id), source_id: row.source_id, slug: targetSlug(row), row_num: row.row_num === null ? null : Number(row.row_num), route,
       class: klass, reason, fact: row.fact, restored, evidence, visibility: row.visibility, entity_slug: row.entity_slug,
       source_markdown_slug: row.source_markdown_slug, fact_hash: factHash(row) });
   }
@@ -194,6 +213,7 @@ const DETAILS: Record<string, string> = {
   no_source_page: 'no page it came from exists any more, so nothing can prove the original words; left unchanged',
   not_in_source: 'the words around the marker are not in any page it came from, so nothing proves the original words; left unchanged',
   segmented_page: 'its row sits in the facts fence of a page stored in segments, and this repair rewrites a fence by publishing the whole body; left unchanged',
+  fence_row_missing: 'its row number names no active row with its text in its page\'s Facts fence, so neither the fence nor the row can be rewritten safely; left unchanged',
 };
 
 function previewCommand(scope: RepairScope, all: string[]): string {
@@ -206,7 +226,7 @@ async function activeSources(engine: BrainEngine): Promise<string[]> {
 
 async function hashParts(engine: BrainEngine, scope: RepairScope, facts: RedactedFactCandidate[]) {
   const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
-  return ['redacted-facts-v1', brain?.brain_id ?? 'host', scope.source_ids, facts.map(f => [f.id, f.class, f.reason, f.fact_hash, f.restored])];
+  return ['redacted-facts-v1', brain?.brain_id ?? 'host', scope.source_ids, facts.map(f => [f.id, f.class, f.reason, f.fact_hash, f.restored, f.route])];
 }
 
 function pageItem(page: RedactedFactsPage, hash: string, index: number, last: boolean): PageItem {
@@ -258,12 +278,12 @@ export const redactedFactsRepair: RepairHandler = {
     const live = new Map((await classifyRedactedFacts(engine, [page.source_id], { ids: page.facts.map(f => f.id) })).map(c => [c.id, c]));
     const unchanged = page.facts.filter(f => {
       const current = live.get(f.id);
-      return !!current && (['class', 'fact_hash', 'slug', 'row_num', 'restored'] as const).every(field => current[field] === f[field]);
+      return !!current && (['class', 'fact_hash', 'slug', 'row_num', 'route', 'restored'] as const).every(field => current[field] === f[field]);
     });
     const restored: number[] = [];
-    const dbOnly = unchanged.filter(f => f.row_num === null);
+    const dbOnly = unchanged.filter(f => f.route === 'database');
     if (dbOnly.length) restored.push(...await restoreDatabaseRows(engine, page, hash, dbOnly));
-    const fenced = unchanged.filter(f => f.row_num !== null);
+    const fenced = unchanged.filter(f => f.route === 'fence');
     if (fenced.length) restored.push(...await restoreFencedRows(ctx, entry, page, fenced));
     if (last) await clearApprovedSet(engine, { command: 'redacted-facts', hash });
     const changed = page.facts.filter(f => !restored.includes(f.id)).map(f => f.id);
@@ -272,8 +292,8 @@ export const redactedFactsRepair: RepairHandler = {
   },
 };
 
-/** One approved database-only rewrite: the row as previewed (text, visibility, entity, holding page) and its restored text. */
-export interface Restore { id: number; from: string; to: string; visibility: string; entity_slug: string | null; source_markdown_slug: string | null }
+/** One approved in-place rewrite: the row as previewed (text, visibility, entity, holding page, row number) and its restored text. */
+export interface Restore { id: number; from: string; to: string; visibility: string; entity_slug: string | null; source_markdown_slug: string | null; row_num?: number | null }
 
 /**
  * Rewrites each row still exactly as previewed. The compare runs in the
@@ -283,21 +303,22 @@ export interface Restore { id: number; from: string; to: string; visibility: str
  */
 export const restoreRedactedRows = (tx: BrainEngine, sourceId: string, restores: Restore[]) => tx.executeRaw<{ id: number | string }>(`UPDATE facts f
     SET fact=r.to_text, context=concat_ws(' | ', NULLIF(f.context,''), $3::text)
-   FROM jsonb_to_recordset($2::text::jsonb) AS r(id bigint, from_text text, to_text text, visibility text, entity_slug text, source_markdown_slug text)
+   FROM jsonb_to_recordset($2::text::jsonb) AS r(id bigint, from_text text, to_text text, visibility text, entity_slug text, source_markdown_slug text, row_num int)
   WHERE f.source_id=$1 AND f.id=r.id AND f.fact=r.from_text AND f.visibility=r.visibility AND f.entity_slug IS NOT DISTINCT FROM r.entity_slug
-    AND f.source_markdown_slug IS NOT DISTINCT FROM r.source_markdown_slug AND f.expired_at IS NULL AND f.superseded_by IS NULL AND f.row_num IS NULL
+    AND f.source_markdown_slug IS NOT DISTINCT FROM r.source_markdown_slug AND f.expired_at IS NULL AND f.superseded_by IS NULL
+    AND f.row_num IS NOT DISTINCT FROM r.row_num AND (r.row_num IS NULL OR f.source LIKE 'cli:extract-conversation-facts%')
   RETURNING f.id`,
 [sourceId, JSON.stringify(restores.map(r => ({ id: r.id, from_text: r.from, to_text: r.to, visibility: r.visibility, entity_slug: r.entity_slug,
-  source_markdown_slug: r.source_markdown_slug }))), RESTORED_CONTEXT]);
+  source_markdown_slug: r.source_markdown_slug, row_num: r.row_num ?? null }))), RESTORED_CONTEXT]);
 
 /**
- * Database-only rows: on a managed brain one database-only maintenance
+ * Database-only and conversation-extractor rows: on a managed brain one database-only maintenance
  * request on the page key (owner-checked, with a publication receipt); on an
  * unmanaged brain one transaction.
  */
 async function restoreDatabaseRows(engine: BrainEngine, page: RedactedFactsPage, hash: string, facts: RedactedFactCandidate[]): Promise<number[]> {
   const restores: Restore[] = facts.map(f => ({ id: f.id, from: f.fact, to: f.restored!, visibility: f.visibility, entity_slug: f.entity_slug,
-    source_markdown_slug: f.source_markdown_slug }));
+    source_markdown_slug: f.source_markdown_slug, row_num: f.row_num }));
   if (!await managedPersistenceEnabled(engine)) {
     return (await maintenanceTransaction(engine, tx => restoreRedactedRows(tx, page.source_id, restores))).map(row => Number(row.id));
   }
@@ -310,13 +331,14 @@ async function restoreDatabaseRows(engine: BrainEngine, page: RedactedFactsPage,
   return (receipt.restored as number[] | undefined) ?? [];
 }
 
-/** Preparer for `managed_maintenance_restore_redacted_facts`: rewrites the named database-only rows still holding their previewed text. */
+/** Preparer for `managed_maintenance_restore_redacted_facts`: rewrites the named database-only and conversation-extractor rows still holding their previewed text. */
 export async function prepareRedactedFactsRestore(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
   const restores = (row.intent as { restores?: unknown } | null)?.restores;
   const text = (v: unknown) => typeof v === 'string';
   const valid = Array.isArray(restores) && restores.every(r => !!r && typeof r === 'object' && Number.isSafeInteger((r as Restore).id)
     && text((r as Restore).from) && text((r as Restore).to) && text((r as Restore).visibility)
-    && ((r as Restore).entity_slug === null || text((r as Restore).entity_slug)) && ((r as Restore).source_markdown_slug === null || text((r as Restore).source_markdown_slug)));
+    && ((r as Restore).entity_slug === null || text((r as Restore).entity_slug)) && ((r as Restore).source_markdown_slug === null || text((r as Restore).source_markdown_slug))
+    && ((r as Restore).row_num == null || Number.isSafeInteger((r as Restore).row_num)));
   if (!valid) {
     throw opError('invalid_params', 'The redacted facts restore intent does not name its facts.',
       `Request ${row.request_id} in source ${row.source_id} does not name the facts to restore, so nothing changed. Preview the repair again and apply the new preview after the user approves.`,
