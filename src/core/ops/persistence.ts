@@ -95,7 +95,8 @@ async function receiptAccess(ctx: OperationContext, operation: ReceiptOperation,
  * local CLI only) lists every principal's terminal receipts and names `gbrain write-request <id> --json` as each row's
  * inspect step, but an owner write runs under the principal that submitted it (a fact extraction under the page write's
  * MCP client), so the own-principal lookup answered not_found. The same trusted local CLI, inside its own grant, reads
- * the receipt by request_id; a request_id two principals share stays not_found. Every other caller is unchanged.
+ * the receipt by request_id; a request_id two principals share stays not_found, and so does a receipt another local
+ * writer registration owns (local writers stay isolated from each other). Every other caller is unchanged.
  */
 async function hostOperatorReceipt(ctx: OperationContext, access: ReceiptAccess, requestId: string): Promise<WriteRequest | null> {
   if (ctx.remote !== false || ctx.auth || ctx.viaSubagent === true || access.principal.kind !== 'local_cli') return null;
@@ -103,7 +104,7 @@ async function hostOperatorReceipt(ctx: OperationContext, access: ReceiptAccess,
   if (currentVerifiedLocalWriter()?.remote) return null;
   const rows = await ctx.engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=$1::uuid LIMIT 2', [requestId]);
   const row = rows.length === 1 ? rows[0]! : null;
-  if (!row) return null;
+  if (!row || row.principal_kind === 'local_cli' || row.principal_kind === 'local_stdio') return null;
   if (access.sourceIds && !access.sourceIds.includes(row.source_id)) return null;
   if (access.operations && !access.operations.includes(row.operation)) return null;
   const slug = String(row.slug ?? '').toLowerCase();
