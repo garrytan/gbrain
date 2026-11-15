@@ -4381,6 +4381,15 @@ GBrain is MIT-licensed and free to self-host, and it starts with no API keys: se
 - Anything you ask your agent to remember is still there in the next session, in every agent connected to the brain.
 - Your notes and your company's docs are searchable, and your agent answers questions like *"what did we decide about pricing, and why?"* from them.
 
+**Works with these agents** (each name links to its guide):
+
+| How it connects | Agents |
+|---|---|
+| One command wires memory, hooks and instructions | [Claude Code](docs/mcp/CLAUDE_CODE.md) (`gbrain setup claude-code`), [Codex](docs/mcp/CODEX.md) (`gbrain setup codex`) |
+| MCP from its guide, then `gbrain setup <name>` adds the brain-first instructions | [OpenClaw](docs/mcp/OPENCLAW.md), [Hermes](docs/mcp/HERMES.md), [opencode](docs/mcp/OPENCODE.md), [Cursor](#connect-gbrain-to-your-ai-client-mcp) |
+| MCP from its guide | [ChatGPT](docs/mcp/CHATGPT.md), [Claude Desktop](docs/mcp/CLAUDE_DESKTOP.md), [Claude Cowork](docs/mcp/CLAUDE_COWORK.md), [Perplexity](docs/mcp/PERPLEXITY.md), [Grok Build](docs/mcp/GROK.md), [Grok Bot](docs/guides/grok-bot.md), [Muse](docs/guides/muse.md), [Windsurf and other stdio clients](#connect-gbrain-to-your-ai-client-mcp) |
+| Any other coding agent | Paste the [install prompt](#heres-how-to-self-host-it) below |
+
 ## Install
 
 > [!TIP]
