@@ -10,6 +10,44 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.726.0] - 2026-11-15
+
+- The conversation archive is now on by default for personal brains; turn it off with `gbrain transcripts archive off` ([#9433](https://github.com/garrytan/gbrain/pull/9433))
+- New `gbrain transcripts archive` saves each day of your agent conversations, OpenClaw included, as one redacted, searchable page ([#9432](https://github.com/garrytan/gbrain/pull/9432))
+- Archive pages rank a little below your own notes, and `gbrain doctor` warns when the archive falls behind ([#9433](https://github.com/garrytan/gbrain/pull/9433))
+
+**New, off by default: `gbrain transcripts archive` writes one redacted page per conversation per local day from your agent harnesses, plus a daily index (GST-2768).**
+
+### Added
+- `gbrain transcripts archive run | backfill --from <day> | status | adopt-legacy --dir <folder> | on | off`. Off until `gbrain transcripts archive on`; nothing is scheduled yet. Pages go to `conversations/<harness>/<day>/<label>-<hash8>` and `conversations/days/<day>` in the `conversations` source, redacted before any write; reruns change nothing; the first run pins the timezone so days never re-slice. Backfilled pages are keyword-searchable at once and their embedding waits for `gbrain embed --held`. On a shared brain every page names its readers (the owner, plus an existing `chat-<hash8>` group for a verified group chat); with no owner named, days are held with `archive_owner_unset`. Works on repo-less brains (database is the record), personal repo brains (files committed with `gbrain git commit-push`, then synced) and managed brains (the write coordinator).
+- OpenClaw: live sessions are read through the Gateway (`openclaw gateway call`, with OpenClaw's own config or `OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN`, or `GBRAIN_OPENCLAW_GATEWAY_URL` / `GBRAIN_OPENCLAW_GATEWAY_TOKEN` to override them), checked against OpenClaw 2026.10.9 and 2026.11.3. The archive also reads OpenClaw's retained session files (`.jsonl.reset.<stamp>`, zstd `.jsonl.deleted.<stamp>.<hex>.zst` and `.jsonl.bak.<stamp>`) and merges them with the Gateway's copy of the same session, so a backfill works with the Gateway down and messages from before a reset are kept; migration and Doctor copies are skipped, and `gbrain transcripts ingest` still reads live files only. A day page is rewritten only when it keeps every message it already held, and backfill re-redacts a finished day when the redaction rules changed since it was written. The `openclaw` child gets only PATH, HOME, locale and the resolved Gateway URL and token, and a working-folder `.env` can no longer set any `OPENCLAW_*` or gbrain Gateway variable. Backfill reads large session folders in a bounded way and resumes where the last run stopped.
+- New error codes: `archive_gateway_unreachable`, `archive_gateway_auth`, `archive_gateway_failed`, `archive_owner_unset`, `archive_redaction_failed`, `archive_run_busy` (one run per source at a time), `archive_audience_unproven` (the brain's audience could not be checked, so nothing was written).
+- When a brain becomes shared, the next archive run first keeps every earlier archive page to the owner, then records the new audience. A failed day index write is retried on the next run.
+
+- Docs: `docs/guides/conversation-archive.md`.
+- Tests: `test/transcripts-archive-*.test.ts` (PGLite, including a real git remote and child CLI commit-push), `test/transcripts-openclaw-gateway.test.ts`, `test/transcripts-openclaw-archived-files.test.ts`, `test/transcripts-openclaw-files-only.test.ts`.
+
+### Known limits
+- Redaction works on what each day's own text marks as a secret. A value that a later day labels as a credential stays visible in the earlier day's page.
+- Pages written while the brain was personal are closed on the next archive run after it becomes shared, so they stay readable to other members for up to one maintenance interval.
+
+**The conversation archive is now on by default for personal brains, runs from the maintenance pass, ranks a little below your own pages, and has a doctor check (GST-2768).**
+
+<!-- behavior-change: transcript_archive_default_gst2768 -->
+
+### Changed
+- `transcripts.archive.enabled` unset now resolves on when the brain is personal (this default flip is approved by Garry's 2026-11-15 "do it" on GST-2768) (`brain.audience` personal, or the audience heuristic reads it as personal) and off on a shared or unknown brain, a thin client and a remote caller; an explicit on or off always wins, and a config read failure resolves off. A shared brain is only offered the archive. Existing personal brains see a one-time upgrade notice with the off command, `gbrain transcripts archive off`.
+- Search and query: an archive page ranks a little below a written page that scores close to it (rank prior 0.8), and one result list keeps at most two archive hits per day, unless the query asks about a conversation or a date. `search.rank_priors false` turns both off.
+- `gbrain init` and `gbrain setup <harness>` state the archive in their first-run settings (on, or offered on a shared brain), what leaves the machine, and how to turn it off.
+
+### Added
+- The maintenance pass runs the archive: unattended upkeep (a serve's idle tick, `gbrain maintain --unattended` and its schedule) and the autopilot tick archive the forward days, then one capped backfill run (`transcripts.archive.backfill_days_per_run`) of older days until none are left, at most once per `transcripts.archive.maintenance_floor_min` (default 360). It never runs when the archive resolves off, never fails the pass, and records its outcome in `transcripts.archive.last_maintenance`. One pass is bounded by count and by `ARCHIVE_MAINTENANCE_BUDGET_MS` (120 s, coordinator waits included). A busy run (`archive_run_busy`) or an unproven audience (`archive_audience_unproven`) is a recorded skip the next pass retries. On a managed brain the pass writes through the write coordinator as `put_page` requests under the local CLI identity (`local_cli`); a write accepted but not yet published counts as `accepted` and is not written again; called inside a coordinated write it skips with `archive_inside_publication`. Backfilled pages stay keyword-only until `gbrain embed --held`; no facts extraction or Dream synthesis runs on archive pages.
+- When a brain archived while personal becomes shared, the owner-only re-scope now adds one rule per folder that holds an archive page (replacing any rule already on those folders, a wider one included) instead of one `conversations/` rule, so a group conversation archived afterwards keeps its group. A personal history longer than the per-source rule limit (256 folders) is kept to the owner by one rule on `conversations/` instead (`archive_rescope_folder_cap`, reported by status and doctor), so group conversations archived afterwards stay owner-only too; widening that rule also opens the earlier days to its readers. When the re-scope waits (no owner: `archive_rescope_owner_unset`; rules kept in git: `archive_rescope_git_rules`), `gbrain transcripts archive status` and doctor say so in one line with the next step.
+- Embedding planning reads a page's archive hold marker and budget row in one statement instead of two.
+- Doctor check `transcript_archive_freshness`: warns when a harness's newest archived day is more than `transcripts.archive.stale_days` (default 2) behind its newest session day (fix: `gbrain transcripts archive run`, or `backfill --from <day>` for a wider gap), when no maintenance pass has run the archive in that long (fix: `gbrain autopilot --install`), and lists held days with their codes. Off is ok; a harness with no readable sessions is informational.
+- Docs: `docs/guides/conversation-archive.md` (default-on behaviour, what leaves the machine, the off switch, backfill and the held embedding, the doctor check, retiring a home-made pipeline).
+- Tests: `test/transcripts-archive-default.test.ts`, `test/transcripts-archive-maintenance.test.ts`, `test/search-archive-rank-prior.test.ts`, `test/doctor-transcript-archive-freshness.test.ts`, `test/upgrade-transcript-archive-notice.test.ts`, `test/transcripts-archive-maintenance-managed.test.ts`, `test/transcripts-archive-run-on-demand.test.ts`, `test/transcripts-archive-rescope-skipped.test.ts`, `test/page-embedding-budget-statements.test.ts`, and the archive line in `test/init-first-run.test.ts`.
+
 ## [0.60.725.0] - 2026-11-15
 
 **Doctor's Git checks now finish on large brains, and a check that could not see everything says health unknown instead of ok.**
