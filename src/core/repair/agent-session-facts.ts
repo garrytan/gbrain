@@ -163,6 +163,13 @@ function readHead(path: string): string {
   } finally { closeSync(fd); }
 }
 
+/** Claude Code's own slash-command records (caveat, command name/message/args, local stdout) are not text the user typed. */
+function stripHarnessText(text: string): string {
+  return text
+    .replace(/<(local-command-caveat|local-command-stdout)>[\s\S]*?<\/\1>/g, ' ')
+    .replace(/<(command-name|command-message|command-args)>[\s\S]*?<\/\1>/g, ' ');
+}
+
 /** The session's first user turn, normalized; null when no retained file holds one long enough to compare, 'unread' when its files could not be read. */
 function openingKey(paths: string[], unreadable: string[]): string | null {
   const ranked = paths.map(path => {
@@ -174,8 +181,9 @@ function openingKey(paths: string[], unreadable: string[]): string | null {
   for (const { path, wb } of ranked) {
     let head: string;
     try { head = readHead(path); } catch { unreadable.push(path); unread = true; continue; }
-    const turn = wb ? stripPastedContent(head).text : parseCorpusTurns(head).find(t => t.role === 'user')?.body;
-    const key = turn?.replace(/\s+/g, ' ').trim().toLowerCase().slice(0, OPENING_CHARS);
+    const normalize = (text: string) => stripHarnessText(text).replace(/\s+/g, ' ').trim().toLowerCase().slice(0, OPENING_CHARS);
+    const key = wb ? normalize(stripPastedContent(head).text)
+      : parseCorpusTurns(head).filter(t => t.role === 'user').map(t => normalize(t.body)).find(Boolean);
     if (key) return key.length >= OPENING_MIN_CHARS ? key : null;
   }
   return unread ? 'unread' : null;
