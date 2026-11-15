@@ -53,11 +53,15 @@
  * (1.1 s for a 40k-chunk scope at 50k pages, 9-22 s for a 74k-chunk one). It is complete by construction, where a filtered HNSW scan of
  * a mid-share scope returned a fraction of the true neighbours, and it costs
  * a few microseconds per scope chunk. Up to SCOPE_SCAN_FIRST_MAX_CHUNKS it
- * replaces the walk; above that the walk runs first (fast when the scope's
- * chunks spread through the space) and the scan answers when the walk comes
- * back short, as it does for a scope clustered away from the query. Callers
- * accept the scan when it fills the limit or its window is short (the scope
- * ran out of eligible chunks).
+ * runs before the walk (`scopeScanFirst`); above that the walk runs first
+ * (fast when the scope's chunks spread through the space) and the scan
+ * answers when the walk comes back short, as it does for a scope clustered
+ * away from the query. Callers accept the scan when it fills the limit or its
+ * window is short (the scope ran out of eligible chunks). A scan that times
+ * out (cold pages, a slow disk) falls to the walk, whose cost the window
+ * bounds, before the joined statement: without the walk, that statement was
+ * the only fallback, and on a cold brain its plan is a sequential scan and
+ * distance sort of every chunk that ran into the vector deadline.
  */
 import type { SearchOpts } from '../types.ts';
 import { hnswIndexExpected } from '../vector-index.ts';
@@ -103,8 +107,10 @@ export interface VectorSearchStatement {
   indexWalkSql?: string;
   /** Raw rows the walk orders per window slot: INDEX_WALK_OVERFETCH, scaled by 1/share for a source scope. */
   indexWalkOverfetch: number;
-  /** Exact scan over a small source scope's chunks (relaxed variant), same parameters as `sql`; runs after the walk when both exist. */
+  /** Exact scan over a small source scope's chunks (relaxed variant), same parameters as `sql`; runs after the walk when both exist, unless `scopeScanFirst`. */
   scopeScanSql?: string;
+  /** The scope scan runs before the walk (a scope of at most SCOPE_SCAN_FIRST_MAX_CHUNKS); the walk is its fallback. */
+  scopeScanFirst?: boolean;
 }
 
 /**
@@ -148,7 +154,8 @@ export const INDEX_WALK_MIN_SCOPE_SHARE = 0.04;
 /**
  * Source scopes under SCOPE_SCAN_MAX_SHARE of pages get the exact scope scan
  * up to SCOPE_SCAN_MAX_CHUNKS (counted, SCOPE_CHUNKS_SQL): first when at most
- * SCOPE_SCAN_FIRST_MAX_CHUNKS, otherwise after the walk comes back short.
+ * SCOPE_SCAN_FIRST_MAX_CHUNKS (the walk is then its fallback), otherwise
+ * after the walk comes back short.
  * The scan costs about 5 µs per scope chunk (75k chunks: 340 ms, 157k:
  * 760 ms on a 50k-page brain), so the 120k cap keeps the fallback near
  * 600 ms, under the joined statement's 820 ms on a clustered 75k-chunk scope
@@ -358,7 +365,8 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
   const narrowed = !!(opts?.type || opts?.types?.length || opts?.where || opts?.afterDate || opts?.beforeDate)
     || (share !== undefined && share < INDEX_WALK_MIN_SCOPE_SHARE);
   const scopeScan = relaxed && share !== undefined && share < SCOPE_SCAN_MAX_SHARE && chunks !== undefined && chunks <= SCOPE_SCAN_MAX_CHUNKS;
-  const walk = relaxed && !narrowed && !(scopeScan && chunks! <= SCOPE_SCAN_FIRST_MAX_CHUNKS);
+  const scopeScanFirst = scopeScan && chunks! <= SCOPE_SCAN_FIRST_MAX_CHUNKS;
+  const walk = relaxed && !narrowed;
   const overfetch = indexWalkOverfetch(share);
   const preMigration = modelParam ? `(${modelParam}::text IS NULL AND NOT EXISTS(SELECT 1 FROM config WHERE key='embedding_migration.state'))` : '';
   const hashCurrent = `(cc.embedded_text_hash=md5(cc.chunk_text) OR cc.embedded_text_hash IS NULL)`;
@@ -522,5 +530,6 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
     indexWalkOverfetch: overfetch,
     ...(walk ? { indexWalkSql: statement(indexWalkCandidates, true) } : {}),
     ...(scopeScan ? { scopeScanSql: statement(scopeScanCandidates, true) } : {}),
+    ...(scopeScanFirst && walk ? { scopeScanFirst: true } : {}),
   };
 }

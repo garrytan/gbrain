@@ -1,0 +1,9 @@
+**A source-scoped vector search whose scope scan times out now falls back to the HNSW index walk instead of a full-corpus scan.** A source holding at most 25k chunks (and under 30% of pages) runs the exact scope scan first. Until now that scope had no index walk at all, so when the scan hit its 2 s attempt budget (cold pages, a busy disk) the only next statement was the joined pool statement. On a cold brain the planner runs that as a sequential scan and distance sort of every chunk, which ran into the 8 s vector deadline and left the vector arm empty, reported as `vector_candidates_incomplete` (`timeout`). The scope now keeps the walk as the scan's fallback, so the order is scope scan, then walk, then the joined statement. A scan that answers is unchanged and still exact, and the walk applies every source, visibility and page filter, as it already does for wider scopes.
+
+### Itemized changes
+
+- `src/core/search/vector-statement.ts`: a scan-first scope keeps `indexWalkSql` and sets the new `scopeScanFirst` flag; the scan SQL, the walk SQL and the routing thresholds are unchanged.
+- `src/core/search/vector-pool.ts`: `searchIndexWalk` runs the scope scan before the walk when `scopeScanFirst` is set, and never runs the scan twice.
+- `src/core/postgres-engine.ts`, `src/core/pglite-engine.ts`: `explainVectorSearch` (doctor `vector_plan`) still explains the scan for a scan-first scope, and the joined statement's settings are chosen as before.
+- Docs: `docs/architecture/key-files/core-search-2.md`.
+- Tests: `test/search/vector-pool.test.ts`, `test/search/vector-statement.test.ts`, `test/search/vector-index-walk.test.ts` (PGLite: a timed-out scan falls to the walk, not the pool, and returns the joined statement's rows), `test/search/vector-scope-chunks.test.ts`, and `test/e2e/vector-scope-recall-postgres.test.ts` (Postgres, 1024-dim: walk after a timed-out scan, recall against the exact statement).
