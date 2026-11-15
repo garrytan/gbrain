@@ -43,7 +43,7 @@ async function recordStatements<T>(engine: BrainEngine, fn: () => Promise<T>): P
 
 /** What each settle in IDLE_SKIPS sends when it runs, counted in a run's statements. */
 const settles = (sent: Array<{ sql: string; params: unknown[] }>, sourceId: string) => ({
-  holdReads: sent.filter(s => s.sql.startsWith('SELECT h.completed_keys->0 AS record FROM op_checkpoints h') && s.params[0] === GIT_HOLD_OP && s.params[2] === null).length,
+  holdReads: sent.filter(s => (s.sql.startsWith('SELECT ') && s.sql.includes(' AS record FROM op_checkpoints h')) && s.params[0] === GIT_HOLD_OP && s.params[2] === null).length,
   holdReport: sent.filter(s => s.sql.includes("COALESCE((completed_keys->0->>'count')::int,0) AS count") && s.params[0] === GIT_HOLD_SUMMARY_OP).length,
   failureRows: sent.filter(s => s.sql.includes("f.op='managed-sync-failure' AND f.completed_keys->0->>'source_id'=$1")).length,
   needsHuman: sent.filter(s => s.sql === 'SELECT incarnation::text AS incarnation FROM sources WHERE id=$1' && s.params[0] === sourceId).length,
