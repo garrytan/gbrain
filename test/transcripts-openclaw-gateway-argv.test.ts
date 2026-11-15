@@ -57,7 +57,17 @@ describe('openclaw gateway call child process', () => {
 
   test('a Gateway URL that is not a ws, wss, http or https URL is refused before anything runs', async () => {
     const before = readFileSync(log, 'utf8');
-    await expect(cliGatewayTransport({ bin, url: '--config=/tmp/evil' }).call('sessions.list', {})).rejects.toThrow(/GBRAIN_OPENCLAW_GATEWAY_URL/);
+    await expect(cliGatewayTransport({ bin, url: '--config=/tmp/evil' }).call('sessions.list', {})).rejects.toThrow('GBRAIN_OPENCLAW_GATEWAY_URL must use the ws, wss, http or https scheme; nothing was run');
+    expect(readFileSync(log, 'utf8')).toBe(before);
+  });
+
+  test('a bad OpenClaw OPENCLAW_GATEWAY_URL is refused by that name before anything runs', async () => {
+    const before = readFileSync(log, 'utf8');
+    await withEnv({ OPENCLAW_GATEWAY_URL: '--config=/tmp/evil', GBRAIN_OPENCLAW_GATEWAY_URL: undefined }, async () => {
+      const err = await cliGatewayTransport({ bin }).call('sessions.list', {}).then(() => null, (e: Error) => e);
+      expect(err?.message).toContain('OPENCLAW_GATEWAY_URL must use the ws, wss, http or https scheme; nothing was run');
+      expect(err?.message).not.toContain('GBRAIN_OPENCLAW_GATEWAY_URL');
+    });
     expect(readFileSync(log, 'utf8')).toBe(before);
   });
 
