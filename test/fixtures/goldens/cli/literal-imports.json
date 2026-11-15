@@ -65,6 +65,7 @@
         "./commands/edges-backfill.ts"
       ],
       "embed": [
+        "./commands/embed-slug-args.ts",
         "./commands/embed.ts",
         "./core/held-embedding.ts"
       ],

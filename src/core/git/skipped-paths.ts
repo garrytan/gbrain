@@ -1,6 +1,6 @@
 /** GST-2116, GST-2767: which named paths a commit-push left out, and why, in words an operator can act on. */
-import { existsSync, lstatSync, readlinkSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { literalPathspecs } from '../git-env.ts';
 import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 import { git, gitOk } from './git-run.ts';
@@ -86,16 +86,35 @@ export function unstagedPaths(root: string, rel: string[], listed: string[], dir
  */
 export function nestedRepositoryOf(root: string, path: string): string | null {
   const parts = path.split('/');
-  const own = git(root, ['rev-parse', '--absolute-git-dir']).stdout.trim();
+  const own = validGitDir(join(root, '.git'));
   for (let i = 1; i < parts.length; i++) {
     const dir = parts.slice(0, i).join('/');
-    if (!existsSync(join(root, dir, '.git'))) continue;
-    const top = git(join(root, dir), ['rev-parse', '--show-toplevel']);
-    if (top.code !== 0 || canonicalFilesystemPath(top.stdout.trim()) !== canonicalFilesystemPath(join(root, dir))) continue;
-    const gitDir = git(join(root, dir), ['rev-parse', '--absolute-git-dir']).stdout.trim();
-    if (!own || canonicalFilesystemPath(gitDir) !== canonicalFilesystemPath(own)) return dir;
+    const gitDir = validGitDir(join(root, dir, '.git'));
+    if (gitDir && gitDir !== own) return dir;
   }
   return null;
+}
+
+/**
+ * The git directory a `.git` entry names (a directory, a link to one, or a `gitdir:` file), canonical, when git's own
+ * discovery would take it as a repository: HEAD names a ref or an object, and objects/ and refs/ exist. Ownership is never
+ * read, as `git add` in the outer repository does not read it, so a nested repository git refuses to open still counts.
+ */
+function validGitDir(dotGit: string): string | null {
+  try {
+    let dir = dotGit;
+    if (statSync(dotGit).isFile()) {
+      const named = /^gitdir: (.+)$/m.exec(readFileSync(dotGit, 'utf8'));
+      if (!named) return null;
+      dir = resolve(dirname(dotGit), named[1]!.trim());
+    }
+    const head = readFileSync(join(dir, 'HEAD'), 'utf8').trim();
+    if (!/^ref: refs\//.test(head) && !/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(head)) return null;
+    const common = existsSync(join(dir, 'commondir')) ? resolve(dir, readFileSync(join(dir, 'commondir'), 'utf8').trim()) : dir;
+    return existsSync(join(common, 'objects')) && existsSync(join(common, 'refs')) ? canonicalFilesystemPath(dir) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The `git status` entries under the named paths that are directories, as path (a nested repository keeps its trailing /) to XY code. */

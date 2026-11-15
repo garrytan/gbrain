@@ -246,3 +246,17 @@ for (const kind of ['classic', 'managed'] as const) {
     }
   }
 }
+
+test('a nested repository git refuses to open for its ownership still counts as nested, so the folder is reported skipped, never as committed', async () => {
+  const { nestedRepositoryOf } = await import('../src/core/git/skipped-paths.ts');
+  const f = fixture('nested-dubious', 'classic');
+  execFileSync('git', ['init', '-q', join(f.repo, 'brain', 'imports')]);
+  mkdirSync(join(f.repo, 'brain', 'imports', 'sub'));
+  writeFileSync(join(f.repo, 'brain', 'imports', 'sub', 'export.csv'), 'a,b\n');
+  const nested = await withEnv({ GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' }, () => nestedRepositoryOf(f.repo, 'brain/imports/sub'));
+  expect(nested).toBe('brain/imports');
+  expect(nestedRepositoryOf(f.repo, 'brain/' + YEAR)).toBeNull();
+  symlinkSync('../.git', join(f.repo, 'brain', '.git'));
+  expect(nestedRepositoryOf(f.repo, 'brain/' + YEAR)).toBeNull();
+  expect(nestedRepositoryOf(f.repo, 'brain/imports/sub')).toBe('brain/imports');
+});
