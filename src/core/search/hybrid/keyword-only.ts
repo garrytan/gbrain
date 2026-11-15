@@ -67,16 +67,18 @@ export async function searchWithoutEmbeddings(
   // GST-2735: the any-word fill only adds pages, after every other row: dedup and rank priors run on the
   // other rows as if the fill were absent, then on the fill rows alone, which follow below the last other row.
   const rankPool = async (rows: SearchResult[]) => rows.length ? prioritize(req, await collapsePool(req, dedupResults(rows, { regions: await segmentRegions(engine, rows) }))) : [];
-  const kept = await rankPool(noEmbedResults.filter(r => !r.keyword_fill));
-  const keptPages = new Set(kept.map(r => `${r.source_id ?? 'default'}:${r.slug}`));
-  let floor = kept.length ? kept[kept.length - 1]!.score : Infinity;
-  const below = (score: number) => (floor = Math.min(score, floor - Math.max(Math.abs(floor) * 1e-3, Number.EPSILON)));
-  const fill = (await rankPool(noEmbedResults.filter(r => r.keyword_fill))).filter(r => !keptPages.has(`${r.source_id ?? 'default'}:${r.slug}`));
-  const noEmbedDeduped = [...kept, ...fill.map(r => ({ ...r, score: below(r.score) }))];
-  trace?.observe('deduped', noEmbedDeduped);
+  // The alias hop and the exact-lookup tier also run without the fill, so a fill row never stands in for a page they would put first.
+  const noEmbedDeduped = await rankPool(noEmbedResults.filter(r => !r.keyword_fill));
+  const fillRanked = await rankPool(noEmbedResults.filter(r => r.keyword_fill));
+  trace?.observe('deduped', [...noEmbedDeduped, ...fillRanked]);
   const noEmbedPreExact = await applyAliasHop(engine, noEmbedDeduped, query, aliasHopOpts);
   // #1663 — structural exact-lookup tier (slug / exact-title identity).
-  const noEmbedHopped = await collapsePool(req, await applyExactLookupTier(engine, noEmbedPreExact, query, exactLookupOpts));
+  const noEmbedExact = await collapsePool(req, await applyExactLookupTier(engine, noEmbedPreExact, query, exactLookupOpts));
+  const pageKey = (r: SearchResult) => `${r.source_id ?? 'default'}:${r.slug}`;
+  const exactPages = new Set(noEmbedExact.map(pageKey));
+  let floor = noEmbedExact.length ? Math.min(...noEmbedExact.map(r => r.score)) : Infinity;
+  const below = (score: number) => (floor = Math.min(score, floor - Math.max(Math.abs(floor) * 1e-3, Number.EPSILON)));
+  const noEmbedHopped = [...noEmbedExact, ...fillRanked.filter(r => !exactPages.has(pageKey(r))).map(r => ({ ...r, score: below(r.score) }))];
   stampEvidence(noEmbedHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
   // System One S3 evidence gate (no-op when the slot is off), at the fused path's position.
   const noEmbedGated = await applyEvidenceGate(req.decide, query, noEmbedHopped);

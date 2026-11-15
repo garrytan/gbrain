@@ -138,6 +138,32 @@ for (const kind of testBackends()) {
       expect(rows.map(r => r.slug).indexOf('events/quokka-offsite')).toBeGreaterThanOrEqual(firstFill);
     });
 
+    describe('a declared alias beats the fill', () => {
+      beforeAll(async () => {
+        const target = 'Light falls through the glass roof onto the stage.';
+        await engine.putPage('projects/atrium', { type: 'project', title: 'Atrium', compiled_truth: target, frontmatter: {} });
+        await installFixtureChunks(engine, 'projects/atrium', [{ chunk_index: 0, chunk_text: target, chunk_source: 'compiled_truth' }]);
+        await engine.executeRaw(`INSERT INTO page_aliases (source_id, alias_norm, slug) VALUES ('default', 'hall of light', 'projects/atrium') ON CONFLICT DO NOTHING`);
+        const other = 'Concert notes from the hall: the light show ran late.';
+        await engine.putPage('notes/concert', { type: 'note', title: 'Concert', compiled_truth: other, frontmatter: {} });
+        await installFixtureChunks(engine, 'notes/concert', [{ chunk_index: 0, chunk_text: other, chunk_source: 'compiled_truth' }]);
+      });
+
+      test('the alias target leads at limit 1', async () => {
+        const rows = await hybridSearch(engine, 'hall of light', { limit: 1, expansion: false });
+        expect(rows.map(r => r.slug)).toEqual(['projects/atrium']);
+      });
+
+      test('the alias target, which also qualifies as a fill row, appears once, first, at the default limit', async () => {
+        const kw = await engine.searchKeyword('hall of light', { limit: 50, orFallback: true, orFill: true });
+        expect(kw.find(r => r.slug === 'projects/atrium')?.keyword_fill).toBe(true);
+        const slugs = (await hybridSearch(engine, 'hall of light', { expansion: false })).map(r => r.slug);
+        expect(slugs[0]).toBe('projects/atrium');
+        expect(slugs.filter(s => s === 'projects/atrium')).toHaveLength(1);
+        expect(slugs).toContain('notes/concert');
+      });
+    });
+
     test('a keyword-only retrieval the caller asked for (decide.keywordOnly, used on brains with embeddings too) gets no fill', async () => {
       const rows = await hybridSearch(engine, QUERY, { limit: 20, expansion: false, decide: { keywordOnly: true } } as never);
       expect(rows.some(r => r.keyword_fill)).toBe(false);
