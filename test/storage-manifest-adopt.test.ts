@@ -173,6 +173,32 @@ describe('storage adopt on a repo-less brain', () => {
     expect((await refusal(applyAdopt(ctx(), { ...opts, expect: plan.plan_hash, dropFields: [] })))).toMatchObject({ code: 'storage_record_invalid' });
   }, 60_000);
 
+  test('a record cut off by the 64 KiB read is reported as truncated, not as a page with no record', async () => {
+    const notes = `## Notes\n\n${'archive notes line\n'.repeat(4000)}\n`;
+    const content = `---\ntype: stored-object\ntitle: Long record\n---\n# Long record\n\n${notes}## Record\n\n${FENCE}json\n${JSON.stringify(record('dataset-long'), null, 2)}\n${FENCE}\n`;
+    await call('put_page', { slug: 'storage-manifest/dataset-long', content, request_id: randomUUID() });
+    const plan = await previewAdopt(ctx(), opts);
+    expect(plan.entries.map((e) => [e.slug, e.state, e.problem?.code ?? null, e.problem?.reason ?? null])).toEqual([['storage-manifest/dataset-long', 'blocked', 'storage_record_invalid', 'truncated']]);
+    expect(plan.entries[0]!.problem!.message).toContain('64 KiB');
+    expect((await refusal(applyAdopt(ctx(), { ...opts, expect: plan.plan_hash, dropFields: [] })))).toMatchObject({ code: 'storage_record_invalid', reason: 'truncated' });
+  }, 60_000);
+
+  test('apply --json counts what it adopted, skipped and refused, with the write receipt of each record it wrote', async () => {
+    await interim('storage-manifest/dataset-a', record('dataset-a'));
+    await interim('storage-manifest/dataset-b', record('dataset-b'));
+    await interim('storage-manifest/dataset-c', record('dataset-c'));
+    await call('storage_register', { card: { ...record('dataset-c'), reason: 'something else' } });
+    const plan = await previewAdopt(ctx(), opts);
+    const applied = await applyAdopt(ctx(), { ...opts, expect: plan.plan_hash, dropFields: [] });
+    expect(applied.counts).toEqual({ adopted: 2, skipped: 0, refused: 1, pending: 0 });
+    const written = applied.results.filter((r) => r.outcome === 'registered' || r.outcome === 'retagged');
+    expect(written).toHaveLength(4);
+    for (const row of written) expect(await call('get_write_request', { request_id: row.request_id })).toMatchObject({ request_id: row.request_id, state: 'committed' });
+    expect(applied.results.find((r) => r.outcome === 'conflict')).toMatchObject({ slug: 'storage-manifest/dataset-c', card_id: 'dataset-c' });
+    const again = await previewAdopt(ctx(), opts);
+    expect((await applyAdopt(ctx(), { ...opts, expect: again.plan_hash, dropFields: [] })).counts).toEqual({ adopted: 0, skipped: 2, refused: 1, pending: 0 });
+  }, 60_000);
+
   test('a matching card is only tagged, a differing one is a conflict, and a half-finished run applies with the hash it printed', async () => {
     await interim('storage-manifest/dataset-a', record('dataset-a'));
     await interim('storage-manifest/dataset-b', record('dataset-b'));

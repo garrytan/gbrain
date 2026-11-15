@@ -56,4 +56,18 @@ describe('storage adopt on a brain with a Git checkout', () => {
     expect(await applyFinalize(ctx, { ...opts, expect: finalize.plan_hash })).toMatchObject({ side_effects: 'complete', deleted: ['storage-manifest/runs-2026'] });
     expect((await call(ctx, 'storage_get', { id: 'runs-2026' })).origin).toBe('adopt');
   }), 90_000);
+
+  test('the adopt apply leaves its own commits indexed: the shelf checkpoint reaches HEAD with no hand-run sync', () => managedBrain(async ({ engine, ctx, root }) => {
+    await call(ctx, 'put_page', { slug: 'storage-manifest/runs-2027', request_id: randomUUID(),
+      content: `---\ntype: stored-object\ntitle: Interim runs\n---\n## Record\n\n${FENCE}json\n${JSON.stringify(record('runs-2027'))}\n${FENCE}\n` });
+    const dir = join(dirname(root), 'shelf');
+    const preview = await initStorageSource(engine, { dir, dryRun: true });
+    await initStorageSource(engine, { dir, dryRun: false, expect: preview.plan!.plan_hash });
+    const plan = await previewAdopt(ctx, opts);
+    const applied = await applyAdopt(ctx, { ...opts, expect: plan.plan_hash, dropFields: ['restore.command'] });
+    const head = git(join(dir, 'worktree'), 'rev-parse', 'HEAD').trim();
+    expect(await engine.executeRaw("SELECT last_commit FROM sources WHERE id='storage'")).toEqual([{ last_commit: head }]);
+    expect(applied).toMatchObject({ side_effects: 'complete', index: { source_id: 'storage', status: 'indexed' } });
+    expect(applied.index!.last_commit).toBe(head);
+  }), 90_000);
 });

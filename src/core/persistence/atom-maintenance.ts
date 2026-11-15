@@ -16,6 +16,7 @@ import { isConnectorSourceKind } from './connector-identity.ts';
 import { preparePageMutation } from './page-prepare.ts';
 import { assertPersistenceAccepting, waitForWrite, writeResponse } from './service.ts';
 import { MaintenanceWriteWait } from './maintenance-wait.ts';
+import { STORAGE_ROLE } from '../storage-manifest/door.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteAuthority, WriteRequest } from './model.ts';
 import type { WriteReceipt } from './types.ts';
@@ -907,7 +908,7 @@ export async function listHeldManagedAtoms(engine: BrainEngine, sourceIds?: stri
         h.completed_keys->0->>'failure' AS failure, h.completed_keys->0->>'attempts' AS attempts, h.updated_at AS held_at
        FROM op_checkpoints h JOIN sources s ON s.id=h.completed_keys->0->>'sourceId' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
       WHERE h.op='managed-atoms' AND h.completed_keys->0->>'held'='true'
-        AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
+        AND ($1::text[] IS NULL OR s.id=ANY($1::text[])) AND s.config->>'role' IS DISTINCT FROM $2
         AND (h.completed_keys->0->>'kind'<>'page' OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id=s.id
           AND p.id::text=h.completed_keys->0->>'pageId' AND p.content_hash=h.completed_keys->0->>'contentHash' AND p.deleted_at IS NULL))
         AND NOT EXISTS (SELECT 1 FROM op_checkpoints ac WHERE ac.op='managed-atoms' AND ac.completed_keys->0->>'failure' IS NULL
@@ -916,7 +917,7 @@ export async function listHeldManagedAtoms(engine: BrainEngine, sourceIds?: stri
           AND (CASE WHEN h.completed_keys->0->>'kind'='page' THEN ac.completed_keys->0->>'pageId'=h.completed_keys->0->>'pageId'
             ELSE ac.completed_keys->0->>'locator'=h.completed_keys->0->>'locator' END)
           AND ac.completed_keys->0->>'contentHash'=h.completed_keys->0->>'contentHash')
-      ORDER BY h.completed_keys->0->>'requestId', h.updated_at`, [sourceIds ?? null]);
+      ORDER BY h.completed_keys->0->>'requestId', h.updated_at`, [sourceIds ?? null, STORAGE_ROLE]);
   return rows.map(row => ({ ...row, attempts: Number(row.attempts), held_at: new Date(row.held_at).toISOString() }))
     .sort((a, b) => a.source_id.localeCompare(b.source_id) || a.locator.localeCompare(b.locator));
 }
