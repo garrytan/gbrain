@@ -707,6 +707,10 @@
       },
       {
         "category": "brain",
+        "name": "purged_page_facts"
+      },
+      {
+        "category": "brain",
         "name": "conversation_label_facts"
       },
       {
