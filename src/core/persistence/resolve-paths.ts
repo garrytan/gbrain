@@ -23,10 +23,17 @@
  *                       (`embedding-state.ts`); `pending_embedding` is searchable by keyword on a brain keyless by choice.
  *   - `fix`: the existing command that moves the path on (never run here), or null when nothing is owed.
  * Read-only: Git object reads and bounded lookups on existing indexes; nothing is scheduled or written.
+ *
+ * #8761: under a caller's read `policy` (the remote operation passes it), a path whose page rows the caller may not
+ * read, live or deleted, answers exactly as a path with no file and no page, and a slug owner it may not read is not
+ * named, so a guessed path never tells a member that someone else's restricted or private page exists.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { PageReadPolicy } from '../types.ts';
+import { pageReadFilter } from '../search/read-policy-sql.ts';
 import type { Action } from '../agent-output.ts';
 import { literalPathspecs } from '../git-env.ts';
+import { classifyGitCheckout } from '../git-checkout.ts';
 import { existsSync, realpathSync } from 'node:fs';
 import { isHostAbsolutePath } from '../path-confine.ts';
 import { opError } from '../ops/contract.ts';
@@ -108,7 +115,7 @@ function headCommit(gitRoot: string): string | null {
 const readFix = (why: string, argv: string[], verify: string[]): Action => ({ argv, consent: [], actor: 'agent', requires_exclusive: false, why, verify: { argv: verify }, docs: DOCS });
 
 /** Resolves `paths` of one source; refuses more than RESOLVE_PATHS_MAX paths and a source without a local Git checkout. */
-export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, paths: string[]): Promise<ResolvedPaths> {
+export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, paths: string[], policy?: PageReadPolicy): Promise<ResolvedPaths> {
   if (!paths.length) throw opError('invalid_params', 'Pass at least one file path.', 'Name the repo-relative paths a commit changed, for example projects/acme-example/index.md.');
   if (paths.length > RESOLVE_PATHS_MAX) throw opError('invalid_params', `At most ${RESOLVE_PATHS_MAX} paths per call (got ${paths.length}).`, 'Split the paths into batches.');
   const [source] = await engine.executeRaw<{ local_path: string | null; last_commit: string | null; config: Record<string, unknown> | null; archived: boolean | null }>(
@@ -125,7 +132,17 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
   if (!source.local_path || !existsSync(source.local_path)) throw opError('not_found', `Source ${sourceId} has no Git checkout on this host, so its paths cannot be resolved here.`,
     'Run this on the host that holds the checkout (gbrain sources status names its path).', { fix: readFix('Shows where the source checkout lives.', status, status) });
   const root = realpathSync(source.local_path);
-  const gitRoot = realpathSync(syncGit(root, ['rev-parse', '--show-toplevel']).trim());
+  let top: string;
+  try {
+    top = syncGit(root, ['rev-parse', '--show-toplevel']);
+  } catch (error) {
+    const gitExpected = source.last_commit !== null || source.config?.canonical === 'git' || source.config?.managed_clone === true || !!source.config?.remote_url;
+    if (gitExpected || classifyGitCheckout(root) !== 'not_git') throw error;
+    throw opError('sync_not_applicable', `Source ${sourceId} is a plain directory with no Git history, so its paths cannot be resolved.`,
+      'For a Git landing check, pass a source that is a Git checkout. To read an indexed page, use get_page with its slug and source.',
+      { reason: 'plain_directory', fix: readFix('Shows how the source is registered.', status, status) });
+  }
+  const gitRoot = realpathSync(top.trim());
   const context = { root, gitRoot, sourceId, source: { last_commit: source.last_commit, config: source.config ?? {} } };
   const { scope, eligible, sourcePath } = await loadSyncEligibility(engine, context);
   const managed = await persistenceEnabledForHealth(engine).catch(() => false);
@@ -142,13 +159,17 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
   const atHead = head ? lsTree(gitRoot, head, gitPaths) : null;
   const heads = readBlobContents(gitRoot, [...synced.values()].filter(row => row.size <= 256 * 1024));
   const origins = normalized.map(p => p.origin);
-  const pages = await engine.executeRaw<{ id: number; slug: string; source_path: string; deleted: boolean }>(
-    'SELECT id, slug, source_path, deleted_at IS NOT NULL AS deleted FROM pages WHERE source_id=$1 AND source_path = ANY($2::text[]) ORDER BY deleted_at IS NOT NULL, id DESC', [sourceId, origins]);
+  const pageParams: unknown[] = [sourceId, origins];
+  const pages = await engine.executeRaw<{ id: number; slug: string; source_path: string; deleted: boolean; readable: boolean }>(
+    `SELECT id, slug, source_path, deleted_at IS NOT NULL AS deleted, COALESCE(${pageReadFilter('pages', policy, pageParams)}, false) AS readable
+       FROM pages WHERE source_id=$1 AND source_path = ANY($2::text[]) ORDER BY deleted_at IS NOT NULL, id DESC`, pageParams);
   const byOrigin = new Map<string, typeof pages[number]>();
-  for (const page of pages) if (!byOrigin.has(page.source_path)) byOrigin.set(page.source_path, page);
+  for (const page of pages) if (page.readable === true && !byOrigin.has(page.source_path)) byOrigin.set(page.source_path, page);
+  const hidden = new Set(pages.filter(page => !byOrigin.has(page.source_path)).map(page => page.source_path));
   const slugs = [...new Set(origins.map(origin => resolveSlugForPath(origin)).filter(Boolean))];
+  const ownerParams: unknown[] = [sourceId, slugs];
   const owners = new Map((await engine.executeRaw<{ slug: string; source_path: string | null }>(
-    'SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND slug = ANY($2::text[])', [sourceId, slugs])).map(row => [row.slug, row]));
+    `SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND slug = ANY($2::text[]) AND COALESCE(${pageReadFilter('pages', policy, ownerParams)}, false)`, ownerParams)).map(row => [row.slug, row]));
   const liveSlugs = [...new Set([...byOrigin.values()].filter(page => !page.deleted).map(page => page.slug))];
   const searchability = await readPageSearchability(engine, sourceId, liveSlugs);
   const embedding = new Map([...searchability].filter(([, page]) => page.embedding_state).map(([slug, page]) => [slug, { state: page.embedding_state!, chunks: page.chunks, unembedded: page.unembedded }]));
@@ -159,8 +180,8 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
   const out: ResolvedPath[] = [];
   for (const p of normalized) {
     const slug = resolveSlugForPath(p.origin);
-    const committed = synced.get(p.gitPath);
-    const current = atHead ? atHead.get(p.gitPath) : undefined;
+    const committed = hidden.has(p.origin) ? undefined : synced.get(p.gitPath);
+    const current = atHead && !hidden.has(p.origin) ? atHead.get(p.gitPath) : undefined;
     const page = byOrigin.get(p.origin) ?? null;
     const owner = owners.get(slug);
     const slugOwner = owner && owner.source_path !== p.origin ? { slug: owner.slug, source_path: owner.source_path } : null;
