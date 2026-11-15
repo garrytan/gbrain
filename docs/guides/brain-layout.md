@@ -30,7 +30,9 @@ gbrain setup claude-code --shape both --notes ~/notes --docs ~/acme-example/docs
   default search, so a question that names no source finds company pages too. When the
   brain may serve several people (`gbrain access serves` says several, or
   `brain.audience` is `shared`), it stays out of default search and setup asks you first:
-  `gbrain sources federate company` puts it in.
+  `gbrain sources federate company` puts it in. If that folder already exists and is not
+  an empty folder, setup leaves it alone, keeps the company lines out of the instruction
+  block and asks you to move it before you run setup again.
 - **Six starter pages** in that source, only when they don't exist yet: `company/facts`
   (numbers agents may quote, each dated with where it came from), `company/decisions`
   (a dated log: what, why, who, what would make you revisit it), `company/pricing`, and

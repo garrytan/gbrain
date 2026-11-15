@@ -311,12 +311,13 @@ function ensureCompanySource(exec: Run, launcher: string, dryRun: boolean): NonN
   const defaultRoot = sources.find(s => s.id === 'default')?.local_path;
   const root = defaultRoot ? join(dirname(defaultRoot), COMPANY_SOURCE) : gbrainPath('content', COMPANY_SOURCE);
   if (dryRun) return { source: COMPANY_SOURCE, action: 'created', federated: null, root, detail: 'would add' };
-  if (existsSync(root) && readdirSync(root).length > 0) return failed(`${root} already holds files and is not a source; move them or add it yourself with gbrain sources add ${COMPANY_SOURCE} --path <folder>`);
+  const st = lstatSync(root, { throwIfNoEntry: false });
+  if (st && (!st.isDirectory() || readdirSync(root).length > 0)) return failed(`${root} already exists and is not an empty folder; move it or add a folder yourself with gbrain sources add ${COMPANY_SOURCE} --path <folder>`);
   mkdirSync(root, { recursive: true });
   const add = exec([launcher, 'sources', 'add', COMPANY_SOURCE, '--path', root, '--json'], undefined, null);
   if (add.code !== 0) return failed(lastLine(add.stderr || add.stdout));
   let federated = false;
-  try { federated = (JSON.parse(add.stdout) as { config?: { federated?: unknown } }).config?.federated === true; } catch { /* unreadable: not federated */ }
+  try { const doc = JSON.parse(add.stdout) as { federated?: unknown; config?: { federated?: unknown } }; federated = doc.federated === true || doc.config?.federated === true; } catch { /* unreadable: not federated */ }
   return { source: COMPANY_SOURCE, action: 'created', federated, root };
 }
 
@@ -360,14 +361,15 @@ export function applyBrainLayout(opts: { harness: string; scope?: LayoutScope; s
     if (team) {
       outcome.company = { source: COMPANY_SOURCE, action: 'team', federated: null, root: null, detail: 'a shared company brain is set up on its own; nothing was created here' };
     } else {
-      outcome.company = ensureCompanySource(exec, launcher, flags.dryRun);
-      if (outcome.company.action !== 'failed') {
+      const company = outcome.company = ensureCompanySource(exec, launcher, flags.dryRun);
+      if (company.action === 'failed' && !opts.instructionsDeclined) outcome.block = syncLayoutBlock(opts.instructionsPath, harness, scope, source, blockShape(flags.brain, true), flags.dryRun);
+      if (company.action !== 'failed') {
         outcome.pages.push(...writePages(exec, launcher, COMPANY_PAGES, COMPANY_SOURCE, flags.dryRun));
         if (flags.docs) {
           const { outcome: docs, title } = importFolder(exec, launcher, flags.docs, COMPANY_SOURCE, flags.dryRun);
           outcome.docs = docs;
           if (title) {
-            const inDefault = outcome.company.federated === true;
+            const inDefault = company.federated === true;
             const found = searchFinds(exec, launcher, title, inDefault ? null : COMPANY_SOURCE);
             const where = inDefault ? 'default search' : `search of the ${COMPANY_SOURCE} source`;
             outcome.check = found
@@ -437,11 +439,16 @@ export function layoutNotices(o: LayoutOutcome | null, harness: string, scope: L
   const failed = o.pages.filter(p => p.action === 'failed');
   if (failed.length || o.company?.action === 'failed') {
     const what = [...failed.map(p => p.slug), ...(o.company?.action === 'failed' ? [`the ${COMPANY_SOURCE} source`] : [])];
-    const detail = o.company?.action === 'failed' ? o.company.detail : failed[0]!.detail;
+    const companyFailed = o.company?.action === 'failed';
+    const detail = companyFailed ? o.company!.detail : failed[0]!.detail;
+    const argv = [...setupArgv(harness, scope, source), '--shape', o.shape, ...(o.company?.action === 'team' ? ['--team'] : [])];
     out.push({
       code: 'brain_layout_pages_pending', kind: 'coaching',
       why: `Setup could not write ${what.join(', ')} (${detail}); the rest of the install finished.`,
-      fix: { argv: [...setupArgv(harness, scope, source), '--shape', o.shape], consent: [], actor: 'agent', requires_exclusive: true, why: 'Rerun once the brain is free; existing pages are kept.' },
+      fix: companyFailed
+        ? { ask_user: true, argv, consent: [], actor: 'agent', requires_exclusive: true, why: 'The company source needs the user to fix its folder first; existing pages are kept.',
+          user_message: `Setup could not add the ${COMPANY_SOURCE} source: ${detail}. Once that is fixed, rerun ${argv.join(' ')}` }
+        : { argv, consent: [], actor: 'agent', requires_exclusive: true, why: 'Rerun once the brain is free; existing pages are kept.' },
     });
   }
   if (o.company && o.company.federated === false) {

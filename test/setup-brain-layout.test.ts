@@ -295,6 +295,56 @@ describe('layout units', () => {
     expect(wrote.pages.map((p) => p.action)).toEqual(['write', 'write', 'write']);
   });
 
+  test('a rerun handed out after a --team run keeps --team', () => {
+    const o = (company: any) => ({ shape: 'both', pages: [{ slug: 'me/facts', source: null, action: 'failed', detail: 'busy' }], notes: null, docs: null, company, block: null, check: { ok: true, query: null, detail: '' }, next_question: null }) as any;
+    const fix = (company: any) => layoutNotices(o(company), 'claude-code').find((n) => n.code === 'brain_layout_pages_pending')!.fix!;
+    expect(fix({ source: 'company', action: 'team', federated: null, root: null }).argv).toEqual(['gbrain', 'setup', 'claude-code', '--shape', 'both', '--team']);
+    expect(fix(null).argv).toEqual(['gbrain', 'setup', 'claude-code', '--shape', 'both']);
+  });
+
+  test('a company folder that is not an empty folder is never adopted, and the block and the fix say so', () => {
+    for (const occupy of [(p: string) => { mkdirSync(p); writeFileSync(join(p, 'mine.md'), '# Mine\n'); }, (p: string) => writeFileSync(p, 'a file\n')]) {
+      const root = mkdtempSync(join(tmpdir(), 'gbrain-layout-occupied-'));
+      roots.push(root);
+      occupy(join(root, 'company'));
+      const instructions = join(root, 'CLAUDE.md');
+      const calls: string[][] = [];
+      const o = applyBrainLayout({ harness: 'claude-code', launcher: 'gbrain', instructionsPath: instructions, flags: { brain: 'both', notes: null, docs: null, dryRun: false },
+        run: (argv) => {
+          calls.push(argv);
+          if (argv[1] === 'sources') return { code: 0, stdout: JSON.stringify({ sources: [{ id: 'default', local_path: join(root, 'default'), federated: true }] }), stderr: '' };
+          return argv[1] === 'get' ? { code: 1, stdout: '{"code":"page_not_found"}', stderr: '' } : { code: 0, stdout: '', stderr: '' };
+        } })!;
+      expect(o.company!.action).toBe('failed');
+      expect(calls.some((c) => c[1] === 'sources' && c[2] === 'add')).toBe(false);
+      expect(o.pages.map((p) => p.slug)).toEqual(PERSONAL_PAGES.map((p) => p.slug));
+      const block = readFileSync(instructions, 'utf8');
+      expect(block).toContain('me/facts');
+      expect(block).not.toContain('company/facts');
+      const fix = layoutNotices(o, 'claude-code').find((n) => n.code === 'brain_layout_pages_pending')!.fix!;
+      expect(fix.ask_user).toBe(true);
+      expect(fix.user_message).toContain(join(root, 'company'));
+    }
+  });
+
+  test('personal pages land before the company source exists, and either sources add reply reads as federated', () => {
+    for (const reply of [{ federated: true }, { config: { federated: true } }]) {
+      const root = mkdtempSync(join(tmpdir(), 'gbrain-layout-order-'));
+      roots.push(root);
+      const calls: string[][] = [];
+      const o = applyBrainLayout({ harness: 'claude-code', launcher: 'gbrain', instructionsPath: null, flags: { brain: 'both', notes: null, docs: null, dryRun: false },
+        run: (argv) => {
+          calls.push(argv);
+          if (argv[1] === 'sources' && argv[2] === 'list') return { code: 0, stdout: JSON.stringify({ sources: [{ id: 'default', local_path: join(root, 'default'), federated: true }] }), stderr: '' };
+          if (argv[1] === 'sources' && argv[2] === 'add') return { code: 0, stdout: JSON.stringify({ id: 'company', ...reply }), stderr: '' };
+          return argv[1] === 'get' ? { code: 1, stdout: '{"code":"page_not_found"}', stderr: '' } : { code: 0, stdout: '', stderr: '' };
+        } })!;
+      const added = calls.findIndex((c) => c[1] === 'sources' && c[2] === 'add');
+      for (const p of PERSONAL_PAGES) expect(calls.findIndex((c) => c[1] === 'put' && c[2] === p.slug)).toBeLessThan(added);
+      expect(o.company!.federated).toBe(true);
+    }
+  });
+
   test('the notes count does not follow symlinked folders', () => {
     const root = mkdtempSync(join(tmpdir(), 'gbrain-layout-loop-'));
     roots.push(root);
