@@ -2792,14 +2792,16 @@ matches. A page stored in segments is read as evidence up to 16 MiB.
 | --- | --- | --- |
 | `evidenced` | Every text that proves a restoration proves the same one. | By `--apply --expect <hash>` |
 | `ambiguous` | A text holds two different spans around the same words, or two texts prove different restorations. | Never; listed |
-| `unproven` | No page it came from exists any more (`no_source_page`), or none still holds the words around the marker (`not_in_source`). | Never; listed |
+| `unproven` | No page it came from exists any more (`no_source_page`), or none still holds the words around the marker (`not_in_source`), or the fact's row number names no active row with its text in its page's `## Facts` fence and it did not come from the conversation extractor (`fence_row_missing`; the listing shows the restored text). | Never; listed |
 | `segmented` | Proved, but the fact's row sits in the `## Facts` fence of a page stored in segments, which this repair does not rewrite (`segmented_page`). The listing shows the restored text. | Never; listed |
 
 The apply restores exactly the previewed set. A fact that changed since the
 preview reports `changed_since_preview` and keeps its text. A fact with a row
 in its page's `## Facts` fence has that row's claim rewritten in the page
 (one revision-bound `put_page` per page, which re-chunks and re-embeds the
-page); a fact with no fence row is rewritten database-only (one maintenance
+page); a fact with no row number, or a conversation-extractor fact whose
+row number names no fence row (its page has no `## Facts` fence), is
+rewritten database-only, row number kept (one maintenance
 request per page on a managed brain) and gets `restored: redacted-facts
 repair` appended to its context; its vector no longer matches its text, so
 the next `gbrain embed` re-embeds it. Page history keeps the damaged

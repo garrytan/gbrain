@@ -35,7 +35,7 @@ import {
 } from '../search/embedding-column.ts';
 import { chunkDocumentOrder, chunkGenerationFilter, chunkManifestJoin, chunkVisibleFilter, chunkWriteInvalidations, currentTextProjectionFilter, movableChunkSql, requiresSafeChunks, safeChunksFilter } from '../search/safe-chunks.ts';
 import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
-import { splitEmbeddingSignature, lockEmbeddingSources } from '../embedding-invalidation.ts';
+import { currentSpaceChunkPredicate, splitEmbeddingSignature, lockEmbeddingSources } from '../embedding-invalidation.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from '../embed-skip.ts';
 import { QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
 import { pageBudgetLimitedFilter } from '../page-size-policy.ts';
@@ -571,16 +571,12 @@ export async function setPageEmbeddingSignature(exec: SqlExecutor, slug: string,
   }
 
 /**
- * `currentSpaceChunkPredicate` (embedding-invalidation.ts) as a fragment:
- * identical text, values bound in place of its hand-numbered `$model` /
- * `$dims`. `test/engine-sql-chunks.test.ts` pins the two against each other.
+ * `currentSpaceChunkPredicate` (embedding-invalidation.ts) as a fragment: built from its text, with values bound in
+ * place of its `$model` / `$dims` parameters, so the two cannot drift. `test/engine-sql-chunks.test.ts` pins them.
  */
 export function currentSpaceChunkFragment(column: string, model: string, dims: number | null): SqlFragment {
-  const colId = trustedSql(quoteIdentifier(column));
-  return sqlFragment`COALESCE(cc.${colId} IS NOT NULL
-              AND cc.model = ${model}
-              AND cc.embedded_text_hash = md5(cc.chunk_text)
-              AND vector_dims(cc.${colId}) = ${dims}::int, false)`;
+  const strings = currentSpaceChunkPredicate(quoteIdentifier(column), 9001, 9002).split(/\$900[12]/);
+  return sqlFragment(Object.assign([...strings], { raw: [...strings] }), model, dims);
 }
 
 export async function invalidateStaleSignatureEmbeddings(
