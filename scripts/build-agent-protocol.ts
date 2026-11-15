@@ -182,9 +182,9 @@ export const TRANSCRIPTS: readonly Transcript[] = [
     after: (doc) => {
       const bundle = (doc.notices as Json[]).find(n => n.code === 'first_run_decisions') as Json;
       const ids = (bundle.decisions as Json[]).map(d => `\`${d.id}\` (default \`${d.default}\`)`).join(', ');
-      return `stdout is one document; the brain is ready and nothing blocks using it. The \`first_run_decisions\` notice is \`kind: ask\`, `
-        + `so the agent relays its \`user_message\` ("${bundle.user_message}") once and stops. The decisions are ${ids}; `
-        + 'each option carries the exact argv to apply it, so a reply of "defaults" needs no command at all.';
+      return `stdout is one document; the brain is ready and nothing blocks using it. The agent first does the \`harness_wiring\` step: connecting gbrain to itself is part of the install, not a setting. `
+        + `It then reports the install and relays the \`first_run_decisions\` \`user_message\` ("${bundle.user_message}") once in that reply, without waiting for an answer. `
+        + `The settings in effect are ${ids}; each option carries the exact argv to apply it when the user picks one.`;
     },
   },
   {

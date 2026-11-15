@@ -2738,6 +2738,9 @@ async function connectEngine(opts?: EngineConnectOptions): Promise<BrainEngine> 
   return exitOnRepairFailed(() => connectEngineForServe(ENGINE_CONNECT_HOOKS, opts));
 }
 
+/** Commands that run or report the upgrade migrations themselves, so connect adds no pending-migrations notice to them. */
+const ORCHESTRATOR_MIGRATION_OWNERS: ReadonlySet<string> = new Set(['apply-migrations', 'post-upgrade', 'upgrade', 'doctor', 'init', 'setup', 'serve']);
+
 /** A6/D1: the pending-migrations warning as a notice whose fix applies them (stderr; stdout stays the command's). */
 function migrationsNotice(why: string): Notice {
   return { code: 'migrations_pending', kind: 'safety', why, fix: { argv: ['gbrain', 'apply-migrations', '--yes'], consent: [], actor: 'agent',
@@ -2774,6 +2777,15 @@ async function completeEngineStartup(engine: BrainEngine, opts: EngineConnectOpt
     // Last-resort defense in case the helper itself throws unexpectedly.
     writeCliNotice(migrationsNotice(`Schema probe failed (unexpected): ${(err as Error).message}`));
   }
+
+  // Upgrade migrations (the orchestrators in src/commands/migrations/) run only from apply-migrations, post-upgrade and
+  // setup, never on connect. A reinstall over an older brain (`bun install -g` again) runs neither, so say so here.
+  if (!ORCHESTRATOR_MIGRATION_OWNERS.has(dispatchedCommand)) try {
+    const { declinedMigrations, migrationLedgerSummary } = await import('../core/migration-ledger.ts');
+    const { loadCompletedMigrations } = await import('../core/preferences.ts');
+    const pending = loadCompletedMigrations().length === 0 ? [] : migrationLedgerSummary(VERSION, await declinedMigrations(engine)).pending;
+    if (pending.length > 0) writeCliNotice(migrationsNotice(`${pending.length} upgrade migration(s) have not run on this brain yet (${pending.join(', ')}); the command ran, and gbrain apply-migrations --yes finishes the upgrade.`));
+  } catch { /* a ledger read never breaks a command */ }
 
   // #5628: drop this host's markers of a retired managed epoch before any filesystem guard check. A one-shot read runs no guard check.
   if (!opts.oneShotRead) try { await (await import('../core/persistence/deactivation.ts')).cleanupRetiredManagedMarkers(engine); } catch { /* status reports pending markers */ }
