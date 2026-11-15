@@ -354,7 +354,7 @@ export interface ArchiveRescopeSkip { code: 'archive_rescope_owner_unset' | 'arc
 /** Why the owner-only re-scope (reconcileAudience) has not run on a brain that became shared, or null. */
 export async function archiveRescopeSkipped(engine: BrainEngine, sourceId?: string): Promise<ArchiveRescopeSkip | null> {
   const configured = await configuredSource(engine, sourceId);
-  if (await engine.getConfig(AUDIENCE_PREFIX + configured) !== 'personal') return null;
+  if (await engine.getConfig(`${AUDIENCE_PREFIX}${configured}`) !== 'personal') return null;
   const privacy = await resolvePrivacy(engine);
   if (!privacy.shared) return null;
   if (!privacy.owner) {

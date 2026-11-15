@@ -42,7 +42,7 @@ export async function checkTranscriptArchiveFreshness(
     const nowMs = opts.nowMs ?? Date.now();
     const staleRaw = Number((await engine.getConfig(ARCHIVE_STALE_DAYS_KEY))?.trim());
     const staleDays = Number.isFinite(staleRaw) && staleRaw > 0 ? staleRaw : DEFAULT_ARCHIVE_STALE_DAYS;
-    const windowRaw = Number((await engine.getConfig(archive.ARCHIVE_RUN_WINDOW_KEY))?.trim());
+    const windowRaw = Number((await engine.getConfig('transcripts.archive.run_window_days'))?.trim());
     const runWindow = Number.isSafeInteger(windowRaw) && windowRaw > 0 ? windowRaw : archive.DEFAULT_RUN_WINDOW_DAYS;
     const status = await archive.archiveStatus(engine, opts.readers ? { readers: opts.readers } : {});
     const today = localDay(new Date(nowMs).toISOString(), status.timezone ?? status.configured_timezone);

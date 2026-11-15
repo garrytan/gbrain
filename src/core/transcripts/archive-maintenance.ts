@@ -88,8 +88,8 @@ export async function readArchiveMaintenance(engine: Pick<BrainEngine, 'getConfi
   }
 }
 
-async function configMinutes(engine: BrainEngine, key: string, fallback: number): Promise<number> {
-  const raw = (await engine.getConfig(key).catch(() => null))?.trim();
+function nonNegative(value: string | null | undefined, fallback: number): number {
+  const raw = value?.trim();
   const n = Number(raw);
   return raw && Number.isFinite(n) && n >= 0 ? n : fallback;
 }
@@ -113,7 +113,7 @@ export async function runArchiveMaintenance(engine: BrainEngine, opts: ArchiveMa
     const enablement = await resolveArchiveEnabled(engine);
     if (!enablement.enabled) return { status: 'skipped', code: 'archive_off', message: 'The conversation archive is off on this brain (' + enablement.reason + '); nothing ran.' };
     const prior = await readArchiveMaintenance(engine);
-    const floorMs = (await configMinutes(engine, ARCHIVE_MAINTENANCE_FLOOR_KEY, DEFAULT_ARCHIVE_MAINTENANCE_FLOOR_MIN)) * 60_000;
+    const floorMs = nonNegative(await engine.getConfig(ARCHIVE_MAINTENANCE_FLOOR_KEY).catch(() => null), DEFAULT_ARCHIVE_MAINTENANCE_FLOOR_MIN) * 60_000;
     if (prior && prior.status !== 'skipped' && now.getTime() - Date.parse(prior.at) < floorMs) {
       return { status: 'not_due', message: 'The archive last ran at ' + prior.at + '; the next pass runs it after ' + ARCHIVE_MAINTENANCE_FLOOR_KEY + '.' };
     }
