@@ -49,7 +49,7 @@ describe('buildInitFirstRunNotices', () => {
       expect(wiring.fix!.consent).toEqual(['persistent_install']);
       expect(wiring.fix!.user_message).toBeTruthy();
       expect(wiring.why).not.toContain('The fix names the command');
-      expect(wiring.why).toContain('relay');
+      expect(wiring.why).toContain(wiring.fix!.user_message!);
     });
   });
 

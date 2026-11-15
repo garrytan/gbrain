@@ -30,8 +30,16 @@ describe('pendingUpgradeMigrationsNotice', () => {
       appendCompletedMigration({ version: MIGRATION_VERSIONS[0]!, status: 'complete' } as never);
       return pendingUpgradeMigrationsNotice(engine, 'query', latest);
     });
-    expect(notice).toMatchObject({ code: 'migrations_pending', fix: { argv: ['gbrain', 'apply-migrations', '--yes'] } });
+    expect(notice).toMatchObject({ code: 'migrations_pending', fix: { argv: ['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install'] } });
     expect(notice!.why).toContain(latest);
+  });
+
+  test('a migration whose last run was partial still gets the notice', async () => {
+    const notice = await inHome(async () => {
+      for (const version of MIGRATION_VERSIONS) appendCompletedMigration({ version, status: version === latest ? 'partial' : 'complete' } as never);
+      return pendingUpgradeMigrationsNotice(engine, 'query', latest);
+    });
+    expect(notice?.why).toContain(latest);
   });
 
   test('no ledger yet (a fresh brain) means no notice', async () => {
