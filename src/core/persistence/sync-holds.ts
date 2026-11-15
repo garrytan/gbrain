@@ -275,6 +275,8 @@ export interface GitHoldRecord {
   run_id: string | null;
   mode: 'managed' | 'legacy';
   meta: GitHoldMeta;
+  /** GBRA-542: set by the readers, never stored: the source is a read-only mirror (`mirror_read_only`), so gbrain never writes its files. */
+  read_only_checkout?: true;
 }
 
 export interface GitSourceHolds { sourceId: string; incarnation: string; count: number; holds: GitHoldRecord[] }
@@ -347,6 +349,19 @@ async function readRow(tx: Exec, sourceId: string, incarnation: string, path: st
   const [row] = await tx.executeRaw<{ record: GitHoldRecord }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
     [GIT_HOLD_OP, gitHoldFingerprint(sourceId, incarnation, path)]);
   return row?.record ?? null;
+}
+
+/** GBRA-542: the hold record as readers return it, marked when its source is a read-only mirror (`s`: the sources row). */
+const READ_HOLD_RECORD_SQL = `CASE WHEN COALESCE(s.config->>'mirror_read_only','false')='true' THEN jsonb_set(h.completed_keys->0,'{read_only_checkout}','true'::jsonb) ELSE h.completed_keys->0 END`;
+
+/**
+ * GBRA-542: a deleted-side `file_drift` hold on a read-only mirror whose file Git committed and the upstream removed while the
+ * page changed in the database (or has no import record). gbrain never writes the mirror's files, so the page stays live and
+ * database-only: the hold is carried by design (class `mirror_database_only`), never re-screened by a plain sync and never a
+ * person's to clear. Deleting the page as the upstream did stays the owner's explicit `--prefer file` repair.
+ */
+export function mirrorDatabaseOnlyHold(record: Pick<GitHoldRecord, 'code' | 'meta' | 'read_only_checkout'>): boolean {
+  return record.read_only_checkout === true && record.code === 'file_drift' && record.meta.side === 'deleted' && record.meta.state === 'file_gone' && !record.meta.reason;
 }
 
 /**
@@ -520,7 +535,9 @@ export async function recordContentHoldRepair(engine: Exec, input: { sourceId: s
 }
 
 export async function readGitHold(engine: Exec, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
-  return readRow(engine, sourceId, incarnation, path);
+  const [row] = await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h LEFT JOIN sources s ON s.id=$3
+    WHERE h.op=$1 AND h.fingerprint=$2`, [GIT_HOLD_OP, gitHoldFingerprint(sourceId, incarnation, path), sourceId]);
+  return row?.record ?? null;
 }
 
 /** #5493: unsupported-image holds per source's current incarnation (sources with none are absent); they never escalate. */
@@ -545,7 +562,7 @@ export async function countGitHolds(engine: Exec, sourceId: string, incarnation:
  * status` and `sources retry-held` merge the two.
  */
 export async function readGitSourceHolds(engine: Exec, opts: { sourceIds?: string[]; runId?: string } = {}): Promise<GitSourceHolds[]> {
-  const rows = await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT h.completed_keys->0 AS record FROM op_checkpoints h
+  const rows = await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h
     JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
     WHERE h.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) AND ($3::text IS NULL OR h.completed_keys->0->>'run_id'=$3)
     ORDER BY s.id,h.fingerprint`, [GIT_HOLD_OP, opts.sourceIds ?? null, opts.runId ?? null]);
@@ -569,7 +586,7 @@ export async function readGitHoldListing(engine: Exec, sourceIds: string[], limi
       s.incarnation::text AS incarnation, COALESCE((sm.completed_keys->0->>'count')::int,0) AS count, h.record
     FROM sources s
     JOIN op_checkpoints sm ON sm.op=$1 AND sm.fingerprint=s.id||':'||s.incarnation::text
-    LEFT JOIN LATERAL (SELECT x.fingerprint, x.completed_keys->0 AS record FROM op_checkpoints x
+    LEFT JOIN LATERAL (SELECT x.fingerprint, CASE WHEN COALESCE(s.config->>'mirror_read_only','false')='true' THEN jsonb_set(x.completed_keys->0,'{read_only_checkout}','true'::jsonb) ELSE x.completed_keys->0 END AS record FROM op_checkpoints x
       WHERE x.op=$2 AND x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
       ORDER BY x.fingerprint LIMIT $4) h ON true
     WHERE s.id=ANY($3::text[]) AND COALESCE((sm.completed_keys->0->>'count')::int,0)>0
@@ -664,7 +681,9 @@ export interface HoldRepairRoute { fences: number; others: number; concurrent?: 
   /** #6712 `file_drift` holds: a database edit sync would have overwritten; each routes to `gbrain repair file-drift`. */
   drift?: number;
   /** #6377 `frontmatter_slug_conflict` holds, counted apart from `others` by callers that read codes (summary counts leave them in `others`). */
-  slug_conflicts?: number }
+  slug_conflicts?: number;
+  /** GBRA-542: the source is a read-only mirror, so its drift holds are carried and never resolved toward the database. */
+  mirror?: boolean }
 
 /** `gbrain repair content --source <id> [--only <path>]`: the content-repair lane's read-only preview (#6377; no model call). */
 export function contentRepairArgv(sourceId: string, path?: string): string[] {
@@ -701,7 +720,8 @@ export function holdRepairSteps(sourceId: string, route: HoldRepairRoute, auto?:
   const unblock = ['gbrain', 'sync', 'unblock', '--source', sourceId, '--apply'];
   const dirtyText = `the ${route.dirty ?? 0} worktree-dirty hold(s) are uncommitted edits in the checkout that sync would not overwrite: commit them (gbrain sources status ${sourceId} names each file), `
     + `then run ${unblock.join(' ')}, which re-screens every held file that is now committed, and the same sync`;
-  const driftText = `for each file-drift hold, preview the resolution with gbrain repair file-drift --source ${sourceId} --slug <slug> --prefer database (or --prefer file) `
+  const driftText = route.mirror ? `the file-drift holds are on a read-only mirror, which gbrain never writes, so their pages stay live and database-only: list them with ${heldDriftPreviewArgv(sourceId, 'deleted', 'file_gone', 'file').join(' ')} (a preview that writes nothing), and turn the mirror flag off only if gbrain should write the checkout`
+    : `for each file-drift hold, preview the resolution with gbrain repair file-drift --source ${sourceId} --slug <slug> --prefer database (or --prefer file) `
     + `(gbrain sources status ${sourceId} names each slug and the database write sync did not overwrite) and decide with the user. ${FILE_DRIFT_APPLY_STEP} Then run gbrain sync --source ${sourceId} --no-pull`;
   if (route.stalled && !route.others && !content && !route.concurrent && !route.dirty && !route.drift) {
     return { argv: stalled.status, commands: [stalled.status.join(' '), stalled.retry.join(' '), stalled.sync.join(' ')], text: stalledText };
@@ -737,6 +757,17 @@ export function fileDriftActionVerb(side: FileDriftSide, state: FileDriftDeleted
   return prefer === 'database' ? 'recreate the file' : 'soft-delete the page';
 }
 
+/** GBRA-542: one class of holds carried by design, with a sample of its paths and the read-only command that lists them. */
+export interface CarriedHolds { class: 'mirror_database_only'; count: number; sample: string[]; list: string[] }
+export const CARRIED_SAMPLE = 5;
+
+/** GBRA-542: the carried classes among one source's holds (empty when there are none). */
+export function carriedHolds(records: ReadonlyArray<Pick<GitHoldRecord, 'source_id' | 'path' | 'code' | 'meta' | 'read_only_checkout'>>): CarriedHolds[] {
+  const mirror = records.filter(mirrorDatabaseOnlyHold);
+  return mirror.length ? [{ class: 'mirror_database_only', count: mirror.length, sample: mirror.slice(0, CARRIED_SAMPLE).map(record => record.path),
+    list: heldDriftPreviewArgv(mirror[0]!.source_id, 'deleted', 'file_gone', 'file') }] : [];
+}
+
 /** #6712 PR 4b: the bulk preview of the held `file_drift` pages of one side (and deleted state), narrowed to `path` when given. */
 export function heldDriftPreviewArgv(sourceId: string, side: FileDriftSide, state: FileDriftDeletedState | undefined, prefer: 'file' | 'database', path?: string): string[] {
   return ['gbrain', 'repair', 'file-drift', '--source', sourceId, '--held', '--side', side, ...(side === 'deleted' && state ? ['--state', state] : []),
@@ -749,7 +780,7 @@ export function movedPagesPreviewArgv(sourceId: string, slug?: string | null): s
 }
 
 /** #6712 PR 4b: the Decision for a `file_drift` hold whose one side is a deletion; each option names its action verb. */
-function deletedDriftFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'meta'> & Partial<Pick<GitHoldRecord, 'slug'>>, state: FileDriftDeletedState): Action {
+function deletedDriftFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'meta'> & Partial<Pick<GitHoldRecord, 'slug' | 'read_only_checkout'>>, state: FileDriftDeletedState): Action {
   const source = record.source_id;
   const slug = record.slug ?? '<slug>';
   const revision = record.meta.page_revision ? ` (revision ${record.meta.page_revision})` : '';
@@ -762,6 +793,12 @@ function deletedDriftFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'met
         why: `Decides ${record.path} again under the fixed gbrain.yml: a database-only page is kept, any other deletion follows its usual proof.` },
       verify };
   }
+  // GBRA-542: on a read-only mirror gbrain never rewrites a file, so no fix names --prefer database there.
+  if (mirrorDatabaseOnlyHold({ ...record, code: 'file_drift' })) {
+    return { argv: preview('file'), consent: [], actor: 'user', requires_exclusive: false, docs: 'docs/guides/repair.md#deleted-canonical-files',
+      why: `${record.path} is gone from the read-only mirror's last commit, and page ${slug}${revision} changed in the database or has no import record, so sync keeps the page. gbrain never writes this mirror's files, so the page stays live and database-only: the hold is carried by design (mirror_database_only), never re-screened by a plain sync, and needs nothing. Only if the owner wants the page gone as the upstream did, this preview (writes nothing) shows what --prefer file deletes; its apply needs the user's consent.`,
+      verify };
+  }
   const uncommitted = state === 'file_gone' && (record.meta.reason === 'never_committed' || record.meta.reason === 'ignored');
   const what = state === 'file_gone' && record.meta.reason === 'origin_unknown' ? `${record.path} is gone, and Git could not show whether a commit held it (its history read did not finish), so sync kept page ${slug} instead of deleting it (#7130). The --held preview reads the whole history and names the file's provenance. `
     : uncommitted ? `${record.path} is gone, but Git never committed it${record.meta.reason === 'ignored' ? ' (.gitignore excludes it)' : ''}, so its absence is no evidence of a deletion and sync kept page ${slug} instead of deleting it (#7130). Put the file back and commit it (un-ignore it first) to keep the page file-backed. `
@@ -771,9 +808,11 @@ function deletedDriftFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'met
     : `${record.path} is gone from the last commit but page ${slug} changed${revision}, so sync held the deletion instead of removing a page that changed. `;
   // GST-2584: a file that moved left its page behind; the --held preview lists it moved_to and names the fold.
   const moved = state === 'file_gone' ? `If the file moved, the preview lists the page moved_to <slug> and names ${shellQuote(movedPagesPreviewArgv(source, record.slug))}, which folds it into the moved page. ` : '';
-  const options = `${moved}This preview (writes nothing) shows --prefer database: ${fileDriftActionVerb('deleted', state, 'database')}; ${preview('file').join(' ')} previews --prefer file: `
+  const readOnly = record.read_only_checkout === true;
+  const options = readOnly ? `${moved}The source is a read-only mirror, so gbrain never rewrites its files and keeping the database copy needs no repair; this preview (writes nothing) shows --prefer file: ${fileDriftActionVerb('deleted', state, 'file')}. `
+    : `${moved}This preview (writes nothing) shows --prefer database: ${fileDriftActionVerb('deleted', state, 'database')}; ${preview('file').join(' ')} previews --prefer file: `
     + `${fileDriftActionVerb('deleted', state, 'file')}. `;
-  return { argv: preview('database'), consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/repair.md#deleted-canonical-files',
+  return { argv: preview(readOnly ? 'file' : 'database'), consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/repair.md#deleted-canonical-files',
     why: `${what}${options}Decide with the user. ${FILE_DRIFT_APPLY_STEP} Then sync again. The rest of the source is not blocked.`,
     then: { argv: ['gbrain', 'sync', '--source', source, '--no-pull'], consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `Re-screens ${record.path} after the repair (a changed file or page revision re-screens it by itself).` },
@@ -795,7 +834,7 @@ export const FILE_DRIFT_APPLY_STEP = 'The preview writes nothing and names what 
  * preview, then the apply, the edit or the paid setting). `auto` is what the
  * caller read about the maintenance run (undefined: unknown).
  */
-export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'code' | 'meta'> & Partial<Pick<GitHoldRecord, 'slug' | 'page_id'>>, auto?: FenceAutoRepair): Action {
+export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'code' | 'meta'> & Partial<Pick<GitHoldRecord, 'slug' | 'page_id' | 'read_only_checkout'>>, auto?: FenceAutoRepair): Action {
   const source = record.source_id;
   const repair = (ambiguous: boolean, why: string): Action => ({ argv: ['gbrain', 'repair', 'frontmatter', '--source', source, ...(ambiguous ? ['--include-ambiguous'] : [])],
     consent: [], actor: 'agent', requires_exclusive: false, why,
@@ -881,9 +920,10 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
           : side === 'both' ? 'the file changed too' : 'no import record says whether the file changed too'}). `;
       const decide = `Decide with the user which version wins. ${FILE_DRIFT_APPLY_STEP} Then sync again. The rest of the source is not blocked.`;
       // #6517: a shared-origin delete kept the file for this surviving page, and its receipt names importing the file.
-      const shared = record.meta.shared_origin === true;
-      return { argv: preview(shared ? 'file' : 'database'), consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/write-refusals.md#file_drift',
-        why: shared ? `${held}Page ${slug} survived a shared-origin delete that kept ${record.path} for it. This preview (writes nothing) imports the file into the page, as the delete's receipt says; `
+      const shared = record.meta.shared_origin === true, readOnly = record.read_only_checkout === true;
+      return { argv: preview(shared || readOnly ? 'file' : 'database'), consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/write-refusals.md#file_drift',
+        why: readOnly ? `${held}The source is a read-only mirror, so gbrain never rewrites its files: keeping the database copy needs no repair, and this preview (writes nothing) imports the file into the page instead. ${decide}`
+          : shared ? `${held}Page ${slug} survived a shared-origin delete that kept ${record.path} for it. This preview (writes nothing) imports the file into the page, as the delete's receipt says; `
           + `${preview('database').join(' ')} previews keeping the database copy and rewriting the file instead. ${decide}`
           : `${held}This preview (writes nothing) keeps the database copy and rewrites the file; ${preview('file').join(' ')} previews importing the file instead. ${decide}`,
         then: { argv: ['gbrain', 'sync', '--source', source, '--no-pull'], consent: [], actor: 'agent', requires_exclusive: false, verify,
@@ -1383,12 +1423,13 @@ export async function buildHoldReport(engine: Exec, input: { sourceId: string; i
   policy: SyncHoldPolicy | Promise<SyncHoldPolicy>; screened: number; pendingScreen?: boolean; needsHuman?: (record: GitHoldRecord, auto: FenceAutoRepair | undefined) => boolean }): Promise<Pick<import('../../commands/sync.ts').SyncResult,
   'held' | 'held_count' | 'held_needs_human' | 'holds_outstanding' | 'holds_escalated' | 'holds_truncated' | 'holds_pending_screen' | 'holds_fix'>> {
   // #6712 PR 4b: the summary, this run's holds and the policy (a caller may pass its read in flight) in one round trip.
-  const [[summary], sourceHolds, policy] = await Promise.all([engine.executeRaw<{ count: number | string; images: number | string; fences: number | string; stalled: number | string; concurrent: number | string; dirty: number | string; drift: number | string }>(`SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count,
+  const [[summary], sourceHolds, policy, [source]] = await Promise.all([engine.executeRaw<{ count: number | string; images: number | string; fences: number | string; stalled: number | string; concurrent: number | string; dirty: number | string; drift: number | string }>(`SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count,
       COALESCE((completed_keys->0->>'drift')::int,0) AS drift,
       COALESCE((completed_keys->0->>'images')::int,0) AS images, COALESCE((completed_keys->0->>'fences')::int,0) AS fences, COALESCE((completed_keys->0->>'stalled')::int,0) AS stalled,
       COALESCE((completed_keys->0->>'concurrent')::int,0) AS concurrent, COALESCE((completed_keys->0->>'dirty')::int,0) AS dirty
     FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`,
-  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(input.sourceId, input.incarnation)]), readGitSourceHolds(engine, { sourceIds: [input.sourceId], runId: input.runId }), input.policy]);
+  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(input.sourceId, input.incarnation)]), readGitSourceHolds(engine, { sourceIds: [input.sourceId], runId: input.runId }), input.policy,
+    engine.executeRaw<{ mirror: string | null }>("SELECT config->>'mirror_read_only' AS mirror FROM sources WHERE id=$1", [input.sourceId])]);
   const outstanding = Number(summary?.count ?? 0);
   const runHolds = sourceHolds[0]?.holds ?? [];
   if (!outstanding && !runHolds.length) return {};
@@ -1405,7 +1446,7 @@ export async function buildHoldReport(engine: Exec, input: { sourceId: string; i
   // #7199: this run's holds whose verdict waits on a person (sync-status.ts holdVerdict).
   const needsHuman = input.needsHuman ? runHolds.filter(hold => input.needsHuman!(hold, auto)).length : 0;
   const steps = holdRepairSteps(input.sourceId, { fences, others: Math.max(0, outstanding - fences - stalled - concurrent - dirty - drift - slugConflicts), ...(stalled ? { stalled } : {}),
-    ...(concurrent ? { concurrent } : {}), ...(dirty ? { dirty } : {}), ...(drift ? { drift } : {}), ...(slugConflicts ? { slug_conflicts: slugConflicts } : {}) }, auto);
+    ...(concurrent ? { concurrent } : {}), ...(dirty ? { dirty } : {}), ...(drift ? { drift } : {}), ...(slugConflicts ? { slug_conflicts: slugConflicts } : {}), ...(source?.mirror === 'true' ? { mirror: true } : {}) }, auto);
   // #6278: the escalation text is routed by code: stalled holds point at the writer, not at a generator.
   const runStalled = runHolds.filter(hold => stalledWeight(hold)).length;
   const escalation = runStalled * 2 > runHolds.length
