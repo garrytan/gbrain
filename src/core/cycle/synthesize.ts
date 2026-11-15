@@ -80,7 +80,7 @@ import { stampDreamProvenance, summaryProvenanceLines } from './dream-provenance
 import { activateSynthesisGenerations } from './synthesize-generations.ts';
 import { summaryDerivation, withTranscriptTaint } from './dream-taint.ts';
 import { DREAM_SUMMARY_KIND, publishSinglePage } from '../generations/adapters/single-page.ts';
-import { findSynthV2Completion, noCandidates, noNewTranscripts, partitionCompletedSynthesis } from './synthesize-completion.ts';
+import { findSynthV2Completion, noCandidates, noNewTranscripts, partitionCompletedSynthesis, resynthesisHold, resynthesisHoldSuffix } from './synthesize-completion.ts';
 
 // Re-exports: the drain was peeled to inline-drain.ts (dream-wave C7), the
 // allow-list loader to filing-rules.ts (#2397); patterns.ts and the
@@ -723,7 +723,7 @@ async function runPhaseSynthesizeInner(
     const synthMeter = new BudgetMeter({ budgetUsd: config.budgetUsd, allowUnpriced: config.allowUnpriced, pricingOverrides: await loadPricingOverrides(engine), phase: 'synthesize' });
     const childMaxOutputTokens = resolveMaxOutputTokens(undefined, await engine.getConfig('agent.max_output_tokens').catch(() => null), config.model);
 
-    const breaker = await loadDreamBreaker(engine);
+    const [breaker, resynthesisHeld] = await Promise.all([loadDreamBreaker(engine), resynthesisHold(engine, cycleSourceId, explicitTarget ? 0 : config.cooldownHours)]);
     // Admission-quota latch: once a submit is rejected, every later transcript
     // this run would be rejected too — record one skip per remaining file
     // without hammering the queue.
@@ -795,7 +795,7 @@ async function runPhaseSynthesizeInner(
         continue;
       }
 
-      const refusal = breaker && synthBreakerRefusal(breaker, { synthesisIdentity, sourceId: cycleSourceId, filePath: t.filePath, hash16 });
+      const refusal = resynthesisHeld(t.filePath, hash16, synthesisIdentity) || breaker && synthBreakerRefusal(breaker, { synthesisIdentity, sourceId: cycleSourceId, filePath: t.filePath, hash16 });
       if (refusal) { process.stderr.write(`[dream] ${t.basename}: ${refusal}\n`); skipReports.push({ filePath: t.filePath, reason: refusal }); continue; }
       const chunks = splitTranscriptByBudget(t.content, t.contentHash, maxCharsPerChunk);
 
@@ -1037,7 +1037,7 @@ async function runPhaseSynthesizeInner(
     // a run that did no synthesis must not suppress the retry window that
     // would pick these files up.
     if (childIds.length === 0) {
-      return ok(`no synthesis submitted (${skipReports.length} passing file(s) skipped)${deferralSuffix}`, {
+      return ok(`no synthesis submitted (${skipReports.length} passing file(s) skipped)${resynthesisHoldSuffix(skipReports)}${deferralSuffix}`, {
         transcripts_discovered: transcripts.length,
         transcripts_processed: 0,
         pages_written: 0,
@@ -1372,7 +1372,7 @@ async function runPhaseSynthesizeInner(
     const turnsSamples = childOutcomes.filter(
       (o): o is { jobId: number; status: string; turns: number } => typeof o.turns === 'number',
     );
-    return reportFileHolds(withPostprocessConflicts(postprocessConflicts, withPublishPending(publishPending, ok(`${submittedTranscripts} transcript(s) synthesized in ${(ms / 1000).toFixed(1)}s${deferralSuffix}`, {
+    return reportFileHolds(withPostprocessConflicts(postprocessConflicts, withPublishPending(publishPending, ok(`${submittedTranscripts} transcript(s) synthesized in ${(ms / 1000).toFixed(1)}s${resynthesisHoldSuffix(skipReports)}${deferralSuffix}`, {
       transcripts_discovered: transcripts.length,
       transcripts_processed: submittedTranscripts,
       pages_written: writtenSlugs.length,
