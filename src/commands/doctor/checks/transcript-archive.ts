@@ -82,7 +82,7 @@ export async function checkTranscriptArchiveFreshness(
     }
     const details = {
       enabled: true, source_id: status.source_id, stale_days: staleDays, behind, held: status.held,
-      harnesses: status.harnesses.map(h => ({ harness: h.harness, newest_session_day: h.newest_session_day, newest_archived_day: h.newest_archived_day, ...(h.info ? { info: h.info } : {}) })),
+      harnesses: status.harnesses.map(h => ({ harness: h.harness, reader: h.reader, readable: !h.info, newest_session_day: h.newest_session_day, newest_archived_day: h.newest_archived_day })),
       ...(record ? { last_maintenance: record } : {}), docs: 'docs/guides/conversation-archive.md#doctor',
     };
     if (problems.length) return { name, status: 'warn', message: 'Conversation archive: ' + problems.join('; ') + '.', details, ...(fix ? { fix } : {}) };
