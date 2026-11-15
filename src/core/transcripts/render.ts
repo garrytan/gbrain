@@ -47,7 +47,8 @@ import { gbrainPath } from '../config.ts';
 import { dumpFrontmatterYaml } from '../data-frontmatter.ts';
 import { join } from 'node:path';
 import { DEFAULT_BYTES_WARN } from '../content-sanity.ts';
-import { applyRedaction, planRedaction, type EchoDictionary, type RedactionPlan } from '../secret-scan.ts';
+import { TRANSCRIPT_LANE_SCAN_OPTS, applyRedaction, planRedaction, trailingDanglingLabel, type EchoDictionary, type RedactionPlan } from '../secret-scan.ts';
+import type { DanglingForm } from '../secret-scan-labeled.ts';
 import { loadPatterns } from '../skillpack/harvest-lint.ts';
 import { sanitizeForJsonb } from '../batch-rows.ts';
 import { ensureWellFormed } from '../text-safe.ts';
@@ -146,6 +147,12 @@ export function loadImportRedactionPatterns(userPatternsPath?: string): ImportRe
  * password / login / credentials label (`password: hunter2`, `login alice /
  * hunter2`); a claimed value of 8+ characters that is not a stoplisted word
  * joins the echo dictionary below.
+ * Also transcript-lane only (`TRANSCRIPT_LANE_SCAN_OPTS.transcriptRules`,
+ * GST-2768): `cookie_header` claims cookie values after a `Cookie:` /
+ * `Set-Cookie:` header or a curl `-b` argument (names kept), a `.netrc`
+ * password is claimed, and a label left dangling at the end of one message
+ * (`password:`, `here is my API key:`) claims the value alone on the first
+ * line of the NEXT message, never further.
  * Every match becomes `<REDACTED:pattern>`; user patterns become
  * `<REDACTED:user-pattern>`.
  *
@@ -170,14 +177,14 @@ export function redactSession(
   let imperativesFlagged = 0;
   const echoValues: EchoDictionary = new Map();
 
-  const plan = (text: string): RedactionPlan =>
+  const plan = (text: string, leadingDangling: DanglingForm | null = null): RedactionPlan =>
     // sanitizeForJsonb (NUL-strip + well-form): transcripts capture raw tool
     // output that legitimately carries U+0000, which Postgres text/jsonb
     // reject at the write boundary (#4392).
-    // highEntropy + labeledCredentials: transcripts opt into the assignment
-    // heuristic and the labeled-credential detector (see doc comment above);
-    // the shared scanner keeps both off by default.
-    planRedaction(sanitizeForJsonb(text), { highEntropy: true, labeledCredentials: true, echoValues });
+    // TRANSCRIPT_LANE_SCAN_OPTS: transcripts opt into the assignment
+    // heuristic, the labeled-credential detector and the transcript-only
+    // rules (see doc comment above); the shared scanner keeps all off by default.
+    planRedaction(sanitizeForJsonb(text), { ...TRANSCRIPT_LANE_SCAN_OPTS, leadingDangling, echoValues });
 
   const apply = (p: RedactionPlan): string => {
     redactionCount += p.redactions.length;
@@ -193,14 +200,16 @@ export function redactSession(
 
   // Phase 1: plan every field.
   const imperativeFlags: boolean[] = [];
-  const planned = session.messages.map((m) => {
+  const planned = session.messages.map((m, i) => {
     const imperative = IMPERATIVE_RES.some((re) => re.test(m.text));
     imperativeFlags.push(imperative);
     if (imperative) imperativesFlagged++;
     // Speaker labels are persisted into the anchor line, so they get the
     // same redaction as bodies (a secret or private name in a display name
     // must not bypass the scan).
-    return { m, text: plan(m.text), speaker: m.speaker ? plan(m.speaker) : undefined };
+    // Cross-message join: a label the previous message left dangling reads this message's first line as its value.
+    const leading = i > 0 ? trailingDanglingLabel(session.messages[i - 1]!.text, TRANSCRIPT_LANE_SCAN_OPTS) : null;
+    return { m, text: plan(m.text, leading), speaker: m.speaker ? plan(m.speaker) : undefined };
   });
   const titlePlan = session.meta.title ? plan(session.meta.title) : undefined;
   // Flatness is ENFORCED, not assumed: strings are planned; primitive

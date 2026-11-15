@@ -38,6 +38,13 @@
  * key/value row, with escaped pipes, rows without outer pipes and several
  * credential columns.
  *
+ * GST-2768 adds, behind `ScanOpts.transcriptRules` (the transcript page lane
+ * and its audit only, see `TRANSCRIPT_LABELED_PATTERNS`): a `.netrc` line's
+ * `password <value>`, and a key or token label left dangling at a line end
+ * (`here is my API key:`, `ACCESS_TOKEN=`) with its value alone on the next
+ * line. The transcript lane also carries a dangling label of any form into
+ * the first line of the NEXT message (`ScanOpts.leadingDangling`).
+ *
  * Accepted misses: an unquoted multi-word passphrase (`login: alice / pass
  * word`), a delimiter-free single label (`the password is hunter2`), a pair
  * split by anything but one line break, a concatenated short flag
@@ -68,12 +75,22 @@ const CLI_HEAD = '(?:^|\\s)--?(?!(?:no|skip|ask|prompt|reset|show|print|change|c
 /** openssl's `-passin pass:X` / `-passout pass:X`. */
 const OPENSSL_PASS_HEAD = '(?:^|\\s)-pass(?:in|out)\\s{1,4}pass:';
 
+/** The label form a line leaves dangling for the next line: `key` is the transcript-lane key or token label. */
+export type DanglingForm = 'single' | 'pair' | 'key';
+
 export interface LabeledPattern {
   source: string;
   /** `cli`: a single label written as a command-line flag, whose value never starts with `-` (that is the next flag). */
   form: 'single' | 'pair' | 'cli';
   /** Runs only on the line after one that ends in a dangling label of this form. */
   continuation?: 'single' | 'pair';
+}
+
+/** A transcript-lane labeled shape; `key` is a value under a key or token label, checked by `keyLabelValueIsCredential`. */
+export interface TranscriptLabeledPattern {
+  source: string;
+  form: 'single' | 'key';
+  continuation?: 'key';
 }
 
 /** Group 1 = everything before the value, group 2 = the value (the scanner's shape). */
@@ -90,6 +107,74 @@ export const LABELED_CREDENTIAL_PATTERNS: readonly LabeledPattern[] = [
   { form: 'single', continuation: 'single', source: `(^\\s{0,8}${QUOTE})(${QUOTED_VALUE})(?=${QUOTE}[,;]?\\s*$)` },
   { form: 'single', continuation: 'single', source: `(^\\s{0,8})(${BARE_VALUE})(?=[.,;]?\\s*$)` },
 ];
+
+/** A key or token label (`API key`, `access_token`, `client secret`), transcript lane only. */
+const KEY_LABEL = '(?:api[ _-]?key|access[ _-]?key|secret[ _-]?key|client[ _-]?secret|secret|token)s?';
+const NETRC_HEAD = '(?:^|\\s)(?:machine\\s{1,4}[^\\s]{1,253}|default)(?:\\s{1,4}(?:login|account)\\s{1,4}[^\\s]{1,128}){0,2}\\s{1,4}password\\s{1,4}';
+
+/**
+ * GST-2768: the transcript-lane-only labeled shapes (`ScanOpts.transcriptRules`), claimed as
+ * `labeled_credential`: a `.netrc` password, and the value on the line after a dangling key label.
+ */
+export const TRANSCRIPT_LABELED_PATTERNS: readonly TranscriptLabeledPattern[] = [
+  { form: 'single', source: `(${NETRC_HEAD})(${BARE_VALUE})${BARE_END}` },
+  { form: 'key', continuation: 'key', source: `(^\\s{0,8}${QUOTE})(${QUOTED_VALUE})(?=${QUOTE}[,;]?\\s*$)` },
+  { form: 'key', continuation: 'key', source: `(^\\s{0,8})(${BARE_VALUE})(?=[.,;]?\\s*$)` },
+];
+
+/** Cheap gate before the `.netrc` pattern runs on a line. */
+export const NETRC_PRECHECK_RE = /password/i;
+
+// nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- compile-time literal; bounded quantifiers
+const KEY_DANGLING_RE = new RegExp(`${LEFT}${KEY_LABEL}${LABEL_END}${BOLD}${QUOTE}?\\s{0,4}${DELIM}${BOLD}\\s{0,4}$`, 'i');
+const KEY_PRECHECK_RE = /key|secret|token/i;
+
+/** True when `line` ends in a key or token label with nothing after it (`here is my API key:`). Tests the last 128 characters only. */
+export function danglingKeyLabel(line: string): boolean {
+  if (!KEY_PRECHECK_RE.test(line)) return false;
+  return KEY_DANGLING_RE.test(line.length > 128 ? line.slice(-128) : line);
+}
+
+/**
+ * A value alone on the line after a dangling key label: one token of 12+ characters with a
+ * letter and a digit that also passes the single-label checks, so prose (`hold on`), short
+ * words and code references under a `token:` heading are never claimed.
+ */
+export function keyLabelValueIsCredential(value: string, head = ''): boolean {
+  return value.length >= 12 && !/\s/.test(value) && LETTER_RE.test(value) && /[0-9]/.test(value) && labeledValueIsCredential(value, 'single', head);
+}
+
+/**
+ * The transcript lane's scan options (redactSession, `gbrain transcripts
+ * audit-secrets`, the session-corpus reader): the opt-in high-entropy and
+ * labeled-credential detectors plus the transcript-only rules
+ * (`ScanOpts.transcriptRules`). Every other surface keeps the shared defaults.
+ */
+export const TRANSCRIPT_LANE_SCAN_OPTS: Readonly<{ highEntropy: true; labeledCredentials: true; transcriptRules: true }> = Object.freeze({
+  highEntropy: true,
+  labeledCredentials: true,
+  transcriptRules: true,
+});
+
+/** The scan options that decide which dangling labels count (a structural slice of `ScanOpts`). */
+interface DanglingOpts { labeledCredentials?: boolean; transcriptRules?: boolean }
+
+/** The label form `line` leaves dangling for the next line under `opts`, or null. */
+export function danglingFor(line: string, opts: DanglingOpts): DanglingForm | null {
+  const labeled = opts.labeledCredentials === true ? danglingLabel(line) : null;
+  if (labeled) return labeled;
+  return opts.transcriptRules === true && danglingKeyLabel(line) ? 'key' : null;
+}
+
+/**
+ * The label form the last line of `text` leaves dangling (`password:`,
+ * `login: alice /`, `here is my API key:`), for the next message's
+ * `ScanOpts.leadingDangling`. Null when the options carry no labeled rules.
+ */
+export function trailingDanglingLabel(text: string, opts: DanglingOpts): DanglingForm | null {
+  const trimmed = text.trimEnd();
+  return danglingFor(trimmed.slice(trimmed.lastIndexOf('\n') + 1), opts);
+}
 
 /**
  * #7997: an importer redaction marker (`<REDACTED:kind>`) with its colon swapped, the same length, so the label

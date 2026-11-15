@@ -13,7 +13,7 @@ import type { ParsedSession } from '../src/core/transcripts/types.ts';
 
 const KEY = ['Synth3tic', 'ApiKeyValue0042'].join('');
 const PW = ['Synth', '-pw-split-9'].join('');
-const PAIR = ['Synth', '-pair-5!'].join('');
+const PAIR = ['Synth', '-pair-5x'].join('');
 const TOKEN = ['Synth3tic', 'Tok3nValue0099'].join('');
 
 function redact(texts: string[], roles: Array<'user' | 'assistant'> = []): string[] {
