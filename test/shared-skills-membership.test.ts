@@ -158,6 +158,45 @@ test('requirement, policy and source incarnation changes require renewed approva
   blocked = await syncBrain(ctx, params(first)); expect(blocked.skills).toEqual([]); expect(blocked.blocked_skills[0].source_incarnation).toBe(nextIncarnation);
 });
 
+// Value: protects=explicit approved refresh of a stale policy binding; fails_when=active join leaves skills blocked;
+// why_new=the existing policy-change test stops at refusal; seam=synthetic canonical catalog; no_claim=native activation.
+test('#6797 approved active rejoin refreshes policy pins and fences old delivery acknowledgments', async () => {
+  const ctx = await context(), first = await join(ctx);
+  expect((await syncBrain(ctx, ack(first))).delivery.installation).toBe('self_reported');
+  policyEpoch = randomUUID();
+  await engine.executeRaw('UPDATE shared_skill_policies SET epoch=$1::uuid', [policyEpoch]);
+  await projectFixture('UPDATE shared_skill_heads SET policy_epoch=$1', [policyEpoch]);
+  expect((await syncBrain(ctx, params(first))).status).toBe('requirements_changed');
+
+  const refreshed = await join(ctx);
+  expect(refreshed.status).toBe('catalog_visible');
+  expect(refreshed.installation_id).toBe(first.installation_id);
+  expect(refreshed.enrollment_epoch).toBe(first.enrollment_epoch + 1);
+  expect(refreshed.skills.map(skill => skill.name)).toEqual(['fixture']);
+  expect(refreshed.delivery.installation).toBe('unverified');
+  await expect(syncBrain(ctx, ack(first))).rejects.toMatchObject({ code: 'membership_inactive' });
+  await expect(leaveBrain(ctx, params(first))).rejects.toMatchObject({ code: 'membership_inactive' });
+  expect((await syncBrain(ctx, ack(refreshed))).delivery.installation).toBe('self_reported');
+  const repeated = await join(ctx);
+  expect(repeated.enrollment_epoch).toBe(refreshed.enrollment_epoch);
+  expect(repeated.batch_token).toBe(refreshed.batch_token);
+});
+
+test('#6797 active approval preserves source narrowing and refuses widening or implicit consent', async () => {
+  const ctx = await context();
+  const first = await joinBrain(ctx, { adapter: 'codex', follow_policy: { approved: true, source_ids: ['default'] } });
+  // @ts-expect-error Exercise unapproved wire input, which the public type excludes.
+  await expect(joinBrain(ctx, { adapter: 'codex', follow_policy: { approved: false, source_ids: ['default'] } })).rejects.toMatchObject({ code: 'follow_approval_required' });
+  await expect(join(ctx)).rejects.toMatchObject({ code: 'follow_approval_required' });
+  const unchanged = await syncBrain(ctx, params(first));
+  expect(unchanged.batch_token).toBe(first.batch_token);
+  const narrowed = await joinBrain(ctx, { adapter: 'codex', follow_policy: { approved: true, source_ids: [] } });
+  expect(narrowed.enrollment_epoch).toBe(first.enrollment_epoch + 1);
+  expect(narrowed.skills).toEqual([]);
+  expect((await syncBrain(ctx, ack(narrowed))).delivery.installation).toBe('self_reported');
+  await expect(joinBrain(ctx, { adapter: 'codex', follow_policy: { approved: true, source_ids: ['default'] } })).rejects.toMatchObject({ code: 'follow_approval_required' });
+});
+
 test('concurrent leave and acknowledgment cannot reactivate an enrollment', async () => {
   const ctx = await context(), first = await join(ctx);
   const results = await Promise.allSettled([syncBrain(ctx, ack(first)), leaveBrain(ctx, params(first))]);
