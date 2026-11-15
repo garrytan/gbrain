@@ -149,7 +149,8 @@ whose addresses all match are grouped by reader set, with the owner first in eve
 a slugs file (mode 0600, in `<config dir>/visibility-proposals/` or `--out`, never inside a
 git work tree) and the `--readers` command above to preview it, then apply it with
 `--apply --expect <hash>`. A page with any address that names no enabled member is
-listed as unmatched and gets no proposal. DM, chat and mail pages with no address list are listed by
+listed as unmatched and gets no proposal, and so is a page whose slug a slugs file cannot carry (it
+starts with `#`, has surrounding spaces or holds a line break): label it with `--slug`. DM, chat and mail pages with no address list are listed by
 folder with a `gbrain access rule add --prefix <folder>/ --readers <owner>,<list>` command to fill in.
 Labelling a page also hides its derived atoms, facts and chronicle events from every remote caller
 except the owner, unless `access.members_read_lineage` is on. `--propose` itself labels nothing
