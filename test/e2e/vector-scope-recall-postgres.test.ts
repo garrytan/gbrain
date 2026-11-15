@@ -4,7 +4,8 @@
  * statement (`exactSql`, no index, unbounded window) for the same query:
  *
  *   - scopes under SCOPE_SCAN_MAX_SHARE of pages run the exact scope scan
- *     first on this fixture, so their rows equal the exact statement's;
+ *     first on this fixture, so their rows equal the exact statement's; when
+ *     that scan times out, the walk answers before the joined statement;
  *   - a scope clustered away from the query, sized as a mid-size scope, runs
  *     the walk first, comes back short and is answered by the scope scan;
  *   - wide scopes and unscoped searches keep the HNSW walk, held to a recall
@@ -152,6 +153,36 @@ async function firstAttempts(opts: SearchOpts): Promise<string[]> {
       }
     }, 120_000);
   }
+
+  test('a scope scan that times out falls to the walk, never the joined statement, and keeps recall', async () => {
+    const opts: SearchOpts = { embeddingColumn: column, sourceId: 'b8', excludePrivate: true };
+    const kinds: string[] = [];
+    let hit = 0, total = 0;
+    const original = vectorPool.searchIndexWalk;
+    const walkSpy = spyOn(vectorPool, 'searchIndexWalk').mockImplementation((stmt, limit, run) => original(stmt, limit, async attempt => {
+      kinds.push(attempt.scopeScan ? 'scan' : attempt.indexWalk ? 'walk' : 'pool');
+      if (attempt.scopeScan) throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+      return run(attempt);
+    }));
+    const poolSpy = spyOn(vectorPool, 'searchVectorPool');
+    try {
+      for (const embedding of queries) {
+        kinds.length = 0;
+        const truth = new Set(await exactPages(embedding, opts));
+        const got = (await engine.searchVector(embedding, { ...opts, limit: LIMIT })).map(row => row.page_id);
+        expect(kinds).toEqual(['scan', 'walk']);
+        expect(got).toHaveLength(truth.size);
+        total += truth.size;
+        hit += got.filter(id => truth.has(id)).length;
+      }
+      expect(poolSpy).not.toHaveBeenCalled();
+    } finally {
+      walkSpy.mockRestore();
+      poolSpy.mockRestore();
+    }
+    console.info(JSON.stringify({ metric: 'vector-scope-recall', scope: 'b8 (scan timed out, walk)', recall: hit / total }));
+    expect(hit / total).toBeGreaterThanOrEqual(0.9);
+  }, 120_000);
 
   test('a mid-size scope clustered away from the query: the walk comes back short and the scope scan answers exactly', async () => {
     const opts: SearchOpts = { embeddingColumn: column, sourceId: TOPIC_SOURCE };

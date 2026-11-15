@@ -142,7 +142,7 @@ describe('bounded vector candidate safety', () => {
 
 describe('first attempts: index walk, then scope scan', () => {
   const rows = (n: number) => Array.from({ length: n }, (_, page_id) => ({ page_id }));
-  async function run(stmt: { indexWalkSql?: string; scopeScanSql?: string }, batches: Partial<Record<'walk' | 'scan', VectorPoolBatch | Error>>, limit = 10) {
+  async function run(stmt: { indexWalkSql?: string; scopeScanSql?: string; scopeScanFirst?: boolean }, batches: Partial<Record<'walk' | 'scan', VectorPoolBatch | Error>>, limit = 10) {
     const kinds: Array<'walk' | 'scan'> = [];
     const attempts: VectorPoolAttempt[] = [];
     const result = await searchIndexWalk({ innerLimit: 100, indexWalkOverfetch: 50, ...stmt }, limit, async attempt => {
@@ -203,6 +203,25 @@ describe('first attempts: index walk, then scope scan', () => {
     expect(await widen(n => ({ rows: rows(10), candidatePool: n, eligiblePool: 40 }))).toEqual({ result: null, windows: [250] });
     expect(await widen(() => ({ rows: rows(10), candidatePool: 200, eligiblePool: 200 }))).toEqual({ result: null, windows: [250] });
     expect((await widen(n => ({ rows: rows(10), candidatePool: n, eligiblePool: n }), 's')).result).toHaveLength(50);
+  });
+
+  test('a scan-first scope answers from the scan without walking', async () => {
+    const { result, kinds } = await run({ indexWalkSql: 'w', scopeScanSql: 's', scopeScanFirst: true }, { scan: { rows: rows(10), candidatePool: 100 } });
+    expect(result).toHaveLength(10);
+    expect(kinds).toEqual(['scan']);
+  });
+
+  test('a scan-first scope whose scan times out or comes back short falls to the walk before the pool, and never scans twice', async () => {
+    const scanFirst = { indexWalkSql: 'w', scopeScanSql: 's', scopeScanFirst: true };
+    const walked = await run(scanFirst, { scan: timeout(), walk: { rows: rows(10), candidatePool: 100 } });
+    expect(walked.result).toHaveLength(10);
+    expect(walked.kinds).toEqual(['scan', 'walk']);
+    expect(walked.attempts[1]).toMatchObject({ indexWalk: true, remainingMs: 2000, exact: false });
+    const stale = await run(scanFirst, { scan: { rows: rows(8), candidatePool: 100, eligiblePool: 90 }, walk: { rows: rows(10), candidatePool: 100 } });
+    expect(stale.kinds).toEqual(['scan', 'walk']);
+    expect(stale.result).toHaveLength(10);
+    expect(await run(scanFirst, { scan: timeout(), walk: timeout() })).toMatchObject({ result: null, kinds: ['scan', 'walk'] });
+    expect(await run(scanFirst, { scan: timeout(), walk: { rows: rows(4), candidatePool: 40 } })).toMatchObject({ result: null, kinds: ['scan', 'walk'] });
   });
 
   test('a full scan window that stale rows left short, or a timed-out attempt, falls back to the pool', async () => {

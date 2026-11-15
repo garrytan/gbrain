@@ -206,12 +206,14 @@ describe('source scope strategy: walk overfetch, walk skip and scope scan', () =
     }
   });
 
-  test('a scope of at most SCOPE_SCAN_FIRST_MAX_CHUNKS runs the scope scan instead of the walk', () => {
+  test('a scope of at most SCOPE_SCAN_FIRST_MAX_CHUNKS runs the scope scan first and keeps the walk as its fallback', () => {
     const small = build({ sourceId: 'small' }, 'postgres', 0.2, SCOPE_SCAN_FIRST_MAX_CHUNKS);
     expect(small.scopeScanSql).toBeDefined();
-    expect(small.indexWalkSql).toBeUndefined();
+    expect(small.scopeScanFirst).toBe(true);
+    expect(small.indexWalkSql).toBe(build({ sourceId: 'small' }, 'postgres', 0.2, SCOPE_SCAN_MAX_CHUNKS).indexWalkSql!);
     const narrowed = build({ sourceId: 'small', type: 'note' }, 'postgres', 0.01, 500);
     expect(narrowed.scopeScanSql).toBeDefined();
+    expect([narrowed.indexWalkSql, narrowed.scopeScanFirst]).toEqual([undefined, undefined]);
     unchanged(small, build({ sourceId: 'small' }));
   });
 
@@ -219,6 +221,7 @@ describe('source scope strategy: walk overfetch, walk skip and scope scan', () =
     const mid = build({ sourceId: 'sessions' }, 'postgres', 0.25, SCOPE_SCAN_MAX_CHUNKS);
     expect(mid.indexWalkSql).toBeDefined();
     expect(mid.scopeScanSql).toBeDefined();
+    expect(mid.scopeScanFirst).toBeUndefined();
     expect(build({ sourceId: 'sessions' }, 'postgres', 0.25, SCOPE_SCAN_MAX_CHUNKS + 1).scopeScanSql).toBeUndefined();
     expect(build({ sourceId: 'notes' }, 'postgres', SCOPE_SCAN_MAX_SHARE, 1_000).scopeScanSql).toBeUndefined();
     expect(build({ sourceId: 'small' }, 'postgres', 0.01).scopeScanSql).toBeUndefined();
@@ -287,9 +290,10 @@ describe('source scope strategy: walk overfetch, walk skip and scope scan', () =
     expect(counted.chunks!).toBeLessThanOrEqual(SCOPE_SCAN_MAX_CHUNKS);
     const scanFirst = buildVectorSearchStatement({ dialect: 'postgres', embedding: new Float32Array([1, 0, 0]), limit: 10, offset: 0, opts: { embeddingColumn: indexedColumn, sourceId: 'sessions' }, scope: { share: 0.25, chunks: SCOPE_SCAN_FIRST_MAX_CHUNKS } });
     const walkFirst = buildVectorSearchStatement({ dialect: 'postgres', embedding: new Float32Array([1, 0, 0]), limit: 10, offset: 0, opts: { embeddingColumn: indexedColumn, sourceId: 'sessions' }, scope: counted });
-    expect([!!scanFirst.indexWalkSql, !!scanFirst.scopeScanSql]).toEqual([false, true]);
-    expect([!!walkFirst.indexWalkSql, !!walkFirst.scopeScanSql]).toEqual([true, true]);
+    expect([!!scanFirst.indexWalkSql, !!scanFirst.scopeScanSql, scanFirst.scopeScanFirst]).toEqual([true, true, true]);
+    expect([!!walkFirst.indexWalkSql, !!walkFirst.scopeScanSql, walkFirst.scopeScanFirst]).toEqual([true, true, undefined]);
     expect(walkFirst.scopeScanSql).toBe(scanFirst.scopeScanSql!);
+    expect(walkFirst.indexWalkSql).toBe(scanFirst.indexWalkSql!);
   });
 
   test('the loader counts chunks only for scopes under SCOPE_SCAN_MAX_SHARE, in the background, once a minute per scope, and keeps the estimate on a failed count', async () => {

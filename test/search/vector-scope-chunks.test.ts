@@ -94,7 +94,7 @@ describe('SCOPE_CHUNKS_SQL', () => {
     expect(Math.abs(routed!.chunks! - truth) / truth).toBeLessThan(0.05);
     expect(routed!.chunks!).toBeGreaterThan(SCOPE_SCAN_FIRST_MAX_CHUNKS);
     const stmt = (scope: VectorScope) => buildVectorSearchStatement({ dialect: 'pglite', embedding: new Float32Array(1536), limit: 20, offset: 0, opts, scope });
-    expect([!!stmt(byShare).indexWalkSql, !!stmt(byShare).scopeScanSql]).toEqual([false, true]);
-    expect([!!stmt(routed!).indexWalkSql, !!stmt(routed!).scopeScanSql]).toEqual([true, true]);
+    expect([!!stmt(byShare).indexWalkSql, !!stmt(byShare).scopeScanSql, stmt(byShare).scopeScanFirst]).toEqual([true, true, true]);
+    expect([!!stmt(routed!).indexWalkSql, !!stmt(routed!).scopeScanSql, stmt(routed!).scopeScanFirst]).toEqual([true, true, undefined]);
   });
 });

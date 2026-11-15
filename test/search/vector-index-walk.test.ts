@@ -244,7 +244,7 @@ describe('vector index walk (PGLite)', () => {
     const scope = sourceScope(stats, opts)!;
     const stmt = buildVectorSearchStatement({ dialect: 'pglite', embedding: vec(7), limit: 10, offset: 0, opts, scope });
     expect(stmt.scopeScanSql).toBeDefined();
-    expect(stmt.indexWalkSql).toBeUndefined();
+    expect(stmt.scopeScanFirst).toBe(true);
     const kinds: string[] = [];
     const original = vectorPool.searchIndexWalk;
     const spy = spyOn(vectorPool, 'searchIndexWalk').mockImplementation((s, limit, run) => original(s, limit, attempt => {
@@ -257,6 +257,37 @@ describe('vector index walk (PGLite)', () => {
       expect(hits.map(hit => hit.slug)).toEqual(shape(await exactRows(stmt.sql, [...stmt.params])).map(row => String(row[0])));
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  test('a timed-out scope scan falls to the walk, not the joined statement, and returns the joined statement result', async () => {
+    const opts: SearchOpts = { limit: 10, embeddingColumn: column, sourceId: 'side', excludePrivate: true };
+    const [stats] = await engine.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL);
+    const scope = sourceScope(stats, opts)!;
+    const stmt = buildVectorSearchStatement({ dialect: 'pglite', embedding: vec(7), limit: 10, offset: 0, opts, scope });
+    expect([stmt.scopeScanFirst, !!stmt.indexWalkSql]).toEqual([true, true]);
+    const loader = engine as unknown as { vectorScope: (o?: SearchOpts) => Promise<unknown> };
+    const originalScope = loader.vectorScope;
+    loader.vectorScope = async () => scope;
+    const kinds: string[] = [];
+    const original = vectorPool.searchIndexWalk;
+    const walkSpy = spyOn(vectorPool, 'searchIndexWalk').mockImplementation((s, limit, run) => original(s, limit, attempt => {
+      kinds.push(attempt.scopeScan ? 'scan' : 'walk');
+      if (attempt.scopeScan) return Promise.reject(Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }));
+      return run(attempt);
+    }));
+    const poolSpy = spyOn(vectorPool, 'searchVectorPool');
+    await engine.executeRaw('SET enable_indexscan = off');
+    try {
+      const hits = await engine.searchVector(vec(7), opts);
+      expect(kinds).toEqual(['scan', 'walk']);
+      expect(poolSpy).not.toHaveBeenCalled();
+      expect(hits.map(hit => hit.slug)).toEqual(shape(await exactRows(stmt.sql, [...stmt.params])).map(row => String(row[0])));
+    } finally {
+      await engine.executeRaw('RESET enable_indexscan');
+      walkSpy.mockRestore();
+      poolSpy.mockRestore();
+      loader.vectorScope = originalScope;
     }
   });
 
