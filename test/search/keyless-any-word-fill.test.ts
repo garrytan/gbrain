@@ -2,7 +2,7 @@
  * GST-2735: keyless keyword search fills a short all-words result with
  * any-word matches, on PGLite here and on PostgreSQL when DATABASE_URL is set.
  *
- * Repro of the GBRA-524 first-run miss: on a brain with no embedding provider,
+ * Repro of a first-run miss: on a brain with no embedding provider,
  * "SSO Starter plan" matched the pricing and decisions pages (they hold every
  * word) and never reached the call transcript that holds two of the three.
  * The fill runs the keyword arm's own statement, so it applies the caller's
