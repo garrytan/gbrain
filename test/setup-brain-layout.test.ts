@@ -12,11 +12,11 @@
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runCli, type CliResult } from './helpers/cli-spawn.ts';
-import { LAYOUT_BEGIN, PERSONAL_PAGES, parseLayoutFlags, renderStarterPage, withBrainShape, brainShapeDecision } from '../src/commands/setup-brain-layout.ts';
+import { LAYOUT_BEGIN, PERSONAL_PAGES, parseLayoutFlags, renderStarterPage, withBrainShape, brainShapeDecision, renderLayoutBlock, layoutNotices, applyBrainLayout, countNotes } from '../src/commands/setup-brain-layout.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
 const roots: string[] = [];
@@ -35,7 +35,7 @@ function box(): Box {
   return { root, home, bin };
 }
 
-const CLEAN = { CLAUDE_CONFIG_DIR: undefined, CODEX_HOME: undefined, GBRAIN_SOURCE: undefined, GBRAIN_SURFACE: undefined, GBRAIN_HOOKS: undefined, GBRAIN_SETUP_ABORT_AFTER: undefined };
+const CLEAN = { DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_REMOTE_CLIENT_SECRET: undefined, GBRAIN_SKIP_STARTUP_HOOKS: '1', CLAUDE_CONFIG_DIR: undefined, CODEX_HOME: undefined, GBRAIN_SOURCE: undefined, GBRAIN_SURFACE: undefined, GBRAIN_HOOKS: undefined, GBRAIN_SETUP_ABORT_AFTER: undefined };
 const envOf = (b: Box) => ({ ...CLEAN, HOME: b.home, GBRAIN_HOME: b.home });
 
 async function setup(b: Box, args: string[]): Promise<CliResult & { doc: any }> {
@@ -134,6 +134,16 @@ describe('setup --shape personal', () => {
     expect(existsSync(claudeMd(b)) ? readFileSync(claudeMd(b), 'utf8') : '').not.toContain(LAYOUT_BEGIN);
   }, 120_000);
 
+  test('--no-instructions after a personal layout takes the layout block out too', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--shape', 'personal'])).exitCode).toBe(0);
+    expect(readFileSync(claudeMd(b), 'utf8')).toContain(LAYOUT_BEGIN);
+    const off = await setup(b, ['claude-code', '--no-instructions']);
+    expect(off.exitCode).toBe(0);
+    expect(off.doc.brain_layout.block.action).toBe('remove');
+    expect(readFileSync(claudeMd(b), 'utf8')).not.toContain(LAYOUT_BEGIN);
+  }, 180_000);
+
   test('codex gets the block in its AGENTS.md', async () => {
     const b = box();
     const r = await setup(b, ['codex', '--shape', 'personal']);
@@ -172,5 +182,49 @@ describe('layout units', () => {
     const merged = withBrainShape([{ code: 'first_run_decisions', kind: 'ask', why: 'x', user_message: 'Hi.', decisions: [] } as any], brainShapeDecision('codex', []));
     expect(merged).toHaveLength(1);
     expect(merged[0]!.decisions!.map((d) => d.id)).toEqual(['brain_shape']);
+  });
+
+  test('a project-scope run keeps --scope project in every command it hands out', () => {
+    const argvs = (scope?: 'user' | 'project') => {
+      const d = brainShapeDecision('claude-code', ['/notes'], scope);
+      const failed = { shape: 'personal', pages: [{ slug: 'me/facts', action: 'failed', detail: 'locked' }], notes: null, block: null, check: { ok: true, query: null, detail: '' }, next_question: null } as any;
+      return [...d.options.filter((o) => o.argv).map((o) => o.argv!), ...layoutNotices(failed, 'claude-code', scope).map((n) => n.fix!.argv!)];
+    };
+    for (const argv of argvs('project')) expect(argv.slice(0, 5)).toEqual(['gbrain', 'setup', 'claude-code', '--scope', 'project']);
+    for (const argv of argvs()) expect(argv).not.toContain('--scope');
+    expect(renderLayoutBlock('claude-code', 'project')).toContain('Remove: gbrain setup claude-code --scope project --shape none');
+    expect(renderLayoutBlock('claude-code')).toContain('Remove: gbrain setup claude-code --shape none');
+  });
+
+  test('a pinned source rides every command and child the layout runs', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-layout-src-'));
+    roots.push(root);
+    writeFileSync(join(root, 'a.md'), '# A\n');
+    const calls: string[][] = [];
+    const o = applyBrainLayout({ harness: 'claude-code', source: 'private', launcher: 'gbrain', instructionsPath: null, flags: { brain: 'personal', notes: root, dryRun: false },
+      run: (argv) => { calls.push(argv); return { code: 0, stdout: '[]', stderr: '' }; } })!;
+    expect(o.notes!.argv).toEqual(['gbrain', 'import', root, '--no-embed', '--source', 'private']);
+    expect(brainShapeDecision('claude-code', [], 'user', 'private').options.find((x) => x.id === 'personal')!.argv).toEqual(['gbrain', 'setup', 'claude-code', '--source', 'private', '--shape', 'personal']);
+    expect(renderLayoutBlock('claude-code', 'user', 'private')).toContain('Remove: gbrain setup claude-code --source private --shape none');
+  });
+
+  test('a starter page is written only when get says page_not_found', () => {
+    const calls: string[][] = [];
+    const o = applyBrainLayout({ harness: 'claude-code', launcher: 'gbrain', instructionsPath: null, flags: { brain: 'personal', notes: null, dryRun: false },
+      run: (argv) => { calls.push(argv); return argv[1] === 'get' ? { code: 1, stdout: '{"code":"file_held"}', stderr: 'Error [file_held]: held' } : { code: 0, stdout: '', stderr: '' }; } })!;
+    expect(o.pages.map((p) => p.action)).toEqual(['failed', 'failed', 'failed']);
+    expect(calls.some((c) => c[1] === 'put')).toBe(false);
+    const wrote = applyBrainLayout({ harness: 'claude-code', launcher: 'gbrain', instructionsPath: null, flags: { brain: 'personal', notes: null, dryRun: false },
+      run: (argv) => (argv[1] === 'get' ? { code: 1, stdout: '{"code":"page_not_found"}', stderr: '' } : { code: 0, stdout: '', stderr: '' }) })!;
+    expect(wrote.pages.map((p) => p.action)).toEqual(['write', 'write', 'write']);
+  });
+
+  test('the notes count does not follow symlinked folders', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-layout-loop-'));
+    roots.push(root);
+    symlinkSync(root, join(root, 'loop-a'));
+    symlinkSync(root, join(root, 'loop-b'));
+    writeFileSync(join(root, 'n.md'), '# N\n');
+    expect(countNotes(root)).toEqual({ count: 1, first: join(root, 'n.md') });
   });
 });

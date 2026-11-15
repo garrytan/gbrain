@@ -24,7 +24,8 @@ gbrain setup codex --shape personal --notes ~/notes
 - **A short block in the agent's instruction file**, next to the brain-first block
   (`~/.claude/CLAUDE.md` for Claude Code, `$CODEX_HOME/AGENTS.md` for Codex). It tells
   the agent to read those pages, to state facts about you only from `me/facts`, and that
-  a `status: stub` page holds no facts yet. `--no-instructions` skips it.
+  a `status: stub` page holds no facts yet. `--no-instructions` skips it, and takes it
+  out again if an earlier run wrote it.
 
 Then setup checks that keyless search finds one of your notes by its title and prints a
 question to try in a new session.

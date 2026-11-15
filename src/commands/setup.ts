@@ -718,9 +718,11 @@ async function layoutFor(harness: SetupHarnessId, flags: SetupFlags, launcher: s
   let shape: { brain?: BrainShape; notes?: string | null } = { brain: flags.brain, notes: flags.notes };
   const ask = brainCreate && !shape.brain;
   if (ask && !flags.json && isInteractive()) shape = await askBrainShape();
-  const outcome = applyBrainLayout({ harness, launcher, instructionsPath: instructions?.decision.value === 'accepted' ? instructions.path : null,
+  const scope = flags.scope ?? 'user';
+  const source = flags.source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : null);
+  const outcome = applyBrainLayout({ harness, scope, source, launcher, instructionsPath: instructions?.path ?? null, instructionsDeclined: instructions?.decision.value === 'declined',
     flags: { brain: shape.brain, notes: shape.notes, dryRun: flags.dryRun } });
-  return { outcome, notices: (base) => [...(ask && !shape.brain ? withBrainShape(base, brainShapeDecision(harness)) : base), ...layoutNotices(outcome, harness)] };
+  return { outcome, notices: (base) => [...(ask && !shape.brain ? withBrainShape(base, brainShapeDecision(harness, undefined, scope, source)) : base), ...layoutNotices(outcome, harness, scope, source)] };
 }
 
 /** Run the `gbrain init --json` child that creates a new keyless brain; returns setup's form of its first-run bundle. */

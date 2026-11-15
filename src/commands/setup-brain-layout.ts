@@ -24,7 +24,7 @@
  * `brain_shape` decision in the first-run bundle instead, and no starter
  * page is written until it is answered.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import type { Decision, Notice } from '../core/agent-output.ts';
@@ -47,7 +47,13 @@ export const LAYOUT_VERSION = 1;
 export const LAYOUT_BEGIN = '<!-- gbrain:brain-layout:begin -->';
 export const LAYOUT_END = '<!-- gbrain:brain-layout:end -->';
 
-const markers = (harness: string): BlockMarkers => ({ begin: LAYOUT_BEGIN, end: LAYOUT_END, label: 'brain-layout', rerun: `gbrain setup ${harness} --shape personal` });
+export type LayoutScope = 'user' | 'project';
+
+/** The setup command that targets this run's harness, wiring scope and pinned source; every rerun, remove and option argv starts with it. */
+export const setupArgv = (harness: string, scope: LayoutScope = 'user', source: string | null = null): string[] =>
+  ['gbrain', 'setup', harness, ...(scope === 'project' ? ['--scope', 'project'] : []), ...(source ? ['--source', source] : [])];
+
+const markers = (harness: string, scope: LayoutScope, source: string | null): BlockMarkers => ({ begin: LAYOUT_BEGIN, end: LAYOUT_END, label: 'brain-layout', rerun: [...setupArgv(harness, scope, source), '--shape', 'personal'].join(' ') });
 
 export interface StarterPage { slug: string; title: string; body: string }
 
@@ -81,9 +87,9 @@ export function renderStarterPage(p: StarterPage): string {
     + '_This page is an empty form (status: stub). It holds no facts until you add your own lines; then remove the stub line from the frontmatter._\n';
 }
 
-export function renderLayoutBlock(harness: string): string {
+export function renderLayoutBlock(harness: string, scope: LayoutScope = 'user', source: string | null = null): string {
   return [
-    `<!-- gbrain brain-layout v${LAYOUT_VERSION}: managed by gbrain setup and replaced on upgrade; edit outside these markers. Remove: gbrain setup ${harness} --shape none -->`,
+    `<!-- gbrain brain-layout v${LAYOUT_VERSION}: managed by gbrain setup and replaced on upgrade; edit outside these markers. Remove: ${[...setupArgv(harness, scope, source), '--shape', 'none'].join(' ')} -->`,
     '## My brain layout (gbrain)',
     '- Before a task that needs my context, read the gbrain pages me/facts, me/voice and me/how-i-decide.',
     '- State facts about me only from me/facts, and say they came from there.',
@@ -104,7 +110,8 @@ export function countNotes(dir: string, cap = IMPORT_INLINE_MAX): { count: numbe
       if (name.startsWith('.')) continue;
       const p = join(d, name);
       let st;
-      try { st = statSync(p); } catch { continue; }
+      try { st = lstatSync(p); } catch { continue; }
+      if (st.isSymbolicLink()) continue;
       if (st.isDirectory()) walk(p);
       else if (/\.(md|markdown)$/i.test(name)) { count++; first ??= p; }
     }
@@ -164,15 +171,16 @@ export interface LayoutOutcome {
   next_question: string | null;
 }
 
-type Run = (argv: string[]) => { code: number; stdout: string; stderr: string };
-const run: Run = (argv) => {
-  const child = bunSpawnSync(argv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env });
+type Run = (argv: string[], stdin?: string) => { code: number; stdout: string; stderr: string };
+const childEnv = (source: string | null): NodeJS.ProcessEnv => (source ? { ...process.env, GBRAIN_SOURCE: source } : process.env);
+const runIn = (source: string | null): Run => (argv, stdin) => {
+  const child = bunSpawnSync(argv, { stdin: stdin === undefined ? 'ignore' : new TextEncoder().encode(stdin), stdout: 'pipe', stderr: 'pipe', env: childEnv(source) });
   return { code: child.exitCode ?? 1, stdout: child.stdout?.toString() ?? '', stderr: child.stderr?.toString() ?? '' };
 };
 
-function syncLayoutBlock(path: string | null, harness: string, shape: BrainShape, dryRun: boolean): LayoutOutcome['block'] {
+function syncLayoutBlock(path: string | null, harness: string, scope: LayoutScope, source: string | null, shape: BrainShape, dryRun: boolean): LayoutOutcome['block'] {
   if (!path) return null;
-  const m = markers(harness);
+  const m = markers(harness, scope, source);
   const exists = existsSync(path);
   const text = exists ? readFileSync(path, 'utf8') : '';
   const probe = probeBlock(m, text);
@@ -182,7 +190,7 @@ function syncLayoutBlock(path: string | null, harness: string, shape: BrainShape
     if (!dryRun) writeUnlessChanged(path, text, false, removeBlock(m, text).text);
     return { path, action: 'remove', detail: `brain-layout block removed from ${path}; the pages stay` };
   }
-  const body = renderLayoutBlock(harness);
+  const body = renderLayoutBlock(harness, scope, source);
   if (probe.state === 'present' && probe.interior?.trim() === body.trim()) return { path, action: 'keep', detail: `brain-layout block in ${path} is current` };
   if (!dryRun) writeUnlessChanged(path, text, !exists, spliceBlock(m, text, body));
   return { path, action: 'write', detail: `brain-layout block ${probe.state === 'present' ? 'upgraded in' : 'appended to'} ${path}` };
@@ -190,13 +198,16 @@ function syncLayoutBlock(path: string | null, harness: string, shape: BrainShape
 
 /**
  * The personal layout for this run. `instructionsPath` is the file the brain-first block lives in (null when the
- * person declined instructions or the harness has none); the layout block goes there too.
+ * harness has none); the layout block goes there too, and comes out of it when the person declined instructions.
  */
-export function applyBrainLayout(opts: { harness: string; launcher: string; flags: LayoutFlags; instructionsPath: string | null; run?: Run }): LayoutOutcome | null {
+export function applyBrainLayout(opts: { harness: string; scope?: LayoutScope; source?: string | null; launcher: string; flags: LayoutFlags; instructionsPath: string | null; instructionsDeclined?: boolean; run?: Run }): LayoutOutcome | null {
   const { flags, launcher, harness } = opts;
-  if (!flags.brain) return null;
-  const exec = opts.run ?? run;
-  const block = syncLayoutBlock(opts.instructionsPath, harness, flags.brain, flags.dryRun);
+  const source = opts.source ?? null;
+  const scope = opts.scope ?? 'user';
+  const removed = opts.instructionsDeclined ? syncLayoutBlock(opts.instructionsPath, harness, scope, source, 'none', flags.dryRun) : null;
+  const block = opts.instructionsDeclined ? (removed?.action === 'skip' ? null : removed) : flags.brain ? syncLayoutBlock(opts.instructionsPath, harness, scope, source, flags.brain, flags.dryRun) : null;
+  if (!flags.brain) return block && opts.instructionsDeclined ? { shape: 'none', pages: [], notes: null, block, check: { ok: true, query: null, detail: 'nothing to check' }, next_question: null } : null;
+  const exec = opts.run ?? runIn(source);
   const outcome: LayoutOutcome = { shape: flags.brain, pages: [], notes: null, block, check: { ok: true, query: null, detail: 'nothing to check' }, next_question: null };
   if (flags.brain === 'none') return outcome;
 
@@ -204,14 +215,15 @@ export function applyBrainLayout(opts: { harness: string; launcher: string; flag
     if (flags.dryRun) { outcome.pages.push({ slug: page.slug, action: 'write', detail: 'would write if missing' }); continue; }
     const got = exec([launcher, 'get', page.slug, '--json']);
     if (got.code === 0) { outcome.pages.push({ slug: page.slug, action: 'keep' }); continue; }
-    const put = bunSpawnSync([launcher, 'put', page.slug, '--json'], { stdin: new TextEncoder().encode(renderStarterPage(page)), stdout: 'pipe', stderr: 'pipe', env: process.env });
-    outcome.pages.push(put.exitCode === 0 ? { slug: page.slug, action: 'write' }
-      : { slug: page.slug, action: 'failed', detail: lastLine(put.stderr?.toString() ?? '') });
+    if (errorCode(got.stdout) !== 'page_not_found') { outcome.pages.push({ slug: page.slug, action: 'failed', detail: lastLine(got.stderr || got.stdout) }); continue; }
+    const put = exec([launcher, 'put', page.slug, '--json'], renderStarterPage(page));
+    outcome.pages.push(put.code === 0 ? { slug: page.slug, action: 'write' }
+      : { slug: page.slug, action: 'failed', detail: lastLine(put.stderr) });
   }
 
   if (flags.notes) {
     const { count, first } = countNotes(flags.notes);
-    const argv = ['gbrain', 'import', flags.notes, '--no-embed'];
+    const argv = ['gbrain', 'import', flags.notes, '--no-embed', ...(source ? ['--source', source] : [])];
     if (count > IMPORT_INLINE_MAX) {
       outcome.notes = { dir: flags.notes, files: count, action: 'deferred', argv, detail: `more than ${IMPORT_INLINE_MAX} markdown files; run the import as its own step` };
     } else if (flags.dryRun) {
@@ -241,6 +253,11 @@ export function applyBrainLayout(opts: { harness: string; launcher: string; flag
   return outcome;
 }
 
+/** The `code` of a gbrain --json error document, or null when stdout is not one. */
+function errorCode(stdout: string): string | null {
+  try { const doc = JSON.parse(stdout) as { code?: unknown }; return typeof doc.code === 'string' ? doc.code : null; } catch { return null; }
+}
+
 function lastLine(text: string): string {
   return text.trim().split('\n').filter(Boolean).at(-1)?.slice(0, 300) ?? 'no output';
 }
@@ -258,7 +275,7 @@ export function describeLayout(o: LayoutOutcome, dryRun: boolean): string[] {
 }
 
 /** Notices for what the agent still has to do: a deferred or failed import, a failed page. */
-export function layoutNotices(o: LayoutOutcome | null, harness: string): Notice[] {
+export function layoutNotices(o: LayoutOutcome | null, harness: string, scope: LayoutScope = 'user', source: string | null = null): Notice[] {
   if (!o) return [];
   const out: Notice[] = [];
   if (o.notes && o.notes.action !== 'imported') {
@@ -274,7 +291,7 @@ export function layoutNotices(o: LayoutOutcome | null, harness: string): Notice[
     out.push({
       code: 'brain_layout_pages_pending', kind: 'coaching',
       why: `Setup could not write ${failed.map(p => p.slug).join(', ')} (${failed[0]!.detail}); the rest of the install finished.`,
-      fix: { argv: ['gbrain', 'setup', harness, '--shape', 'personal'], consent: [], actor: 'agent', requires_exclusive: true, why: 'Rerun once the brain is free; existing pages are kept.' },
+      fix: { argv: [...setupArgv(harness, scope, source), '--shape', 'personal'], consent: [], actor: 'agent', requires_exclusive: true, why: 'Rerun once the brain is free; existing pages are kept.' },
     });
   }
   return out;
@@ -284,8 +301,8 @@ export function layoutNotices(o: LayoutOutcome | null, harness: string): Notice[
  * The `brain_shape` decision for a brand-new brain set up without --shape. Nothing is written until it is
  * answered (default none); each option is the exact command that applies it.
  */
-export function brainShapeDecision(harness: string, folders: string[] = candidateNoteFolders()): Decision {
-  const base = ['gbrain', 'setup', harness, '--shape', 'personal'];
+export function brainShapeDecision(harness: string, folders: string[] = candidateNoteFolders(), scope: LayoutScope = 'user', source: string | null = null): Decision {
+  const base = [...setupArgv(harness, scope, source), '--shape', 'personal'];
   return {
     id: 'brain_shape',
     question: 'Make this a personal brain? Setup adds three empty starter pages (facts about you, your voice, how you decide), '
