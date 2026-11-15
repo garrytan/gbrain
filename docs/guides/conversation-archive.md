@@ -29,8 +29,8 @@ brain sees a one-time upgrade notice saying it is on and how to turn it off. Nei
 ## What leaves the machine
 
 - On a keyless brain, nothing: pages are written to the local brain and searched by keyword.
-- With an embedding key, new days are embedded by that provider like any new page, under the maintenance embedding
-  cap (`maintenance.embed_daily_usd`). Older history written by backfill is keyword-only, and its embedding waits
+- With an embedding key, new days are embedded by that provider like any new page: unattended upkeep caps that at
+  `maintenance.embed_daily_usd`; autopilot and a managed brain's write coordinator embed new pages as they arrive. Older history written by backfill is keyword-only, and its embedding waits
   until you see the price and approve it:
 
   ```bash

@@ -8,7 +8,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import { isThinClient, type GBrainConfig } from '../config.ts';
+import { isThinClient, loadConfigFileOnly, type GBrainConfig } from '../config.ts';
 import { classifyBrainAudience, type BrainAudience } from '../facts/writeback-audience.ts';
 
 export const ARCHIVE_ENABLED_KEY = 'transcripts.archive.enabled';
@@ -28,12 +28,13 @@ const OFF = new Set(['0', 'false', 'off', 'no']);
 
 export async function resolveArchiveEnabled(
   engine: Pick<BrainEngine, 'getConfig'>,
-  /** config: the caller's loaded config file (the commands layer passes loadConfig()); it names a thin client. */
+  /** config: the caller's loaded config (the commands layer passes loadConfig()); it names a thin client and may declare
+   * brain.audience. Undefined reads the config file. */
   opts: { remote?: boolean; config?: GBrainConfig | null } = {},
 ): Promise<ArchiveEnablement> {
   const off = (source: ArchiveEnablement['source'], reason: string): ArchiveEnablement => ({ enabled: false, source, audience: null, offered: false, reason });
   if (opts.remote) return off('remote', 'a remote caller never runs the archive');
-  const config = opts.config ?? null;
+  const config = opts.config === undefined ? loadConfigFileOnly() : opts.config;
   if (isThinClient(config)) return off('thin_client', 'a thin client reads a remote brain; the archive runs on the brain host');
   let raw: string | null;
   try {

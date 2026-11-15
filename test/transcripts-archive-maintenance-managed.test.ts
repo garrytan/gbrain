@@ -14,7 +14,11 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { disposePersistenceConsumer, startPersistenceConsumer, stopPersistenceConsumer } from '../src/core/persistence/service.ts';
 import { readLocalWriter, registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
-import { ARCHIVE_TIMEZONE_KEY, setArchiveEnabled } from '../src/core/transcripts/archive.ts';
+import { cancelWriteRequest } from '../src/core/persistence/control.ts';
+import { addMember } from '../src/core/access/members.ts';
+import { setOwner } from '../src/core/access/owner.ts';
+import { makeContext } from '../src/cli/main.ts';
+import { ARCHIVE_TIMEZONE_KEY, runTranscriptArchive, setArchiveEnabled } from '../src/core/transcripts/archive.ts';
 import { ARCHIVE_MAINTENANCE_FLOOR_KEY, readArchiveMaintenance, runArchiveMaintenance } from '../src/core/transcripts/archive-maintenance.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -111,5 +115,43 @@ describe('the maintenance pass on a writer-claimed brain', () => {
     const second = await pass(1);
     expect(second.record).toMatchObject({ status: 'ok', written: 0, errors: [] });
     expect((await requests()).length).toBe(submitted);
+  }, 240_000);
+});
+
+describe('accepted writes on a writer-claimed brain (review fixes)', () => {
+  const backfill = (deadline?: number) => withEnv({ GBRAIN_HOME: dir, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_WRITE_WAIT_MS: undefined },
+    () => runTranscriptArchive(engine, { mode: 'backfill', from: '2026-10-01', to: '2026-10-01', now: new Date('2026-10-10T00:00:00Z'),
+      readers: [staticReader('codex', [conversation('codex', 'accepted-then-cancelled', [['user', '2026-10-01T10:00:00.000Z', 'canary-accepted-0021 note']])])],
+      makeContext: source => makeContext(engine, { source, dry_run: false }), ...(deadline ? { deadlineAtMs: deadline } : {}) }));
+
+  test('an accepted write that the coordinator later cancels is written again by the next backfill run', async () => {
+    const restore = stallCoordinator();
+    let first;
+    try { first = await backfill(Date.now() + 1_500); } finally { restore(); }
+    expect(first.accepted).toBeGreaterThanOrEqual(1);
+    const cli = await withEnv({ GBRAIN_HOME: dir }, () => readLocalWriter(engine, 'cli'));
+    const queued = await engine.executeRaw<{ request_id: string }>("SELECT request_id FROM persistence_requests WHERE state NOT IN ('committed','failed','cancelled')");
+    const stall = stallCoordinator();
+    try { for (const q of queued) await cancelWriteRequest(engine, { kind: 'local_cli', id: cli.id }, q.request_id); } finally { stall(); }
+    expect((await archivedPages(engine)).some(p => p.body.includes('canary-accepted-0021'))).toBe(false);
+    const second = await backfill();
+    expect(second.errors).toEqual([]);
+    expect((await archivedPages(engine)).some(p => p.body.includes('canary-accepted-0021'))).toBe(true);
+  }, 240_000);
+
+  test('a day still queued when the brain becomes shared gets an owner-only rule', async () => {
+    await engine.setConfig('brain.audience', 'personal');
+    const restore = stallCoordinator();
+    try { expect((await backfill(Date.now() + 1_500)).accepted).toBeGreaterThanOrEqual(1); } finally { restore(); }
+    const stall = stallCoordinator();
+    try {
+      await engine.setConfig('brain.audience', 'shared');
+      for (const id of ['alice-example', 'bob-example']) await addMember(engine, id);
+      await setOwner(engine, 'alice-example');
+      await withEnv({ GBRAIN_HOME: dir }, () => runTranscriptArchive(engine, { mode: 'run', readers: [staticReader('codex', [])], now: new Date('2026-11-05T00:00:00Z'), deadlineAtMs: Date.now() + 1_500,
+        makeContext: source => makeContext(engine, { source, dry_run: false }) }));
+    } finally { stall(); }
+    const rules = await engine.executeRaw<{ prefix: string }>("SELECT prefix FROM access_rules WHERE source_id = 'conversations'");
+    expect(rules.map(r => r.prefix)).toContain('conversations/codex/2026-10-01/');
   }, 240_000);
 });

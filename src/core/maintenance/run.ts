@@ -397,7 +397,8 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
     }
     const budgeted = opts.budgetMs !== undefined;
     const sources = (await engine.listAllSources()).sort((a, b) => a.id.localeCompare(b.id));
-    const archiveOn = (await resolveArchiveEnabled(engine).catch(() => null))?.enabled === true;
+    const archiveOn = (await resolveArchiveEnabled(engine).catch(() => null))?.enabled === true
+      || (await (await import('../transcripts/archive.ts')).archiveRescopeSkipped(engine).catch(() => null))?.code === 'archive_rescope_pending';
     const keys = ['global', ...sources.map((source) => `source:${source.id}`), ...(archiveOn ? [ARCHIVE_ITEM_KEY] : [])];
     const parked = (prior?.parked ?? []).filter((p) => keys.includes(p.key)).map((p) => ({ ...p }));
     const retryOnly = !upkeepDue(prior, now);

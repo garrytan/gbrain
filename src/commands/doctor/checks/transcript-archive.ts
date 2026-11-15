@@ -36,6 +36,10 @@ export async function checkTranscriptArchiveFreshness(
     const { loadConfig } = await import('../../../core/config.ts');
     const enablement = await resolveArchiveEnabled(engine, { config: (() => { try { return loadConfig(); } catch { return null; } })() });
     if (!enablement.enabled) {
+      const rescope = await (await import('../../../core/transcripts/archive.ts')).archiveRescopeSkipped(engine);
+      if (rescope) {
+        return { name, status: 'warn', message: 'The conversation archive is off (' + enablement.reason + '). ' + rescope.message, details: { enabled: false, source: enablement.source, offered: enablement.offered, rescope } };
+      }
       return { name, status: 'ok', message: 'The conversation archive is off (' + enablement.reason + ').', details: { enabled: false, source: enablement.source, offered: enablement.offered } };
     }
     const archive = await import('../../../core/transcripts/archive.ts');

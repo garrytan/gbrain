@@ -63,7 +63,7 @@ export function archiveLine(state: 'on' | 'offered', embedding: boolean): string
   return 'Conversation archive: on. gbrain keeps one redacted page per conversation per day from your agent sessions (Claude Code, Codex, OpenClaw, Hermes, Grok) '
     + 'in the conversations source, written by the maintenance pass. '
     + (embedding
-      ? 'New days are embedded by your embedding provider under the daily cap; older history is keyword-only until you approve its cost (gbrain embed --held --dry-run). '
+      ? 'New days are embedded like any new page (unattended upkeep caps that at maintenance.embed_daily_usd); older history is keyword-only until you approve its cost (gbrain embed --held --dry-run). '
       : 'Without an embedding key nothing leaves this machine. ')
     + 'Turn off: gbrain transcripts archive off.';
 }

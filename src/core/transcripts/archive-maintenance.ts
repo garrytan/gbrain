@@ -2,19 +2,25 @@
  * archive-maintenance.ts — the conversation archive's step in the maintenance pass (GST-2768 PR 3).
  *
  * Unattended upkeep (the serve's idle tick, gbrain maintain --unattended and its schedule) and the autopilot tick
- * call runArchiveMaintenance. It does nothing unless the archive resolves on (archive-default.ts), runs at most once
+ * call runArchiveMaintenance. A brain archived while personal that has become shared is re-scoped to its owner first,
+ * even though the unset switch now resolves off. Otherwise it does nothing unless the archive resolves on
+ * (archive-default.ts), runs at most once
  * per transcripts.archive.maintenance_floor_min, and holds the gbrain-transcript-archive lock so two runners never
  * archive at once (a repository write still takes the checkout's writer lock through gbrain git commit-push). One
  * pass archives the forward window (archive run) and then one bounded backfill run over older days
  * (transcripts.archive.backfill_days_per_run, newest first, embedding held as archive_backfill) until backfill has
  * nothing left. One pass is bounded by a count (the run window, transcripts.archive.run_window_days, and
- * backfill_days_per_run) and by time (ARCHIVE_MAINTENANCE_BUDGET_MS: no reader or conversation starts after it).
+ * backfill_days_per_run) and by time (ARCHIVE_MAINTENANCE_BUDGET_MS: no further reader or conversation starts after
+ * it once one conversation has been written, so a slow reader still moves forward every pass).
  * On a managed brain each day page is a put_page write request through the write coordinator (submitPageMutation),
  * under the same local_cli identity as gbrain transcripts archive run; the wait for it counts against the budget, and a
- * write the coordinator accepted but has not published yet counts as archived and is not written again.
+ * write the coordinator accepted but has not published yet is submitted again by later runs until it is published, and
+ * keeps the backfill open, as a held day does.
  *
  * Never throws: every outcome, an archive error included, is recorded in transcripts.archive.last_maintenance, which
- * the transcript_archive_freshness doctor check reads. No fact extraction, no Dream synthesis, no embedding call.
+ * the transcript_archive_freshness doctor check reads. No fact extraction, no Dream synthesis, and no embedding call
+ * here: new days are embedded like any new page (unattended upkeep caps that at maintenance.embed_daily_usd; autopilot
+ * and a managed brain's write coordinator embed new pages as they arrive), and backfilled days stay held.
  */
 
 import type { BrainEngine } from '../engine.ts';
@@ -110,6 +116,8 @@ export async function runArchiveMaintenance(engine: BrainEngine, opts: ArchiveMa
   const now = opts.now ?? new Date();
   const at = now.toISOString();
   try {
+    const { reconcileArchiveAudience } = await import('./archive.ts');
+    await reconcileArchiveAudience(engine);
     const enablement = await resolveArchiveEnabled(engine);
     if (!enablement.enabled) return { status: 'skipped', code: 'archive_off', message: 'The conversation archive is off on this brain (' + enablement.reason + '); nothing ran.' };
     const prior = await readArchiveMaintenance(engine);
@@ -152,7 +160,7 @@ export async function runArchiveMaintenance(engine: BrainEngine, opts: ArchiveMa
           if (backfill.accepted) record.accepted = (record.accepted ?? 0) + backfill.accepted;
           record.held += backfill.held;
           record.errors.push(...errors);
-          record.backfill = { written: backfill.written, deferred: backfill.deferred_days.length, done: backfill.deferred_days.length === 0 && errors.length === 0 && !backfill.stopped_at_deadline };
+          record.backfill = { written: backfill.written, deferred: backfill.deferred_days.length, done: backfill.deferred_days.length === 0 && errors.length === 0 && !backfill.stopped_at_deadline && backfill.held === 0 && !backfill.accepted };
           if (record.backfill.done) await engine.setConfig(ARCHIVE_BACKFILL_STATE_KEY, JSON.stringify({ done: true, at }));
         }
         if (record.errors.length) {
