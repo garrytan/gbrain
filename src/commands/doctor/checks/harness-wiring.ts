@@ -143,9 +143,12 @@ const codexConfigPath = () => join(process.env.CODEX_HOME || join(home(), '.code
 const opencodeConfigPath = () => join(process.env.XDG_CONFIG_HOME || join(home(), '.config'), 'opencode', 'opencode.json');
 
 function codexRegistration(name: string): HarnessRegistration | null {
-  const path = codexConfigPath();
-  if (!existsSync(path)) return null;
-  try { return parseCodexRegistration(readFileSync(path, 'utf8'), name, path); } catch { return null; }
+  const ws = bootstrapReceipt()?.workspace_dir;
+  for (const path of [codexConfigPath(), ...(ws ? [join(ws, '.codex', 'config.toml')] : [])]) {
+    if (!existsSync(path)) continue;
+    try { const r = parseCodexRegistration(readFileSync(path, 'utf8'), name, path); if (r) return r; } catch { /* unreadable: try the next */ }
+  }
+  return null;
 }
 
 function opencodeRegistration(name: string): HarnessRegistration | null {
@@ -177,7 +180,7 @@ function recordedUnreadableRegistrations(harnesses: readonly ReadinessHarness[])
   if (!receipt) return [];
   const configFor = (harness: ReadinessHarness, scope: string): string => harness === 'claude-code'
     ? (scope === 'project' ? join(receipt.workspace_dir, '.mcp.json') : join(home(), '.claude.json'))
-    : harness === 'codex' ? codexConfigPath() : scope === 'project' ? opencodeProjectConfigPath(receipt.workspace_dir) : opencodeConfigPath();
+    : harness === 'codex' ? (scope === 'project' ? join(receipt.workspace_dir, '.codex', 'config.toml') : codexConfigPath()) : scope === 'project' ? opencodeProjectConfigPath(receipt.workspace_dir) : opencodeConfigPath();
   const readable = (path: string) => { try { readFileSync(path); return true; } catch { return false; } };
   return receipt.registrations
     .filter((r) => harnesses.includes(r.host) && (r.detail?.split('+') ?? []).includes('mcp'))
