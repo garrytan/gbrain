@@ -33,7 +33,7 @@ describe('openclaw gateway call child process', () => {
   test('hostile session keys stay inside --params; argv has a fixed shape; the token is in env only', async () => {
     const reader = openclawGatewayReader({ transport: cliGatewayTransport({ bin, url: 'ws://127.0.0.1:18789', token: 'tok-synthetic-0001', timeoutMs: 5_000 }) });
     const convs = await reader.list();
-    expect(convs.map(c => c.conversationKey)).toEqual(HOSTILE);
+    expect(convs.map(c => c.scopeKey)).toEqual(HOSTILE);
     const calls = readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l) as { argv: string[]; token: string | null; url: string | null });
     expect(calls.length).toBe(1 + HOSTILE.length);
     for (const { argv, token, url } of calls) {

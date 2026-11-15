@@ -80,8 +80,10 @@ const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface ArchiveConversation {
   harness: TranscriptFormat;
-  /** The conversation's identity in its harness: the OpenClaw session key, else the session id. */
+  /** The conversation's identity, the same whichever path read it: the session id. */
   conversationKey: string;
+  /** The harness's own key for the conversation when it differs (the OpenClaw session key): it names the group principal and label, never the page. */
+  scopeKey?: string;
   session: ParsedSession;
   channel?: ArchiveChannel;
   /** Where it was read; a Gateway conversation wins over an archived file of the same OpenClaw session. */
@@ -291,7 +293,7 @@ async function readersFor(engine: BrainEngine, privacy: Privacy, conv: ArchiveCo
   const readers = [privacy.owner!];
   const ch = conv.channel;
   if (ch?.verified && (ch.chatType === 'group' || ch.chatType === 'room')) {
-    const principal = archiveGroupPrincipal(conv.harness, conv.conversationKey);
+    const principal = archiveGroupPrincipal(conv.harness, conv.scopeKey ?? conv.conversationKey);
     if (!groups.has(principal)) groups.set(principal, (await listGroups(engine, principal).catch(() => [])).length > 0);
     if (groups.get(principal)) readers.push('group:' + principal);
   }
@@ -492,13 +494,11 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
     }
     if (live.length) items.push({ entry, hash, days: live });
   }
-  let allowed: Set<string> | null = null;
-  if (opts.mode === 'backfill') {
-    const cap = await configInt(engine, ARCHIVE_BACKFILL_CAP_KEY, DEFAULT_BACKFILL_DAYS_PER_RUN);
-    const ordered = [...allDays].sort().reverse();
-    allowed = new Set(ordered.slice(0, cap));
-    result.deferred_days = ordered.slice(cap).sort();
-  }
+  // A day held in the ledger for every conversation on it is retried on every backfill run without counting against
+  // the cap, and a day that fails during this run hands its slot to the next older day.
+  const heldDays = new Set([...allDays].filter(day => items.every(it => !it.days.includes(day) || !!ledger.get(it.entry.harness + '.' + it.hash + '.' + day)?.held)));
+  const cap = opts.mode === 'backfill' ? await configInt(engine, ARCHIVE_BACKFILL_CAP_KEY, DEFAULT_BACKFILL_DAYS_PER_RUN) : 0;
+  const ordered = [...allDays].filter(d => !heldDays.has(d)).sort().reverse();
 
   const patterns = loadImportRedactionPatterns();
   const redact = opts.redact ?? ((s: ParsedSession) => redactSession(s, { patterns }));
@@ -526,7 +526,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
     if (!dryRun) await writeLedger(engine, { ...(prior ?? {}), source_id: sourceId, harness: outcome.harness, conversation_key_hash: outcome.conversation_key_hash, day: outcome.day, held });
   };
 
-  for (const { entry, hash, days } of items) {
+  const processRound = async (allowed: Set<string> | null) => { for (const { entry, hash, days } of items) {
     const todo = [...(allowed ? days.filter(d => allowed!.has(d)) : days)].sort().reverse();
     if (todo.length === 0) continue;
     const outcomes = todo.map(day => ({ harness: entry.harness, conversation_key_hash: hash, day, status: 'planned' as ArchiveDayStatus } as ArchiveDayOutcome));
@@ -568,7 +568,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
       const quiet = !!lastTs && now.getTime() - Date.parse(lastTs) >= quietMs;
       const hold: DayWrite['hold'] = opts.mode === 'backfill' ? 'backfill' : (!complete && !quiet ? 'open' : 'release');
       const dayInput = {
-        harness: conv.harness, conversationKey: conv.conversationKey, channel: conv.channel, day: outcome.day, timezone: tz.timezone,
+        harness: conv.harness, conversationKey: conv.conversationKey, ...(conv.scopeKey ? { scopeKey: conv.scopeKey } : {}), channel: conv.channel, day: outcome.day, timezone: tz.timezone,
         redacted, slice, complete, partTargetBytes: pageCeiling, readableBy,
       };
       let rendered = renderArchiveDay(dayInput);
@@ -608,6 +608,22 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
       batchBytes += rendered.parts.reduce((n, p) => n + p.content.length, 0);
     }
     if (batch.length >= FLUSH_DAYS || batchBytes >= FLUSH_BYTES) await flushBatch();
+  } };
+  if (opts.mode !== 'backfill') await processRound(null);
+  else {
+    let next = 0;
+    let good = 0;
+    let round = new Set([...heldDays, ...ordered.slice(0, cap)]);
+    next = Math.min(cap, ordered.length);
+    while (round.size) {
+      const start = pending.length;
+      await processRound(round);
+      const ok = new Set(pending.slice(start).filter(o => o.status !== 'held' && o.status !== 'error').map(o => o.day));
+      good += [...round].filter(d => !heldDays.has(d) && ok.has(d)).length;
+      round = new Set(ordered.slice(next, next + Math.max(0, cap - good)));
+      next += round.size;
+    }
+    result.deferred_days = ordered.slice(next).sort();
   }
   const indexFor = (days: Set<string>, view: Map<string, ArchiveLedgerEntry>): DayWrite[] => [...days].sort().map(day => {
     const dayEntries: DayIndexEntry[] = [];

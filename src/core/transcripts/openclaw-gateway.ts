@@ -40,7 +40,10 @@ export interface GatewayTransport {
 
 export interface GatewayConversation {
   harness: 'openclaw';
+  /** The session id: one identity whether the Gateway or a session file read it. */
   conversationKey: string;
+  /** The session key, for the group principal and label only. */
+  scopeKey: string;
   via: 'gateway';
   channel: ArchiveChannel;
   session: { meta: { harness: 'openclaw'; sessionId: string; startedAt?: string; raw: Record<string, unknown> }; messages: TranscriptMessage[] };
@@ -204,7 +207,8 @@ export function openclawGatewayReader(opts: { transport?: GatewayTransport } = {
         const sessionId = typeof row.sessionId === 'string' ? row.sessionId : history.sessionId ?? key;
         out.push({
           harness: 'openclaw',
-          conversationKey: key,
+          conversationKey: sessionId,
+          scopeKey: key,
           via: 'gateway',
           channel: gatewayChannel(row),
           session: {

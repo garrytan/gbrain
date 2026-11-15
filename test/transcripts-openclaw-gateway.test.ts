@@ -63,7 +63,8 @@ describe('openclaw gateway reader (recorded fixtures)', () => {
     const transport = recorded();
     const convs = await openclawGatewayReader({ transport }).list({});
     expect(transport.calls.filter(([m]) => m === 'sessions.list').map(([, p]) => p.offset ?? 0)).toEqual([0, 2]);
-    expect(convs.map(c => c.conversationKey)).toEqual(['agent:dev:example-scratch-alpha', 'agent:dev:telegram:group:example-group-9']);
+    expect(convs.map(c => c.scopeKey)).toEqual(['agent:dev:example-scratch-alpha', 'agent:dev:telegram:group:example-group-9']);
+    expect(convs.map(c => c.conversationKey)).toEqual(convs.map(c => c.session.meta.sessionId));
     const alpha = convs[0]!;
     expect(alpha.harness).toBe('openclaw');
     expect(alpha.session.meta.sessionId).toBe('318c6a69-4cfa-4aba-bda5-8babbb465c4e');

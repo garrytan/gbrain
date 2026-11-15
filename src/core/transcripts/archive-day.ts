@@ -104,6 +104,8 @@ export function redactionCounts(messages: readonly TranscriptMessage[]): Record<
 export interface ArchiveDayInput {
   harness: TranscriptFormat;
   conversationKey: string;
+  /** The harness's own key (OpenClaw session key) the group label hashes; defaults to conversationKey. */
+  scopeKey?: string;
   channel?: ArchiveChannel;
   day: string;
   timezone: string;
@@ -129,7 +131,7 @@ export function renderArchiveDay(input: ArchiveDayInput): ArchiveDayRender {
     ...(flags ? { imperativeFlags: slice.indexes.map(i => flags[i] === true) } : {}),
   };
   const rendered = renderSessionParts(sub, { sourcePath: '', layout: 'single', partTargetBytes: input.partTargetBytes });
-  const label = conversationLabel(harness, conversationKey, input.channel);
+  const label = conversationLabel(harness, input.scopeKey ?? conversationKey, input.channel);
   const baseSlug = archiveDayBaseSlug(harness, day, label, conversationKey);
   const timestamps = slice.messages.map(m => m.timestamp).filter(Boolean);
   const single = rendered.parts.length === 1;
