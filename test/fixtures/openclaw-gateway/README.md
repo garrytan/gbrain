@@ -17,3 +17,7 @@ minted. Rows and messages are trimmed to the fields the archive reader reads.
 Doc-shaped (not recorded, marked `_note`): sessions-list-group-docshape.json, chat-history-group-docshape.json and
 chat-history-legacy-row.json. A channel-created group row needs a real messaging account, which the recording run never
 connected.
+
+2026.10.9 shape (synthetic, built from a 2026-11-15 probe of a 2026.10.9 dev Gateway): sessions-list-1009.json,
+chat-history-1009-main.json and chat-history-1009-probe-a.json. On 10.9 a session an operator created with
+sessions.create has no chatType (classification custom), and history rows carry __openclaw.transcriptPosition.

@@ -1,0 +1,51 @@
+{
+  "sessionKey": "agent:dev:example-probe-a",
+  "sessionId": "00000000-0000-4000-8000-000000001010",
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "note 1 for probe a"
+        }
+      ],
+      "timestamp": 1794724689369,
+      "__openclaw": {
+        "id": "00000000-0000-4000-8000-0000000012a1",
+        "recordTimestampMs": 1794724689369,
+        "transcriptPosition": {
+          "source": "example-transcript-source",
+          "rawSeq": 1
+        },
+        "seq": 1
+      },
+      "stopReason": "stop",
+      "provider": "openclaw",
+      "model": "gateway-injected"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "note 2 for probe a"
+        }
+      ],
+      "timestamp": 1794724691183,
+      "__openclaw": {
+        "id": "00000000-0000-4000-8000-0000000012a2",
+        "recordTimestampMs": 1794724691183,
+        "transcriptPosition": {
+          "source": "example-transcript-source",
+          "rawSeq": 2
+        },
+        "seq": 2
+      },
+      "stopReason": "stop",
+      "provider": "openclaw",
+      "model": "gateway-injected"
+    }
+  ],
+  "hasMore": false
+}

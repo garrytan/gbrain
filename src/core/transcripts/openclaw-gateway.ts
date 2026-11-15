@@ -95,9 +95,19 @@ export function parseGatewayCliOutput(stdout: string, exitCode: number | null): 
   throw gatewayError('failed', message);
 }
 
+const DEFAULT_MAX_OUTPUT_BYTES = 256 * 1024 * 1024;
+
 /** The default transport: the documented CLI on this machine. The token, when gbrain holds one, goes through the environment, never argv. */
-export function cliGatewayTransport(opts: { bin?: string; url?: string; token?: string; timeoutMs?: number } = {}): GatewayTransport {
+export function cliGatewayTransport(opts: {
+  bin?: string; url?: string; token?: string; timeoutMs?: number;
+  /** Largest stdout the child may write before it is stopped (default 256 MiB). Internal: tests pass a small bound. */
+  maxOutputBytes?: number;
+  /** Test seam: the child launcher (default spawn.ts execFile: array arguments, no shell). */
+  spawn?: typeof execFile;
+} = {}): GatewayTransport {
   const bin = opts.bin ?? 'openclaw';
+  const maxOutputBytes = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+  const launch = opts.spawn ?? execFile;
   const url = opts.url ?? process.env.GBRAIN_OPENCLAW_GATEWAY_URL;
   const token = opts.token ?? process.env.GBRAIN_OPENCLAW_GATEWAY_TOKEN;
   const timeoutMs = opts.timeoutMs ?? 60_000;
@@ -111,9 +121,10 @@ export function cliGatewayTransport(opts: { bin?: string; url?: string; token?: 
       // the environment (gateway_credentials_required, 2026.10.9 and 2026.11.3), and accepts the environment pair.
       const env = { ...process.env, ...(url ? { OPENCLAW_GATEWAY_URL: url } : {}), ...(token ? { OPENCLAW_GATEWAY_TOKEN: token } : {}) };
       return new Promise((resolve, reject) => {
-        execFile(bin, args, { env, timeout: timeoutMs + 10_000, maxBuffer: 256 * 1024 * 1024 }, (error, stdout) => {
+        launch(bin, args, { env, timeout: timeoutMs + 10_000, maxBuffer: maxOutputBytes }, (error, stdout) => {
           const code = error && typeof (error as NodeJS.ErrnoException).code === 'string' ? (error as NodeJS.ErrnoException).code : null;
           if (code === 'ENOENT') { reject(gatewayError('unreachable', bin + ' is not on PATH')); return; }
+          if (code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') { reject(gatewayError('failed', 'openclaw gateway call wrote more than ' + maxOutputBytes + ' bytes, so it was stopped and nothing it wrote was read')); return; }
           try {
             resolve(parseGatewayCliOutput(String(stdout), error ? (typeof error.code === 'number' ? error.code : 1) : 0));
           } catch (e) {

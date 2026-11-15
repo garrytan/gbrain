@@ -68,4 +68,27 @@ describe('openclaw gateway call child process', () => {
     // gstack-timing-ok: the kill bound is the contract under test (timeoutMs + 10 s grace), with 10 s of slack
     expect(Date.now() - started).toBeLessThan(20_000);
   }, 30_000);
+
+  test('a child that writes more than the output bound is stopped and reported as archive_gateway_failed', async () => {
+    const loud = join(dir, 'openclaw-loud');
+    writeFileSync(loud, '#!/bin/sh\nhead -c 65536 /dev/zero | tr "\\\\0" a\nsleep 5\n');
+    chmodSync(loud, 0o755);
+    const err = await cliGatewayTransport({ bin: loud, timeoutMs: 20_000, maxOutputBytes: 1024 }).call('sessions.list', {}).then(() => null, e => e as { code?: string; message?: string });
+    expect(err?.code).toBe('archive_gateway_failed');
+    expect(err?.message).toContain('more than 1024 bytes');
+  }, 30_000);
+
+  test('with no override the child is the openclaw binary, launched with an argument array', async () => {
+    const launched: Array<{ file: string; args: unknown }> = [];
+    const spawn = ((file: string, args: unknown, _opts: unknown, cb: (e: Error | null, out: string, err: string) => void) => {
+      launched.push({ file, args });
+      cb(null, JSON.stringify({ sessions: [], hasMore: false }), '');
+      return {};
+    }) as unknown as NonNullable<Parameters<typeof cliGatewayTransport>[0]>['spawn'];
+    await cliGatewayTransport({ spawn }).call('sessions.list', { limit: 1 });
+    expect(launched).toHaveLength(1);
+    expect(launched[0]!.file).toBe('openclaw');
+    expect(Array.isArray(launched[0]!.args)).toBe(true);
+    expect((launched[0]!.args as string[]).slice(0, 3)).toEqual(['gateway', 'call', 'sessions.list']);
+  });
 });
