@@ -37,8 +37,8 @@ export async function noGrantFloorNext(engine: BrainEngine, id: string): Promise
   };
 }
 
-/** The notice for a source left out of default search; shared says the brain's shape kept it out, so federating is the user's call. */
-export function notInDefaultSearchNotice(id: string, shared: boolean): Notice {
+/** The notice for a source left out of default search; shared says the brain's shape kept it out. Federating is the user's call when shared or when `ask` (a source that predates this add). */
+export function notInDefaultSearchNotice(id: string, shared: boolean, ask = shared): Notice {
   return {
     code: 'source_not_in_default_search',
     kind: 'info',
@@ -49,7 +49,7 @@ export function notInDefaultSearchNotice(id: string, shared: boolean): Notice {
       argv: ['gbrain', 'sources', 'federate', id],
       consent: [],
       actor: 'agent',
-      ...(shared ? { ask_user: true as const } : {}),
+      ...(ask ? { ask_user: true as const } : {}),
       requires_exclusive: false,
       why: 'Adds the source to default search and to what connections with no source grant can read.',
       verify: { argv: ['gbrain', 'sources', 'list', '--json'] },
@@ -66,7 +66,7 @@ export async function syncOutOfSearchNotice(engine: BrainEngine, args: string[])
     const [row] = await engine.executeRaw<{ f: unknown; remote: unknown; pages: number }>(
       `SELECT config->'federated' AS f, config->'added_by_remote_caller' AS remote, (SELECT count(*)::int FROM pages WHERE source_id = $1 AND deleted_at IS NULL) AS pages FROM sources WHERE id = $1`, [id]);
     if (!row || row.f != null || row.remote === true || !Number(row.pages)) return null;
-    return notInDefaultSearchNotice(id, !(await newSourceJoinsDefaultSearch(engine)));
+    return notInDefaultSearchNotice(id, !(await newSourceJoinsDefaultSearch(engine)), true);
   } catch {
     return null;
   }

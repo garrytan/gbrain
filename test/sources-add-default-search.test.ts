@@ -76,6 +76,13 @@ describe('a new source on a single-user brain joins default search', () => {
     expect(await federated('attach-unset')).toBeNull();
   });
 
+  test('a retried add of a source that now exists normalizes the same way (idempotent replay)', async () => {
+    const { withDefaultSearchChoice } = await import('../src/core/source-default-search.ts');
+    await add(['personal-retry']);
+    const again = await withDefaultSearchChoice(engine, { id: 'personal-retry', localPath: '/tmp/gbrain-retry-example' } as never);
+    expect(again.federated).toBe(true);
+  });
+
   test('--json reports federated true with no notices', async () => {
     const out = JSON.parse((await add(['personal-c', '--json'])).stdout);
     expect(out).toMatchObject({ id: 'personal-c', federated: true });

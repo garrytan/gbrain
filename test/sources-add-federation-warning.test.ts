@@ -177,7 +177,7 @@ describe('gbrain sync --source names a source that default search leaves out', (
     expect(await syncOutOfSearchNotice(engine, ['--source', 'source-m'])).toBeNull();
     await engine.putPage('notes/m', { type: 'note', title: 'M', compiled_truth: 'A page in source-m.', timeline: '' }, { sourceId: 'source-m' });
     const notice = await syncOutOfSearchNotice(engine, ['--source', 'source-m', '--no-pull']);
-    expect(notice).toMatchObject({ code: 'source_not_in_default_search', fix: { argv: ['gbrain', 'sources', 'federate', 'source-m'] } });
+    expect(notice).toMatchObject({ code: 'source_not_in_default_search', fix: { argv: ['gbrain', 'sources', 'federate', 'source-m'], ask_user: true } });
     expect(await syncOutOfSearchNotice(engine, ['status', '--source', 'source-m'])).toBeNull();
     expect(await syncOutOfSearchNotice(engine, ['--source', 'default'])).toBeNull();
     await engine.executeRaw(`UPDATE sources SET config = config || '{"federated": false}'::jsonb WHERE id = 'source-m'`);
