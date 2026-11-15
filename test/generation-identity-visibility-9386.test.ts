@@ -46,7 +46,7 @@ describe('#9386 atoms stamped by repair visibility stay adoptable', () => {
     const owned = [...items.values()].filter(item => item.key === 'atoms/legacy-insight');
     expect(owned).toHaveLength(1);
     expect([...await atomGenerationAdapter.legacyEvidence(engine, key, owned)]).toEqual(['atoms/legacy-insight']);
-    await atomGenerationAdapter.completeItems(engine, key, ['atoms/legacy-insight'], undefined);
+    await atomGenerationAdapter.completeItems!(engine, key, ['atoms/legacy-insight'], undefined);
     const [adopted] = await engine.executeRaw<{ v: string | null; h: string | null }>("SELECT frontmatter->>'visibility' AS v, frontmatter->>'source_hash' AS h FROM pages WHERE slug='atoms/legacy-insight'");
     expect(adopted?.h).toBeTruthy();
     expect(adopted?.v).toBe('private');
