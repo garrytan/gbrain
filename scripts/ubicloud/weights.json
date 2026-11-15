@@ -2983,7 +2983,6 @@
   "unit:test/scripts/normalize-tokens.test.ts": 417,
   "unit:test/scripts/postgres-lane-coverage.test.ts": 5373,
   "unit:test/scripts/postgres-unit-arms.test.ts": 230,
-  "unit:test/scripts/postinstall-standalone.test.ts": 213,
   "unit:test/scripts/regen-all.test.ts": 180,
   "unit:test/scripts/release-gate.test.ts": 205,
   "unit:test/scripts/release-restamp.test.ts": 20891,

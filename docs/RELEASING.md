@@ -142,6 +142,18 @@ master since the last release one version and writes all the stamps at once.
 `.gstack/ship-policy.json` turns this on (`changelog_fragments`,
 `merge: "direct"`), and gstack's /ship, receipt and land commands follow it.
 
+**How a PR lands.** Every PR, release PRs included, lands on master as one
+squashed commit whose subject is the PR title followed by `(#<number>)`, so
+`git log --oneline master` reads as a list of changes, with no
+"Merge pull request" lines and none of a branch's own housekeeping commits.
+The maintainer's merge step makes that commit; its body is the PR's
+summary lines, and everyone else who wrote commits on the branch is
+credited with a `Co-authored-by:` trailer. Only the landing squashes. A
+branch brings master in with a merge commit and is never rebased or
+force-pushed; `history: "merge-only"` in `.gstack/ship-policy.json` makes
+/ship refuse a plan that would. Write the PR title as the one line a
+reader of the log should see.
+
 **What a PR carries.**
 
 - `changelog.d/<branch-slug>.md`: the PR's CHANGELOG entry with no version
@@ -632,7 +644,9 @@ manual tag push is part of the ship flow — the workflow reads `VERSION` (the
 single source of truth), mints tag `v<VERSION>` at the pushed commit, titles
 the release the same, uses that version's `CHANGELOG.md` entry as the notes
 (`scripts/changelog-entry.sh`; falls back to a CHANGELOG link if the entry is
-missing), and attaches the compiled binaries.
+missing), and attaches the compiled binaries. Every one is published as a
+pre-release; only the stable release is GitHub's "Latest" ([Which release GitHub
+calls Latest](#which-release-github-calls-latest)).
 
 The executable build job pins Bun 1.4.4, the first release with the Brotli fix
 for CVE-2026-111497 (#7373): a standalone binary embeds the Bun it was built
@@ -694,6 +708,47 @@ release already exists with all assets):
 ```bash
 git push origin "+refs/tags/v<VERSION>^{commit}:refs/tags/latest-stable"
 ```
+
+### Which release GitHub calls Latest
+
+release.yml publishes every batch release with `prerelease: true` and
+`make_latest: false`, so the Releases page and its Latest badge point at the
+release installs follow. Each promotion (`scripts/promote-stable.ts`, from the
+promote dispatch or the daily check) ends by marking the promoted release
+Latest and clearing its pre-release flag. A forward promotion also replaces its
+notes with every CHANGELOG entry since the previous stable, newest first; the
+oldest entries drop with a link to the full CHANGELOG once the notes would pass
+GitHub's 125,000-character limit. A rollback keeps the notes.
+
+A forward promotion never moves Latest to an older release than the one it
+marks now, because binaries released before this rule download
+`releases/latest` as their update. So during the changeover Latest stays on
+the newest release published before the rule, until stable passes it; that
+promotion sets Latest, and from then on Latest is stable. `backfill` should
+not be needed. A hand re-run of release.yml that would republish the current
+stable release as a pre-release refuses; upload missing assets with
+`gh release upload` instead.
+
+Nothing that installs or updates gbrain reads GitHub's Latest: `#stable` and
+`gbrain upgrade` follow the `stable` tag and its record; the alpha channel
+(binary self-update included) reads `VERSION` at `latest-stable` and fetches
+that exact release; the upgrade matrix counts pre-releases as releases; the
+macOS signature check resolves its tag from `latest-stable`. Anyone who
+downloads from `releases/latest` by hand now gets the stable release, about a
+day behind the newest. People who watch the repository for releases are still
+notified of pre-releases: GitHub has no setting to skip them.
+
+`scripts/release-channel.ts` handles GitHub release state outside a promotion;
+each command prints its plan and writes nothing without `--apply`:
+
+- `backfill`: every published release newer than the current stable becomes a
+  pre-release and the stable release becomes Latest with rolled-up notes. It is
+  also the repair when a promotion moved `stable` but could not mark it Latest
+  (the refusal names it).
+- `undo`: every pre-release goes back to a normal release and the newest release
+  becomes Latest, as before this rule. Revert the workflow change with it.
+- `preview-promotion [--version <v>]`: the release a promotion would make
+  Latest and the notes it would write.
 
 ### Stable channel promotion
 
@@ -883,11 +938,10 @@ the template repository ONLY — no other repositories, no other permissions.
 Configure it as a repo secret; when absent, template publishing is disabled
 and the job skips cleanly.
 
-Why every bump, not selective: `gbrain check-update` resolves the latest
-version from `VERSION` on master, while binary self-update
-(`src/core/binary-self-update.ts`) downloads assets from `releases/latest`.
-Any release that lags `VERSION` tells binary installs an upgrade exists that
-self-update cannot apply. `releases/latest` must track `VERSION`.
+Why every bump, not selective: the alpha update check reads `VERSION` at
+`latest-stable`, and binary self-update downloads that exact release
+(`src/core/binary-self-update.ts`). Any version without a release tells binary
+installs an upgrade exists that self-update cannot apply.
 
 Invariants:
 
@@ -927,7 +981,17 @@ to see what's actually in the PR before writing the body.
 
 ## Community PR wave process
 
-Never merge external PRs directly into master. Instead, use the "fix wave" workflow:
+Fix waves built from outside PR lists ended on 2026-11-01. Each outside PR is
+now triaged when it arrives, under the rules contributors see in
+[CONTRIBUTING.md](../CONTRIBUTING.md#how-an-outside-pull-request-is-handled):
+documentation people read may be merged as it is after a text read of every
+link, command and install step; a small, plainly correct fix (under about 40
+lines, not counting tests) is rebuilt on current master with credit, at most one
+small PR a day; anything else is read as a report and rebuilt only when it has
+proof and matters. Outside code is never checked out, run or merged. A rebuild
+PR lists the outside PR on a `Supersedes #N` line so the
+[closeout](#fix-wave-closeout) closes it with a link. The steps below are the
+older batch procedure; steps 4 to 7 still apply to any rebuild PR.
 
 1. **Categorize** — group PRs by theme (bug fixes, features, infra, docs)
 2. **Deduplicate** — if two PRs fix the same thing, pick the one that changes fewer
@@ -975,9 +1039,11 @@ master unless its head repository is `garrytan/gbrain` or the `maintainer-overri
 label counts. Only maintainers can push to `garrytan/gbrain`, so GBRA thread PRs
 (`capy/*`) and `garrytan/*` branches pass; fork PRs fail whatever their branch is
 called. When a contributor PR opens, a second job posts one comment with the same
-text as the failure: the work is welcome and the PR stays open, it lands through a
-fix wave with credit (`Contributed by @handle` plus a `Co-Authored-By:` trailer), and
-CONTRIBUTING.md "Where does my change go?" explains where changes belong.
+text as the failure: how outside PRs are handled (documentation merged as it is
+after a text read, small correct fixes rebuilt with credit, everything else read as
+a report and rebuilt with credit when taken, `Contributed by @handle` plus a
+`Co-Authored-By:` trailer), the proof a larger change needs, who the open-PR limit
+applies to, and a link to CONTRIBUTING.md "How an outside pull request is handled".
 
 The workflow uses `pull_request_target`, so the workflow and
 `scripts/fix-wave-gate.ts` always come from the default branch: a PR that edits
@@ -990,7 +1056,7 @@ repository (deleted fork) fails closed. The check re-runs on `opened`, `edited`,
 **`maintainer-override` label.** Who: a human on `MAINTAINERS` in
 `scripts/fix-wave-gate.ts` (starts as `garrytan`; changing it is a reviewed PR to
 master). When: only for a PR a maintainer has decided may land from its fork, such as
-a fix wave a maintainer opened from a fork; record the reason in a PR comment. How it
+an outside documentation change or a PR a maintainer opened from a fork; record the reason in a PR comment. How it
 is checked: the label counts only when the most recent `labeled` timeline event for it
 was made by an allowlisted `User`; bots (`capy-ai[bot]`, `github-actions[bot]`, any
 `[bot]` login) never qualify, and removing the label fails the PR again. Audit: the run

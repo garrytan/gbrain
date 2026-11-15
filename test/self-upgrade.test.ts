@@ -308,7 +308,7 @@ describe('reconcileBreadcrumb', () => {
     expect(r.state.failed_versions).toEqual(['0.43.0']);
   });
   // #5813: the swap installs whatever is current at swap time (git pull, bun
-  // update, releases/latest), so the relaunched binary can be NEWER than the
+  // update, the release latest-stable names), so the relaunched binary can be NEWER than the
   // version the breadcrumb recorded from the update cache.
   const appliedCases: Array<{ name: string; su: SelfUpgradeState; running: string; failed: string[] | undefined }> = [
     { name: 'running newer than attempted', su: { attempting_version: '0.60.22.0' }, running: '0.60.25.0', failed: undefined },

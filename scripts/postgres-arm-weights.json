@@ -88,6 +88,8 @@
   "test/embed-once-per-content-version.serial.test.ts": 17930,
   "test/embed-stale-images-managed-6529.test.ts": 11128,
   "test/embedding-completion-atomic.serial.test.ts": 8616,
+  "test/enforced-member-writes-setting.serial.test.ts": 47833,
+  "test/enforced-member-writes.serial.test.ts": 69196,
   "test/enforced-member.serial.test.ts": 180449,
   "test/engine-sql-facts-keyset.test.ts": 6534,
   "test/extract-all-stamp-intersection.serial.test.ts": 6869,

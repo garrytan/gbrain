@@ -939,7 +939,7 @@ async function rescopeClientWith(engine: BrainEngine, clientId: string, parsed: 
 function printClientGrantAxes(grant: ClientGrant) {
   console.log(`  Scopes: ${grant.scopes.join(' ') || '<none>'}`);
   console.log(`  Write source: ${grant.sourcesNone ? 'none (every read and write refused)' : grant.sourceId}`);
-  console.log(`  Federated reads: ${grant.federatedRead.join(', ') || '<none>'}`);
+  console.log(`  Federated reads: ${grant.federatedRead.join(', ') || '<none>'}\n  Operations: ${grant.allowedOperations === null ? 'all (no snapshot)' : grant.allowedOperations.join(', ') || 'none'}\n  Slug prefixes: ${grant.boundSlugPrefixes?.join(', ') || '<none>'}`);
   console.log(`  Takes holders: ${grant.takesHolders === null ? 'world (default)' : grant.takesHolders.join(', ') || 'none (every take hidden)'}`);
   console.log(`  Private pages: ${renderPrivatePages(grant.privatePages)}`);
   console.log(`  Tool surface: ${grant.surface ?? '<server default>'}`);

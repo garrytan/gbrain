@@ -993,7 +993,7 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
     // E-2: CLI-only single-flight for stale runs (the minion path locks itself).
     opts = { all, stale, dryRun, sourceId, batchSize, priority, catchUp, ...(pace && { pace }), ...(stale && { singleFlight: true }), ...(includeNullSignature && { includeNullSignature: true }) };
   } else {
-    const slug = args.find(a => !a.startsWith('--'));
+    const slug = (await import('./embed-slug-args.ts')).embedSlugTarget(args);
     if (!slug) {
       serr('Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...|--held] [--dry-run] [--batch-size N] [--priority recent] [--catch-up] [--include-null-signature] [--yes | --max-usd N] | --stale --images (gbrain embed --help: paid runs need the user\'s approval)');
       process.exit(1);

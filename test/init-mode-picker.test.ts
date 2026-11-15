@@ -246,9 +246,10 @@ describe('runModePicker: non-TTY and --json', () => {
       expect(await engine.getConfig('search.mode_source')).toBe('auto');
       expect(decision).toEqual({ mode: 'tokenmax', reason: MODE_REASONS.default });
       expect(out).toContain('[gbrain] search mode tentatively set to: tokenmax');
-      expect(out.toLowerCase()).toContain('show this matrix');
+      expect(out).toContain('nothing waits on an answer');
+      expect(out).not.toContain('ask_user');
       expect(out).toContain('INSTALL_FOR_AGENTS.md');
-      expect(out).toContain('gbrain init --search-mode <mode>');
+      expect(out).toContain('gbrain config set search.mode <conservative|balanced|tokenmax>');
       expect(out).toContain('Opus 5.5');
     });
   });

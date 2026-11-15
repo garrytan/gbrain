@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runGuests } from '../src/commands/guests.ts';
+import { initGuestSource } from '../src/core/guests/sources.ts';
 import { runSources } from '../src/commands/sources.ts';
 
 let engine: PGLiteEngine;
@@ -82,6 +83,22 @@ describe('gbrain guests init', () => {
     await run(() => runGuests(engine, ['init', '--source', 'source-a', '--yes']));
     expect({ exitCode: exitCode as number | null, said: err.join('\n').includes('already holds 1 page') }).toEqual({ exitCode: 2, said: true });
     expect(await guestRow('source-a')).toBeUndefined();
+  });
+
+  test('initGuestSource itself counts under the source lock and refuses a source that holds pages', async () => {
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', ['source-a']);
+    await engine.putPage('notes/owner-a', { title: 'Owner', type: 'note' as never, compiled_truth: 'Mine.', frontmatter: {}, timeline: '' }, { sourceId: 'source-a' } as never);
+    expect(await initGuestSource(engine, 'source-a', []).then(() => 'made a guest source', (e: Error) => e.message)).toContain('already holds 1 page');
+    expect(await guestRow('source-a')).toBeUndefined();
+  });
+
+  test("doctor's repair works on a source whose config says guest but which has no guest_sources row and holds pages", async () => {
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', ['source-a']);
+    await engine.putPage('notes/owner-a', { title: 'Owner', type: 'note' as never, compiled_truth: 'Mine.', frontmatter: {}, timeline: '' }, { sourceId: 'source-a' } as never);
+    await engine.executeRaw(`UPDATE sources SET config = config || '{"guest": true}'::jsonb WHERE id = 'source-a'`);
+    await run(() => runGuests(engine, ['init', '--source', 'source-a', '--yes']));
+    expect({ exitCode: exitCode as number | null, err: err.join('\n') }).toEqual({ exitCode: null, err: '' });
+    expect(await guestRow('source-a')).toEqual({ writers: [], trust_ceiling: 'external_untrusted' });
   });
 
   test('previews by default and writes nothing', async () => {

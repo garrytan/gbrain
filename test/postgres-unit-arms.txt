@@ -35,6 +35,8 @@ test/access-page-rule-fileless.test.ts
 test/access-qm-actor.test.ts
 test/access-raw-only-rules.test.ts
 test/access-room.test.ts
+test/access-rule-hints-owner-gst2128.test.ts
+test/access-rule-owner-gst2698.test.ts
 test/access-token-grant-columns.test.ts
 test/access-ungranted-member-writes.test.ts
 test/access-writes.test.ts
@@ -106,7 +108,10 @@ test/edge-whitespace-twins.test.ts
 test/effect-commit-moved-head.test.ts
 test/embed-once-per-content-version.serial.test.ts
 test/embed-stale-images-managed-6529.test.ts
+test/embedding-bare-model-label-8533.test.ts
 test/embedding-completion-atomic.serial.test.ts
+test/enforced-member-writes-setting.serial.test.ts
+test/enforced-member-writes.serial.test.ts
 test/enforced-member.serial.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/extract-all-stamp-intersection.serial.test.ts
@@ -182,6 +187,7 @@ test/graduation-target.test.ts
 test/graduation-verify-sync-freshness.test.ts
 test/graduation-verify.test.ts
 test/grandfather-managed.test.ts
+test/guest-notes-scoped-role.test.ts
 test/harness-skills-epoch.test.ts
 test/harness-verify-member-credential.test.ts
 test/held-bare-name-move-gst2492.test.ts
@@ -537,8 +543,10 @@ test/physical-root-birth-tolerance-6501.test.ts
 test/physical-root-copied-brain-fix-7671.test.ts
 test/physical-root-moved-8625.test.ts
 test/privacy-label-ignored.test.ts
+test/projection-rebuild-progress-9192.test.ts
 test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
+test/purge-context-facts-8859.test.ts
 test/purge-expires-page-facts.test.ts
 test/purge-fact.test.ts
 test/purge-global-marker.test.ts
@@ -598,11 +606,13 @@ test/repair-frontmatter.test.ts
 test/repair-ghost-database-ahead-gbra133.test.ts
 test/repair-lost-fence-rows.test.ts
 test/repair-private-labels-batch.test.ts
+test/repair-purged-page-facts-8859.test.ts
 test/repair-quoted-markers-8059.test.ts
 test/repair-receipt-compaction.test.ts
 test/repair-rename-identity-6729.test.ts
 test/repair-secret-spans.test.ts
 test/repair-unwithdrawn-facts-8819.test.ts
+test/repair-visibility-propose-gst2670.test.ts
 test/request-tools-combined-gbra449.test.ts
 test/requester-scope.test.ts
 test/retrieval-coverage-notices.test.ts

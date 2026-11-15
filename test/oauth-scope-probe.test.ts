@@ -7,8 +7,9 @@
  * ScopeProbeResult inputs to pin the status semantics:
  *
  *   read.missing_scope  → fail (broken setup)
- *   admin.missing_scope → warn (the load-bearing case for v0.29.2/v0.30.0
- *                              thin clients without admin scope)
+ *   admin.missing_scope → warn only when the grant lists admin; a read or
+ *                         read+write client is narrow by design → ok,
+ *                         informational, never advice to add a scope (#8543)
  *   both ok             → ok
  *   inconclusive        → ok with detail.inconclusive=true
  */
@@ -46,7 +47,7 @@ describe('buildScopeCheck', () => {
       admin_ok: false,
       admin_error: 'missing_scope',
     };
-    const check = buildScopeCheck('read write', probe);
+    const check = buildScopeCheck('read write admin', probe);
     expect(check.status).toBe('warn');
     expect(check.message).toContain('admin scope MISSING');
     // The pinpoint remediation must name the exact CLI invocation.
@@ -56,6 +57,17 @@ describe('buildScopeCheck', () => {
     expect(check.detail?.admin_ok).toBe(false);
     expect(check.detail?.admin_error).toBe('missing_scope');
   });
+
+  for (const granted of ['read', 'read write', 'read,write']) {
+    test(`a "${granted}" client without admin is ok and informational, and nothing suggests adding a scope (#8543)`, () => {
+      const check = buildScopeCheck(granted, { read_ok: true, admin_ok: false, admin_error: 'missing_scope' });
+      expect(check.status).toBe('ok');
+      expect(check.message).toContain('by design');
+      expect(check.message).not.toContain('register-client');
+      expect(JSON.stringify(check)).not.toMatch(/--scopes|read,write,admin|re-register/);
+      expect(check.detail).toMatchObject({ granted, read_ok: true, admin_ok: false, admin_granted: false });
+    });
+  }
 
   test('admin probe fails for non-scope reason (e.g. parse) → status=ok inconclusive', () => {
     const probe: ScopeProbeResult = {

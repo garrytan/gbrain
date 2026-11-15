@@ -1,7 +1,7 @@
 /**
  * GBRA-218 (PR A2): `gbrain access rule|apply|resume`, the operator surface for folder rules.
  *
- *   gbrain access rule add --prefix <folder/> | --slug <page> --readers a,group:b [--raw-only] [--id <rule>] [--source <id>] [--yes] [--expect <rev>] [--operation <id>]
+ *   gbrain access rule add --prefix <folder/> | --slug <page> --readers a,group:b [--raw-only] [--allow-without-owner] [--id <rule>] [--source <id>] [--yes] [--expect <rev>] [--operation <id>]
  *   gbrain access rule rm <rule> [--source <id>] [--yes] [--expect <rev>] [--operation <id>]
  *   gbrain access rule list|status|history [--source <id>] [--operation <id>] [--limit <n>]
  *   gbrain access rule revert --to <revision> [--source <id>] [--yes]
@@ -28,7 +28,7 @@ import { heldRowsInVersions } from '../core/facts/fence-fact-append.ts';
 import { identityFor } from '../core/access/principals.ts';
 import { openTwins, openTwinsLines, OPEN_TWINS_PAGES, type OpenTwins } from '../core/access/open-twins.ts';
 import { boundCredentials, listGroups, listMembers } from '../core/access/members.ts';
-import { ownerReadsRestrictedOn, ownerView } from '../core/access/owner.ts';
+import { ownerReadsRestrictedOn, ownerView, readersOmitOwnerError, readersOwner } from '../core/access/owner.ts';
 import {
   appliedRules, applyApproved, getRevision, listRevisions, newOperationId, policyStatus, previewApply, proposeRevision, readAccessStore, resumePolicy,
   ensurePolicyState, type AccessStore, type ProposalResult, type RestampProgress,
@@ -191,10 +191,11 @@ async function previewRules(engine: BrainEngine, sourceId: string, store: Access
   }
   const edits = [...pages.values()], segmented = Math.max(0, ...edits.map(p => p.segmented_versions_not_edited ?? 0));
   const twins: OpenTwins = { count: 0, twins: [], commands: [] };
+  const ruleOwner = (await readersOwner(engine)).owner;
   for (const rule of cls.changes.filter(c => c.narrowing).map(c => cls.target.find(r => r.id === c.rule)).filter(r => r !== undefined)) {
     const covered = await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT source_id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND ${ruleCoversSql('slug', '$2::text')} ORDER BY slug LIMIT ${OPEN_TWINS_PAGES}`, [sourceId, rule.prefix]);
     const found = await openTwins(engine, covered, rule.readable_by,
-      source => `gbrain access rule add ${rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${rule.prefix} --readers ${rule.readable_by.map(reader).join(',')} --source ${source}`);
+      source => `gbrain access rule add ${rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${rule.prefix} --readers ${rule.readable_by.map(reader).join(',')}${ruleOwner && !rule.readable_by.includes(`member:${ruleOwner}`) ? ' --allow-without-owner' : ''} --source ${source}`);
     Object.assign(twins, { count: twins.count + found.count, twins: [...twins.twins, ...found.twins], commands: [...twins.commands, ...found.commands] });
   }
   const owner = await ownerReadsRestrictedOn(engine) ? (await ownerView(engine)).owner : null;
@@ -363,6 +364,10 @@ async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: strin
         if (taken) throw opError('access_rule_invalid', `Rule id "${taken.id}" already names ${taken.prefix}, and ${r.rule.prefix} derives the same id.`, `Nothing was written. Name the new rule yourself: gbrain access rule add --id <rule> ${r.rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${r.rule.prefix} --readers <list>.`);
         const clash = base.find(b => b.prefix === r.rule.prefix && b.id !== r.rule.id);
         if (clash) throw opError('access_rule_invalid', `Rule "${clash.id}" already covers ${r.rule.prefix}.`, `Nothing was written. Change that rule's readers instead: gbrain access rule add --id ${clash.id} ${r.rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${r.rule.prefix} --readers <list>.`);
+        const { owner, live } = await readersOwner(engine);
+        if (owner && !r.rule.readable_by.includes(`member:${owner}`) && !args.includes('--allow-without-owner')) {
+          throw readersOmitOwnerError(owner, live, r.rule.readable_by, r.rule.prefix.endsWith('/') ? `the pages under ${r.rule.prefix}` : `the page ${r.rule.prefix}`);
+        }
         desired = sortRules([...base.filter(b => b.id !== r.rule.id), r.rule]);
         message = `access: rule ${r.rule.id} on ${r.rule.prefix} readable by ${r.rule.readable_by.map(reader).join(', ')}${coversDerived(r.rule) ? '' : ' (raw only)'}`;
       } else if (sub === 'rm') {

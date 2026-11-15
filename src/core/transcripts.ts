@@ -19,7 +19,7 @@ import { join, basename, dirname } from 'node:path';
 import type { BrainEngine } from './engine.ts';
 import type { Action } from './agent-output.ts';
 import { isDreamOutput } from './cycle/transcript-discovery.ts';
-import { redactFindings } from './secret-scan.ts';
+import { TRANSCRIPT_LANE_SCAN_OPTS, redactFindings } from './secret-scan.ts';
 
 export interface RecentTranscriptOpts {
   /** Window in days. Default 7. */
@@ -86,7 +86,7 @@ export async function listRecentTranscripts(
     const name = basename(c.path);
     const dateMatch = DATE_RE.exec(name);
     // Redact the whole file before the summary/full-read cap cuts it.
-    const text = redactFindings(raw, { highEntropy: true, labeledCredentials: true }).text;
+    const text = redactFindings(raw, TRANSCRIPT_LANE_SCAN_OPTS).text;
     out.push({
       path: name,
       date: dateMatch ? dateMatch[1] : null,

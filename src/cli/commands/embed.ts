@@ -17,6 +17,10 @@ export async function run(engine: BrainEngine, args: string[], ctx: CliDispatchC
     return;
   }
   const { SELECTED_CONFIG_BY_ENGINE } = ctx;
+  // GST-2767: a single-page run's arguments are read before consent, so an unknown flag is refused before any spend prompt.
+  if (!args.some(a => ['--all', '--stale', '--slugs', '--held', '--facts', '--images'].includes(a))) {
+    (await import('../../commands/embed-slug-args.ts')).embedSlugTarget(args);
+  }
   // A4: an explicit backfill is paid work; consent first, on the probe-only engine (startup: 'observational').
   const consent = await authorizeEmbed(engine, args);
   if (!consent) return;

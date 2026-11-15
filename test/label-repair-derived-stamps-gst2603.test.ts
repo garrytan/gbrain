@@ -316,7 +316,7 @@ for (const backend of testBackends()) describe('[' + backend + '] label repairs 
     expect(applied.applied).toBe(1);
     const lines: string[] = [];
     const spy = spyOn(console, 'log').mockImplementation((...parts: unknown[]) => { lines.push(parts.map(String).join(' ')); });
-    try { await runAccessRules(engine, 'rule', ['add', '--slug', 'notes/ruled-example', '--readers', 'alice-example', '--source', 'default', '--yes', '--json'], true); } finally { spy.mockRestore(); }
+    try { await runAccessRules(engine, 'rule', ['add', '--slug', 'notes/ruled-example', '--readers', 'alice-example', '--allow-without-owner', '--source', 'default', '--yes', '--json'], true); } finally { spy.mockRestore(); }
     expect(JSON.parse(lines.join(NL)).state).toBe('applied');
     expect((await row(engine, 'notes/labelled-example')).frontmatter.visibility).toBe('private');
     expect((await row(engine, 'notes/ruled-example')).frontmatter.visibility).toBeUndefined();
@@ -346,7 +346,7 @@ for (const backend of testBackends()) describe('[' + backend + '] label repairs 
   const rules = async (engine: BrainEngine, argv: string[]) => {
     const lines: string[] = [];
     const spy = spyOn(console, 'log').mockImplementation((...parts: unknown[]) => { lines.push(parts.map(String).join(' ')); });
-    try { await runAccessRules(engine, 'rule', [...argv, '--json'], true); } finally { spy.mockRestore(); }
+    try { await runAccessRules(engine, 'rule', [...argv, '--allow-without-owner', '--json'], true); } finally { spy.mockRestore(); }
     return JSON.parse(lines.join(NL));
   };
 
@@ -368,8 +368,20 @@ for (const backend of testBackends()) describe('[' + backend + '] label repairs 
     const file = join(home, 'access.yml');
     writeFileSync(file, ['version: 1', 'rules:', '  - slug: ' + twin, '    readable_by: [alice-example]', ''].join(NL));
     const open = await rules(engine, ['import', '--file', file, '--source', 'default']);
-    expect(open.open_twins).toEqual({ count: 1, twins: [{ source_id: 'source-b', slug: twin, twin_of: 'default:' + twin }], commands: ['gbrain access rule add --slug ' + twin + ' --readers alice-example --source source-b'] });
+    expect(open.open_twins).toEqual({ count: 1, twins: [{ source_id: 'source-b', slug: twin, twin_of: 'default:' + twin }], commands: ['gbrain access rule add --slug ' + twin + ' --readers alice-example --allow-without-owner --source source-b'] });
     expect((await rules(engine, ['add', '--slug', twin, '--readers', 'alice-example', '--source', 'source-b', '--yes'])).state).toBe('applied');
     expect((await rules(engine, ['import', '--file', file, '--source', 'default'])).open_twins).toEqual({ count: 0, twins: [], commands: [] });
+  }), 180_000);
+
+  test('a twin command for a rule that leaves the owner out keeps --allow-without-owner, so the printed command is accepted as printed (GST-2128)', () => brain(async (engine, home) => {
+    await twinBrain(engine);
+    const file = join(home, 'access.yml');
+    writeFileSync(file, ['version: 1', 'rules:', '  - slug: ' + twin, '    readable_by: [alice-example]', ''].join(NL));
+    const open = await rules(engine, ['import', '--file', file, '--source', 'default']);
+    const command = 'gbrain access rule add --slug ' + twin + ' --readers alice-example --allow-without-owner --source source-b';
+    expect(open.open_twins.commands).toEqual([command]);
+    const spy = spyOn(console, 'log').mockImplementation(() => {});
+    try { await runAccessRules(engine, 'rule', [...command.split(' ').slice(3), '--yes', '--json'], true); } finally { spy.mockRestore(); }
+    expect((await rules(engine, ['import', '--file', file, '--source', 'default'])).open_twins.count).toBe(0);
   }), 180_000);
 });

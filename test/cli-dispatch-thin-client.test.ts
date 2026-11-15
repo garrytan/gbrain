@@ -97,7 +97,7 @@ describe('thin-client dispatch guard refuses DB-bound commands', () => {
     ['repair-jsonb', '--dry-run'],
     ['orphans'],
     ['integrity', 'check'],
-    ['serve'],
+    ['serve', '--http'],
     // v0.32 audit REFUSE additions (no MCP route, or localOnly ops) and the
     // v0.31.1-era refusals not covered above.
     ['pages', 'purge-deleted'],
@@ -157,6 +157,14 @@ describe('thin-client dispatch guard does NOT refuse safe commands', () => {
   // Commands that are still useful in thin-client mode (init, auth, version,
   // help) MUST NOT be refused. We assert the canonical thin-client error
   // does NOT appear.
+  test('`gbrain --brain <id> serve` refuses instead of bridging to the configured remote', async () => {
+    seedThinClientConfig(tmp);
+    const r = await run(['--brain', 'other-brain', 'serve']);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain('--brain is not supported on a thin-client install');
+    expect(r.stderr).not.toContain('[gbrain-bridge] relaying');
+  });
+
   test('`gbrain --version` works on thin-client install', async () => {
     seedThinClientConfig(tmp);
     const r = await run(['--version']);

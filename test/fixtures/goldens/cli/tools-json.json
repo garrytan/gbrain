@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 300728,
-    "stdoutSha256": "0e10a7c8d316e108fa63dfd27366d9609bcce6bcf8e7d019d5d63453d2d577d1",
+    "stdoutBytes": 300735,
+    "stdoutSha256": "33eac5e04d5362ecb7175edec8781ab33558a5dbad8061e781550f43cbc415ac",
     "toolNames": [
       "remember",
       "entity",
@@ -767,7 +767,7 @@
         "schema": {
           "properties": {
             "expected_revision": {
-              "description": "Revision read; omit to create.",
+              "description": "Revision read; required unless force.",
               "type": "string"
             },
             "force": {

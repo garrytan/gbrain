@@ -44,9 +44,20 @@ export function splitEmbeddingSignature(signature: string): { model: string; dim
   return { model: signature.slice(0, separator), dims };
 }
 
+/**
+ * #8533: whether a chunk's model label names the target model: the label itself, or its bare tail (`text-embedding-3-large`
+ * for `openai:text-embedding-3-large`), which chunks embedded before provider-prefixed labels carry. Every predicate that
+ * decides whether a stored vector is still in the target space compares labels through this one rule. A bare tail counts
+ * only where `bareWidthOk` (the stored vector's width equals the target dimensions) holds; an explicit different prefix
+ * never matches. `model` is an SQL expression referenced once (a bound parameter in the fragment twin).
+ */
+export function chunkModelMatchesSql(label: string, model: string, bareWidthOk: string): string {
+  return `EXISTS (SELECT 1 FROM (SELECT ${model}::text AS m) target WHERE ${label} IS NOT DISTINCT FROM target.m OR (${label} = substr(target.m, strpos(target.m, ':') + 1) AND ${bareWidthOk}))`;
+}
+
 export function currentSpaceChunkPredicate(colId: string, modelParam: number, dimsParam: number, alias = 'cc'): string {
   return `COALESCE(${alias}.${colId} IS NOT NULL
-              AND ${alias}.model = $${modelParam}
+              AND ${chunkModelMatchesSql(`${alias}.model`, `$${modelParam}`, 'TRUE')}
               AND ${alias}.embedded_text_hash = md5(${alias}.chunk_text)
               AND vector_dims(${alias}.${colId}) = $${dimsParam}::int, false)`;
 }
@@ -96,8 +107,7 @@ export function falseStampPageWhere(colId: string, signatureParam = 1, modelPara
         AND EXISTS (
           SELECT 1 FROM content_chunks c
            WHERE c.page_id = p.id AND c.${colId} IS NOT NULL
-             AND c.model IS NOT NULL AND c.model <> $${modelParam}
-             AND c.model <> substr($${modelParam}, strpos($${modelParam}, ':') + 1)
+             AND c.model IS NOT NULL AND NOT ${chunkModelMatchesSql('c.model', `$${modelParam}`, `vector_dims(c.${colId})::text = regexp_replace($${signatureParam}::text, '^.*:', '')`)}
         )`;
 }
 
