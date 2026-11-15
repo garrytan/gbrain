@@ -6,8 +6,8 @@
  *
  * Before a release dates the row, the test adds it to the loaded table for the duration of the file (dated at the
  * newest disclosed release, so the notice id is unchanged) and removes it afterwards; once a release has dated it, the
- * table already holds it and the test adds nothing. The release also folds the changelog fragment into CHANGELOG.md,
- * so the marker is read from whichever of the two holds it.
+ * table already holds it and the test adds nothing. The marker is read from CHANGELOG.md, where v0.60.726.0 folded the
+ * changelog fragment.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -61,12 +61,7 @@ describe('the conversation archive upgrade notice', () => {
     expect(text.length).toBeLessThanOrEqual(2000);
     expect(text).not.toContain('\n');
     for (const phrase of ['gbrain transcripts archive off', 'conversations', 'gbrain embed --held --dry-run', 'keyless', 'gbrain transcripts archive on']) expect(text).toContain(phrase);
-    let entry: string;
-    try {
-      entry = readFileSync(join(ROOT, 'changelog.d', 'transcript-archive-default.md'), 'utf8');
-    } catch {
-      entry = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-    }
+    const entry = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
     expect(entry).toContain('<!-- behavior-change: ' + ID + ' -->');
   });
 

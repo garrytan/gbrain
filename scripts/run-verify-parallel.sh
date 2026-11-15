@@ -113,6 +113,8 @@ CHECKS=(
   "check:resolver"
   "check:privacy"
   "check:test-names"
+  # A test that opens a changelog.d fragment by name breaks on the release commit.
+  "check:test-fragment-reads"
   "check:test-isolation"
   # D7: a test that gates execution on a GBRAIN_* opt-in the operator-env
   # preload strips is a silent skip; TS AST scan, ~2s.
