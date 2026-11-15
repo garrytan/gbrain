@@ -31,6 +31,8 @@ import { WakeshiftError, type WakeshiftApi } from './client.ts';
 import { wakeshiftRuntime, type WakeshiftRuntime } from './config.ts';
 import { CRON_FINISHED, JOB_FINISHED, WRITE_SETTLED, cronMarker, cronWake, jobMarker, jobWake, wakeEmitId, writeMarker, writeWake, type JobSnapshot, type WriteSnapshot } from './events.ts';
 import { operatorTerms, termsAccepted, type OperatorTerms } from './terms.ts';
+import { ingestCronSpool } from './spool.ts';
+import { managedFilesystemDatastorePath } from '../persistence/filesystem-guard.ts';
 
 export const WAKE_RETRY_SCHEDULE_S = [30, 120, 480, 1800] as const;
 export const WAKE_MAX_ATTEMPTS = 5;
@@ -184,10 +186,16 @@ function wakeFor(row: WakeRow): { marker: string; args: Record<string, unknown>;
   return { marker: jobMarker(job), args: { job: Number(row.target) }, ...jobWake(Number(row.target), job) };
 }
 
-/** Queue a Wakeshift forget for a revoked credential's own user (a member's user is forgotten when the member is removed, forget.ts). */
+/**
+ * Queue a Wakeshift forget for a revoked credential's own user, or for a removed member's user: removal queues it
+ * (forget.ts), and this catches a removal whose queueing failed. A revoked credential of a member who is still live
+ * queues nothing, since the member's user outlives that credential.
+ */
 async function queueForget(engine: BrainEngine, row: WakeRow): Promise<void> {
-  if (row.member_id || row.principal_kind === 'local_stdio') return;
-  await engine.executeRaw(`INSERT INTO wake_forgets (wake_user) VALUES ($1) ON CONFLICT (wake_user) WHERE state = 'pending' DO NOTHING`, [row.wake_user]);
+  if (!row.member_id && row.principal_kind === 'local_stdio') return;
+  await engine.executeRaw(`INSERT INTO wake_forgets (wake_user) SELECT $1
+      WHERE $2::text IS NULL OR NOT EXISTS (SELECT 1 FROM access_members WHERE id = $2 AND tombstoned_at IS NULL)
+      ON CONFLICT (wake_user) WHERE state = 'pending' DO NOTHING`, [row.wake_user, row.member_id]);
 }
 
 async function deliver(engine: BrainEngine, api: WakeshiftApi, row: WakeRow, report: DrainReport, terms: { shared: boolean; current: OperatorTerms | null }): Promise<void> {
@@ -268,7 +276,8 @@ async function drainForgets(engine: BrainEngine, api: WakeshiftApi, report: Drai
 }
 
 /**
- * One reconciliation pass: ends expired watches, sends queued forgets, then delivers up to 20 due watches (only `ids`
+ * One reconciliation pass: ends expired watches, records cron runs spooled while the PGLite brain was held
+ * (spool.ts), sends queued forgets, then delivers up to 20 due watches (only `ids`
  * when given). Returns `skipped: 'off'` without a query when reporting back is off or keyless. `runtime` is the
  * caller's (the watch tools) or a test seam.
  */
@@ -282,9 +291,11 @@ export async function drainWakes(engine: BrainEngine, opts: { ids?: number[]; ru
     `UPDATE wake_subscriptions SET state = 'ended', last_error = 'expired', updated_at = now()
       WHERE state = 'open' AND expires_at < now() RETURNING id, wake_user, ws_subscription_id`);
   report.ended += expired.length;
+  let failure: unknown = null;
+  const datastore = opts.ids === undefined ? managedFilesystemDatastorePath(engine) : undefined;
+  if (datastore) await ingestCronSpool(engine, datastore).catch(e => { failure = e; });
   if (opts.ids === undefined) await drainForgets(engine, api, report);
   const rows = await engine.executeRaw<WakeRow>(CANDIDATES_SQL(opts.ids !== undefined), opts.ids !== undefined ? [opts.ids] : []);
-  let failure: unknown = null;
   for (const row of rows) {
     try { await deliver(engine, api, row, report, terms); } catch (e) { failure ??= e; }
   }

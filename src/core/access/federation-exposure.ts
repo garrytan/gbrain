@@ -17,6 +17,7 @@
 import { shellQuote } from '../agent-output.ts';
 import type { BrainEngine } from '../engine.ts';
 import { privacyPartSql, remotePrivacyRelaxed } from '../search/private-visibility.ts';
+import { hintReaders } from './owner.ts';
 
 export interface PagesExposed {
   count: number;
@@ -49,7 +50,7 @@ export async function remotePagesFederationExposes(engine: BrainEngine, sourceId
     examples: rows.map(r => ({ slug: r.slug, member: r.member })),
     check: shellQuote(['gbrain', 'access', 'who-can-read', first.slug, '--source', sourceId]),
     restrict: bound
-      ? shellQuote(['gbrain', 'access', 'rule', 'add', '--prefix', bound.slug.slice(0, bound.slug.lastIndexOf('/') + 1), '--readers', bound.member!, '--source', sourceId])
+      ? shellQuote(['gbrain', 'access', 'rule', 'add', '--prefix', bound.slug.slice(0, bound.slug.lastIndexOf('/') + 1), '--readers', await hintReaders(engine, [bound.member!]), '--source', sourceId])
       : `gbrain access rule add --prefix <folder/> --readers <member> --source ${shellQuote([sourceId])}`,
   };
 }

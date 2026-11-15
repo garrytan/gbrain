@@ -28,7 +28,7 @@
  * Docs: docs/RELEASING.md#master-red-issues, docs/ci-red-runbook.md#ci-issue-labels.
  */
 import {
-  commentIssue, createIssue, ensureLabel, getIssue, inert, inertBlock, jsonBlock, linkedPulls, listLabeled, readJsonBlock, updateIssue,
+  AGENT_FILED_LABEL, commentIssue, createIssue, ensureLabel, getIssue, inert, inertBlock, jsonBlock, linkedPulls, listLabeled, readJsonBlock, updateIssue,
   type GitHubClient, type Issue,
 } from './gh-issue.ts';
 import { collectEvidence, EXEMPTION_DAYS, EXEMPTION_MARKER, exemptionRows, plusDays, reproduceCommand, stressBackend, verdictOf, workflowFile, type EvidenceOptions, type FailedJob, type FailedTest, type RunEvidence, type RunInfo } from './ci-run.ts';
@@ -520,7 +520,7 @@ async function writePlan(client: GitHubClient, repo: string, plan: MasterRedPlan
       step.issue = (await createIssue(client, plan.title, renderMasterRed(step.state, repo), [MR_LABEL])).number;
       const older = step.action === 'create' && (await listLabeled(client, MR_LABEL, 'open')).filter(i => i.title === plan.title && i.number < step.issue!).sort((a, b) => a.number - b.number)[0];
       if (older) {
-        await updateIssue(client, step.issue, { body: `Duplicate of #${older.number}: two watches created this incident at the same time; #${older.number} carries the state. Nothing to do here.`, state: 'closed', labels: [] });
+        await updateIssue(client, step.issue, { body: `Duplicate of #${older.number}: two watches created this incident at the same time; #${older.number} carries the state. Nothing to do here.`, state: 'closed', labels: [AGENT_FILED_LABEL] });
         throw new CreateRace(`#${step.issue} duplicated #${older.number}`);
       }
     }

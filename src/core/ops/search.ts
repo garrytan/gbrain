@@ -50,7 +50,7 @@ import { SAFE_FENCE_CHUNKER_VERSION, chunkManifestReads } from '../search/safe-c
 import { expandEngineTypeFilters } from '../schema-pack/query-types.ts';
 import { reconcileTypeFilter } from './search-type-filter.ts';
 import { probeProjectionReadiness } from '../search/projection-readiness.ts';
-import { countEmbeddingHeld, countPendingProjections, coverageRelevance, type RetrievalCoverage } from '../search/retrieval-coverage.ts';
+import { countEmbeddingHeld, countPendingProjections, countProjectionRebuild, coverageRelevance, type RetrievalCoverage } from '../search/retrieval-coverage.ts';
 import { resolveBoostMap, resolveHardExcludes } from '../search/source-boost.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
 import { QUERY_DESCRIPTION, SEARCH_DESCRIPTION, SEARCH_MATCH_DESCRIPTION } from '../operations-descriptions.ts';
@@ -420,10 +420,11 @@ async function buildRetrievalResponseMeta(
   const readinessScope = { ...scope, excludePrivate, types: opts.types, excludeSlugPrefixes };
   // #6721: these reads depend on nothing but the inputs above, so they run at once: on a pooled Postgres
   // the wall time is the slowest read's round trips, not their sum. The answer-feedback write still runs last.
-  const [safeIndexPending, [readiness, pendingCount], entityFacts, matched, held, sourceFreshness, embeddingHeld, filterNotice] = await Promise.all([
+  const [safeIndexPending, [readiness, pendingCount, rebuild], entityFacts, matched, held, sourceFreshness, embeddingHeld, filterNotice] = await Promise.all([
     timed('safe_index', ctx.remote !== false && hasUnsealedPagesInScope(ctx, scope, excludePrivate, { types: opts.types, excludeSlugPrefixes })),
-    timed('readiness', probeProjectionReadiness(ctx.engine, readinessScope).then(async r =>
-      [r, r.status === 'projection_pending' ? await countPendingProjections(ctx.engine, readinessScope, relevance) : null] as const)),
+    timed('readiness', probeProjectionReadiness(ctx.engine, readinessScope).then(async r => r.status === 'projection_pending'
+      ? [r, ...await Promise.all([countPendingProjections(ctx.engine, readinessScope, relevance), countProjectionRebuild(ctx.engine, readinessScope)])] as const
+      : [r, null, null] as const)),
     // Facts saved about the entity the query names come first (newest first, one hop through entities they name).
     timed('entity_facts', opts.entity && ctx.emitResponseMeta ? entitySavedFacts(ctx.engine, opts.entity, { remote: ctx.remote !== false, excludePrivate, minTrust: scope.minTrust }) : []),
     timed('saved_facts', matchingSavedFacts(ctx, scope, queryText, aliases.flatMap(a => [a.name, a.alias]))),
@@ -486,6 +487,7 @@ async function buildRetrievalResponseMeta(
       ...(embedding ? { embedding_held: embedding.could_affect } : {}) },
     ...(pending?.capped || embedding?.capped ? { capped: true as const } : {}),
     ...(topHitExact ? { top_hit_exact: true as const } : {}),
+    ...(pending && rebuild ? { rebuild } : {}),
   } : undefined;
   const heldNotice = heldFilesNotice(held.couldAffect === 0 ? [] : heldFiles, ctx.remote !== false, held.couldAffect ?? undefined,
     embedding?.could_affect ? embedding : undefined);

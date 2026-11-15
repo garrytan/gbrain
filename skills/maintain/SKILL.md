@@ -266,9 +266,13 @@ in `dream.synthesize.last_completion_ts` and is written only when every child
 completed and nothing was deferred (synthesis budget, triage time budget or
 publish pending), never on skipped or failed runs. So under a standing
 backlog the cooldown never applies and synthesize runs every cycle until the
-backlog drains (#6753); it is not a cap of ~2 runs a day. To cap spend, use
+backlog drains (#6753); it is not a cap of ~2 runs a day. The same setting
+also holds a growing transcript: one whose earlier version was synthesized
+within `dream.synthesize.cooldown_hours` is skipped as `resynthesis_cooldown`
+until that window passes, so it is re-synthesized at most about twice a day.
+To cap spend, use
 `dream.synthesize.max_submissions_per_source_per_day`. Explicit `--input` /
-`--date` / `--from` / `--to` invocations bypass cooldown.
+`--date` / `--from` / `--to` invocations bypass cooldown and the hold.
 
 **`--dry-run` semantics:** runs the scored triage pass (judges + caches
 verdicts for new files) but skips the synthesis subagents. NOT zero LLM

@@ -31,6 +31,7 @@ import { catalogFile } from '../src/core/skills/resolver/paths.ts';
 import { appendDailyLog, appendDailyLogSync, DAILY_LOG_DAY_CAP_BYTES, dailyLogFile, LANE_LOG, readRecentDailyLog, RESOLVER_LOG } from '../src/core/skills/resolver/daily-log.ts';
 import { EXCLUDE_MAX, STAT_CHECK_SLICE } from '../src/core/skills/resolver/resolve.ts';
 import { RACY_MTIME_MS } from '../src/core/skills/resolver/build.ts';
+import { TOP_GATE_DEFAULT } from '../src/core/skills/resolver/limits.ts';
 
 const scratch: string[] = [];
 afterAll(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
@@ -93,7 +94,7 @@ describe('turn rules', () => {
       { id: 'x:delta', name: 'delta', description: 'Other work', body: 'Step one: check the zorvek dashboard.' },
       { id: 'x:zorvek', name: 'zorvek', description: 'Other work' },
     ]);
-    const r = await resolveSkills({ message: 'zorvek', top_k: 8 }, { home });
+    const r = await resolveSkills({ message: 'zorvek', top_k: 8, top_gate: 0 }, { home });
     const by = Object.fromEntries(r.output.suggestions.map(s => [s.id, s.match_strength]));
     expect(by).toEqual({ 'x:zorvek': 'name', 'x:beta': 'triggers', 'x:gamma': 'routing', 'x:alpha': 'description', 'x:delta': 'body' });
     const named = await resolveSkills({ message: 'use the delta skill for zorvek' }, { home });
@@ -106,9 +107,9 @@ describe('turn rules', () => {
       ...Array.from({ length: 6 }, (_, i) => ({ id: `x:desc-${i}`, name: `desc-${i}`, description: `Rotate the zorvek keys, part ${i}`, triggers: ['unrelated chore'] })),
       { id: 'x:route', name: 'route', description: 'Other work', routing: ['zorvek'] },
     ]);
-    const all = await resolveSkills({ message: 'rotate the zorvek keys', top_k: 2 }, { home });
+    const all = await resolveSkills({ message: 'rotate the zorvek keys', top_k: 2, top_gate: 0 }, { home });
     expect(all.output.suggestions.map(s => s.match_strength)).toEqual(['description', 'description']);
-    const floored = await resolveSkills({ message: 'rotate the zorvek keys', top_k: 2, min_match_strength: 'routing', session_id: 'f' }, { home });
+    const floored = await resolveSkills({ message: 'rotate the zorvek keys', top_k: 2, min_match_strength: 'routing', session_id: 'f', top_gate: 0 }, { home });
     expect(floored.output.suggestions.map(s => [s.id, s.match_strength])).toEqual([['x:route', 'routing']]);
     expect(floored.pending!.delta.suggested).toEqual(['x:route']);
     const strict = await resolveSkills({ message: 'rotate the zorvek keys', min_match_strength: 'name' }, { home });
@@ -117,7 +118,7 @@ describe('turn rules', () => {
     expect(named.output.suggestions.map(s => s.id)).toEqual(['x:desc-3']);
   });
 
-  test('top_gate empties the block when the best skill scores below it over its catalog maxIdf; off by default and at 0, a named skill bypasses it, nothing gated is committed', async () => {
+  test('top_gate empties the block when the best skill scores below it over its catalog maxIdf; off at 0, a named skill bypasses it, nothing gated is committed', async () => {
     const home = tmp();
     await jsonCatalog(home, 'c', BASIC);
     const open = await resolveSkills({ message: 'team status', session_id: 'g' }, { home });
@@ -130,6 +131,24 @@ describe('turn rules', () => {
     expect((await resolveSkills({ message: 'team status', top_gate: 0 }, { home })).output.suggestions).toEqual((await resolveSkills({ message: 'team status' }, { home })).output.suggestions);
     const named = await resolveSkills({ message: 'use the deploy skill', top_gate: 100 }, { home });
     expect(named.output.suggestions[0]).toMatchObject({ id: 'gbrain:deploy', match_strength: 'named' });
+  });
+
+  test('the gate is on by default: a turn whose best skill only matches weakly gets no block (weak_top_match), top_gate 0 turns it off, a named skill still bypasses it', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', [
+      { id: 'x:dinner-split', name: 'dinner-split', description: 'Split a restaurant bill between friends' },
+      { id: 'x:release-notes', name: 'release-notes', description: 'Write release notes for a software version', body: 'Collect the merged changes. Each person on the team reviews the draft before it ships.' },
+      { id: 'x:deploy', name: 'deploy', description: 'Deploy the service to staging and production', body: 'Run each step in order. Ask the person who owns the service before production.' },
+    ]);
+    const weak = 'how much does each person owe';
+    const off = await resolveSkills({ message: weak, top_gate: 0 }, { home });
+    expect(off.output.suggestions.length).toBeGreaterThan(0);
+    expect(off.output.suggestions[0]!.score / maxIdf(3)).toBeLessThan(TOP_GATE_DEFAULT);
+    const gated = await resolveSkills({ message: weak, session_id: 'd' }, { home });
+    expect([gated.output.block, gated.output.suggestions, gated.output.block_reason, gated.output.no_skill]).toEqual(['', [], 'weak_top_match', false]);
+    expect(gated.pending!.delta.suggested).toEqual([]);
+    expect((await resolveSkills({ message: 'split the restaurant bill' }, { home })).output.suggestions[0]!.id).toBe('x:dinner-split');
+    expect((await resolveSkills({ message: 'how much does each person owe with the deploy skill' }, { home })).output.suggestions[0]).toMatchObject({ id: 'x:deploy', match_strength: 'named' });
   });
 
   test('top_gate reads the best skill the block would show: an excluded top skill does not open it, and an empty window stays filtered', async () => {
@@ -197,7 +216,7 @@ describe('turn rules', () => {
     const skills = Array.from({ length: 1100 }, (_, i) => ({ id: `x:s${i}`, name: `s${i}`, description: `Rotate the zorvek keys step ${i}` }));
     await jsonCatalog(home, 'c', skills);
     const exclude = skills.slice(0, EXCLUDE_MAX).map(s => s.id);
-    const r = await resolveSkills({ message: 'rotate zorvek keys', exclude, top_k: 3 }, { home });
+    const r = await resolveSkills({ message: 'rotate zorvek keys', exclude, top_k: 3, top_gate: 0 }, { home });
     expect(r.output.suggestions).toHaveLength(3);
     for (const s of r.output.suggestions) expect(exclude).not.toContain(s.id);
   });
@@ -220,10 +239,10 @@ describe('turn rules', () => {
     expect(cjk.output.suggestions[0]!.id).toBe('x:minutes');
   });
 
-  test('a weak match is still suggested: there is no score threshold', async () => {
+  test('with the gate off (top_gate 0), a weak match is still suggested: the ranker itself has no score threshold', async () => {
     const home = tmp();
     await jsonCatalog(home, 'c', BASIC);
-    const r = await resolveSkills({ message: 'something about a team offsite and nothing else' }, { home });
+    const r = await resolveSkills({ message: 'something about a team offsite and nothing else', top_gate: 0 }, { home });
     expect(r.output.no_skill).toBe(false);
     expect(r.output.suggestions.map(s => s.id)).toEqual(['gbrain:reports']);
     expect(r.output.suggestions[0]!.reason).toBe('description: team');
@@ -330,7 +349,7 @@ describe('sessions', () => {
     for (let t = 1; t <= 50; t++) {
       const s = strong.indexOf(t);
       const message = s >= 0 ? `can you ${targets[s]!.name} this` : `${pool[t % 12]} ${pool[(t + 5) % 12]}`;
-      const r = await resolveSkills({ message, session_id: 'fifty' }, { home });
+      const r = await resolveSkills({ message, session_id: 'fifty', top_gate: 0 }, { home });
       perTurn.push({ turn: t, n: r.output.suggestions.length, tokens: r.output.block_tokens });
       expect(await r.commit()).toBe(true);
     }
@@ -550,12 +569,12 @@ describe('block', () => {
     await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
     const lines: Record<string, string> = { 'claude-code': 'Skill tool', 'codex': 'open the SKILL.md at its path', 'hermes': 'skill_view(name)', 'openclaw': 'skills_read({name}) using its name', 'qm': 'action read', 'pi': 'read the SKILL.md at its path', 'cursor': 'read the SKILL.md at its path' };
     for (const [h, needle] of Object.entries(lines)) {
-      const r = await resolveSkills({ message: 'deploy acme-example-secret-words', harness: h }, { home });
+      const r = await resolveSkills({ message: 'deploy acme-example-secret-words', harness: h, top_gate: 0 }, { home });
       expect(r.output.block).toContain(needle);
       expect(r.output.block).not.toContain('acme-example-secret-words');
       expect(r.output.block.includes(JSON.stringify(p))).toBe(['codex', 'openclaw', 'pi', 'cursor'].includes(h));
     }
-    const custom = await resolveSkills({ message: 'deploy' }, { home, loadHint: 'Load it with my_loader <now>' });
+    const custom = await resolveSkills({ message: 'deploy', top_gate: 0 }, { home, loadHint: 'Load it with my_loader <now>' });
     expect(custom.output.block).toContain('Load it with my_loader  now');
     expect(custom.output.suggestions[0]!.path).toBe(p);
   });
@@ -625,7 +644,7 @@ describe('block', () => {
       skillDir(root, `${plugin}/skills/deploy`, { name: 'deploy', description: `Deploy with ${plugin}` });
     }
     await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
-    const r = await resolveSkills({ message: 'deploy', harness: 'hermes' }, { home });
+    const r = await resolveSkills({ message: 'deploy', harness: 'hermes', top_gate: 0 }, { home });
     expect(r.output.suggestions.map(s => [s.id, s.name]).sort()).toEqual([['alpha-example:deploy', 'deploy'], ['beta-example:deploy', 'deploy']]);
     expect(r.output.block).toContain('id: "alpha-example:deploy"');
     expect(r.output.block).toContain('id: "beta-example:deploy"');
@@ -685,7 +704,7 @@ describe('catalog sources and bounds', () => {
     expect(Buffer.byteLength(snap)).toBeLessThan(2 * 1024 * 1024);
     expect((JSON.parse(snap) as { body: string }[])[0]!.body.length).toBeLessThanOrEqual(4096);
     expect((await catalogStatus('full', { home })).fresh).toBe(true);
-    expect((await resolveSkills({ message: 'zebrafinch' }, { home, catalogs: ['full'] })).output.suggestions[0]?.id).toBe('s7');
+    expect((await resolveSkills({ message: 'zebrafinch', top_gate: 0 }, { home, catalogs: ['full'] })).output.suggestions[0]?.id).toBe('s7');
   });
 
   test('a JSON catalog over 8 MB stays fresh when a 4 KB cut ends on whitespace or a body opens with two frontmatter blocks', async () => {
