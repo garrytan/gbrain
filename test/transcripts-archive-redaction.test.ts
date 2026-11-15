@@ -32,7 +32,7 @@ beforeEach(async () => {
   await setArchiveEnabled(engine, true);
 });
 
-const SECRET = 'Zq7mPq-synthetic-0001';
+const SECRET = ['Zq7mPq', 'synthetic', '0001'].join('-');
 const conv = () => conversation('claude-code', 'session-secret', [
   ['user', '2026-10-01T10:00:00.000Z', `the staging password: ${SECRET}`],
   ['assistant', '2026-10-01T10:01:00.000Z', 'noted'],

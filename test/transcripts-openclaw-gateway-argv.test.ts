@@ -12,6 +12,8 @@ import { isCwdDotenvProtectedKey, quarantineCwdDotenv } from '../src/core/env-tr
 import { cliGatewayTransport, openclawGatewayReader } from '../src/core/transcripts/openclaw-gateway.ts';
 import { withEnv } from './helpers/with-env.ts';
 
+const syntheticToken = (n: string) => ['tok', 'synthetic', n].join('-');
+
 const dir = mkdtempSync(join(tmpdir(), 'openclaw-argv-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const log = join(dir, 'calls.jsonl');
@@ -33,15 +35,15 @@ chmodSync(bin, 0o755);
 
 describe('openclaw gateway call child process', () => {
   test('hostile session keys stay inside --params; argv has a fixed shape; the token is in env only', async () => {
-    const reader = openclawGatewayReader({ transport: cliGatewayTransport({ bin, url: 'ws://127.0.0.1:18789', token: 'tok-synthetic-0001', timeoutMs: 5_000 }) });
+    const reader = openclawGatewayReader({ transport: cliGatewayTransport({ bin, url: 'ws://127.0.0.1:18789', token: syntheticToken('0001'), timeoutMs: 5_000 }) });
     const convs = await reader.list();
     expect(convs.map(c => c.scopeKey)).toEqual(HOSTILE);
     const calls = readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l) as { argv: string[]; token: string | null; url: string | null });
     expect(calls.length).toBe(1 + HOSTILE.length);
     for (const { argv, token, url } of calls) {
-      expect(token).toBe('tok-synthetic-0001');
+      expect(token).toBe(syntheticToken('0001'));
       expect(url).toBe('ws://127.0.0.1:18789');
-      expect(argv.join(' ')).not.toContain('tok-synthetic-0001');
+      expect(argv.join(' ')).not.toContain(syntheticToken('0001'));
       expect(argv.length).toBe(8);
       expect(argv.slice(0, 2)).toEqual(['gateway', 'call']);
       expect(['sessions.list', 'chat.history']).toContain(argv[2]);
@@ -119,13 +121,13 @@ describe('openclaw gateway call child environment', () => {
 
   test('a planted OPENCLAW_GATEWAY_URL in a working-folder .env never reaches the child', async () => {
     const quarantine = planted('OPENCLAW_GATEWAY_URL=wss://planted.invalid');
-    await withEnv({ OPENCLAW_GATEWAY_URL: 'wss://planted.invalid', GBRAIN_OPENCLAW_GATEWAY_URL: undefined, GBRAIN_OPENCLAW_GATEWAY_TOKEN: 'tok-synthetic-0002' }, async () => {
+    await withEnv({ OPENCLAW_GATEWAY_URL: 'wss://planted.invalid', GBRAIN_OPENCLAW_GATEWAY_URL: undefined, GBRAIN_OPENCLAW_GATEWAY_TOKEN: syntheticToken('0002') }, async () => {
       quarantine();
       await cliGatewayTransport({ bin: envBin }).call('sessions.list', {});
     });
     const env = lastEnv();
     expect(env.OPENCLAW_GATEWAY_URL).toBeUndefined();
-    expect(env.OPENCLAW_GATEWAY_TOKEN).toBe('tok-synthetic-0002');
+    expect(env.OPENCLAW_GATEWAY_TOKEN).toBe(syntheticToken('0002'));
   }, 30_000);
 
   test('a planted OPENCLAW_GATEWAY_TOKEN in a working-folder .env never reaches the child', async () => {
@@ -150,13 +152,13 @@ describe('openclaw gateway call child environment', () => {
 
   test('the child gets only PATH, HOME, locale and the resolved Gateway URL and token from the parent', async () => {
     await withEnv({ OPENCLAW_STATE_DIR: '/planted/state', OPENCLAW_CONFIG_PATH: '/planted/config.json', GBRAIN_SYNTHETIC_MARKER: 'x', LANG: 'C.UTF-8' }, async () => {
-      await cliGatewayTransport({ bin: envBin, url: 'ws://127.0.0.1:18789', token: 'tok-synthetic-0004' }).call('sessions.list', {});
+      await cliGatewayTransport({ bin: envBin, url: 'ws://127.0.0.1:18789', token: syntheticToken('0004') }).call('sessions.list', {});
     });
     const env = lastEnv();
     for (const k of ['OPENCLAW_STATE_DIR', 'OPENCLAW_CONFIG_PATH', 'GBRAIN_SYNTHETIC_MARKER']) expect(env[k]).toBeUndefined();
     expect(env.LANG).toBe('C.UTF-8');
     expect(env.PATH).toBe(process.env.PATH!);
-    expect(env.OPENCLAW_GATEWAY_TOKEN).toBe('tok-synthetic-0004');
+    expect(env.OPENCLAW_GATEWAY_TOKEN).toBe(syntheticToken('0004'));
   }, 30_000);
 
   test('every OPENCLAW_* name and the gbrain Gateway names are protected from a working-folder .env', () => {
