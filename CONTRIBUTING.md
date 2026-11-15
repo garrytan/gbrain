@@ -837,6 +837,10 @@ A limit of 3 open pull requests applies only to someone whose recent pull
 requests have mostly been closed without being taken. It never applies to
 anyone who has had a pull request taken (merged or rebuilt) in the last 90 days.
 
+Every outside issue gets a first reply from us within 48 hours. A bug report
+we could not reproduce gets one follow-up question after 60 days, and is
+closed two weeks after that if nobody answers.
+
 The same three things make a bug report easy to act on. To see what the
 community has reported, without the issues our own agents and CI file, use the
 [community issues](https://github.com/garrytan/gbrain/issues?q=is%3Aissue%20is%3Aopen%20-label%3Aagent-filed)
