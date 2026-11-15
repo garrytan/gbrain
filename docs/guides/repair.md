@@ -4389,6 +4389,8 @@ re-screen, which the next sync consumes once it imports or holds the file; docto
 [hold](#held-files). `slug_taken` (the path slug belongs to another page) and `deleted_page`
 (the page was deleted while the file stayed committed) are never scheduled:
 rename one of the two files, or delete the file or restore the page.
+A committed symlink whose target does not exist is skipped by sync, so it is
+never reported as unindexed.
 `metafile_skipped` (never scheduled) lists titled scaffolding files sync skips
 on purpose (`index.md`, `README.md`, ...) under `sync.metafile_pages off`; under
 the default `typed` a nested titled one is an ordinary unindexed file. To keep

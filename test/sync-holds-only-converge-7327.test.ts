@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { SyncResult } from '../src/commands/sync.ts';
@@ -42,7 +43,9 @@ for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
   test(`#7327 [${backend}]: a re-screen of held symlinks cut short by deadlines resumes, converges with its holds, and shows progress`, () => managedBrain(async ({ engine, root }) => {
     mkdirSync(join(root, 'linked'));
-    for (let i = 0; i < N; i++) symlinkSync(`/nonexistent-other-checkout/x${i}.md`, join(root, `linked/s${i}.md`));
+    // GST-2515: links into a checkout outside this source (present on this host); a link to nothing is skipped, not held.
+    const other = mkdtempSync(join(tmpdir(), 'gbrain-7327-other-'));
+    for (let i = 0; i < N; i++) { writeFileSync(join(other, `x${i}.md`), `---\ntype: concept\ntitle: X${i}\n---\n\nOther ${i}.\n`); symlinkSync(join(other, `x${i}.md`), join(root, `linked/s${i}.md`)); }
     git(root, 'add', '-A'); git(root, 'commit', '-qm', 'symlinks');
     expect((await pass(engine)).result.status).toBe('first_sync');
     expect(await holdCount(engine)).toBe(N);
@@ -67,6 +70,7 @@ for (const backend of testBackends()) {
     expect(await readGitHoldRetryPaths(engine, 'default', (await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id='default'"))[0]!.incarnation)).toEqual([]);
     expect(await holdCount(engine)).toBe(N);
     expect((await pass(engine)).result.status).toBe('up_to_date');
+    rmSync(other, { recursive: true, force: true });
   }, { databaseUrl, setup: ({ root }) => {
     mkdirSync(join(root, 'notes')); git(root, 'init', '-q');
     writeFileSync(join(root, 'notes/a.md'), '---\ntype: concept\ntitle: A\n---\n\nAn observation about acme-example.\n');

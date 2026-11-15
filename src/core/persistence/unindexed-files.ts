@@ -59,6 +59,7 @@ import { loadSyncEligibility, resolveManagedSyncContext, syncExcludePatterns, sy
 import { heldGitPaths, readGitHoldRetryPaths, requestGitHoldRetry } from './sync-holds.ts';
 import { readBlobContents, type TreeBlob } from './sync-blobs.ts';
 import { isWindowsColonTarget } from './native-file-target.ts';
+import { danglingLink } from './sync-entry-fault.ts';
 import { createHash } from 'node:crypto';
 
 export const UNINDEXED_FILES_OP = 'unindexed-files';
@@ -235,7 +236,9 @@ export async function findUnindexedFiles(engine: BrainEngine, sourceId: string, 
         'SELECT source_path, slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path = ANY($2::text[])', [sourceId, origins]);
       const byOrigin = new Map(pages.map(page => [page.source_path, page.slug]));
       const held = await heldGitPaths(engine, sourceId, incarnation, rows.map(row => row.root));
-      const missing = rows.filter(row => !byOrigin.has(row.origin) && !(row.legacy && byOrigin.get(row.legacy) === resolveSlugForPath(row.root)) && !held.has(row.root));
+      // GBRA-542: a committed symlink whose target does not exist is skipped by sync on every pass, so it is not unindexed either.
+      const missing = rows.filter(row => !byOrigin.has(row.origin) && !(row.legacy && byOrigin.get(row.legacy) === resolveSlugForPath(row.root)) && !held.has(row.root)
+        && !(row.mode === SYMLINK_MODE && danglingLink(gitRoot, row.path)));
       const fresh = missing.filter(row => {
         if (!retry.has(row.root)) return true;
         scan.scheduled++;

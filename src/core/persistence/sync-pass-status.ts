@@ -8,7 +8,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import type { SyncAdmissionStatus } from './sync-admission.ts';
 import { digest } from './digest.ts';
-import { fileDriftSide, type GitHoldRecord } from './sync-holds.ts';
+import { fileDriftSide, GIT_HOLD_OP, type GitHoldRecord } from './sync-holds.ts';
 import { readDeletesWithheld, type DeletesWithheld } from './sync-markers.ts';
 import { ABANDONED_QUIET_MS, ABANDONED_REPORT_STREAK, MANAGED_SYNC_PASS_OP, NOT_CONVERGED_REPORT_STREAK, passHealth, passReadClock, transientEnding, type PassRoundSummary,
   type PassRow } from './sync-pass-row.ts';
@@ -70,6 +70,19 @@ export async function passConvergence(engine: Pick<BrainEngine, 'executeRaw'>, i
     duration_ms: t.duration_ms, timings_ms: t.timings_ms, last_full_at: o.converged?.last_full_at ?? null };
 }
 
+/**
+ * GBRA-542: whether a pass committed work: a sync write it admitted committed, or it held a path it had not held before. Read
+ * from durable rows, never from the pass row's heartbeat, so a pass that only reported progress is not counted.
+ */
+export async function passBanked(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, incarnation: string, telemetry: { pass_id: string; started_at: string }): Promise<boolean> {
+  const [row] = await engine.executeRaw<{ banked: boolean }>(`SELECT EXISTS (SELECT 1 FROM persistence_requests r JOIN persistence_source_bindings b ON b.worktree_id=r.worktree_id
+      WHERE b.source_id=$1 AND b.source_incarnation::text=$6 AND r.source_incarnation=b.source_incarnation AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
+        AND r.completed_at >= $5::timestamptz AND r.intent->>'passId'=$2)
+    OR EXISTS (SELECT 1 FROM op_checkpoints WHERE op=$3 AND left(fingerprint, length($4))=$4 AND completed_keys->0->>'run_id'=$2 AND (completed_keys->0->>'held_at')::timestamptz >= $5::timestamptz) AS banked`,
+    [sourceId, telemetry.pass_id, GIT_HOLD_OP, `${sourceId}:${incarnation}:`, telemetry.started_at, incarnation]);
+  return row?.banked === true;
+}
+
 export type PassStatusReason = 'pass_unfinished' | 'pass_interrupted' | 'pass_abandoned' | 'not_converged' | 'settle_mismatch' | 'deletes_withheld' | 'selection_scoped' | 'admission_paused' | 'writeback_failed';
 
 /**
@@ -80,9 +93,11 @@ export type PassStatusReason = 'pass_unfinished' | 'pass_interrupted' | 'pass_ab
  * streak counts again once that holder stops renewing.
  * #7982: a pass that ended on a transient stop counts itself, so passes that hit the same statement timeout every time build the
  * streak too. `now` is the database clock at the row's read (`passReadClock`), never only this process's.
+ * GBRA-542: a pass that committed work (`banked`, from `passBanked`) moved the source whatever stopped it, so it resets the streak.
  */
-export function abandonedPasses(row: PassRow, now = passReadClock(row), interrupted?: boolean): number {
+export function abandonedPasses(row: PassRow, now = passReadClock(row), interrupted?: boolean, banked?: boolean): number {
   const t = row.value.telemetry, streak = row.value.obligations.abandoned_streak ?? 0;
+  if (banked) return 0;
   if (transientEnding(t)) return streak + 1;
   if (t.outcome !== 'open' || interrupted === false) return 0;
   return streak + ((interrupted ?? now - Date.parse(row.updated_at) >= ABANDONED_QUIET_MS) ? 1 : 0);
@@ -94,9 +109,9 @@ export function abandonedPasses(row: PassRow, now = passReadClock(row), interrup
  * #7596 `interrupted`: no process holds the source's drain lease (`readDrainLease`), so an open pass is one whose process
  * stopped without ending it (killed or crashed), not one still running: `pass_interrupted`.
  */
-export function passStatusState(row: PassRow, withheld: DeletesWithheld | null, writebackFailed: string | null = null, now = passReadClock(row), interrupted?: boolean): ['synced' | 'resumable' | 'blocked', PassStatusReason] | null {
+export function passStatusState(row: PassRow, withheld: DeletesWithheld | null, writebackFailed: string | null = null, now = passReadClock(row), interrupted?: boolean, banked?: boolean): ['synced' | 'resumable' | 'blocked', PassStatusReason] | null {
   const t = row.value.telemetry;
-  if (abandonedPasses(row, now, interrupted) >= ABANDONED_REPORT_STREAK) return ['blocked', 'pass_abandoned'];
+  if (abandonedPasses(row, now, interrupted, banked) >= ABANDONED_REPORT_STREAK) return ['blocked', 'pass_abandoned'];
   if (t.outcome === 'open' && interrupted) return ['resumable', 'pass_interrupted'];
   if (t.outcome === 'open' || (t.outcome === 'resumable' && t.stop_reason !== 'not_converged' && t.stop_reason !== 'admission_paused')) return ['resumable', 'pass_unfinished'];
   if (t.stop_reason === 'admission_paused') return ['resumable', 'admission_paused'];
@@ -109,7 +124,7 @@ export function passStatusState(row: PassRow, withheld: DeletesWithheld | null, 
 }
 
 /** The next step for a pass reason (`resume`: the plain sync's arguments). */
-export function passStatusNext(sourceId: string, reason: PassStatusReason, row: PassRow, resume: string[], writebackFailed: string | null = null, interrupted?: boolean): Action {
+export function passStatusNext(sourceId: string, reason: PassStatusReason, row: PassRow, resume: string[], writebackFailed: string | null = null, interrupted?: boolean, banked?: boolean): Action {
   const verify = { argv: ['gbrain', 'sync', 'status', '--source', sourceId, '--json'] };
   const sync: Action = { argv: ['gbrain', 'sync', ...resume], consent: [], actor: 'agent', requires_exclusive: false, verify, why: '' };
   switch (reason) {
@@ -133,7 +148,7 @@ export function passStatusNext(sourceId: string, reason: PassStatusReason, row: 
         why: 'The preview names the parked effect and what a retry runs (read-only); until it commits, the source is never idle.' };
     case 'pass_abandoned':
       return { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false, verify,
-        why: `The last ${abandonedPasses(row, passReadClock(row), interrupted)} sync passes of ${sourceId} stopped before they ended (the drain abandoned them for making no progress, or their process was killed) or on a transient stop that recurs (a statement timeout, a lost connection), so another plain sync is likely to stop the same way. Report what doctor shows, with the gbrain version and the newest sync run's drain.stall (read-only).` };
+        why: `The last ${abandonedPasses(row, passReadClock(row), interrupted, banked)} sync passes of ${sourceId} stopped before they ended (the drain abandoned them for making no progress, or their process was killed) or on a transient stop that recurs (a statement timeout, a lost connection), so another plain sync is likely to stop the same way. Report what doctor shows, with the gbrain version and the newest sync run's drain.stall (read-only).` };
     case 'pass_interrupted':
       return { ...sync, why: `The newest pass of ${sourceId} stopped before it ended and no process holds its drain lease: its process was killed or crashed (an out-of-memory kill or a timeout), or stopped on an error it does not record (a dropped connection), so nothing recorded a failure. The plain sync continues it from the current level; if that pass stops the same way, status reads pass_abandoned.` };
     case 'selection_scoped':

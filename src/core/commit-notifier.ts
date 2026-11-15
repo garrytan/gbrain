@@ -11,7 +11,7 @@
  * What it watches: managed sources whose worktree this host owns, and classic sources whose last sync ran on this host
  * (sync_notifier_sources.syncer_host_id) or that GBRAIN_NOTIFIER_CLASSIC_SOURCES binds here; any other source is
  * skipped with a reason. HEAD is watched while `sync.on_commit` is on and the source is not listed in
- * `sync.on_commit.sources` (the exclusion list); wanted markers (sync trigger, webhook, busy delegated syncs) are
+ * `sync.on_commit.sources` (the exclusion list) and its `config.syncEnabled` is not false; wanted markers (sync trigger, webhook, busy delegated syncs) are
  * drained regardless of the flag. It never pulls on its own: a commit-triggered run imports the checkout's HEAD.
  *
  * Detection: fs.watch on the git dirs (notifier/detect.ts) brings the next poll forward; the async rev-parse poll every
@@ -56,6 +56,9 @@ export interface NotifierSource {
   commonDir?: string | null;
   lastCommit: string | null;
   kind?: 'managed' | 'classic';
+  /** `config.syncEnabled=false`: HEAD is not watched and no owed run restarts it; an explicit wanted marker runs once, and a failed run waits
+   * (operator_blocked, `sync_disabled`) for a new request instead of being retried. */
+  syncDisabled?: boolean;
 }
 export interface SkippedSource { sourceId: string; reason: string }
 export type StartResult = { jobId: string } | { busy: true } | { refused: string };
@@ -233,7 +236,7 @@ const closeWatch = (rt: Rt) => { if (rt.watchClose) { try { rt.watchClose(); } c
 const mode = (rt: Rt): DetectionMode => rt.watchClose ? 'watch' : 'poll';
 const markerKey = (rt: Rt) => `${rt.head ?? ''}|${rt.markers.map(m => `${m.intent}:${m.generation}`).join(',')}`;
 // GST-2515: an unwatched source (sync.on_commit off) has no HEAD to compare, so a run it owes (retry, or due after a resume or restart) keeps it due after its marker is gone.
-const due = (rt: Rt) => (rt.watched && !!rt.head && rt.head !== rt.lastCommit) || rt.markers.length > 0 || (!rt.watched && (rt.state === 'retry' || rt.state === 'due'));
+const due = (rt: Rt) => (rt.watched && !!rt.head && rt.head !== rt.lastCommit) || rt.markers.length > 0 || (!rt.watched && !rt.syncDisabled && (rt.state === 'retry' || rt.state === 'due'));
 
 /** Merges a fresh source listing into the runtime map (a moved root starts over); returns the sources new to it. */
 function mergeListed(sources: Map<string, Rt>, rows: NotifierSource[]): Rt[] {
@@ -242,7 +245,7 @@ function mergeListed(sources: Map<string, Rt>, rows: NotifierSource[]): Rt[] {
   for (const s of rows) {
     seen.add(s.sourceId);
     const prior = sources.get(s.sourceId);
-    if (prior && prior.root === s.root) { prior.gitDir = s.gitDir; prior.commonDir = s.commonDir ?? null; prior.lastCommit = s.lastCommit; prior.kind = s.kind; continue; }
+    if (prior && prior.root === s.root) { prior.gitDir = s.gitDir; prior.commonDir = s.commonDir ?? null; prior.lastCommit = s.lastCommit; prior.kind = s.kind; prior.syncDisabled = s.syncDisabled; continue; }
     if (prior) closeWatch(prior);
     const rt: Rt = { ...s, head: null, watched: false, watchClose: null, coverageKey: null, lastStartAt: -Infinity, forwarded: null,
       state: 'idle', attempts: 0, nextRetryAt: 0, blockedKey: null, markers: [], started: false };
@@ -366,7 +369,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
       const states = await guard('reading the notifier states', () => opts.store.readStates(fresh.map(r => r.sourceId)), [] as NotifierSourceRow[]);
       restoreStates(sources, states, now());
     }
-    for (const rt of fresh) rt.watched = enabled && !excluded.has(rt.sourceId);
+    for (const rt of fresh) rt.watched = enabled && !excluded.has(rt.sourceId) && !rt.syncDisabled;
     for (const rt of sources.values()) {
       if (stopped) return;
       if (!rt.watched || forcePoll || !opts.watch) { if (!rt.watched) closeWatch(rt); continue; }
@@ -406,6 +409,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
   };
 
   const failure = async (rt: Rt, code: string, message: string, progressed: boolean) => {
+    if (rt.syncDisabled) { rt.blockedKey = markerKey(rt); await transition(rt, { state: 'operator_blocked', reason: 'sync_disabled', firstDue: 'keep', progress: progressed, error: { code, message, tracePath: trace(rt, { event: 'failure', code, error: message }) } }); decide(rt.sourceId, 'operator_blocked', { detail: code }); return; }
     const { attempts, wait, stalled } = retryPlan(rt.attempts, progressed);
     const tracePath = trace(rt, { event: 'failure', code, error: message, attempts, next_retry_ms: wait, stalled });
     await transition(rt, { state: 'retry', reason: stalled ? 'notifier_stalled' : code, firstDue: 'keep', attempts, nextRetryInMs: wait, progress: progressed,
@@ -526,8 +530,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
     if (t - listedAt >= LIST_EVERY_MS) { listedAt = t; await refreshSources(); }
     if (stopped) return;
     for (const rt of sources.values()) {
-      const w = enabled && !excluded.has(rt.sourceId);
-      if (w !== rt.watched) { rt.watched = w; if (w) listedAt = -Infinity; else { closeWatch(rt); if ((rt.state === 'retry' || rt.state === 'due') && !rt.markers.length) await transition(rt, { state: 'idle', reason: null, firstDue: 'clear', attempts: 0, error: null }); } }
+      const w = enabled && !excluded.has(rt.sourceId) && !rt.syncDisabled; if (w !== rt.watched) { rt.watched = w; if (w) listedAt = -Infinity; else closeWatch(rt); } else if (!rt.syncDisabled) continue; if (!w && (rt.state === 'retry' || rt.state === 'due') && !rt.markers.length) await transition(rt, { state: 'idle', reason: null, firstDue: 'clear', attempts: 0, error: null });
     }
     const wasNudged = nudged;
     nudged = false;

@@ -11,7 +11,7 @@
     ".codex/hooks.json": "sha256:85519b7b2cf4f84208fe47e59bf87224a793bcf303fda59f45d98e541f526eb1",
     ".gbrain/agent-instructions.json": "sha256:4f541f2d3531804b89ca5e2fac1af49b4a77668938580dd0d07e245770866efd",
     ".gbrain/agent-instructions.lock": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    ".gbrain/hook-launcher/gbrain-hook": "sha256:a194491363199f9b91090e473c6931790b72daaf2ed28d3e23e9c85ef89eec10",
+    ".gbrain/hook-launcher/gbrain-hook": "sha256:61f3fb46048ab5cb10986326b04f4ae5e1d84478c526519b9eefadcdce15a009",
     ".gbrain/integrations/hooks/heartbeat.jsonl": "sha256:83625960782a0c6d354105f787839fad3f4883efb3a752fa90c2f7be1805e545"
   },
   "userPromptHooks": [

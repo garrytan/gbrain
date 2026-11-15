@@ -10,7 +10,7 @@
  *   index advanced; GBRA-133 PR 3a: a pass that only settled paths (screened them unchanged) is not progress.
  * Synthetic content only.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, jest, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -58,18 +58,20 @@ describe('#6712 PR 4b lane C: cursor readers on the pass', () => {
 
   test('a delegated deadline extends while the owner\'s passes commit pages, and stops once they settle paths without committing', async () => {
     const lines: string[] = [];
+    // Fake timers drive setTimeout and performance.now together, so the 50 ms margin below is exact, not a runner's scheduling slack.
+    jest.useFakeTimers();
     // A 600 ms deadline with a 400 ms progress window: a slice that commits a page at 450 ms carries the run past 600 ms (to 850 ms).
     const deadline = new DelegatedSyncDeadline(600, 400, line => lines.push(line));
     try {
-      await new Promise(resolve => setTimeout(resolve, 450));
+      jest.advanceTimersByTime(450);
       deadline.noteSlice(passResult(3, 5));
-      await new Promise(resolve => setTimeout(resolve, 350));
+      jest.advanceTimersByTime(350);
       expect(deadline.stop.signal.aborted).toBe(false);
       expect(lines.join('\n')).toContain('still progressing');
       // GBRA-133 PR 3a: this slice settled paths but committed none (screened unchanged): no extension.
       deadline.noteSlice({ ...passResult(3, 2), added: 0 });
-      await new Promise(resolve => setTimeout(resolve, 500));
+      jest.advanceTimersByTime(500);
       expect(deadline.stop.signal.aborted).toBe(true);
-    } finally { deadline.dispose(); }
+    } finally { deadline.dispose(); jest.useRealTimers(); }
   });
 });

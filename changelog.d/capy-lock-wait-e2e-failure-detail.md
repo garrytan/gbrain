@@ -1,0 +1,6 @@
+**Two sync tests are easier to trust: one no longer fails on a busy runner, and the other says why a page failed when it fails.** Neither changes what it checks.
+
+### Tests
+
+- `test/sync-pass-reader-gaps-6712.test.ts`: the delegated-deadline test slept on the real clock and then checked the deadline 50 ms before it expired, so a runner that woke a timer 50 ms late failed it (seen once on CI, 5 of 5 passes locally). It now drives `setTimeout` and `performance.now` with Bun's fake timers, with the same 600 ms deadline, 400 ms window and 450, 350 and 500 ms steps. A probe that stalls the event loop for 60 ms after the first slice fails the old test and passes the new one. A probe that stops a committing slice from extending the deadline still fails the new one.
+- `test/e2e/persistence-preparation-lock-wait-postgres.test.ts`: when the drain doesn't end `synced`, the test prints every page that didn't commit. For a page that failed with `storage_error`, that printout carried only the generic public message, so a CI failure (one page, `storage_error`, while the test held its lock) couldn't be traced: it passed 44 of 44 times locally, 24 of them with four copies running at once. The printout now includes each page's recorded failure detail (the error class, the database error text, the statement and the source frame), so the next failure names its cause.

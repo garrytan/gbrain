@@ -753,6 +753,7 @@
   "test/sync-legacy-sweep-gbra108.test.ts": 7550,
   "test/sync-legacy-sweep-resume-7189.test.ts": 61200,
   "test/sync-markers-6712.test.ts": 1700,
+  "test/sync-mirror-catchup-gst2515.test.ts": 35650,
   "test/sync-no-pull-estimate-gbra133.test.ts": 900,
   "test/sync-origin-live-wins-6517.test.ts": 2900,
   "test/sync-origin-markers-6712.test.ts": 4600,
