@@ -840,9 +840,18 @@ describe('addSource --path — #2707 git-repo validation', () => {
     rmSync(SANDBOX, { recursive: true, force: true });
   });
 
-  test('rejects an existing non-git directory with an actionable error', async () => {
+  test('registers an existing plain directory outside any git repository without --force (GST-2732)', async () => {
+    const plainDir = join(SANDBOX, 'plain-ok');
+    mkdirSync(plainDir, { recursive: true });
+    writeFileSync(join(plainDir, 'notes.md'), 'a plain folder');
+    const row = await addSource(engine, { id: 'plain-ok-src', localPath: plainDir });
+    expect(row.local_path).toBe(plainDir);
+  });
+
+  test('rejects a git repository with untracked files only, with an actionable error', async () => {
     const plainDir = join(SANDBOX, 'plain');
     mkdirSync(plainDir, { recursive: true });
+    execFileSync('git', ['-C', plainDir, 'init', '-q']);
     writeFileSync(join(plainDir, 'notes.md'), 'not committed anywhere');
 
     let threw: SourceOpError | undefined;
@@ -1006,6 +1015,7 @@ describe('addSource --path — #2707 git-repo validation', () => {
   test('quotes a path with a space in the remediation command (codex round 1)', async () => {
     const spacedDir = join(SANDBOX, 'has space here');
     mkdirSync(spacedDir, { recursive: true });
+    execFileSync('git', ['-C', spacedDir, 'init', '-q']);
 
     let threw: SourceOpError | undefined;
     try {
@@ -1143,6 +1153,7 @@ describe('addSource --path — #3903 attach to existing path-less source', () =>
     );
     const plainDir = join(SANDBOX, 'plain-attach');
     mkdirSync(plainDir, { recursive: true });
+    execFileSync('git', ['-C', plainDir, 'init', '-q']);
 
     let threw: SourceOpError | undefined;
     try {

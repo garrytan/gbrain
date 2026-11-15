@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { existsSync as pathExists } from 'node:fs';
+import { isInsideGitRepo } from '../git-remote.ts';
 import { posix } from 'node:path';
 import { parseDataFrontmatter } from '../data-frontmatter.ts';
 import { parseMarkdown } from '../markdown.ts';
@@ -346,7 +348,7 @@ export async function inspectCompanyBrain(options: InspectCompanyBrainOptions): 
     if (companyBrainDigest(after) !== companyBrainDigest(plan.revision)) finding(plan, 'error', 'plan_stale', 'The checkout identity or revision changed during inspection; inspect again.');
   } catch (error) {
     finding(plan, 'error', error instanceof OperationError ? error.code : 'invalid_source',
-      error instanceof OperationError && error.code === 'request_too_large' ? 'Inspection exceeds the bounded entry or metadata limit; partition the repository or narrow selection.' : 'Inspect a committed local Git directory with a stable, safe root. No input was changed.');
+      error instanceof OperationError && error.code === 'request_too_large' ? 'Inspection exceeds the bounded entry or metadata limit; partition the repository or narrow selection.' : notGitRepository(options.path) ? 'This folder is not a Git repository, and sources inspect reviews a committed company-brain checkout. To add a plain folder of notes, run gbrain sources add <id> --path <folder>. No input was changed.' : 'Inspect a committed local Git directory with a stable, safe root. No input was changed.');
   }
   for (const entry of plan.manifest) { plan.counts.tracked++; plan.counts[entry.disposition]++; }
   plan.counts.dirty_eligible = plan.uncommitted.filter(item => item.eligible).length;
@@ -396,4 +398,10 @@ export async function validateCompanyBrainPlan(saved: unknown, options: InspectC
     if (!plan.ready) return { valid: false, code: 'source_not_ready', findings: plan.findings, plan: fresh };
     return { valid: true, code: 'ok', findings: fresh.findings, plan: fresh };
   } catch { return stale(); }
+}
+
+
+/** GST-2732: a plain folder gets a pointer to \`sources add\` instead of the generic Git refusal. */
+function notGitRepository(path: string): boolean {
+  try { return pathExists(path) && !isInsideGitRepo(path); } catch { return false; }
 }
