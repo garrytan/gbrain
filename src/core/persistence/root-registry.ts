@@ -46,7 +46,12 @@ export function checkoutGitMetadata(root: string): string | null {
   const enclosing = enclosingGitMetadata(root);
   if (!enclosing) return null;
   try { execFileSync('git', ['-C', root, 'rev-parse', '--verify', '--quiet', 'HEAD:./'], { stdio: 'ignore', timeout: 10_000, env: gitChildEnv() }); }
-  catch (error) { if ((error as { status?: unknown }).status === 1) return null; }
+  catch (error) {
+    if ((error as { status?: unknown }).status === 1) return null;
+    // An enclosing `.git` that is not a valid repository (exit 128) is no checkout of the root.
+    try { execFileSync('git', ['-C', root, 'rev-parse', '--git-dir'], { stdio: 'ignore', timeout: 10_000, env: gitChildEnv() }); }
+    catch { return null; }
+  }
   return enclosing;
 }
 /** An idle refresh must not touch inode metadata, so chmod only when the mode differs (#5297). */
