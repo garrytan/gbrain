@@ -4748,7 +4748,7 @@ Start with `gbrain doctor`. For database access failures, use `gbrain engine sta
 
 Run `bun run test` for the fast loop, `bun run verify` for the pre-push gate, `bun run ci:local` to run the full Docker-backed CI stack locally. Detailed test discipline in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-Community PRs are batched into release waves rather than merged one-by-one — see the community-PR-wave process in [`docs/RELEASING.md`](docs/RELEASING.md). Contributor attribution stays attached via `Co-Authored-By:` trailers. We credit every accepted contribution in [`CHANGELOG.md`](CHANGELOG.md).
+Outside documentation changes can be merged as they are. Code fixes we take are rebuilt on current master with the author credited as co-author (`Co-Authored-By:` trailers), and the original PR is closed with a link to the one that landed it; changes we don't take are closed with a note saying why. What to expect, and what makes a fix easy to take: [How an outside pull request is handled](CONTRIBUTING.md#how-an-outside-pull-request-is-handled). We credit every accepted contribution in [`CHANGELOG.md`](CHANGELOG.md). To browse community reports without our agents' own issues, use the [community issues](https://github.com/garrytan/gbrain/issues?q=is%3Aissue%20is%3Aopen%20-label%3Aagent-filed) search.
 
 If you find a bug or want a feature: open an issue first. Quick fixes (typo, doc bug, obvious regression) can go straight to a PR. Anything touching schema, retrieval ranking, MCP protocol, or the security boundary needs a design discussion in the issue first.
 
