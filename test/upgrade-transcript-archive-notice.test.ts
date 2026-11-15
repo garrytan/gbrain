@@ -10,7 +10,7 @@
  * so the marker is read from whichever of the two holds it.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -61,8 +61,12 @@ describe('the conversation archive upgrade notice', () => {
     expect(text.length).toBeLessThanOrEqual(2000);
     expect(text).not.toContain('\n');
     for (const phrase of ['gbrain transcripts archive off', 'conversations', 'gbrain embed --held --dry-run', 'keyless', 'gbrain transcripts archive on']) expect(text).toContain(phrase);
-    const fragmentPath = join(ROOT, 'changelog.d', 'transcript-archive-default.md');
-    const entry = readFileSync(existsSync(fragmentPath) ? fragmentPath : join(ROOT, 'CHANGELOG.md'), 'utf8');
+    let entry: string;
+    try {
+      entry = readFileSync(join(ROOT, 'changelog.d', 'transcript-archive-default.md'), 'utf8');
+    } catch {
+      entry = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
+    }
     expect(entry).toContain('<!-- behavior-change: ' + ID + ' -->');
   });
 
