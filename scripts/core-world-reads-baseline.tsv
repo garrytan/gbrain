@@ -588,7 +588,7 @@ src/core/notifier/detect.ts	fs_import	1	W7: filesystem boundary moves to the loc
 src/core/notifier/resident.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/notifier/resident.ts	process_env	5	W6: settings plane out of the core
 src/core/npm-squat-check.ts	fs_import	1	W7: filesystem boundary moves to the local app
-src/core/oauth-provider.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
+src/core/oauth-provider.ts	als_store	2	W2: engine scope (decision E) replaces ad hoc async context; #9364 request-local HTTP disconnect signal crosses the SDK provider interface, not engine settings
 src/core/onboard/checks.ts	load_config	1	W6: settings plane out of the core
 src/core/onboard/init-nudge.ts	process_env	2	W6: settings plane out of the core
 src/core/onboard/mcp-onboarding.ts	fs_import	1	W7: filesystem boundary moves to the local app

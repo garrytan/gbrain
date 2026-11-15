@@ -9,7 +9,7 @@ import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { OAuthError, InvalidClientError, InvalidRequestError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { OAuthTokenRevocationRequestSchema } from '@modelcontextprotocol/sdk/shared/auth.js';
-import { dcrRegistrationContext, type GBrainOAuthProvider } from '../core/oauth-provider.ts';
+import { dcrRegistrationContext, oauthRefreshContext, type GBrainOAuthProvider } from '../core/oauth-provider.ts';
 import { OAuthConsentError } from '../core/oauth-grants.ts';
 import { safeHexEqual } from '../core/timing-safe.ts';
 import { isRetryableError } from '../core/retry-matcher.ts';
@@ -429,6 +429,26 @@ function stringParam(req: Request, name: string, required = false): string | und
 }
 
 export function mountConfidentialOAuth(app: Express, provider: GBrainOAuthProvider, rateLimiter: RequestHandler): void {
+  // Covers both our confidential handler and its fall-through to the SDK public-client handler.
+  app.use('/token', (req, res, next) => {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    const cleanup = () => {
+      req.off('aborted', abort);
+      res.off('close', close);
+      res.off('finish', cleanup);
+    };
+    const close = () => {
+      if (!res.writableFinished) abort();
+      cleanup();
+    };
+    req.once('aborted', abort);
+    res.once('close', close);
+    res.once('finish', cleanup);
+    if (req.aborted || res.destroyed) abort();
+    // Request 'close' also fires after an ordinary fully read body; only response close before finish is cancellation.
+    oauthRefreshContext.run(controller.signal, next);
+  });
   app.post('/token', rateLimiter, express.urlencoded({ extended: false }), async (req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Pragma', 'no-cache');

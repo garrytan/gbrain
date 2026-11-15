@@ -311,6 +311,9 @@ export function clampDcrTokenTtl(
  */
 export const dcrRegistrationContext = new AsyncLocalStorage<{ tokenTtlSeconds?: number }>();
 
+/** The SDK provider interface carries no HTTP request; keep refresh cancellation request-local across its awaits. */
+export const oauthRefreshContext = new AsyncLocalStorage<AbortSignal>();
+
 // ---------------------------------------------------------------------------
 // Clients Store
 // ---------------------------------------------------------------------------
@@ -669,7 +672,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     scopes?: string[],
     resource?: URL,
   ): Promise<OAuthTokens> {
-    return this.grants.refresh(client.client_id, refreshToken, scopes, resource, client.client_secret);
+    return this.grants.refresh(client.client_id, refreshToken, scopes, resource, client.client_secret, oauthRefreshContext.getStore());
   }
 
   // -------------------------------------------------------------------------

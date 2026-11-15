@@ -286,9 +286,11 @@ export class OAuthGrants {
     });
   }
 
-  async refresh(clientId: string, token: string, requested?: string[], resource?: URL, secretHash?: string): Promise<OAuthTokens> {
+  async refresh(clientId: string, token: string, requested?: string[], resource?: URL, secretHash?: string, signal?: AbortSignal): Promise<OAuthTokens> {
     const requestedResource = this.canonicalResource(resource);
+    signal?.throwIfAborted();
     return this.locked(clientId, async (sql, client) => {
+      signal?.throwIfAborted();
       this.assertCredentialPolicy(client, secretHash);
       const [row] = await sql`SELECT * FROM oauth_tokens WHERE token_hash = ${hashToken(token)} AND token_type = 'refresh' AND client_id = ${clientId} FOR UPDATE`;
       if (!row) throw new InvalidGrantError('Refresh token not found');
@@ -299,7 +301,11 @@ export class OAuthGrants {
       const scopes = this.currentScopes(client, requested ?? original);
       const target = this.resource(row.resource, requestedResource);
       await sql`DELETE FROM oauth_tokens WHERE token_hash = ${hashToken(token)} AND token_type = 'refresh' AND client_id = ${clientId}`;
-      return this.issue(sql, client, scopes, target, true, 'refresh_token');
+      const tokens = await this.issue(sql, client, scopes, target, true, 'refresh_token');
+      // Throw inside the transaction: consuming the old token and inserting its replacements must roll back together.
+      // This cannot recover a response lost after commit, or cancel a COMMIT already in flight.
+      signal?.throwIfAborted();
+      return tokens;
     });
   }
 
