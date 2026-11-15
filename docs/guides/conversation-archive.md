@@ -158,7 +158,12 @@ rule on the whole `conversations/` folder instead. Every earlier day is still ke
 archived afterwards stay owner-only too, because a page has to pass every rule above it: a wider rule on one chat's
 folder does not open it. Widening the `conversations/` rule opens every earlier personal day to the same readers, not
 just one chat. `gbrain transcripts archive status` and `gbrain doctor --only transcript_archive_freshness` say so in
-one line (`archive_rescope_folder_cap`) while that rule stands.
+one line (`archive_rescope_folder_cap`) while that rule keeps the folder to the owner alone; once you widen it, they
+stop.
+
+The re-scope never drops one of your rules to make room. A source that already held 256 other rules therefore ends
+with 257: the days stay closed, but `gbrain access rule export` then `import` fails validation until you remove one of
+the other rules, and the same line says so while the source stays over the limit.
 
 The re-scope waits, and `gbrain transcripts archive status` and `gbrain doctor --only transcript_archive_freshness`
 each say so in one line, when the shared brain names no owner (`archive_rescope_owner_unset`: run

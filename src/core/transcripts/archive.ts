@@ -331,7 +331,8 @@ async function readersFor(engine: BrainEngine, privacy: Privacy, conv: ArchiveCo
  * restamps at once; a rule already at one of those folders is replaced, a wider one included) before the run writes
  * anything, then the new audience is recorded. Folders written later are not covered, so a group conversation archived
  * on the shared brain keeps its group. When those folders and the source's other rules would pass MAX_RULES, one owner-only rule on
- * conversations/ replaces them, so later group conversations stay owner-only too (archive_rescope_folder_cap). A source whose rules live in git is left to its access.yml.
+ * conversations/ replaces them, so later group conversations stay owner-only too (archive_rescope_folder_cap). No other rule is
+ * dropped, so a source that already held MAX_RULES other rules ends one rule over (rescopeCapped reports it). A source whose rules live in git is left to its access.yml.
  */
 async function reconcileAudience(engine: BrainEngine, sourceId: string, privacy: Privacy): Promise<void> {
   const now = privacy.shared ? 'shared' : 'personal';
@@ -396,15 +397,26 @@ export async function archiveRescopeSkipped(engine: BrainEngine, sourceId?: stri
 }
 
 /**
- * When the re-scope needed more owner-only folder rules than a source holds (MAX_RULES), it kept the whole
- * conversations/ folder to the owner instead; reported while that rule stands.
+ * When one owner-only rule per archive folder, with the source's other rules, would have passed the rules a source holds
+ * (MAX_RULES), the re-scope kept the whole conversations/ folder to the owner instead; reported while that rule's readers
+ * are the owner alone. A source that already held MAX_RULES other rules is left one rule over the limit, so a rule export
+ * no longer imports; reported while it stays over.
  */
 async function rescopeCapped(engine: BrainEngine, sourceId: string): Promise<ArchiveRescopeSkip | null> {
   const folders = await engine.getConfig(`${RESCOPE_CAPPED_PREFIX}${sourceId}`);
   if (!folders) return null;
-  const [{ appliedRules }, { MAX_RULES }] = await Promise.all([import('../access/policy.ts'), import('../access/folder-rules.ts')]);
-  if (!(await appliedRules(engine, sourceId)).some(r => r.prefix === 'conversations/')) return null;
-  return { code: 'archive_rescope_folder_cap', message: 'Conversation archive pages written while this brain was personal fill ' + folders + ' folders, more than the ' + MAX_RULES + ' rules a source holds, so one rule keeps the whole conversations/ folder of source ' + sourceId + ' to the owner: group conversations archived since stay owner-only too, and widening that conversations/ rule opens every earlier personal day to the same readers, not just one chat.' };
+  const [{ appliedRules }, { MAX_RULES, normalizeRule }] = await Promise.all([import('../access/policy.ts'), import('../access/folder-rules.ts')]);
+  const rules = await appliedRules(engine, sourceId);
+  const rule = rules.find(r => r.prefix === 'conversations/');
+  if (!rule) return null;
+  const owner = (await ownerView(engine)).owner;
+  const ownerOnly = owner ? normalizeRule({ prefix: 'conversations/', readable_by: [owner] }) : null;
+  const kept = !!ownerOnly && 'rule' in ownerOnly && rule.readable_by.join() === ownerOnly.rule.readable_by.join();
+  const over = rules.length > MAX_RULES
+    ? 'Source ' + sourceId + ' now holds ' + rules.length + ' rules, more than the ' + MAX_RULES + ' a rule file accepts, so gbrain access rule export then import fails validation until you remove one of its other rules.'
+    : '';
+  if (!kept) return over ? { code: 'archive_rescope_folder_cap', message: over } : null;
+  return { code: 'archive_rescope_folder_cap', message: 'Conversation archive pages written while this brain was personal fill ' + folders + ' folders, and one owner-only rule per folder with the source\'s other rules would pass the ' + MAX_RULES + ' rules a source holds, so one rule keeps the whole conversations/ folder of source ' + sourceId + ' to the owner: group conversations archived since stay owner-only too, and widening that conversations/ rule opens every earlier personal day to the same readers, not just one chat.' + (over ? ' ' + over : '') };
 }
 
 function isGitRepo(path: string | null): boolean {
