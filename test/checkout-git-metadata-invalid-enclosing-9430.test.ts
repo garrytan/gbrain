@@ -79,6 +79,25 @@ test('control: a tracked directory holding a stray empty .git still belongs to t
   expect(checkoutGitMetadata(wiki)).toBe(join(base, 'repo', '.git'));
 });
 
+test('an untracked folder whose own .git file points nowhere does not take the real repository around it', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'gbrain-9430-dangling-in-repo-'));
+  bases.push(base);
+  const repo = join(base, 'repo'), root = join(repo, 'clones', 'source-a');
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(repo, 'alice-example.md'), 'Notes.\n');
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { stdio: 'ignore' });
+  git('init', '-q'); git('add', 'alice-example.md');
+  git('-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'notes');
+  writeFileSync(join(root, '.git'), `gitdir: ${join(base, 'missing', '.git')}\n`);
+  expect(checkoutGitMetadata(root)).toBeNull();
+  await withEnv({ GBRAIN_HOME: join(base, 'gbrain-home') }, () => {
+    recordManagedRoots(randomUUID(), [{ local_path: root, source_id: 'source-a' }]);
+  });
+  expect(existsSync(join(repo, '.git', 'gbrain-managed.json'))).toBe(false);
+  expect(managedRootMarkerFor(join(repo, 'notes', 'todo.md'))).toBeNull();
+  expect(managedRootMarkerFor(join(root, 'mail.md'))?.root).toBe(root);
+});
+
 test('a marker an older release wrote into an invalid enclosing .git reads as a stale enclosing marker', async () => {
   const h = home('empty-dir');
   const marker = join(h.dir, '.git', 'gbrain-managed.json');
