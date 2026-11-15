@@ -47,6 +47,13 @@ describe('install ref lint', () => {
     expect(driftIn('src/x.ts', 'const a = `github:garrytan/gbrain#v${v}`; const b = INSTALL_PIN;')).toEqual([]);
   });
 
+  test('behavior-changes.d rows are held to the TypeScript rule, because the release folds their text into TypeScript', () => {
+    const row = 'Run bun install -g github:garrytan/gbrain#stable, then fetch https://raw.githubusercontent.com/garrytan/gbrain/stable/BOOTSTRAP_FOR_AGENTS.md\n';
+    expect(driftIn('behavior-changes.d/x_1.md', row, 'stable')).toHaveLength(2);
+    expect(rewriteText('behavior-changes.d/x_1.md', row, 'stable')).toBe(row);
+    expect(driftIn('behavior-changes.d/README.md', row, 'stable')).toEqual([]);
+  });
+
   test('the setup helper resolves the constant, and --write flips every text surface in one pass', () => {
     expect(driftIn('scripts/setup-in-agent.sh', 'gbrain_install_ref=master\n')).toHaveLength(1);
     const doc = 'github:garrytan/gbrain#latest-stable\nraw.githubusercontent.com/garrytan/gbrain/latest-stable/BOOTSTRAP_FOR_AGENTS.md\ngbrain_install_ref=latest-stable\ngithub:garrytan/gbrain#v1.2.3.4\n';
