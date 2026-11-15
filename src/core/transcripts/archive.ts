@@ -1,5 +1,6 @@
 /**
- * archive.ts — the built-in conversation archive (GST-2768, PR 2: core and legacy adoption; off unless turned on).
+ * archive.ts — the built-in conversation archive (GST-2768): on by default on a personal brain, offered on a shared one
+ * (archive-default.ts); the maintenance pass runs it (archive-maintenance.ts).
  *
  * gbrain transcripts archive run | backfill --from --to | status | adopt-legacy | on | off.
  *
@@ -43,8 +44,12 @@ import type { Action } from '../agent-output.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { importFromContent } from '../import-file.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
+import { isTerminalWriteState, type WriteRequestState } from '../persistence/types.ts';
+import { CLI_WRITE_WAIT_MS } from '../persistence/write-wait.ts';
 import { classifyItemFailure } from '../item-failure.ts';
 import { classifyBrainAudience } from '../facts/writeback-audience.ts';
+import { ARCHIVE_ENABLED_KEY, resolveArchiveEnabled } from './archive-default.ts';
 import { listGroups, listMembers } from '../access/members.ts';
 import { ownerView } from '../access/owner.ts';
 import { holdPageEmbedding } from '../page-embedding-budget.ts';
@@ -60,7 +65,7 @@ import {
 
 export type { ArchiveChannel } from './archive-day.ts';
 
-export const ARCHIVE_ENABLED_KEY = 'transcripts.archive.enabled';
+export { ARCHIVE_ENABLED_KEY } from './archive-default.ts';
 export const ARCHIVE_TIMEZONE_KEY = 'transcripts.archive.timezone';
 export const ARCHIVE_SOURCE_KEY = 'transcripts.archive.source';
 export const ARCHIVE_BACKFILL_CAP_KEY = 'transcripts.archive.backfill_days_per_run';
@@ -77,6 +82,7 @@ const PIN_PREFIX = 'transcripts.archive.pinned_timezone.';
 const LEGACY_PREFIX = 'transcripts.archive.legacy.';
 /** The audience (personal or shared) the archive last ran under, per configured source. */
 const AUDIENCE_PREFIX = 'transcripts.archive.audience.';
+const RESCOPE_CAPPED_PREFIX = 'transcripts.archive.rescope_capped.';
 /** Days whose index page still has to be written (a failed or interrupted index write), per source. */
 const INDEX_PENDING_PREFIX = 'transcripts.archive.index_pending.';
 const INGESTED_VIA = 'cli:transcripts-archive';
@@ -140,10 +146,15 @@ export interface ArchiveLedgerEntry {
   /** Version of the redaction rules (built-in detectors and the user's patterns) the day was written under; backfill re-checks a day written under other rules. */
   redaction?: string;
   held?: ArchiveHeld;
+  /** A write the coordinator accepted and has not published: its request ids and the content hash it carries. */
+  pending?: { requests: string[]; hash: string; complete: boolean };
   updated_at?: string;
 }
 
-export type ArchiveDayStatus = 'written' | 'unchanged' | 'held' | 'planned' | 'skipped_legacy' | 'kept' | 'error';
+/** accepted: the write coordinator accepted the day's write and publishes it later; the ledger records its requests
+ * without a content hash, so a later run waits while they are queued, records the day once they commit, and writes it
+ * again when one was cancelled or failed. */
+export type ArchiveDayStatus = 'written' | 'accepted' | 'unchanged' | 'held' | 'planned' | 'skipped_legacy' | 'kept' | 'error';
 
 export interface ArchiveDayOutcome {
   harness: string;
@@ -173,6 +184,7 @@ export interface ArchiveRunResult {
   to: string;
   days: ArchiveDayOutcome[];
   written: number;
+  accepted: number;
   unchanged: number;
   held: number;
   planned: number;
@@ -183,6 +195,8 @@ export interface ArchiveRunResult {
   errors: ArchiveReaderError[];
   message?: string;
   fix?: Action;
+  /** The run reached deadlineAtMs and left conversations for the next run. */
+  stopped_at_deadline?: boolean;
 }
 
 export interface ArchiveRunOpts {
@@ -201,20 +215,22 @@ export interface ArchiveRunOpts {
   redact?: (session: ParsedSession) => RedactedSession;
   /** Repository path: commit the written files (default gbrain git commit-push -- <paths>). */
   commitPaths?: (root: string, paths: string[], message: string) => Promise<void>;
+  /** Stop starting new readers and conversations at this instant (epoch ms); what was not reached waits for the next run. */
+  deadlineAtMs?: number;
   /** Repository path: import the committed files (default an in-process sync of the source). */
   syncSource?: (engine: BrainEngine, sourceId: string, root: string) => Promise<void>;
 }
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
-const truthy = (v: string | null | undefined) => ['1', 'true', 'on', 'yes'].includes(String(v ?? '').trim().toLowerCase());
 
 /** The group principal a group or room conversation may be shared with, once the operator creates it: group:chat-<hash8>. */
 export function archiveGroupPrincipal(harness: TranscriptFormat, conversationKey: string): string {
   return 'chat-' + conversationHash8(harness, conversationKey);
 }
 
+/** The resolved switch (archive-default.ts): an explicit on or off wins; unset is on for a personal brain only. */
 export async function archiveEnabled(engine: Pick<BrainEngine, 'getConfig'>): Promise<boolean> {
-  return truthy(await engine.getConfig(ARCHIVE_ENABLED_KEY));
+  return (await resolveArchiveEnabled(engine)).enabled;
 }
 
 export async function setArchiveEnabled(engine: BrainEngine, on: boolean): Promise<void> {
@@ -289,7 +305,8 @@ async function archiveTimeZone(engine: BrainEngine, sourceId: string): Promise<{
 interface Privacy { shared: boolean; owner: string | null; unproven?: boolean }
 
 async function resolvePrivacy(engine: BrainEngine): Promise<Privacy> {
-  const audience = await classifyBrainAudience(engine);
+  const { loadConfigFileOnly } = await import('../config.ts');
+  const audience = await classifyBrainAudience(engine, loadConfigFileOnly());
   const enabled = (await listMembers(engine)).filter(m => m.status === 'enabled').length;
   const shared = audience.audience !== 'personal' || enabled >= 2;
   return { shared, owner: shared ? (await ownerView(engine)).owner : null, ...(!shared && audience.unproven ? { unproven: true } : {}) };
@@ -308,9 +325,13 @@ async function readersFor(engine: BrainEngine, privacy: Privacy, conv: ArchiveCo
 }
 
 /**
- * Pages written while the brain was personal name no readers. When the brain has become shared, the source's whole archive
- * folder is kept to the owner by a folder rule (a narrowing, so it applies and restamps at once) before the run writes
- * anything, then the new audience is recorded. A source whose rules live in git is left to its access.yml.
+ * Pages written while the brain was personal name no readers. When the brain has become shared, every folder under
+ * conversations/ that holds an archive page at that moment, or a day the ledger recorded (a write the coordinator accepted
+ * and has not published yet), is kept to the owner by a rule (a narrowing, so it applies and
+ * restamps at once; a rule already at one of those folders is replaced, a wider one included) before the run writes
+ * anything, then the new audience is recorded. Folders written later are not covered, so a group conversation archived
+ * on the shared brain keeps its group. When those folders and the source's other rules would pass MAX_RULES, one owner-only rule on
+ * conversations/ replaces them, so later group conversations stay owner-only too (archive_rescope_folder_cap). A source whose rules live in git is left to its access.yml.
  */
 async function reconcileAudience(engine: BrainEngine, sourceId: string, privacy: Privacy): Promise<void> {
   const now = privacy.shared ? 'shared' : 'personal';
@@ -319,18 +340,71 @@ async function reconcileAudience(engine: BrainEngine, sourceId: string, privacy:
   if (privacy.shared && !privacy.owner) return;
   if (privacy.shared && recorded === 'personal' && (await engine.executeRaw('SELECT 1 FROM sources WHERE id = $1', [sourceId])).length) {
     const policy = await import('../access/policy.ts');
-    const { normalizeRule } = await import('../access/folder-rules.ts');
+    const { MAX_RULES, normalizeRule } = await import('../access/folder-rules.ts');
     if (await policy.readAccessStore(engine, sourceId) === 'git') return;
-    const normalized = normalizeRule({ prefix: 'conversations/', readable_by: [privacy.owner] });
-    if ('problem' in normalized) throw new Error('the owner-only archive rule is invalid: ' + normalized.problem);
-    const rule = normalized.rule;
+    const folderOf = (slug: string) => slug.includes('/') ? slug.replace(/[^/]+$/, '') : slug;
+    const pageFolders = await engine.executeRaw<{ folder: string }>(
+      "SELECT DISTINCT regexp_replace(slug, '[^/]+$', '') AS folder FROM pages WHERE source_id = $1 AND slug LIKE 'conversations/%'", [sourceId]);
+    const ledger = await readArchiveLedger(engine, sourceId);
+    const folders = [...new Set([...pageFolders.map(r => r.folder), ...ledger.flatMap(e => e.slug ? [folderOf(e.slug)] : []), ...(ledger.length ? ['conversations/days/'] : [])])].sort();
     const current = await policy.appliedRules(engine, sourceId);
-    const kept = current.find(r => r.prefix === rule.prefix);
-    if (!kept || kept.readable_by.join() !== rule.readable_by.join()) {
-      await policy.proposeRevision(engine, sourceId, [...current.filter(r => r.prefix !== rule.prefix), rule], { origin: 'cli', store: 'database', proposedBy: 'transcripts-archive' });
+    const capped = current.filter(r => !folders.includes(r.prefix)).length + folders.length > MAX_RULES;
+    const rules = (capped ? ['conversations/'] : folders).map(folder => {
+      const normalized = normalizeRule(folder.endsWith('/') ? { prefix: folder, readable_by: [privacy.owner] } : { slug: folder, readable_by: [privacy.owner] });
+      if ('problem' in normalized) throw new Error('the owner-only archive rule for ' + folder + ' is invalid: ' + normalized.problem);
+      return normalized.rule;
+    });
+    const replaced = new Set(rules.map(r => r.prefix));
+    if (rules.some(rule => current.find(r => r.prefix === rule.prefix)?.readable_by.join() !== rule.readable_by.join())) {
+      await policy.proposeRevision(engine, sourceId, [...current.filter(r => !replaced.has(r.prefix)), ...rules], { origin: 'cli', store: 'database', proposedBy: 'transcripts-archive' });
     }
+    if (capped) await engine.setConfig(`${RESCOPE_CAPPED_PREFIX}${sourceId}`, String(folders.length));
   }
   await engine.setConfig(`${AUDIENCE_PREFIX}${sourceId}`, now);
+}
+
+export interface ArchiveRescopeSkip { code: 'archive_rescope_owner_unset' | 'archive_rescope_git_rules' | 'archive_rescope_pending' | 'archive_rescope_folder_cap'; message: string }
+
+/**
+ * Runs the owner-only re-scope for a brain archived while personal that is now shared, whether or not the archive is
+ * still on (an unset switch resolves off once the brain is shared). Returns whether one was due.
+ */
+export async function reconcileArchiveAudience(engine: BrainEngine, sourceId?: string): Promise<boolean> {
+  const configured = await configuredSource(engine, sourceId);
+  if (await engine.getConfig(`${AUDIENCE_PREFIX}${configured}`) !== 'personal') return false;
+  const privacy = await resolvePrivacy(engine);
+  if (!privacy.shared) return false;
+  await reconcileAudience(engine, configured, privacy);
+  return true;
+}
+
+/** Why the owner-only re-scope (reconcileAudience) has not run on a brain that became shared, or null. */
+export async function archiveRescopeSkipped(engine: BrainEngine, sourceId?: string): Promise<ArchiveRescopeSkip | null> {
+  const configured = await configuredSource(engine, sourceId);
+  if (await engine.getConfig(`${AUDIENCE_PREFIX}${configured}`) !== 'personal') return rescopeCapped(engine, configured);
+  const privacy = await resolvePrivacy(engine);
+  if (!privacy.shared) return null;
+  if (!privacy.owner) {
+    return { code: 'archive_rescope_owner_unset', message: 'Conversation archive pages written while this brain was personal are not yet kept to the owner, because the shared brain names no owner; run gbrain access owner set <member> and the next archive run applies the owner-only rules.' };
+  }
+  const policy = await import('../access/policy.ts');
+  const pending: ArchiveRescopeSkip = { code: 'archive_rescope_pending', message: 'Conversation archive pages written while this brain was personal are not yet kept to the owner; the next maintenance pass applies the owner-only rules, or run gbrain transcripts archive run now.' };
+  if ((await engine.executeRaw('SELECT 1 FROM sources WHERE id = $1', [configured])).length === 0) return pending;
+  if (await policy.readAccessStore(engine, configured) !== 'git') return pending;
+  if ((await policy.appliedRules(engine, configured)).some(r => r.prefix === 'conversations/')) return null;
+  return { code: 'archive_rescope_git_rules', message: 'Conversation archive pages written while this brain was personal are not yet kept to the owner, because source ' + configured + ' keeps its access rules in git; add a rule with prefix conversations/ and readable_by [' + privacy.owner + '] to its .gbrain/access.yml and sync.' };
+}
+
+/**
+ * When the re-scope needed more owner-only folder rules than a source holds (MAX_RULES), it kept the whole
+ * conversations/ folder to the owner instead; reported while that rule stands.
+ */
+async function rescopeCapped(engine: BrainEngine, sourceId: string): Promise<ArchiveRescopeSkip | null> {
+  const folders = await engine.getConfig(`${RESCOPE_CAPPED_PREFIX}${sourceId}`);
+  if (!folders) return null;
+  const [{ appliedRules }, { MAX_RULES }] = await Promise.all([import('../access/policy.ts'), import('../access/folder-rules.ts')]);
+  if (!(await appliedRules(engine, sourceId)).some(r => r.prefix === 'conversations/')) return null;
+  return { code: 'archive_rescope_folder_cap', message: 'Conversation archive pages written while this brain was personal fill ' + folders + ' folders, more than the ' + MAX_RULES + ' rules a source holds, so one rule keeps the whole conversations/ folder of source ' + sourceId + ' to the owner: group conversations archived since stay owner-only too, and widening that conversations/ rule opens every earlier personal day to the same readers, not just one chat.' };
 }
 
 function isGitRepo(path: string | null): boolean {
@@ -345,7 +419,7 @@ async function ensureSource(engine: BrainEngine, sourceId: string): Promise<{ lo
   return { local_path: null };
 }
 
-const offFix: Action = { argv: ['gbrain', 'transcripts', 'archive', 'on'], consent: [], actor: 'user', why: 'Turns the conversation archive on for this brain; it is off unless the owner turns it on.', requires_exclusive: false };
+const offFix: Action = { argv: ['gbrain', 'transcripts', 'archive', 'on'], consent: [], actor: 'user', why: 'Turns the conversation archive on for this brain: it is off here because it was turned off, or because a shared brain is only offered it.', requires_exclusive: false };
 const ownerFix: Action = {
   argv: ['gbrain', 'access', 'owner', 'set', '<MEMBER>'], consent: [], actor: 'user', ask_user: true, requires_exclusive: false,
   inputs: [{ name: 'MEMBER', how: 'Ask the user which enabled member is the brain owner (gbrain access member list).' }],
@@ -355,7 +429,7 @@ const ownerFix: Action = {
 function emptyResult(mode: 'run' | 'backfill', base: Partial<ArchiveRunResult>): ArchiveRunResult {
   return {
     mode, enabled: false, dry_run: false, source_id: DEFAULT_ARCHIVE_SOURCE, timezone: 'UTC', write_mode: 'database', privacy: 'personal',
-    from: '', to: '', days: [], written: 0, unchanged: 0, held: 0, planned: 0, skipped_legacy: 0, index_pages: [], deferred_days: [], info: [], errors: [],
+    from: '', to: '', days: [], written: 0, accepted: 0, unchanged: 0, held: 0, planned: 0, skipped_legacy: 0, index_pages: [], deferred_days: [], info: [], errors: [],
     ...base,
   };
 }
@@ -425,15 +499,18 @@ interface DayWrite {
   ledger?: ArchiveLedgerEntry;
   hold: 'backfill' | 'open' | 'release' | null;
   staleSlugs: string[];
+  /** Request ids of the coordinator writes accepted and not yet published. */
+  pending?: string[];
 }
 
 export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRunOpts): Promise<ArchiveRunResult> {
   const dryRun = opts.dryRun === true;
   const enabled = await archiveEnabled(engine);
   if (!enabled && !dryRun) {
+    await reconcileArchiveAudience(engine, opts.sourceId);
     return emptyResult(opts.mode, {
       source_id: await configuredSource(engine, opts.sourceId),
-      message: 'The conversation archive is off on this brain, so nothing was read or written. It stays off until the owner turns it on.',
+      message: 'The conversation archive is off on this brain, so nothing was read or written. It stays off until the owner turns it on (a shared brain is only offered it).',
       fix: offFix,
     });
   }
@@ -501,8 +578,10 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
   const sinceMs = opts.mode === 'run' ? Date.parse(from + 'T00:00:00.000Z') - 2 * 86_400_000 : undefined;
   const minMtimeMs = opts.mode === 'backfill' ? Date.parse(from + 'T00:00:00.000Z') - 2 * 86_400_000 : sinceMs;
   const dayOf = (ts: string) => localDay(ts, tz.timezone);
+  const pastDeadline = () => opts.deadlineAtMs !== undefined && Date.now() >= opts.deadlineAtMs && (result.stopped_at_deadline = true);
   const entries: ArchiveScanEntry[] = [];
   for (const reader of readers) {
+    if (entries.length && pastDeadline()) break;
     if (reader.unavailable) { result.info.push(reader.unavailable); continue; }
     try {
       let found = 0;
@@ -575,7 +654,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
     if (ctx.signal?.aborted) throw ctx.signal.reason;
     await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context }, batch);
     for (const w of batch) {
-      if (w.outcome.status !== 'written' || !w.ledger) continue;
+      if ((w.outcome.status !== 'written' && w.outcome.status !== 'accepted') || !w.ledger) continue;
       ledger.set(w.ledger.harness + '.' + w.ledger.conversation_key_hash + '.' + w.ledger.day, w.ledger);
       touched.add(w.outcome.day);
     }
@@ -589,7 +668,9 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
     if (!dryRun) await writeLedger(engine, { ...(prior ?? {}), source_id: sourceId, harness: outcome.harness, conversation_key_hash: outcome.conversation_key_hash, day: outcome.day, held });
   };
 
+  let queued = 0;
   const processRound = async (allowed: Set<string> | null) => { for (const { entry, hash, days } of items) {
+    if (queued && pastDeadline()) break;
     const todo = [...(allowed ? days.filter(d => allowed!.has(d)) : days)].sort().reverse();
     if (todo.length === 0) continue;
     const outcomes = todo.map(day => ({ harness: entry.harness, conversation_key_hash: hash, day, status: 'planned' as ArchiveDayStatus } as ArchiveDayOutcome));
@@ -649,6 +730,16 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
         continue;
       }
       if (dryRun) { outcome.status = 'planned'; continue; }
+      if (before?.pending && !before.hash && before.pending.hash === contentHash) {
+        const states = (await engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE request_id::text = ANY($1::text[])', [before.pending.requests])).map(r => r.state);
+        if (states.length === before.pending.requests.length && states.every(s => s === 'committed')) {
+          const { pending, ...rest } = before;
+          await writeLedger(engine, { ...rest, hash: pending.hash, complete: pending.complete });
+          outcome.status = 'unchanged';
+          continue;
+        }
+        if (states.length === before.pending.requests.length && states.every(s => s === 'committed' || !isTerminalWriteState(s as WriteRequestState))) { outcome.status = 'accepted'; continue; }
+      }
       if (before?.hash === contentHash && !before.held && await pageExists(engine, sourceId, rendered.baseSlug)) {
         outcome.status = 'unchanged';
         if (before.redaction !== redactionVersion) await writeLedger(engine, { ...before, redaction: redactionVersion });
@@ -670,6 +761,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
         staleSlugs: renamed.length ? renamed : Array.from({ length: Math.max(0, (before?.parts ?? 0) - rendered.parts.length) }, (_, i) => rendered.baseSlug + '-p' + (rendered.parts.length + i + 1)),
       });
       batchBytes += rendered.parts.reduce((n, p) => n + p.content.length, 0);
+      queued++;
     }
     if (batch.length >= FLUSH_DAYS || batchBytes >= FLUSH_BYTES) await flushBatch();
   } };
@@ -679,7 +771,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
     let good = 0;
     let round = new Set([...heldDays, ...ordered.slice(0, cap)]);
     next = Math.min(cap, ordered.length);
-    while (round.size) {
+    while (round.size && (!queued || !pastDeadline())) {
       const start = pending.length;
       await processRound(round);
       const ok = new Set(pending.slice(start).filter(o => o.status !== 'held' && o.status !== 'error').map(o => o.day));
@@ -714,9 +806,9 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
       await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context }, indexWrites);
     }
   }
-  if (!dryRun && touched.size) await engine.setConfig(pendingKey, JSON.stringify(indexWrites.filter(w => w.outcome.status !== 'written' && w.outcome.status !== 'unchanged').map(w => w.outcome.day).sort()));
+  if (!dryRun && touched.size) await engine.setConfig(pendingKey, JSON.stringify(indexWrites.filter(w => w.outcome.status !== 'written' && w.outcome.status !== 'accepted' && w.outcome.status !== 'unchanged').map(w => w.outcome.day).sort()));
   for (const w of indexWrites) {
-    if (w.outcome.status === 'written' || w.outcome.status === 'unchanged') result.index_pages.push(w.outcome.slug!);
+    if (w.outcome.status === 'written' || w.outcome.status === 'accepted' || w.outcome.status === 'unchanged') result.index_pages.push(w.outcome.slug!);
     else if (w.outcome.status === 'error') result.errors.push({ harness: 'index', reader: 'day-index', code: w.outcome.code ?? 'archive_commit_failed', message: 'the day index ' + w.outcome.slug + ' was not written: ' + (w.outcome.message ?? 'no detail') });
   }
 
@@ -724,10 +816,13 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
   result.days.push(...pending);
   for (const d of result.days) {
     if (d.status === 'written') result.written++;
+    else if (d.status === 'accepted') result.accepted++;
     else if (d.status === 'unchanged') result.unchanged++;
     else if (d.status === 'held') result.held++;
     else if (d.status === 'planned') result.planned++;
   }
+  pastDeadline();
+  if (result.stopped_at_deadline) result.info.push('the run reached its time limit; the conversations it did not reach wait for the next run');
   if (result.deferred_days.length) result.info.push(result.deferred_days.length + ' older day(s) wait for the next backfill run (' + ARCHIVE_BACKFILL_CAP_KEY + ' caps one run)');
   return result;
 }
@@ -792,19 +887,41 @@ async function flushWrites(engine: BrainEngine, opts: ArchiveRunOpts, target: { 
     }
     for (const w of writes) w.outcome.status = 'written';
   } else {
-    for (const w of writes) {
+    const deadline = opts.deadlineAtMs;
+    const coordinated = async (submit: (ctx: OperationContext) => Promise<unknown>): Promise<string[]> => {
+      const ctx = target.context!;
       try {
+        await submit(deadline === undefined ? ctx : { ...ctx, writeWaitMs: Math.max(0, Math.min(ctx.writeWaitMs ?? CLI_WRITE_WAIT_MS, deadline - Date.now())) });
+        return [];
+      } catch (err) {
+        const receipt = acceptedPendingReceipt(err);
+        if (receipt) return [receipt.request_id];
+        throw err;
+      }
+    };
+    let submitted = 0;
+    for (const w of writes) {
+      if (writeMode === 'coordinator' && deadline !== undefined && w.harness !== 'index' && submitted && Date.now() >= deadline) break;
+      if (w.harness !== 'index') submitted++;
+      try {
+        const accepted: string[] = [];
         for (const part of w.parts) {
-          const r = writeMode === 'coordinator'
-            ? await submitTranscriptPart(target.context!, engine, sourceId, part, provenance(w.harness))
-            : await importFromContent(engine, part.slug, part.content, { sourceId, noEmbed: true, ...provenance(w.harness) });
+          if (writeMode === 'coordinator') {
+            accepted.push(...await coordinated(async ctx => {
+              const r = await submitTranscriptPart(ctx, engine, sourceId, part, provenance(w.harness));
+              if (r.status === 'error') throw new Error('the page write for ' + part.slug + ' returned an error');
+            }));
+            continue;
+          }
+          const r = await importFromContent(engine, part.slug, part.content, { sourceId, noEmbed: true, ...provenance(w.harness) });
           if (r.status === 'error') throw new Error('the page write for ' + part.slug + ' returned an error');
         }
         for (const stale of w.staleSlugs) {
-          if (writeMode === 'coordinator') await deleteStaleTranscriptPart(target.context!, engine, sourceId, stale);
+          if (writeMode === 'coordinator') accepted.push(...await coordinated(ctx => deleteStaleTranscriptPart(ctx, engine, sourceId, stale)));
           else await engine.deletePages([stale], { sourceId });
         }
-        w.outcome.status = 'written';
+        w.outcome.status = accepted.length ? 'accepted' : 'written';
+        if (accepted.length && w.ledger) w.pending = accepted;
       } catch (err) {
         if (classifyItemFailure(err).scope === 'run') throw err;
         const e = err as { code?: string; message?: string };
@@ -813,6 +930,10 @@ async function flushWrites(engine: BrainEngine, opts: ArchiveRunOpts, target: { 
     }
   }
   for (const w of writes) {
+    if (w.outcome.status === 'accepted' && w.ledger) {
+      const { hash, complete, ...queued } = w.ledger;
+      await writeLedger(engine, { ...queued, pending: { requests: w.pending ?? [], hash: hash ?? '', complete: complete === true } });
+    }
     if (w.outcome.status !== 'written') continue;
     if (w.raw) await engine.putRawData(w.parts[0]!.slug, 'transcript:' + w.harness, w.raw, { sourceId });
     if (w.hold) {
@@ -839,6 +960,8 @@ export interface ArchiveStatus {
   held: Array<{ harness: string; day: string; code: string }>;
   legacy_days: number;
   errors: ArchiveReaderError[];
+  /** The brain became shared but the pages archived while personal could not be kept to the owner yet. */
+  rescope?: ArchiveRescopeSkip;
 }
 
 export async function archiveStatus(engine: BrainEngine, opts: { sourceId?: string; readers?: ArchiveReader[] } = {}): Promise<ArchiveStatus> {
@@ -872,6 +995,8 @@ export async function archiveStatus(engine: BrainEngine, opts: { sourceId?: stri
       out.harnesses.push(row);
     }
   }
+  const rescope = await archiveRescopeSkipped(engine, opts.sourceId);
+  if (rescope) out.rescope = rescope;
   return out;
 }
 

@@ -7,6 +7,10 @@ skill already documents: fetch replaces the manual download, and everything
 downstream (redaction, slugging, part-splitting, idempotency) is the exact
 `gbrain transcripts ingest` pipeline.
 
+Agent sessions on this machine (Claude Code, Codex, OpenClaw, Hermes, Grok) need
+no connector: the [conversation archive](conversation-archive.md) keeps them,
+on by default on a personal brain.
+
 Live providers: **ChatGPT** and **Claude**. Perplexity has no live
 connector yet (no transcript adapter) — use the conversation-archive manual
 conversion for it.
