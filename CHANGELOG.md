@@ -10,6 +10,45 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.728.0] - 2026-11-15
+
+**Five small fixes: doctor sees a project-level Codex registration, a stray `.git` no longer claims a checkout, the host's CLI can read a write receipt another principal owns, keyless search keeps working when its fill step fails, and the conversation archive's folder-cap notice stays accurate.**
+
+### Fixed
+- `gbrain doctor` (harness_wiring) now also reads the workspace's `.codex/config.toml`, so a gbrain MCP server registered there for one project counts as registered instead of being reported as unwired (#9398). Reported by @Masashi-Ono0611.
+- An enclosing `.git` that is not a repository (for example an empty `~/.git` folder another tool left behind) no longer counts as the checkout that owns a brain folder under it, so gbrain stops writing its marker there and stops refusing writes under that folder with `writer_coordinator_required` (#9430). Reported by @garrietv and first fixed by @Masashi-Ono0611.
+- `gbrain write-request <id>` on the brain host now shows the receipt of a write that ran under another principal, such as a fact extraction submitted by an MCP client, which `gbrain sources writer failures` names as each row's next step. Remote callers and request ids two principals share still answer not found (#9426). Reported by @cupit01.
+- Keyless search no longer counts a fill row the model never answered as judged, leaves such rows out of the fill, and returns the plain keyword results when the any-word fill step fails instead of failing the whole search.
+- The conversation archive's `archive_rescope_folder_cap` notice shows only while the `conversations/` rule still keeps the folder to the owner, and on a source already at the 256-rule limit it says that `gbrain access rule export` then `import` fails until another rule is removed.
+
+### Changed
+- The refresh-barrier TLA+ nightly now runs in its own job and checks the adoption-plus-foreign-commit case one write at a time; the two-write run is kept as `RefreshBarrierAdoptFull.cfg` and runs by hand.
+
+**New page, docs/STABILITY.md: which release the default install follows, how a release becomes stable, and how to pin a version or go back.**
+
+### Added
+- `docs/STABILITY.md` explains that the README install command follows the stable channel, what a release has to pass before it becomes stable, when stable moves, how to stay on stable, pin an exact release or return to an earlier one, where behaviour changes are announced, and what the faster alpha channel is for. Nothing in gbrain changes; the page describes what it already does.
+- The README has a short Stability section that links to the page, and `llms.txt` / `llms-full.txt` list it.
+
+**Published release notes now open with one line per change and the pull request that made it.**
+
+### Changed
+- The release workflow puts a list at the top of each GitHub release: one line per change the release folds, taken from the change's changelog entry, with its pull request number. A release that never published is listed in the next one. CHANGELOG.md is unchanged.
+- `bun run verify` fails when a test reads a `changelog.d` file from the repository, because the next release deletes that file and the test breaks.
+- `changelog.d/README.md` says every pull request needs a changelog entry, a tests-only one included.
+
+**`gbrain setup --transcripts DIR` imports your exported call transcripts into the company brain with credentials removed, `me/facts` and `company/facts` become quotable facts pages, and setup says what the conversation archive is doing (GST-2731).**
+
+### Added
+- `gbrain setup claude-code|codex --shape company|both --transcripts DIR` (also asked at a terminal, after the docs folder) imports `.txt` and `.md` call or meeting transcripts from any recorder into the `company` source, one page per file at `company/calls/<date>-<title>`. Every credential in the text (API keys, tokens, passwords, plus your own redaction patterns) is replaced by a `<REDACTED:…>` marker before anything is stored, with the same redaction the conversation archive uses, and the file's path is redacted the same way. Pages are keyword-only: embedding them waits for your approval, with the conversation archive's hold. The facts backstop skips them; with a chat model key set, scheduled atom and event extraction can still read them within their budgets, and setup prints a `what leaves this machine` line saying which is on, or that nothing leaves. Each file is imported once. A rerun reports it unchanged, and a file changed since keeps its first page. Above 500 files setup prints the import command instead. `--transcripts` needs the company part on this brain, so it is refused with `--team`.
+- Setup prints who can read the call pages. That is everyone who can read the `company` source on a brain that serves one person, or the members the source's access rules allow on a brain that serves several. The pages carry no readers of their own.
+- `gbrain import DIR --calls [--prefix company/calls] [--source company]`, the same import on its own (implies `--no-embed`).
+- Page type `facts` (base packs; gbrain-base-v2 is now 1.7.0). `me/facts` and `company/facts` are created with `type: facts`, and the instructions setup writes for the agent say to quote only a facts page's dated lines and to add a new fact as a new dated line.
+- Doctor check `facts_undated_lines`: warns about a facts page with a fact line that has no date, naming the page and the line numbers (never the text), and asks you for the dates. It changes nothing.
+- Setup's report ends with one line on the conversation archive: on, off, or offered (a brain that may serve several people is only offered it).
+- Docs: `docs/guides/brain-layout.md`.
+- Tests: `test/import-calls.test.ts`, `test/doctor-facts-undated-lines.test.ts`, and the transcripts cases in `test/setup-brain-layout.test.ts`.
+
 ## [0.60.727.0] - 2026-11-15
 
 - v0.60.726.0 was not published, so this is the first release you can install with the conversation archive; it carries everything in the [0.60.726.0 section of the changelog](https://github.com/garrytan/gbrain/blob/v0.60.727.0/CHANGELOG.md), plus one test fix.
