@@ -99,6 +99,9 @@ export function cliGatewayTransport(opts: { bin?: string; url?: string; token?: 
   const timeoutMs = opts.timeoutMs ?? 60_000;
   return {
     call(method, params) {
+      if (url && !/^(wss?|https?):\/\/[^\s]+$/i.test(url)) {
+        return Promise.reject(gatewayError('failed', 'GBRAIN_OPENCLAW_GATEWAY_URL must be a ws://, wss://, http:// or https:// URL; nothing was run'));
+      }
       const args = ['gateway', 'call', method, '--json', '--params', JSON.stringify(params), '--timeout', String(timeoutMs), ...(url ? ['--url', url] : [])];
       const env = token ? { ...process.env, OPENCLAW_GATEWAY_TOKEN: token } : process.env;
       return new Promise((resolve, reject) => {
