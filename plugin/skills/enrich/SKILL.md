@@ -181,7 +181,7 @@ the raw data shows exactly what the API returned.
    placeholder.
 4. Fill compiled truth with citations
 5. Add first timeline entry
-6. Leave empty sections as `[No data yet]` (don't fill with boilerplate)
+6. Omit sections with nothing to put under them (`gbrain lint` flags empty ones)
 7. In a batch, create the pages other pages will link to first. A link to a
    page that doesn't exist yet is recorded as a wanted page and becomes an
    edge once that page is written (`gbrain wanted` lists them).

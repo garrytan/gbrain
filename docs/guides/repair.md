@@ -5174,7 +5174,9 @@ the harness configuration, or a `gbrain connect --install` receipt), and no
 because sessions would then read an empty brain while useful memory stays on
 the hosted one. Manage that connection with `gbrain connect <mcp-url>
 --harness <claude-code|codex> --install`; `gbrain doctor --only harness_wiring` shows
-which brain the registration reaches.
+which brain the registration reaches. The skill resolver needs no local brain:
+set it up there with `gbrain setup <claude-code|codex> --skills-index-only
+--skill-loading resolve`.
 
 ### Turn hook not loaded
 
