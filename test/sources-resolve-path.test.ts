@@ -195,8 +195,11 @@ test('a page the caller may not read answers exactly like a path with no file or
       `INSERT INTO pages (slug, source_path, deleted_at, ${columns}) SELECT 'team/old-kept', 'team/kept.md', now() - interval '1 day', ${columns} FROM pages WHERE source_id = $1 AND slug = 'team/open'`, [s.id]));
     await s.legacy({ 'team/later-kept.md': RESTRICTED('readable_by: [alice-example, owner-example]', 'Kept later'), 'team/later-open.md': note('Open later') });
     s.write('team/head-kept.md', RESTRICTED('readable_by: [alice-example, owner-example]', 'Kept at head'));
+    s.write('team/head-toml.md', '---toml\ntitle = "Odd"\n---\nBody.\n');
+    s.write('atoms/head-atom.md', 'An atom body with no frontmatter.\n');
+    s.write('team/head-large.md', note('Large') + 'x'.repeat(300 * 1024) + '\n');
     commit(s.repo);
-    const paths = ['team/kept.md', 'team/private.md', 'team/open.md', 'team/KEPT.md', 'team/nothing-here.md', 'team/later-kept.md', 'team/later-open.md', 'team/head-kept.md'];
+    const paths = ['team/kept.md', 'team/private.md', 'team/open.md', 'team/KEPT.md', 'team/nothing-here.md', 'team/later-kept.md', 'team/later-open.md', 'team/head-kept.md', 'team/head-toml.md', 'atoms/head-atom.md', 'team/head-large.md'];
     const call = async (stdioMember?: string) => {
       const result = await dispatchToolCall(engine, 'sources_resolve_path', { id: s.id, paths },
         { remote: true, transport: 'stdio', sourceId: s.id, ...(stdioMember ? { stdioMember } : {}) });
@@ -215,6 +218,9 @@ test('a page the caller may not read answers exactly like a path with no file or
       expect(answer(seen[5]!)).toEqual(nothing);
       expect(seen[6]).toMatchObject({ state: 'missing', in_synced_commit: true });
       expect(answer(seen[7]!)).toEqual(nothing);
+      expect(answer(seen[8]!)).toEqual(nothing);
+      expect(answer(seen[9]!)).toEqual(nothing);
+      expect(answer(seen[10]!)).toEqual(nothing);
       expect(JSON.stringify(seen)).not.toContain('Kept');
     }
     const alice = await call('alice-example');
