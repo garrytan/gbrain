@@ -278,16 +278,30 @@ export const FIRST_GRADUATION_RELEASE = '0.60.52.0';
  * marker, the source row or the tombstone. A graduation-aware release refuses where these tests
  * need an unaware writer, so the newest tags at or after FIRST_GRADUATION_RELEASE never qualify.
  */
-export function previousReleaseTags(count = 2): string[] {
+export function previousReleaseTags(count = 2, bound: NetworkBound = {}): string[] {
   const version = [readFileSync(join(REPO, 'VERSION'), 'utf8').trim(), FIRST_GRADUATION_RELEASE]
     .sort((a, b) => cmpVersion(a.split('.').map(Number), b.split('.').map(Number)))[0]!;
-  const out = Bun.spawnSync(['git', '-C', REPO, 'ls-remote', '--tags', '--refs', 'origin', 'v*'], { stdout: 'pipe', stderr: 'pipe' });
-  if (out.exitCode !== 0) throw new Error(`git ls-remote failed: ${out.stderr.toString()}`);
+  const out = networkGit(['ls-remote', '--tags', '--refs', 'origin', 'v*'], bound);
   const parse = (tag: string) => tag.slice(1).split('.').map(Number);
   const cmp = (a: number[], b: number[]) => { for (let i = 0; i < Math.max(a.length, b.length); i++) { const d = (a[i] ?? 0) - (b[i] ?? 0); if (d) return d; } return 0; };
   const current = version.split('.').map(Number);
-  return out.stdout.toString().split('\n').map(line => line.split('refs/tags/')[1]).filter((t): t is string => !!t && /^v\d+(\.\d+){3}$/.test(t))
+  return out.split('\n').map(line => line.split('refs/tags/')[1]).filter((t): t is string => !!t && /^v\d+(\.\d+){3}$/.test(t))
     .filter(t => cmp(parse(t), current) < 0).sort((a, b) => cmp(parse(b), parse(a))).slice(0, count);
+}
+
+/** Each network git call's own bound: a connection that opens and never answers must not hold the suite's beforeAll to its 900 s limit. */
+export interface NetworkBound { timeoutMs?: number; attempts?: number }
+
+/** `git -C REPO <args>` against origin, killed after `timeoutMs` and retried up to `attempts` times; throws naming the last failure. */
+function networkGit(args: string[], { timeoutMs = 60_000, attempts = 3 }: NetworkBound = {}): string {
+  let last = '';
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const r = Bun.spawnSync(['git', '-C', REPO, ...args], { stdout: 'pipe', stderr: 'pipe', timeout: timeoutMs, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+    if (r.exitCode === 0) return r.stdout.toString();
+    last = r.exitedDueToTimeout ? `timed out after ${timeoutMs / 1000}s` : `exit ${r.exitCode}: ${r.stderr.toString().trim().slice(-500)}`;
+  }
+  throw new Error(`git ${args.join(' ')} failed ${attempts} time(s); last: ${last}. The older-release binaries need origin reachable; `
+    + 'prebuild them under GBRAIN_OLDER_RELEASE_DIR or point GBRAIN_OLDER_RELEASE_BIN_<tag> at one.');
 }
 
 function cmpVersion(a: number[], b: number[]): number {
@@ -300,7 +314,7 @@ function cmpVersion(a: number[], b: number[]): number {
  * (`GBRAIN_OLDER_RELEASE_DIR`, default ~/.cache/gbrain-older-releases).
  * `GBRAIN_OLDER_RELEASE_BIN_<tag with dots as underscores>` points at a prebuilt one.
  */
-export function olderReleaseBinary(tag: string): string {
+export function olderReleaseBinary(tag: string, bound: NetworkBound = {}): string {
   const preset = process.env[`GBRAIN_OLDER_RELEASE_BIN_${tag.replace(/\./g, '_')}`];
   if (preset) return preset;
   const cache = process.env.GBRAIN_OLDER_RELEASE_DIR || join(process.env.HOME ?? '/tmp', '.cache', 'gbrain-older-releases');
@@ -308,10 +322,11 @@ export function olderReleaseBinary(tag: string): string {
   const binary = join(tree, 'bin', 'gbrain');
   if (existsSync(binary)) return binary;
   const run = (argv: string[], cwd = REPO) => {
-    const r = Bun.spawnSync(argv, { cwd, stdout: 'pipe', stderr: 'pipe' });
-    if (r.exitCode !== 0) throw new Error(`${argv.join(' ')}: ${r.stderr.toString().slice(-2000)}`);
+    const r = Bun.spawnSync(argv, { cwd, stdout: 'pipe', stderr: 'pipe', timeout: 300_000 });
+    if (r.exitCode !== 0) throw new Error(`${argv.join(' ')}: ${r.exitedDueToTimeout ? 'timed out after 300s' : r.stderr.toString().slice(-2000)}`);
   };
-  run(['git', 'fetch', '-q', 'origin', 'tag', tag, '--no-tags']);
+  const local = Bun.spawnSync(['git', '-C', REPO, 'rev-parse', '-q', '--verify', `refs/tags/${tag}`], { stdout: 'pipe', stderr: 'pipe' });
+  if (local.exitCode !== 0) networkGit(['fetch', '-q', 'origin', 'tag', tag, '--no-tags'], bound);
   if (!existsSync(tree)) run(['git', 'worktree', 'add', '-q', '--detach', tree, tag]);
   run([process.execPath, 'install', '--frozen-lockfile', '--ignore-scripts'], tree);
   run([process.execPath, 'build', '--compile', '--no-compile-autoload-bunfig', '--outfile', 'bin/gbrain', 'src/cli.ts'], tree);

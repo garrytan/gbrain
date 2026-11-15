@@ -51,6 +51,7 @@ import { implyManagedNoPull } from '../src/commands/sync/managed-no-pull.ts';
 import type { ConsumerRow } from '../src/core/persistence/consumer-heartbeat.ts';
 import type { SyncOpts } from '../src/commands/sync.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { VERSION } from '../src/version.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-handoff-'));
 const sources: string[] = [];
@@ -287,6 +288,28 @@ describe('maybeDelegateManagedSyncToServe (the Postgres ladder, client half)', (
     expect(captured).toHaveLength(3);
     // #6543: none of these rungs forces this process's own consumer beside the serve.
     expect(ownConsumerForcedReason()).toBeNull();
+  }), 120_000);
+
+  test('a serve already on this gbrain version is never told to restart on this version; an older one still is', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const f = await fixture(1);
+    const dead = join(home, `dead-${randomUUID().slice(0, 8)}.sock`);
+    writeFileSync(dead, '');
+    const current = serveRow({ version: VERSION });
+    resetOwnConsumerForTest();
+    captureStderr();
+    const noSock = await maybeDelegateManagedSyncToServe(engine, [], baseOpts(f.id), deps({ sock: null, row: current }));
+    const silent = await maybeDelegateManagedSyncToServe(engine, [], baseOpts(f.id), deps({ sock: dead, row: current }));
+    const older = await maybeDelegateManagedSyncToServe(engine, [], baseOpts(f.id), deps({ sock: null, row: serveRow({ version: '0.0.1.0' }) }));
+    releaseStderr();
+    resetOwnConsumerForTest();
+    for (const outcome of [noSock, silent]) {
+      const line = outcome.kind === 'own_consumer' ? outcome.line ?? '' : '';
+      expect(line).not.toMatch(/[Rr]estart that serve on this gbrain version/);
+      expect(line).toContain(`already runs this gbrain version (v${VERSION})`);
+    }
+    expect(noSock.kind === 'own_consumer' && noSock.line).toMatch(/GBRAIN_SERVE_SYNC_IPC=0/);
+    expect(silent.kind === 'own_consumer' && silent.line).toMatch(/not answering its IPC socket.*may be wedged/);
+    expect(older.kind === 'own_consumer' && older.line).toMatch(/Restart that serve on this gbrain version/);
   }), 120_000);
 
   test('#7167: a dry run that is not delegated says it previews in this process and writes nothing, and never forces a consumer of its own', async () => withEnv({ GBRAIN_HOME: home }, async () => {

@@ -368,14 +368,22 @@ nothing is widened automatically: ask the user first.
 The commands differ by credential type:
 
 ```bash
-# Legacy token: preview the operations added since the snapshot, then add the approved ones
+# Legacy token: list the operations added since the snapshot, preview adding them, then add them
 gbrain auth rescope --token NAME --refresh-operations
-gbrain auth rescope --token NAME --refresh-operations --add put_pages
+gbrain auth rescope --token NAME --refresh-operations --add OP1,OP2,... --dry-run
+gbrain auth rescope --token NAME --refresh-operations --add OP1,OP2,...
 
 # OAuth client: no refresh; pass the whole new snapshot, plus --surface full when the pin blocks too
 gbrain auth rescope --client CLIENT_ID --operations OP1,OP2,... --surface full --dry-run
 gbrain auth rescope --client CLIENT_ID --operations OP1,OP2,... --surface full
 ```
+
+`gbrain doctor` fills the list with every operation it counted for that
+grant except the membership operations below (for a client, the current
+snapshot plus those), and each `--dry-run` prints the operation list before
+and after without changing the grant. Counted membership operations are listed
+apart with a second command that adds them by name; it is never the doctor
+fix, because only the owner approves them.
 
 `--refresh-operations` is token-only (a client gets
 `client_refresh_operations_unsupported`). Removing the snapshot instead is a

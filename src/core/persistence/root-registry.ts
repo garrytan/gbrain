@@ -38,16 +38,17 @@ export function enclosingGitMetadata(root: string): string | null {
 /**
  * #7988: the git metadata directory of the checkout `root` belongs to: its own `.git`, or an enclosing checkout whose HEAD
  * tracks `root` (a committed subdirectory). A directory a checkout only encloses (a connector clone or a plain directory
- * under a dotfiles home) belongs to none, and so does an enclosing `.git` that is not a repository (#9430). A Git read
- * that fails for another reason keeps the enclosing checkout.
+ * under a dotfiles home) belongs to none, and so does a `.git`, its own or an enclosing one, that is not a repository
+ * (#9430). A Git read that fails for another reason keeps the enclosing checkout, unless the root has its own invalid
+ * `.git`: a gitdir file pointing nowhere fails every Git read there, so nothing proves the enclosing checkout tracks it.
  */
 export function checkoutGitMetadata(root: string): string | null {
   const own = gitMetadataDirectory(root);
-  if (own) return own;
-  const enclosing = enclosingGitMetadata(root);
+  if (own && isGitDirectory(own)) return own;
+  const enclosing = enclosingGitMetadata(dirname(root));
   if (!enclosing) return null;
   try { execFileSync('git', ['-C', root, 'rev-parse', '--verify', '--quiet', 'HEAD:./'], { stdio: 'ignore', timeout: 10_000, env: gitChildEnv() }); }
-  catch (error) { if ((error as { status?: unknown }).status === 1 || !isGitDirectory(enclosing)) return null; }
+  catch (error) { if ((error as { status?: unknown }).status === 1 || own || !isGitDirectory(enclosing)) return null; }
   return enclosing;
 }
 /** #9430: Git's own test for a repository directory: HEAD, plus objects/ and refs/ in its common directory (`commondir` in a linked worktree). */

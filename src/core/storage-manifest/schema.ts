@@ -32,7 +32,7 @@ const count = z.number().int().nonnegative();
 const LocationSchema = z.object({
   store: z.enum(STORES),
   bucket: text(200).nullish(),
-  path: text(2000).min(1),
+  path: text(2000).min(1, 'is empty; for an item at the root of its bucket or repository, write "/"'),
   tool: z.enum(TOOLS),
   repository: text(2000).nullish(),
   snapshot: text(200).nullish(),

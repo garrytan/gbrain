@@ -77,6 +77,8 @@ const OPENING_CHARS = 160;
 const OPENING_MIN_CHARS = 40;
 const OPENING_MIN_OTHERS = 3;
 const HEAD_BYTES = 64 * 1024;
+/** #9390: what Claude Code writes into a user turn around a slash command (/clear, /model), never text the owner typed. */
+const HARNESS_BLOCKS = /<(local-command-caveat|command-name|command-message|command-args|local-command-stdout|local-command-stderr)>[\s\S]*?<\/\1>/g;
 const NOTE_SEPARATOR = CONTEXT_NOTE_SEPARATOR;
 const NOTE_MARK = 'speaker: agent ';
 
@@ -163,7 +165,7 @@ function readHead(path: string): string {
   } finally { closeSync(fd); }
 }
 
-/** The session's first user turn, normalized; null when no retained file holds one long enough to compare, 'unread' when its files could not be read. */
+/** The session's first user turn with owner text once harness blocks are dropped, normalized; null when no retained file holds one long enough to compare, 'unread' when its files could not be read. */
 function openingKey(paths: string[], unreadable: string[]): string | null {
   const ranked = paths.map(path => {
     let mtime = Number.POSITIVE_INFINITY;
@@ -174,8 +176,9 @@ function openingKey(paths: string[], unreadable: string[]): string | null {
   for (const { path, wb } of ranked) {
     let head: string;
     try { head = readHead(path); } catch { unreadable.push(path); unread = true; continue; }
-    const turn = wb ? stripPastedContent(head).text : parseCorpusTurns(head).find(t => t.role === 'user')?.body;
-    const key = turn?.replace(/\s+/g, ' ').trim().toLowerCase().slice(0, OPENING_CHARS);
+    const ownerText = (text: string) => text.replace(HARNESS_BLOCKS, ' ').replace(/\s+/g, ' ').trim();
+    const turn = wb ? ownerText(stripPastedContent(head).text) : parseCorpusTurns(head).filter(t => t.role === 'user').map(t => ownerText(t.body)).find(Boolean);
+    const key = turn?.toLowerCase().slice(0, OPENING_CHARS);
     if (key) return key.length >= OPENING_MIN_CHARS ? key : null;
   }
   return unread ? 'unread' : null;

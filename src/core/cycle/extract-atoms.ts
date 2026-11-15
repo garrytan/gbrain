@@ -711,6 +711,7 @@ export async function runPhaseExtractAtoms(
   const sourceId = opts.sourceId ?? 'default';
   const guestSkip = await (await import('../guests/derived.ts')).guestSourceSkip(engine, 'extract_atoms', sourceId);
   if (guestSkip) return { phase: 'extract_atoms', status: 'skipped', duration_ms: 0, summary: `extract_atoms: ${guestSkip.summary}`, details: guestSkip.details };
+  if (await (await import('../storage-manifest/door.ts')).isStorageManifestSource(engine, sourceId)) return { phase: 'extract_atoms', status: 'skipped', duration_ms: 0, summary: `extract_atoms: source ${sourceId} is the storage shelf, which holds archive records, not pages to extract atoms from`, details: { reason: 'storage_manifest_source' } };
   const chat = opts._chat ?? gatewayChat;
   const managed = await managedAtomSession(engine, sourceId, opts._managedRetry, opts.attempt?.writeWait, opts.signal);
   // v0.41.2.1: loadConfigWithEngine() so the dream.* DB-plane merge from Phase 1 reaches this phase.

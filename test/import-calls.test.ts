@@ -10,14 +10,17 @@
  *     a --prefix value read as the import folder, a page written under conversations/.
  *  3. A new mode on an existing command; test/setup-brain-layout.test.ts covers it through gbrain setup.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
-import { callPageFor, listCallFiles } from '../src/commands/import-calls.ts';
+import { callPageFor, callRootId, listCallFiles, runCallImport } from '../src/commands/import-calls.ts';
+import { operations } from '../src/core/operations.ts';
+import { OperationError } from '../src/core/ops/contract.ts';
+import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { parseMarkdown } from '../src/core/markdown.ts';
 import { listBudgetLimitedPages, planPageEmbedding } from '../src/core/page-embedding-budget.ts';
@@ -183,6 +186,56 @@ describe('gbrain import --calls', () => {
     expect(JSON.parse((await imp(b)).stdout)).toMatchObject({ imported: 1, kept: 0, errors: 0 });
     expect((await runCli(['get', 'calls/2026-04-03-retro'], { env })).stdout).toContain('Bob: retro.');
   }, 240_000);
+
+  test('two files a redaction pattern names alike both import, and neither name is stored or printed', async () => {
+    const root = temp('gbrain-calls-alike-');
+    const home = join(root, 'home');
+    mkdirSync(home);
+    const env = { HOME: home, GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_SOURCE: undefined, GBRAIN_SKIP_STARTUP_HOOKS: '1' };
+    expect((await runCli(['init', '--pglite', '--no-embedding', '--json'], { env })).exitCode).toBe(0);
+    writeFileSync(join(home, '.gbrain', 'harvest-private-patterns.txt'), 'acme-example-[0-9]+\n');
+    const calls = join(root, 'calls');
+    mkdirSync(calls);
+    writeFileSync(join(calls, 'acme-example-1.txt'), 'Kickoff 2026-04-01\nAlice: one.\n');
+    const run = async () => {
+      const r = await runCli(['import', calls, '--calls', '--no-embed', '--json'], { env });
+      expect(r.stdout).not.toMatch(/acme-example-\d/);
+      return JSON.parse(r.stdout);
+    };
+    expect(await run()).toMatchObject({ imported: 1, errors: 0 });
+    writeFileSync(join(calls, 'acme-example-2.txt'), 'Review 2026-04-02\nAlice: two.\n');
+    const second = await run();
+    expect(second).toMatchObject({ imported: 1, unchanged: 1, kept: 0, errors: 0 });
+    expect(second.pages.map((p: any) => p.slug).sort()).toEqual(['calls/2026-04-01-kickoff', 'calls/2026-04-02-review']);
+    expect(await run()).toMatchObject({ imported: 0, unchanged: 2, kept: 0, errors: 0 });
+    const stored = await runCli(['get', 'calls/2026-04-02-review'], { env });
+    expect(stored.stdout).toContain('Alice: two.');
+    expect(stored.stdout).not.toMatch(/acme-example-\d/);
+  }, 240_000);
+
+  test('a single call file imports, a later folder import finds it, and a file of another kind is an error', async () => {
+    const root = temp('gbrain-calls-single-');
+    const home = join(root, 'home');
+    mkdirSync(home);
+    const env = { HOME: home, GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_SOURCE: undefined, GBRAIN_SKIP_STARTUP_HOOKS: '1' };
+    expect((await runCli(['init', '--pglite', '--no-embedding', '--json'], { env })).exitCode).toBe(0);
+    const calls = join(root, 'calls');
+    mkdirSync(calls);
+    writeFileSync(join(calls, '2026-04-05 planning.txt'), 'Alice: plan.\n');
+    writeFileSync(join(calls, 'agenda.pdf'), 'x\n');
+    const imp = async (target: string) => {
+      const r = await runCli(['import', target, '--calls', '--no-embed', '--json'], { env });
+      return { code: r.exitCode, doc: JSON.parse(r.stdout) };
+    };
+    const single = await imp(join(calls, '2026-04-05 planning.txt'));
+    expect(single.doc).toMatchObject({ total_files: 1, imported: 1, errors: 0 });
+    expect(single.doc.pages[0]).toMatchObject({ file: '2026-04-05 planning.txt', slug: 'calls/2026-04-05-planning' });
+    expect((await runCli(['get', 'calls/2026-04-05-planning'], { env })).stdout).toContain('Alice: plan.');
+    expect((await imp(calls)).doc).toMatchObject({ total_files: 1, imported: 0, unchanged: 1, errors: 0 });
+    const other = await imp(join(calls, 'agenda.pdf'));
+    expect(other.code).toBe(1);
+    expect(other.doc).toMatchObject({ imported: 0, errors: 1 });
+  }, 240_000);
 });
 
 describe('call page embedding', () => {
@@ -199,5 +252,42 @@ describe('call page embedding', () => {
     expect(plan).toEqual({ kind: 'held', reason: 'call_import' });
     const held = await listBudgetLimitedPages(engine, { state: 'held' });
     expect(held.map(h => [h.slug, h.reason])).toContainEqual([page.slug, 'call_import']);
+  });
+});
+
+describe('call import, in process', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 120_000);
+  afterAll(async () => { await engine.disconnect(); });
+  beforeEach(() => _resetCliExitVerdictForTests());
+  afterEach(() => mock.restore());
+
+  test('a page imported before call_import.path was stored is still found by its file after its modified day moved', async () => {
+    const dir = realpathSync(temp('gbrain-calls-legacy-'));
+    writeFileSync(join(dir, 'legacy.txt'), 'Legacy sync\nAlice: legacy.\n');
+    const page = callPageFor('legacy.txt', 'Legacy sync\nAlice: legacy.\n', MTIME, 'legacy', [], callRootId(dir));
+    expect(page.content).not.toContain('  path:');
+    const parsed = parseMarkdown(page.content);
+    await engine.putPage(page.slug, { type: 'meeting', title: page.title, compiled_truth: parsed.compiled_truth, frontmatter: parsed.frontmatter });
+    spyOn(console, 'log').mockImplementation(() => {});
+    expect(await runCallImport(engine, dir, ['--calls', '--prefix', 'legacy'], { json: false })).toMatchObject({ imported: 0, errors: 0 });
+  });
+
+  test('a write still pending is reported pending, not as an error, and exits 10', async () => {
+    const dir = realpathSync(temp('gbrain-calls-pending-'));
+    writeFileSync(join(dir, '2026-05-02 pending.txt'), 'Alice: pending.\n');
+    const requestId = '7a1c0d2e-0000-4000-8000-00000000ca11';
+    spyOn(operations.find(op => op.name === 'put_page')!, 'handler').mockImplementation((async () => {
+      const error = new OperationError('write_pending', 'The page write was accepted and is still running.', 'Poll the receipt.');
+      error.writeRequest = { request_id: requestId, state: 'queued', retry_after_ms: 500 } as never;
+      throw error;
+    }) as never);
+    const lines: string[] = [];
+    spyOn(console, 'log').mockImplementation((line: string) => { lines.push(line); });
+    const result = await runCallImport(engine, dir, ['--calls', '--prefix', 'pending'], { json: false });
+    expect(result).toMatchObject({ imported: 0, errors: 0, failures: [] });
+    expect(currentExitCode()).toBe(10);
+    expect(lines.join('\n')).toContain('1 pending');
+    expect(lines.join('\n')).toContain(`gbrain write-request -- ${requestId}`);
   });
 });

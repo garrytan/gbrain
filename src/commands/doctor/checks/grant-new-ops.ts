@@ -20,6 +20,7 @@ import { loadConfig, type GBrainConfig } from '../../../core/config.ts';
 import { grantFromRow, grantFromTokenRow } from '../../../core/grants/model.ts';
 import { readClientCatalogProvenance } from '../../../core/grants/service.ts';
 import { ALL_OPERATIONS_CHOICE, grantAge, grantBlockers, grantOperationGaps, grantRescopeArgvs, type GrantGaps, type RescopeTarget } from '../../../core/harness/capabilities.ts';
+import { requiresExplicitApproval } from '../../../core/ops/execution-prerequisites.ts';
 import { clampSurface, isMcpSurface, minSurface, resolveDefaultClientSurface, resolveSurface, surfaceWiderThan, type McpSurface } from '../../../mcp/surface.ts';
 import { disabledOpsForPublishGates } from '../../../mcp/publish-gates.ts';
 import type { Check } from '../../doctor.ts';
@@ -27,7 +28,6 @@ import { checkError, doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
 const DOCS = 'docs/mcp/ADMIN.md#grants-that-cannot-reach-new-operations';
-const BULK_WRITE = 'put_pages';
 
 interface GrantFinding {
   kind: 'oauth_client' | 'legacy_token';
@@ -37,21 +37,30 @@ interface GrantFinding {
   blockers: Array<Record<string, unknown>>;
   excluded_operations: { operation_snapshot: string[]; client_pin: string[]; server_ceiling: string[] };
   grant_age: ReturnType<typeof grantAge>;
-  preview_argv: string[];
-  argv: string[];
+  /** Null when only by-name operations are missing: there is no default repair. */
+  preview_argv: string[] | null;
+  argv: string[] | null;
   all_operations_argv: string[];
+  /** Missing operations the owner approves by name; argv leaves them out and by_name_argv adds them. */
+  by_name_operations: string[];
+  by_name_argv: string[] | null;
 }
 
 function finding(kind: GrantFinding['kind'], id: string, name: string, profile: string | null, gaps: GrantGaps, target: RescopeTarget,
   snapshot: readonly string[] | null, age: ReturnType<typeof grantAge>, surfaces: { client: McpSurface | null; clientSetBy: string | null; server: McpSurface | null }): GrantFinding {
-  const bulk = gaps.snapshotExcluded.includes(BULK_WRITE);
-  const operations = !bulk ? null : kind === 'legacy_token' ? BULK_WRITE : [...new Set([...(snapshot ?? []), BULK_WRITE])].sort().join(',');
-  const argvs = grantRescopeArgvs(target, gaps, operations);
+  const byName = gaps.snapshotExcluded.filter(requiresExplicitApproval);
+  const plain = gaps.snapshotExcluded.filter(op => !requiresExplicitApproval(op));
+  const list = (added: string[], all: string[]) => !added.length ? null
+    : kind === 'legacy_token' ? added.join(',') : [...new Set([...(snapshot ?? []), ...all])].sort().join(',');
+  const argvs = grantRescopeArgvs(target, { ...gaps, snapshotExcluded: plain }, list(plain, plain));
+  const repairable = plain.length > 0 || gaps.pinExcluded.length > 0;
   const blockers = grantBlockers(gaps, { clientSurface: surfaces.client, clientSurfaceSetBy: surfaces.clientSetBy, serverSurface: surfaces.server });
   return {
     kind, id, name, profile, blockers,
     excluded_operations: { operation_snapshot: gaps.snapshotExcluded, client_pin: gaps.pinExcluded, server_ceiling: gaps.serverExcluded },
-    grant_age: age, preview_argv: argvs.preview, argv: argvs.apply, all_operations_argv: argvs.all_operations,
+    grant_age: age, preview_argv: repairable ? argvs.preview : null, argv: repairable ? argvs.apply : null, all_operations_argv: argvs.all_operations,
+    by_name_operations: byName,
+    by_name_argv: byName.length ? grantRescopeArgvs(target, { snapshotExcluded: byName, pinExcluded: [] }, list(byName, gaps.snapshotExcluded)).apply : null,
   };
 }
 
@@ -66,7 +75,13 @@ function describeFinding(f: GrantFinding): string {
     : b.blocker === 'client_pin' ? `its stored ${b.surface} surface excludes ${b.excluded_count}`
     : `the configured ${b.surface} server surface excludes ${b.excluded_count}`);
   const age = 'statement' in f.grant_age ? ` ${f.grant_age.statement}` : '';
-  return `${label}: ${parts.join(', ')}.${age} Preview: ${shownCommand(f.preview_argv)}`;
+  return `${label}: ${parts.join(', ')}.${age}${f.preview_argv ? ` Preview: ${shownCommand(f.preview_argv)}` : ''}${byNameNote(f)}`;
+}
+
+function byNameNote(f: GrantFinding): string {
+  if (!f.by_name_argv) return '';
+  return ` ${f.by_name_operations.length} of the missing operations need the owner's approval by name (${f.by_name_operations.join(', ')}), `
+    + `so ${f.argv ? 'that command leaves them out' : 'there is no default repair'}; an owner who approves them adds them with ${shownCommand(f.by_name_argv)}`;
 }
 
 export async function checkGrantNewOps(engine: BrainEngine, opts: { cfg?: GBrainConfig | null } = {}): Promise<Check> {
@@ -117,16 +132,16 @@ export async function checkGrantNewOps(engine: BrainEngine, opts: { cfg?: GBrain
       return { name: 'grant_new_ops_available', status: 'ok', message: `Every active client and token can call the operations its scopes allow.${ceilingNote}`,
         details: { grants: [], server_surface: ceiling, docs: DOCS } };
     }
-    const first = findings[0];
-    const placeholder = first.argv.includes('<OPERATIONS>');
-    const fix: Action = {
-      preview_argv: first.preview_argv, argv: first.argv, consent: ['credentials'], actor: 'agent', requires_exclusive: false, docs: DOCS,
+    const first = findings.find(f => f.argv);
+    const placeholder = first?.argv?.includes('<OPERATIONS>');
+    const fix: Action | undefined = !first?.argv ? undefined : {
+      preview_argv: first.preview_argv!, argv: first.argv, consent: ['credentials'], actor: 'agent', requires_exclusive: false, docs: DOCS,
       verify: doctorVerify('grant_new_ops_available'),
       why: 'An operation snapshot or a stored client surface keeps this grant from operations its scopes allow; changing it widens what that credential can do.',
       user_message: `${findings.length} connection grant(s) cannot call operations their scopes allow (first: ${first.name}). `
-        + `For ${first.name}: preview the change with ${shownCommand(first.preview_argv)}, then apply it; or leave it as it is; `
-        + `or remove its snapshot with ${first.all_operations_argv.join(' ')} (${ALL_OPERATIONS_CHOICE}). Which do you want?`,
-      ...(placeholder ? { inputs: [{ name: 'OPERATIONS', how: `The operations the user approves for ${first.name}, comma-separated (clients: the whole new snapshot, i.e. the current one plus the approved additions; details.grants[0].excluded_operations lists the candidates).` }] } : {}),
+        + `For ${first.name}: preview the change with ${shownCommand(first.preview_argv!)}, then apply it; or leave it as it is; `
+        + `or remove its snapshot with ${first.all_operations_argv.join(' ')} (${ALL_OPERATIONS_CHOICE}).${byNameNote(first)} Which do you want?`,
+      ...(placeholder ? { inputs: [{ name: 'OPERATIONS', how: `The operations the user approves for ${first.name}, comma-separated (clients: the whole new snapshot, i.e. the current one plus the approved additions; details.grants[${findings.indexOf(first)}].excluded_operations lists the candidates).` }] } : {}),
     };
     return {
       name: 'grant_new_ops_available', status: 'warn',
@@ -136,7 +151,7 @@ export async function checkGrantNewOps(engine: BrainEngine, opts: { cfg?: GBrain
         + `Ask the user before changing any grant; nothing widens automatically, and --operations all (${ALL_OPERATIONS_CHOICE}) is a separate choice, not the default repair.`
         + `${ceilingNote} See ${DOCS}.`,
       details: { grants: findings, server_surface: ceiling, all_operations_choice: ALL_OPERATIONS_CHOICE, docs: DOCS },
-      fix,
+      ...(fix ? { fix } : {}),
     };
   } catch (e) {
     return checkError('grant_new_ops_available', 'read client and token grants', e);

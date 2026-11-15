@@ -35,7 +35,7 @@ import { hasReaders, normalizeReaders } from '../access/principals.ts';
 import { canonicalJson } from '../remediation-step.ts';
 import { readShelfCards } from './find.ts';
 import { accessLabels, CARD_KEYS, cardContent, cardDigest, credentialShape, holdsCredential, isCommandKey, parseCardInput, STAMPED_KEYS, STORED_OBJECT_TYPE, type AccessLabels, type CardInput } from './schema.ts';
-import { shelfWritable, STORAGE_SOURCE_ID } from './source.ts';
+import { shelfWritable, storageSourceState, STORAGE_SOURCE_ID } from './source.ts';
 
 export const ADOPT_DEFAULT_PREFIX = 'storage-manifest/';
 export const ADOPT_DEFAULT_SOURCE = 'default';
@@ -62,15 +62,24 @@ export function pendingWrite(item: string, error: unknown): PendingWrite | null 
   return receipt ? { item, request_id: receipt.request_id, state: receipt.state, poll: ['gbrain', 'write-request', receipt.request_id] } : null;
 }
 
+/** The receipt id of a committed write's response, to report beside the record it wrote. */
+function receiptId(response: unknown): { request_id?: string } {
+  const id = (response as { request_id?: unknown } | null)?.request_id;
+  return typeof id === 'string' ? { request_id: id } : {};
+}
+
 /** What a run changed: an accepted pending write counts as a change, and as unfinished. */
 export function sideEffects(wrote: boolean, unfinished: boolean): SideEffects {
   return !wrote ? 'none' : unfinished ? 'partial' : 'complete';
 }
 export interface AdoptApplyResult {
   action: 'adopt'; dry_run: false; source_id: string; prefix: string; plan_hash: string; side_effects: SideEffects;
-  results: Array<{ slug: string; card_id: string | null; outcome: 'registered' | 'retagged' | 'skipped' | 'conflict' }>;
-  conflicts: string[]; failure?: StepFailure; pending?: PendingWrite[]; rerun?: string[]; finalize?: string[];
+  results: Array<{ slug: string; card_id: string | null; outcome: 'registered' | 'retagged' | 'skipped' | 'conflict'; request_id?: string }>;
+  counts: { adopted: number; skipped: number; refused: number; pending: number };
+  conflicts: string[]; failure?: StepFailure; pending?: PendingWrite[]; rerun?: string[]; finalize?: string[]; index?: ShelfIndex;
 }
+/** On a hosted shelf, whether the sync checkpoint reached the cards the run committed; `resume` indexes them when it did not. */
+export interface ShelfIndex { source_id: string; status: 'indexed' | 'behind'; last_commit: string | null; resume?: string[] }
 export interface FinalizeEntry { slug: string; card_id: string | null; state: 'delete' | 'deleted' | 'unverified' | 'not_adopted'; other_sections?: string[]; unread_tail?: boolean; content?: string }
 export interface FinalizePlan { action: 'finalize'; dry_run: true; source_id: string; prefix: string; entries: FinalizeEntry[]; plan_hash: string; summary: string[]; apply?: string[] }
 export interface FinalizeApplyResult {
@@ -190,9 +199,10 @@ function originalLabels(row: InterimAccess, frontmatter: Record<string, unknown>
 }
 
 /** Map one interim page onto a card. Pure: reads nothing beyond the row. */
-export function mapInterimPage(row: Pick<InterimRow, 'slug' | 'title' | 'frontmatter' | 'body'> & InterimAccess, prefix: string): Pick<AdoptEntry, 'card' | 'labels' | 'refused' | 'problem'> {
+export function mapInterimPage(row: Pick<InterimRow, 'slug' | 'title' | 'frontmatter' | 'body'> & Partial<Pick<InterimRow, 'long_body'>> & InterimAccess, prefix: string): Pick<AdoptEntry, 'card' | 'labels' | 'refused' | 'problem'> {
   if (row.write_channel?.startsWith('mcp:')) return { card: null, labels: null, refused: [], problem: invalidRecord('remote_written', `the page was last written by a remote client (${row.write_channel}); adopt takes only records written on this machine or by sync`) };
   const text = recordJson(row.body ?? '');
+  if (text === null && (row.long_body || (row.body?.length ?? 0) >= BOUNDED_PREFIX_BYTES)) return { card: null, labels: null, refused: [], problem: invalidRecord('truncated', 'the page is longer than the 64 KiB adopt reads and no complete json block under a ## Record heading is in that part, so the record is cut off or past it; move the ## Record section to the top of the page') };
   if (text === null) return { card: null, labels: null, refused: [], problem: invalidRecord('no_record', 'the page has no json block under a ## Record heading in its first 64 KiB') };
   let record: unknown;
   try { record = JSON.parse(text); } catch { return { card: null, labels: null, refused: [], problem: invalidRecord('not_json', 'the ## Record block is not valid JSON') }; }
@@ -312,11 +322,11 @@ export async function applyAdopt(ctx: OperationContext, opts: AdoptOptions & { e
     if (entry.state === 'conflict' || entry.state === 'adopted') { results.push({ slug: entry.slug, card_id: entry.card_id, outcome: entry.state === 'conflict' ? 'conflict' : 'skipped' }); continue; }
     try {
       if (entry.state === 'register') {
-        await registerCard(ctx, entry.card!, 'adopt', undefined, entry.labels!);
-        results.push({ slug: entry.slug, card_id: entry.card_id, outcome: 'registered' });
+        const registered = await registerCard(ctx, entry.card!, 'adopt', undefined, entry.labels!);
+        results.push({ slug: entry.slug, card_id: entry.card_id, outcome: 'registered', ...receiptId(registered.write) });
       }
-      await submitPageMutation(ctx, { operation: 'add_tag', params: { slug: entry.slug, tag: ADOPTED_TAG, source_id: opts.sourceId } });
-      results.push({ slug: entry.slug, card_id: entry.card_id, outcome: 'retagged' });
+      const tagged = await submitPageMutation(ctx, { operation: 'add_tag', params: { slug: entry.slug, tag: ADOPTED_TAG, source_id: opts.sourceId } });
+      results.push({ slug: entry.slug, card_id: entry.card_id, outcome: 'retagged', ...receiptId(tagged) });
     } catch (error) {
       const held = pendingWrite(entry.slug, error);
       if (held) { pending.push(held); continue; }
@@ -326,11 +336,40 @@ export async function applyAdopt(ctx: OperationContext, opts: AdoptOptions & { e
     }
   }
   const wrote = pending.length > 0 || results.some((r) => r.outcome === 'registered' || r.outcome === 'retagged');
+  const index = results.some((r) => r.outcome === 'registered') && (await storageSourceState(ctx.engine)).hosted ? await indexShelfCommits(ctx.engine) : undefined;
   return { action: 'adopt', dry_run: false, source_id: opts.sourceId, prefix: opts.prefix, plan_hash: plan.plan_hash,
     side_effects: sideEffects(wrote, !!failure || pending.length > 0), results,
+    counts: { adopted: new Set(results.filter((r) => r.outcome === 'retagged').map((r) => r.slug)).size, skipped: results.filter((r) => r.outcome === 'skipped').length,
+      refused: results.filter((r) => r.outcome === 'conflict').length + (failure ? 1 : 0), pending: pending.length },
     conflicts: results.filter((r) => r.outcome === 'conflict').map((r) => r.slug),
-    ...(failure ? { failure } : {}), ...(pending.length ? { pending } : {}),
+    ...(failure ? { failure } : {}), ...(pending.length ? { pending } : {}), ...(index ? { index } : {}),
     ...(failure || pending.length ? { rerun } : { finalize: [...adoptArgv(opts), '--finalize'] }) };
+}
+
+/**
+ * Index the commits a run made on a hosted (git-canonical) shelf, as the strict pass of a git conversion does after its own
+ * commits: the managed --no-pull sync under the shelf's drain lease, which reads committed blobs only, so Git stays the
+ * parent. The cycle skips the shelf, so without this its checkpoint stayed behind until someone ran that sync by hand.
+ */
+async function indexShelfCommits(engine: OperationContext['engine']): Promise<ShelfIndex> {
+  const [{ withDrainLease, leaseHeldResult, readDrainHolder }, { drainManagedSync }, { withSyncTail }, { LockUnavailableError, syncLockId }, { withHumanLogsToStderr }] = await Promise.all([
+    import('../persistence/sync-lease.ts'), import('../persistence/sync-drain.ts'), import('../persistence/sync-tail.ts'), import('../db-lock.ts'), import('../console-prefix.ts')]);
+  const opts = { sourceId: STORAGE_SOURCE_ID, noPull: true };
+  let status: string;
+  try {
+    status = await withHumanLogsToStderr(async () => {
+      const drained = await withDrainLease(engine, STORAGE_SOURCE_ID, { holder: { kind: 'cli', id: null }, remote: false },
+        (signal) => drainManagedSync(engine, signal ? { ...opts, signal } : opts, false));
+      return (await withSyncTail(engine, STORAGE_SOURCE_ID, drained)).status;
+    });
+  } catch (error) {
+    if (!(error instanceof LockUnavailableError) || error.lockId !== syncLockId(STORAGE_SOURCE_ID)) throw error;
+    status = leaseHeldResult(STORAGE_SOURCE_ID, await readDrainHolder(engine, STORAGE_SOURCE_ID).catch(() => null)).status;
+  }
+  const [row] = await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id = $1', [STORAGE_SOURCE_ID]);
+  const indexed = ['up_to_date', 'synced', 'first_sync'].includes(status);
+  return { source_id: STORAGE_SOURCE_ID, status: indexed ? 'indexed' : 'behind', last_commit: row?.last_commit ?? null,
+    ...(indexed ? {} : { resume: ['gbrain', 'sync', '--source', STORAGE_SOURCE_ID, '--no-pull'] }) };
 }
 
 /** Preview finalize: the tagged originals to soft-delete. Writes nothing. */
