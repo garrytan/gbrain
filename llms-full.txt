@@ -2808,7 +2808,7 @@ Check which channel you are on with `gbrain doctor`, which prints `channel=<chan
 
 ## How often stable moves
 
-The scheduled check can move it at most twice a day; a maintainer can also promote, or roll back, by hand. If nothing important is waiting, the 7-day rule is the next reason for stable to move, though it still waits for a release that passed the test in step 2. In practice most days carry at least one important fix, so stable has usually moved about once a day. To see the real pace, list every stable release:
+The scheduled check can move it at most twice a day; a maintainer can also promote, or roll back, by hand. If nothing important is waiting, the 7-day rule is the next reason for stable to move, though it still waits for a release that passed the test in step 2. To see the real pace, list every stable release:
 
 ```bash
 git ls-remote --tags --refs https://github.com/garrytan/gbrain 'refs/tags/stable-v*'
@@ -2829,10 +2829,11 @@ Updates are not applied by themselves unless you opt in. The default `self_upgra
 
 ## Pinning a version
 
-Install an exact release tag:
+Install an exact release tag. The first command checks that the tag exists. The second removes the gbrain you have before adding the pinned one, because installing one tag over another can leave the old version running and damage Bun's global package list:
 
 ```bash
-bun install -g github:garrytan/gbrain#v<version>   # for example #v0.60.722.0
+git ls-remote --exit-code --tags https://github.com/garrytan/gbrain refs/tags/v<version> && \
+  bun remove -g gbrain && bun add -g --backend=copyfile github:garrytan/gbrain#v<version>   # for example v0.60.722.0
 ```
 
 A tag-pinned install stays on that release through `bun update`. `gbrain upgrade` is what moves it, so don't run it while you want to stay put. To stop update checks and update notices as well:
