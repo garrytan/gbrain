@@ -4375,7 +4375,7 @@ GBrain is MIT-licensed and free to self-host, and it starts with no API keys: se
 > [!TIP]
 > **Need hosted? First time running an agent?** Try **[gbrain.io](https://gbrain.io/?ref=readme)**, hosted GBrain, for the easiest experience: one brain for you and your team, connected to ChatGPT, Claude and Cursor, with nothing to install or keep online. Stuck? Email support@gbrain.io and a person will set it up with you, free.
 
-**Five minutes after you install it:**
+**A few minutes after you install it:**
 
 - Every new Claude Code or Codex session looks in your brain before it answers, without being told to.
 - Anything you ask your agent to remember is still there in the next session, in every agent connected to the brain.
