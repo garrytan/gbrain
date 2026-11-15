@@ -32,7 +32,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { literalPathspecs } from '../git-env.ts';
 import { git, gitOk, type GitRun } from './git-run.ts';
 export type { SkippedPath } from './skipped-paths.ts';
-import { checkoutBehindStrayGitfile, directoryStatus, flaggedChanges, unindexedFiles, unstagedPaths, type SkippedPath } from './skipped-paths.ts';
+import { checkoutBehindStrayGitfile, directoryStatus, flaggedChanges, stagedRemovals, STAGED_FOR_REMOVAL_WHY, unindexedFiles, unstagedPaths, type SkippedPath } from './skipped-paths.ts';
 import { GIT_SSRF_SUBCOMMAND_FLAGS, ownRemoteTransportFlags as transportFlags } from '../git-transport.ts';
 import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesystemRootFor, type ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
@@ -418,7 +418,7 @@ interface CommitScope { roots: string[]; lockPath: string; markHeld: boolean; ba
  * rest, so a write is never reported as saved when it is not. In a managed canonical worktree a skipped page is the
  * owner's to save (`writer_coordinator_required`); anything else is `commit_paths_skipped`.
  */
-function skippedPathsError(root: string, skipped: SkippedPath[], result: CommitPushResult, managed?: ManagedFilesystemRoot, publish?: unknown): OperationError {
+function skippedPathsError(root: string, skipped: SkippedPath[], result: CommitPushResult, managed?: ManagedFilesystemRoot, publish?: unknown, dryRun = false): OperationError {
   const list = `${skipped.slice(0, 20).map(s => `${s.path} (${s.reason}: ${s.why})`).join(', ')}${skipped.length > 20 ? ', ...' : ''}`;
   const pushed = !!result.committed && (result.outcome === 'pushed' || result.outcome === 'pushed_checkout_lagging');
   const done = result.committed
@@ -426,7 +426,7 @@ function skippedPathsError(root: string, skipped: SkippedPath[], result: CommitP
     : 'Nothing was committed.';
   const failed = publish as { code?: string; message?: string; detail?: string } | undefined;
   const rest = `${done}${failed ? ` The push failed too (${failed.code ?? 'error'}): ${failed.message ?? String(publish)}` : ''}`;
-  const detail = JSON.stringify({ skipped, committed: result.committed, ...(pushed ? { pushed: result.sha } : {}), branch: result.branch,
+  const detail = JSON.stringify({ ...(dryRun ? { dry_run: true } : {}), skipped, committed: result.committed, ...(pushed ? { pushed: result.sha } : {}), branch: result.branch,
     ...(failed ? { publish: { code: failed.code ?? null, detail: failed.detail ?? null } } : {}) });
   const docs = 'docs/guides/shared-checkout-git.md#outcomes';
   const flagged = skipped.filter(s => s.reason !== 'not_staged');
@@ -439,14 +439,18 @@ function skippedPathsError(root: string, skipped: SkippedPath[], result: CommitP
   const flagNote = 'an assume-unchanged or skip-worktree flag; an editor, an indexer or a sparse checkout can leave one, and people also set skip-worktree on purpose to keep local edits out of commits, so clearing it commits those edits';
   const chain = (steps: string[][], last?: Action): Action | undefined => steps.reduceRight<Action | undefined>((then, argv) =>
     ({ argv, consent: [], actor: 'agent', requires_exclusive: false, why: 'Clears the flag so git sees the edit on disk; the file keeps its bytes.', ...(then ? { then } : {}) }), last);
-  const named = skipped.map(s => s.path);
-  const indexed = new Set(git(root, ['ls-files', '-z', '--', ...literalPathspecs(named)]).stdout.split('\0').filter(Boolean));
-  const atHead = new Set(git(root, ['ls-tree', '-z', '--name-only', 'HEAD', '--', ...literalPathspecs(named)]).stdout.split('\0').filter(Boolean));
-  const removals = skipped.filter(s => s.reason === 'not_staged' && atHead.has(s.path) && !indexed.has(s.path) && existsSync(join(root, s.path)) && !statSync(join(root, s.path)).isDirectory()).map(s => s.path);
+  const removals = skipped.filter(s => s.reason === 'staged_for_removal').map(s => s.path);
   if (removals.length && removals.length === skipped.length) {
-    return opError('commit_paths_skipped', `git did not commit ${skipped.length} named path(s) in ${root}: ${list}. They are staged for removal from Git (git rm --cached) while the files stay on disk, and commit-push does not commit that removal. ${rest}`,
-      `To stop tracking them and keep the files, run gbrain git commit-push --untrack -m <msg> -- ${removals.map(p => shellQuote([p])).join(' ')}; to keep them tracked, git -C ${shellQuote([root])} restore --staged -- ${removals.map(p => shellQuote([p])).join(' ')}.`,
-      { docs: 'docs/guides/shared-checkout-git.md#untrack', detail });
+    const quoted = removals.map(p => shellQuote([p])).join(' ');
+    return opError('commit_paths_skipped', 'git did not commit ' + skipped.length + ' named path(s) in ' + root + ': ' + list + '. They are staged for removal from Git (git rm --cached) while the files stay on disk, and commit-push does not commit that removal. ' + rest,
+      'To stop tracking them and keep the files, run gbrain git commit-push --untrack -m <msg> -- ' + quoted + '; to keep them tracked, git -C ' + shellQuote([root]) + ' restore --staged -- ' + quoted + '.',
+      { docs: 'docs/guides/shared-checkout-git.md#untrack', detail,
+        why: 'Something took these files out of the index while leaving them on disk; committing would either publish that removal or quietly add back what someone removed, and only the user knows which was meant.',
+        fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+          argv: ['git', '-C', root, 'restore', '--staged', '--', ...literalPathspecs(removals)],
+          why: 'Puts the files back in the index as HEAD has them, so the next commit-push commits their edits; the bytes on disk are untouched.',
+          user_message: 'Git has ' + removals.slice(0, 10).join(', ') + ' staged for removal while the files are still on disk, so they were not committed. Keep them in Git (git restore --staged), or stop tracking them and keep the files (gbrain git commit-push --untrack)?',
+          verify: { argv: ['git', '-C', root, 'status', '--porcelain', '--', ...literalPathspecs(removals)] } } });
   }
   const pages = managed ? skipped.filter(s => isSyncable(s.path)) : [];
   if (managed && pages.length) {
@@ -496,7 +500,7 @@ function scopeBases(root: string, opts: CommitPushOptions, rel: string[]): Map<s
  * What commitPaths refuses before anything is staged (and the dry run with it): a path outside the source root(s), a
  * `--base` blob HEAD no longer holds, and a file another writer already staged under a named directory (name it to claim it).
  */
-function admitPaths(root: string, rel: string[], roots: string[], bases?: ReadonlyMap<string, string>): void {
+function admitPaths(root: string, rel: string[], roots: string[], bases?: ReadonlyMap<string, string>, dryRun = false): void {
   const outside = rel.filter(p => !insideSourceRoots(p, roots));
   if (outside.length) throw outsideRootError(root, roots, outside, 'Refusing to commit');
   for (const [path, base] of bases ?? []) {
@@ -506,6 +510,12 @@ function admitPaths(root: string, rel: string[], roots: string[], bases?: Readon
       { detail: JSON.stringify({ path, base, head }), docs: 'docs/guides/shared-checkout-git.md#base-check' });
   }
   const swept = stagedPaths(root).filter(p => !rel.includes(p) && rel.some(spec => covers(spec, p)));
+  const removed = new Set(stagedRemovals(root, swept));
+  if (swept.length && swept.every(p => removed.has(p))) {
+    const branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).stdout.trim();
+    throw skippedPathsError(root, swept.map(path => ({ path, reason: 'staged_for_removal' as const, why: STAGED_FOR_REMOVAL_WHY })),
+      { outcome: 'nothing_to_commit', sha: null, committed: null, branch, remote: '', paths: rel, integrated: 0, checkout: 'unchanged' }, undefined, undefined, dryRun);
+  }
   if (swept.length) {
     const list = `${swept.slice(0, 10).join(', ')}${swept.length > 10 ? ', ...' : ''}`;
     throw opError('commit_prestaged_paths', `${swept.length} file(s) under the named path(s) were already staged by another writer: ${list}.`,
@@ -669,8 +679,8 @@ function previewRoots(root: string, allowOutsideSourceRoot?: boolean): { managed
  * worktree as they were (git may add loose objects for the staged files); each refusal carries the real run's code and text.
  */
 export function previewPaths(root: string, rel: string[], opts: { allowOutsideSourceRoot?: boolean; bases?: Map<string, string>; cwd?: string } = {}): void {
-  const { roots } = previewRoots(root, opts.allowOutsideSourceRoot);
-  admitPaths(root, rel, roots, scopeBases(root, { repo: root, bases: opts.bases, cwd: opts.cwd }, rel));
+  const { managed, roots } = previewRoots(root, opts.allowOutsideSourceRoot);
+  admitPaths(root, rel, roots, scopeBases(root, { repo: root, bases: opts.bases, cwd: opts.cwd }, rel), true);
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-preview-'));
   try {
     const index = join(dir, 'index');
@@ -680,6 +690,10 @@ export function previewPaths(root: string, rel: string[], opts: { allowOutsideSo
     stagePaths(root, rel, indexEntries(root, rel), flaggedEntries(root, rel), env, true);
     const partners = withRenamePartners(root, rel, env).filter(p => !insideSourceRoots(p, roots));
     if (partners.length) throw outsideRootError(root, roots, partners, 'A staged rename would commit');
+    const listed = gitOk(root, ['ls-files', '-v', '-z', '--', ...literalPathspecs(rel)], 'ls-files -v', { env }).split('\0').filter(Boolean);
+    const skipped = unstagedPaths(root, rel, listed, new Map(), null);
+    const branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).stdout.trim();
+    if (skipped.length) throw skippedPathsError(root, skipped, { outcome: 'nothing_to_commit', sha: null, committed: null, branch, remote: '', paths: rel, integrated: 0, checkout: 'unchanged' }, managed ?? undefined, undefined, true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -5,7 +5,16 @@ import { literalPathspecs } from '../git-env.ts';
 import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 import { git, gitOk } from './git-run.ts';
 
-export interface SkippedPath { path: string; reason: 'assume_unchanged' | 'skip_worktree' | 'not_staged'; why: string }
+export interface SkippedPath { path: string; reason: 'assume_unchanged' | 'skip_worktree' | 'not_staged' | 'staged_for_removal'; why: string }
+
+export const STAGED_FOR_REMOVAL_WHY = 'the index holds it as staged for removal from Git (as after git rm --cached) while the file stays on disk, and commit-push neither commits that removal nor adds the file back unasked';
+
+/** The files under `rel` the index holds as staged for removal (HEAD has them, the index does not) whose bytes are still on disk. */
+export function stagedRemovals(root: string, rel: string[]): string[] {
+  if (!rel.length) return [];
+  return gitOk(root, ['diff', '--cached', '--no-renames', '--name-only', '--diff-filter=D', '-z', '--', ...literalPathspecs(rel)], 'diff --cached')
+    .split('\0').filter(path => { try { return !!path && !lstatSync(join(root, path)).isDirectory(); } catch { return false; } });
+}
 
 /** The flagged index entries in `listed` (`ls-files -v`: lower case for assume-unchanged, S for skip-worktree) whose bytes on disk HEAD lacks. A skip-worktree entry absent from disk is a sparse checkout, not a change. */
 export function flaggedChanges(root: string, listed: string[]): SkippedPath[] {
@@ -46,7 +55,9 @@ export function flaggedChanges(root: string, listed: string[]): SkippedPath[] {
 export function unstagedPaths(root: string, rel: string[], listed: string[], dirtyBefore: Map<string, string>, sha: string | null): SkippedPath[] {
   const skipped = new Map(flaggedChanges(root, listed).map(s => [s.path, s]));
   const notStaged = (path: string, why: string) => { if (!skipped.has(path)) skipped.set(path, { path, reason: 'not_staged', why }); };
+  const removed = new Set(stagedRemovals(root, rel));
   for (const path of unindexedFiles(root, rel, listed)) {
+    if (removed.has(path)) { skipped.set(path, { path, reason: 'staged_for_removal', why: STAGED_FOR_REMOVAL_WHY }); continue; }
     const nested = nestedRepositoryOf(root, path);
     notStaged(path, nested ? `it sits inside the nested Git repository ${nested}, so git add stages nothing for it` : 'git add left it out of the index');
   }

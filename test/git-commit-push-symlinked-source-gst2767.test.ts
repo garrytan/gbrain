@@ -142,3 +142,68 @@ test('a real nested repository: each skipped path carries its reason in the JSON
   const line = readFileSync(log, 'utf8').split('\n').find(l => l.includes('SKIPPED'));
   expect(line).toContain('brain/imports/export.csv (not_staged: it sits inside the nested Git repository brain/imports');
 }, 60_000);
+
+const dryRun = (f: Fixture, ...paths: string[]) =>
+  runCli(['git', 'commit-push', '--json', '--dry-run', '--path', f.link, '-m', 'write pages', '--', ...paths], { cwd: dir, home: f.home, env: identity });
+const pushLog = (f: Fixture) => { const log = join(f.home, '.gbrain', 'brain-push.log'); return existsSync(log) ? readFileSync(log, 'utf8') : ''; };
+interface Refusal { code: string; message: string; detail: string; why?: string; fix?: { argv?: string[]; next?: string } }
+const skippedOf = (x: Refusal) => (JSON.parse(x.detail) as { skipped: Array<{ path: string; reason: string; why: string }> }).skipped;
+
+for (const kind of ['classic', 'managed'] as const) {
+  test(kind + ': the field report shape, a stray .git above the named folder on a run with nothing new, succeeds and never hints at a staged removal', async () => {
+    const f = fixture(kind + '-field-quiet', kind);
+    mkdirSync(join(f.repo, 'brain', 'notes', '.git'));
+    const dry = await dryRun(f, join(f.link, YEAR));
+    const r = await commitPush(f, join(f.link, YEAR));
+    for (const out of [dry.stdout + dry.stderr, r.stdout + r.stderr]) {
+      expect(out).not.toContain('commit_paths_skipped');
+      expect(out).not.toContain('staged for removal');
+    }
+    expect(dry.exitCode).toBe(0);
+    expect(r.exitCode).toBe(0);
+    expect((JSON.parse(r.stdout) as { outcome: string }).outcome).toBe('nothing_to_commit');
+    expect(pushLog(f)).not.toContain('SKIPPED');
+  }, 60_000);
+
+  test(kind + ': a named folder whose tracked file is staged for removal and still on disk is refused as staged_for_removal, the dry run says the same, and nothing is re-added or removed', async () => {
+    const f = fixture(kind + '-staged-removal', kind);
+    git(f.repo, 'rm', '-q', '-r', '--cached', '--', 'brain/' + YEAR);
+    writeFileSync(join(f.repo, 'brain', YEAR, 'alice-example.md'), page('Alice', 'Second version.'));
+    const head = git(f.repo, 'rev-parse', 'HEAD'), tip = remoteTip(f);
+    const dry = await dryRun(f, join(f.link, YEAR));
+    expect(pushLog(f)).not.toContain('SKIPPED');
+    const r = await commitPush(f, join(f.link, YEAR));
+    for (const x of [dry, r]) {
+      expect(x.exitCode).toBe(1);
+      const e = JSON.parse(x.stdout) as Refusal;
+      expect(e.code).toBe('commit_paths_skipped');
+      expect(skippedOf(e)).toEqual([{ path: 'brain/' + YEAR + '/alice-example.md', reason: 'staged_for_removal', why: expect.stringContaining('staged for removal') }]);
+      expect(e.message).toContain('staged for removal');
+      expect(JSON.stringify(e)).toContain('commit-push --untrack');
+      expect(JSON.stringify(e)).toContain('restore --staged');
+      expect(e.why).toBeTruthy();
+      expect(e.fix?.next).toBe('ask_user');
+      expect((JSON.parse(e.detail) as { dry_run?: boolean }).dry_run).toBe(x === dry ? true : undefined);
+    }
+    expect(git(f.repo, 'rev-parse', 'HEAD')).toBe(head);
+    expect(remoteTip(f)).toBe(tip);
+    expect(git(f.repo, 'diff', '--cached', '--name-status', '--', 'brain')).toBe('D\tbrain/' + YEAR + '/alice-example.md');
+    const line = pushLog(f).split('\n').find(l => l.includes('SKIPPED'));
+    expect(line).toContain('brain/' + YEAR + '/alice-example.md (staged_for_removal: the index holds it as staged for removal');
+  }, 60_000);
+}
+
+test('the dry run reports the same skipped path and reason as the real run for a file inside a real nested repository, and writes no push-log line', async () => {
+  const f = fixture('nested-dry', 'classic');
+  execFileSync('git', ['init', '-q', join(f.repo, 'brain', 'imports')]);
+  writeFileSync(join(f.repo, 'brain', 'imports', 'export.csv'), 'a,b\n');
+  const dry = await dryRun(f, 'imports/export.csv');
+  expect(dry.exitCode).toBe(1);
+  expect(pushLog(f)).not.toContain('SKIPPED');
+  const r = await commitPush(f, 'imports/export.csv');
+  const d = JSON.parse(dry.stdout) as Refusal, e = JSON.parse(r.stdout) as Refusal;
+  expect(d.code).toBe(e.code);
+  expect(skippedOf(d)).toEqual(skippedOf(e));
+  expect(skippedOf(d)).toEqual([{ path: 'brain/imports/export.csv', reason: 'not_staged', why: expect.stringContaining('nested Git repository brain/imports') }]);
+  expect(d.message).not.toContain('staged for removal');
+}, 60_000);
