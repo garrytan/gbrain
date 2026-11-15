@@ -17,7 +17,7 @@ import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts'
  */
 import { execFileSync } from './spawn.ts';
 import { lstatSync, existsSync, readdirSync } from 'fs';
-import { isAbsolute, join } from 'path';
+import { dirname, isAbsolute, join } from 'path';
 import { isInternalUrl } from './url-safety.ts';
 import { execFileBounded } from './bounded-child-exec.ts';
 import { gitChildEnv } from './git-env.ts';
@@ -351,6 +351,19 @@ export function validateRepoState(
  * `addSource` (#2707) to validate `--path` at registration time instead of
  * deferring the failure to the first sync.
  */
+/** Whether `dir` or any directory above it has a `.git` entry (read from the filesystem, no Git process). */
+export function underGitCheckout(dir: string): boolean {
+  for (let current = dir; ; current = dirname(current)) {
+    if (existsSync(join(current, '.git'))) return true;
+    if (current === dirname(current)) return false;
+  }
+}
+
+/** GST-2732: a path counts as a plain folder only when neither Git nor the filesystem places it in a checkout, the test sync applies. */
+export function inGitCheckout(path: string): boolean {
+  return underGitCheckout(path) || isInsideGitRepo(path);
+}
+
 export function isInsideGitRepo(path: string): boolean {
   try {
     execFileSync('git', ['-C', path, 'rev-parse', '--show-toplevel'], {

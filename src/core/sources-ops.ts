@@ -48,7 +48,7 @@ import {
   parseRemoteUrl,
   cloneRepo,
   validateRepoState,
-  isInsideGitRepo,
+  inGitCheckout,
   hasTrackedContent,
   RemoteUrlError,
   GitOperationError,
@@ -719,7 +719,7 @@ export async function addSource(
       opts.localPath &&
       !opts.force &&
       existsSync(opts.localPath) &&
-      isInsideGitRepo(opts.localPath) &&
+      inGitCheckout(opts.localPath) &&
       !hasTrackedContent(opts.localPath)
     ) {
       const q = shellQuote(opts.localPath);

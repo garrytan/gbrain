@@ -21,5 +21,6 @@ export async function newSourceJoinsDefaultSearch(engine: BrainEngine): Promise<
 /** Folder and Git sources only: connectors keep their own defaults (GitHub and Google federated, meetings and Slack chats out). */
 export async function withDefaultSearchChoice(engine: BrainEngine, opts: AddSourceOpts): Promise<AddSourceOpts> {
   if (opts.federated != null || opts.github || opts.google || opts.meetings || opts.slack || opts.addedByRemoteCaller) return opts;
+  if ((await engine.executeRaw('SELECT 1 FROM sources WHERE id = $1', [opts.id])).length > 0) return opts;
   return await newSourceJoinsDefaultSearch(engine) ? { ...opts, federated: true } : opts;
 }

@@ -68,6 +68,14 @@ describe('a new source on a single-user brain joins default search', () => {
     expect(await federated('personal-b')).toBe(false);
   });
 
+  test('attaching a path to an existing path-less source keeps its stored setting (#3903 attach)', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name, local_path, config) VALUES ('attach-off', 'attach-off', NULL, '{"federated":false}'::jsonb), ('attach-unset', 'attach-unset', NULL, '{}'::jsonb)`);
+    await add(['attach-off']);
+    await add(['attach-unset']);
+    expect(await federated('attach-off')).toBe(false);
+    expect(await federated('attach-unset')).toBeNull();
+  });
+
   test('--json reports federated true with no notices', async () => {
     const out = JSON.parse((await add(['personal-c', '--json'])).stdout);
     expect(out).toMatchObject({ id: 'personal-c', federated: true });

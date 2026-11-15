@@ -12,7 +12,7 @@ import { EXPIRED_ARCHIVE_SQL, removedSourceScrubCtes } from '../source-delete.ts
 import { parseSourceConfig } from '../sources-load.ts';
 import { redactSourceConfig } from '../source-config-redact.ts';
 import { discoverGitRoot } from '../sync-git.ts';
-import { isInsideGitRepo, hasTrackedContent } from '../git-remote.ts';
+import { inGitCheckout, hasTrackedContent } from '../git-remote.ts';
 import { containsPath, getWorktreeBinding, humanManifestProgress, type WorktreeBinding, type WorktreeManifest, worktreeManifest } from './ownership.ts';
 import { manifestDifferences, storedManifestScope, type WorktreeManifestScope } from './worktree-manifest.ts';
 import { hostIdFor } from './identity.ts';
@@ -150,7 +150,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
   const replayed=replayTopologyChange(prior);
   if(replayed) return replayed;
   // GST-2732: a plain folder outside any repository registers as one; a repository with nothing committed still refuses (#2707).
-  if(input.requireGitContent&&input.path&&isInsideGitRepo(input.path)&&!hasTrackedContent(input.path))
+  if(input.requireGitContent&&input.path&&inGitCheckout(input.path)&&!hasTrackedContent(input.path))
     throw opError('not_a_git_repo','The source path must contain committed Git content. Use --force to register an ordinary directory.',
       `Commit the content in that directory with git first, or, if '${input.sourceId}' is meant to be a plain directory, rerun the add with --force (sync then imports its files without Git; a file removed from it keeps its page); nothing was registered.`);
   if(input.operation==='reclone'||input.operation==='add'&&input.remoteUrl){

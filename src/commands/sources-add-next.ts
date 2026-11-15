@@ -63,9 +63,9 @@ export async function syncOutOfSearchNotice(engine: BrainEngine, args: string[])
   const id = args.find((_, i) => args[i - 1] === '--source');
   if (!id || id === 'default') return null;
   try {
-    const [row] = await engine.executeRaw<{ f: unknown; pages: number }>(
-      `SELECT config->'federated' AS f, (SELECT count(*)::int FROM pages WHERE source_id = $1 AND deleted_at IS NULL) AS pages FROM sources WHERE id = $1`, [id]);
-    if (!row || row.f != null || !Number(row.pages)) return null;
+    const [row] = await engine.executeRaw<{ f: unknown; remote: unknown; pages: number }>(
+      `SELECT config->'federated' AS f, config->'added_by_remote_caller' AS remote, (SELECT count(*)::int FROM pages WHERE source_id = $1 AND deleted_at IS NULL) AS pages FROM sources WHERE id = $1`, [id]);
+    if (!row || row.f != null || row.remote === true || !Number(row.pages)) return null;
     return notInDefaultSearchNotice(id, !(await newSourceJoinsDefaultSearch(engine)));
   } catch {
     return null;
@@ -85,7 +85,7 @@ export async function noteSyncOutOfSearch(engine: BrainEngine, args: string[]): 
  */
 export async function reportAddOutcome(input: { id: string; chosen: boolean | null | undefined; federated: boolean; path: string | null; json: boolean; say: (line: string) => void }): Promise<RenderedNotice[] | undefined> {
   const { existsSync } = await import('node:fs');
-  if (input.path && existsSync(input.path) && !(await import('../core/git-remote.ts')).isInsideGitRepo(input.path)) {
+  if (input.path && existsSync(input.path) && !(await import('../core/git-remote.ts')).inGitCheckout(input.path)) {
     input.say('  plain folder (not a git repository): sync imports its files without Git, so git history is off and a file removed from it keeps its page');
   }
   if (input.chosen != null) return undefined;

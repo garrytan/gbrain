@@ -848,6 +848,20 @@ describe('addSource --path — #2707 git-repo validation', () => {
     expect(row.local_path).toBe(plainDir);
   });
 
+  test('a folder with a .git entry that git cannot read is not a plain folder: refused like sync would treat it (GST-2732)', async () => {
+    const brokenDir = join(SANDBOX, 'broken-gitlink');
+    mkdirSync(brokenDir, { recursive: true });
+    writeFileSync(join(brokenDir, '.git'), 'gitdir: /nonexistent/gbrain-gst2732\n');
+    writeFileSync(join(brokenDir, 'notes.md'), 'inside a checkout git cannot open');
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'broken-gitlink-src', localPath: brokenDir });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw?.code).toBe('not_a_git_repo');
+  });
+
   test('rejects a git repository with untracked files only, with an actionable error', async () => {
     const plainDir = join(SANDBOX, 'plain');
     mkdirSync(plainDir, { recursive: true });

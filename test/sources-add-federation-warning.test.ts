@@ -183,4 +183,11 @@ describe('gbrain sync --source names a source that default search leaves out', (
     await engine.executeRaw(`UPDATE sources SET config = config || '{"federated": false}'::jsonb WHERE id = 'source-m'`);
     expect(await syncOutOfSearchNotice(engine, ['--source', 'source-m'])).toBeNull();
   });
+
+  test('a source a remote MCP caller added stays out without a federate step after sync', async () => {
+    await add(['source-r']);
+    await engine.executeRaw(`UPDATE sources SET config = (config - 'federated') || '{"added_by_remote_caller": true}'::jsonb WHERE id = 'source-r'`);
+    await engine.putPage('notes/r', { type: 'note', title: 'R', compiled_truth: 'A page in source-r.', timeline: '' }, { sourceId: 'source-r' });
+    expect(await syncOutOfSearchNotice(engine, ['--source', 'source-r'])).toBeNull();
+  });
 });
