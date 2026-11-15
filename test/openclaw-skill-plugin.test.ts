@@ -92,7 +92,8 @@ function drive(b: Box, steps: unknown[], nodeOptions?: string, env: Record<strin
   const script = join(b.root, 'drive.mjs');
   writeFileSync(script, String.raw`
 import { pathToFileURL } from 'node:url';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 const [dir, statePath, stepsJson] = process.argv.slice(2);
 const m = (await import(pathToFileURL(dir + '/index.js').href)).default;
 const h = {};
@@ -108,11 +109,14 @@ for (const [kind, a] of JSON.parse(stepsJson)) {
   else if (kind === 'state') { const s = JSON.parse(readFileSync(statePath, 'utf8')); Object.assign(s.agents.main, a); writeFileSync(statePath, JSON.stringify(s)); await sleep(20); out.push('state'); }
   else if (kind === 'sleep') { await sleep(a.ms); out.push('slept'); }
 }
+const logLineCount = () => { try { return readdirSync(process.env.DRIVE_LOG_DIR).filter((f) => f.startsWith('openclaw-')).reduce((n, f) => n + readFileSync(join(process.env.DRIVE_LOG_DIR, f), 'utf8').split('\n').filter(Boolean).length, 0); } catch { return 0; } };
+const logDeadline = Date.now() + 30_000;
+while (logLineCount() < Number(process.env.DRIVE_LOG_LINES || 0) && Date.now() < logDeadline) await sleep(20);
 await sleep(300);
 console.log(JSON.stringify(out));
 process.exit(0);
 `);
-  const r = Bun.spawnSync([NODE!, script, pluginDir(b), statePath(b), JSON.stringify(steps)], { env: { PATH: b.env.PATH!, HOME: b.home, ...(nodeOptions ? { NODE_OPTIONS: nodeOptions } : {}), GBRAIN_TEST_OPENCLAW_SKILL_DEADLINE_MS: '2000', ...env }, stdout: 'pipe', stderr: 'pipe', timeout: 60_000 });
+  const r = Bun.spawnSync([NODE!, script, pluginDir(b), statePath(b), JSON.stringify(steps)], { env: { PATH: b.env.PATH!, HOME: b.home, ...(nodeOptions ? { NODE_OPTIONS: nodeOptions } : {}), GBRAIN_TEST_OPENCLAW_SKILL_DEADLINE_MS: '2000', DRIVE_LOG_DIR: join(gbrainHome(b), 'skill-index', 'logs'), ...env }, stdout: 'pipe', stderr: 'pipe', timeout: 60_000 });
   const text = r.stdout.toString().trim().split('\n').at(-1) ?? '';
   try { return JSON.parse(text); } catch { throw new Error('drive failed: ' + r.stderr.toString() + text); }
 }
@@ -336,7 +340,7 @@ describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
       ['turn', { text: 'sync the calendar', id: 'm4', session: 'agent:main:s2' }],
       ['state', { mode: 'off' }],
       ['turn', { text: 'sync the calendar', id: 'm5', session: 'agent:main:s3' }],
-    ], '--max-old-space-size=256');
+    ], '--max-old-space-size=256', { DRIVE_LOG_LINES: '6' });
     expect(out[0].appendSystemContext).toContain('<pinned_skills>');
     expect(out[0].appendContext).toContain('<relevant_skills>');
     expect(out[0].appendContext).toContain('email-triage');
@@ -365,7 +369,7 @@ describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
       want.push('suggested');
       for (let j = 0; j < 40; j++) { steps.push(['read', { name: 'skill-' + i + '-' + j }]); want.push('skill-' + i + '-' + j); }
     }
-    drive(b, steps);
+    drive(b, steps, undefined, { DRIVE_LOG_LINES: String(want.length) });
     expect(logLines(b).filter((l) => l.agent === 'main').map((l) => l.skill ?? l.outcome)).toEqual(want);
   });
 
