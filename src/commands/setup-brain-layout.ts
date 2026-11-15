@@ -26,12 +26,12 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { createInterface } from 'node:readline/promises';
 import { basename, join, resolve } from 'node:path';
 import type { Decision, Notice } from '../core/agent-output.ts';
 import { probeBlock, removeBlock, spliceBlock, type BlockMarkers } from '../core/managed-block.ts';
 import { writeUnlessChanged } from '../core/setup/brain-first.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
+import { readLine } from '../core/interaction.ts';
 
 export type BrainShape = 'personal' | 'none';
 
@@ -258,7 +258,7 @@ export function describeLayout(o: LayoutOutcome, dryRun: boolean): string[] {
 }
 
 /** Notices for what the agent still has to do: a deferred or failed import, a failed page. */
-export function layoutNotices(o: LayoutOutcome | null): Notice[] {
+export function layoutNotices(o: LayoutOutcome | null, harness: string): Notice[] {
   if (!o) return [];
   const out: Notice[] = [];
   if (o.notes && o.notes.action !== 'imported') {
@@ -274,7 +274,7 @@ export function layoutNotices(o: LayoutOutcome | null): Notice[] {
     out.push({
       code: 'brain_layout_pages_pending', kind: 'coaching',
       why: `Setup could not write ${failed.map(p => p.slug).join(', ')} (${failed[0]!.detail}); the rest of the install finished.`,
-      fix: { argv: ['gbrain', 'setup', '<harness>', '--shape', 'personal'], consent: [], actor: 'agent', requires_exclusive: true, why: 'Rerun once the brain is free; existing pages are kept.' },
+      fix: { argv: ['gbrain', 'setup', harness, '--shape', 'personal'], consent: [], actor: 'agent', requires_exclusive: true, why: 'Rerun once the brain is free; existing pages are kept.' },
     });
   }
   return out;
@@ -300,21 +300,19 @@ export function brainShapeDecision(harness: string, folders: string[] = candidat
   };
 }
 
-/** The inline brain_shape question; call only when isInteractive() is true. */
+/** The inline brain_shape question; readLine answers eof (decline) unless isInteractive(). */
 export async function askBrainShape(folders: string[] = candidateNoteFolders()): Promise<{ brain?: BrainShape; notes?: string | null }> {
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  try {
-    const yes = (await rl.question('Make this a personal brain? Three empty starter pages (facts about you, your voice, how you decide); nothing about you is invented. [y/N] ')).trim().toLowerCase();
-    if (yes !== 'y' && yes !== 'yes') return {};
-    const hint = folders[0] ? ` [${folders[0]}]` : '';
-    const raw = (await rl.question(`Notes folder to import, read only (Enter ${hint ? 'for the one shown' : 'to skip'}, "none" to skip)${hint}: `)).trim();
-    const picked = raw === 'none' ? null : raw || folders[0] || null;
-    if (!picked) return { brain: 'personal', notes: null };
-    const abs = resolve(picked.startsWith('~/') ? join(homedir(), picked.slice(2)) : picked);
-    try { if (statSync(abs).isDirectory()) return { brain: 'personal', notes: abs }; } catch { /* below */ }
-    process.stderr.write(`${picked} is not a folder; skipping the import (run gbrain import <dir> --no-embed later)\n`);
-    return { brain: 'personal', notes: null };
-  } finally { rl.close(); }
+  const line = async (prompt: string): Promise<string | null> => { const r = await readLine({ prompt }); return r.kind === 'line' ? r.text : null; };
+  const yes = (await line('Make this a personal brain? Three empty starter pages (facts about you, your voice, how you decide); nothing about you is invented. [y/N] '))?.toLowerCase();
+  if (yes !== 'y' && yes !== 'yes') return {};
+  const hint = folders[0] ? ` [${folders[0]}]` : '';
+  const raw = (await line(`Notes folder to import, read only (Enter ${hint ? 'for the one shown' : 'to skip'}, "none" to skip)${hint}: `)) ?? 'none';
+  const picked = raw === 'none' ? null : raw || folders[0] || null;
+  if (!picked) return { brain: 'personal', notes: null };
+  const abs = resolve(picked.startsWith('~/') ? join(homedir(), picked.slice(2)) : picked);
+  try { if (statSync(abs).isDirectory()) return { brain: 'personal', notes: abs }; } catch { /* below */ }
+  process.stderr.write(`${picked} is not a folder; skipping the import (run gbrain import <dir> --no-embed later)\n`);
+  return { brain: 'personal', notes: null };
 }
 
 /** Add brain_shape to setup's first-run bundle (one bundle, never a second notice). */
