@@ -6,7 +6,8 @@ import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
 import { withHeldFactsFence } from '../facts/unfenced-facts.ts';
-import { factsFenceEditor, factsFenceSection, parseFactsFenceFor, formatFenceDate, isHoldingSlug } from '../facts-fence.ts';
+import { formatRetainedFactDate } from '../facts/fence-date.ts';
+import { factsFenceEditor, factsFenceSection, parseFactsFenceFor, isHoldingSlug } from '../facts-fence.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { holdingHome, refuseUnheldFact } from '../facts/held-fact-move.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
@@ -232,7 +233,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
     if (rowNum !== undefined) refuseUnparsedRewrite(fenced, row.slug, row.source_id, () => fence.append({
       rowNum, claim: fact.fact, kind: fact.kind, visibility: fact.visibility,
       confidence: fact.confidence ?? 1, notability: fact.notability ?? 'medium', source: fact.source, context: fact.context ?? undefined,
-      validFrom: formatFenceDate(fact.valid_from!), validUntil: fact.valid_until ? formatFenceDate(fact.valid_until) : undefined,
+      validFrom: formatRetainedFactDate(fact.valid_from!), validUntil: fact.valid_until ? formatRetainedFactDate(fact.valid_until) : undefined,
       claimMetric: fact.claim_metric ?? undefined, claimValue: fact.claim_value ?? undefined,
       claimUnit: fact.claim_unit ?? undefined, claimPeriod: fact.claim_period ?? undefined,
       ...(fact.attributed_to ? { attributedTo: fact.attributed_to } : {}),
@@ -240,7 +241,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
     // Strike the superseded row in this page's fence, as the remember mutation does (#6686: in the section that holds it).
     if (supersedes && rowNum !== undefined && supersedes.source_markdown_slug === row.slug && supersedes.row_num != null) {
       const until = supersededValidUntil(supersedes, fact.valid_from!);
-      fence.strike(Number(supersedes.row_num), rowNum, until ? formatFenceDate(until) : undefined);
+      fence.strike(Number(supersedes.row_num), rowNum, until ? formatRetainedFactDate(until) : undefined);
     }
     entries.push({ fact, duplicateId: null, rowNum, supersedes, gate });
   }

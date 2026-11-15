@@ -157,6 +157,8 @@ export async function exerciseManagedFacts(engine: BrainEngine, scenario: Case):
       const first = await operationsByName.extract_facts.handler(ctx, params) as { inserted: number; fact_ids: number[] };
       expect(first.inserted).toBe(2);
       expect(first.fact_ids).toHaveLength(2);
+      const retained = await engine.executeRaw<{ facts: Array<{ fact: string; valid_from: string }> }>("SELECT intent->'facts' AS facts FROM persistence_requests WHERE source_id=$1 AND operation='extract_facts' AND intent->>'kind'='managed_facts_entity'", [sourceId]);
+      const frozen = retained.flatMap(row => row.facts);
       await disposePersistenceConsumer(engine);
       if (scenario === 'publication') {
         await engine.setConfig('facts.default_visibility', 'world');
@@ -176,7 +178,10 @@ export async function exerciseManagedFacts(engine: BrainEngine, scenario: Case):
       expect(dates.length).toBeGreaterThan(0);
       for (const date of dates) {
         const cell = parseFactsFence(readFileSync(join(root, `${date.slug}.md`), 'utf8')).facts.find(f => f.claim === date.fact)!.validFrom!;
-        expect(cell).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+        expect(cell).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/);
+        const frozenFact = frozen.find(f => f.fact === date.fact);
+        expect(frozenFact).toBeDefined();
+        expect(new Date(cell).getTime()).toBe(new Date(frozenFact!.valid_from).getTime());
         expect(new Date(date.valid_from).getTime()).toBe(new Date(cell).getTime());
       }
       expect(readFileSync(join(root, `${secondSlug}.md`), 'utf8')).toContain('Acme-example measures monthly growth.');

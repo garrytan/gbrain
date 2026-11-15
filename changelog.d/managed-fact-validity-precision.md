@@ -1,0 +1,1 @@
+Managed fact extraction preserves fractional-second `valid_from` and `valid_until` values when publishing into an entity's facts fence. The indexed row retains the frozen payload's exact instants. Date-only and whole-second cells keep their existing formatting.
