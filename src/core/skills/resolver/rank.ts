@@ -7,8 +7,10 @@
  * matched terms, ties broken by name then id, so a ranking equals the
  * prototype's on the same records.
  *
- * There is no score threshold. A turn gets no skill only when it is a known
- * acknowledgement (ack) or none of its terms is in the index (no_match).
+ * The ranker has no score threshold: no_skill is set only for a known
+ * acknowledgement (ack) or when none of the turn's terms is in the index
+ * (no_match). resolve.ts's top_gate, on by default, empties a block whose
+ * best skill scores below it over maxIdf.
  */
 import { FIELDS, type IndexReader } from './index-format.ts';
 import { lexTerms } from './tokenize.ts';

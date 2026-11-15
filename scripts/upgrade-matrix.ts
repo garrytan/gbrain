@@ -21,6 +21,7 @@ import { join, resolve } from 'node:path';
 import { fetchReleases, hasEnoughHistory, RELEASE_TAG, resolveFromVersions, type Candidate, type FromVersion, type Profile, type Release } from './upgrade-matrix/versions.ts';
 import { cellId, runCell, type BrainShape, type Engine, type Fault, type Keys } from './upgrade-matrix/cell.ts';
 import { CHECKS, loadKnownExceptions, summarize, type CellSummary } from './upgrade-matrix/verdict.ts';
+import { AGENT_FILED_LABEL } from './lib/gh-issue.ts';
 
 const REPO = 'garrytan/gbrain';
 const ROOT = resolve(import.meta.dir, '..');
@@ -236,7 +237,7 @@ async function issue(): Promise<void> {
       await api('POST', '/issues/' + existing.number + '/comments', { body: 'Still red on ' + (s.candidate.tag ?? s.candidate.sha) + ': ' + s.red.join(', ') + '. ' + (s.harness.run_url ?? '') });
       console.log('updated #' + existing.number);
     } else {
-      const created = await api('POST', '/issues', { title, body, labels: [ISSUE_LABEL] }) as any;
+      const created = await api('POST', '/issues', { title, body, labels: [ISSUE_LABEL, AGENT_FILED_LABEL] }) as any;
       console.log('created #' + created.number);
     }
   } else if (s.status === 'green' && existing?.state === 'open') {
