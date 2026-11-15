@@ -69,7 +69,7 @@ describe('lean rows for remote callers', () => {
       const full = await call(name, { ...params, fields: 'full' });
       const local = await call(name, params, { remote: false, sourceId: 'default' });
       expect(full.meta?.rows).toBe('full');
-      // GST-2735: the keyless any-word fill lets the local caller see a private page the remote caller cannot; compare the rows both may read.
+      // GST-2762: the keyless any-word fill lets the local caller see a private page the remote caller cannot; compare the rows both may read.
       const readable = new Set(full.rows.map(r => `${r.source_id}:${r.slug}`));
       const shared = local.rows.filter(r => readable.has(`${r.source_id}:${r.slug}`));
       expect(shared.length).toBe(full.rows.length);

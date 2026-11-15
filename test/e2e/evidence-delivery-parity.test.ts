@@ -24,7 +24,7 @@
  * compared under an explicitly keyless gateway in every lane, and a keyed lane
  * additionally checks the keyed capture: key-independent calls (keyword search)
  * still match the frozen bytes, and query/recall report the vector path as on.
- * Think's prompt is keyless-only since GST-2735: without a key its search also
+ * Think's prompt is keyless-only since GST-2762: without a key its search also
  * fills with pages that hold only some of the question's words.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';

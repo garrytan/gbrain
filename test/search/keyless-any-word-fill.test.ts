@@ -1,5 +1,5 @@
 /**
- * GST-2735: keyless keyword search fills a short all-words result with
+ * GST-2762: keyless keyword search fills a short all-words result with
  * any-word matches, on PGLite here and on PostgreSQL when DATABASE_URL is set.
  *
  * Repro of a first-run miss: on a brain with no embedding provider,
@@ -26,7 +26,7 @@ import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts'
 import { testBackends } from '../helpers/test-backends.ts';
 
 const QUERY = 'SSO Starter plan';
-/** The same engine with the any-word fill unavailable: search runs exactly as before GST-2735. */
+/** The same engine with the any-word fill unavailable: search runs exactly as before GST-2762. */
 const fillOff = (engine: BrainEngine): BrainEngine => new Proxy(engine, {
   get: (target, prop) => prop === 'searchKeyword'
     ? (q: string, o?: Record<string, unknown>) => target.searchKeyword(q, { ...o, orFill: false } as never)

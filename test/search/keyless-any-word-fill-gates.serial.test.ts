@@ -1,5 +1,5 @@
 /**
- * GST-2735: rows the keyless any-word fill adds pass the same System One
+ * GST-2762: rows the keyless any-word fill adds pass the same System One
  * evidence gate and injection detector as every other row, and their scores
  * stay finite when the gate empties the first page (min_keep 0). Serial: the
  * decide transport is process-global.

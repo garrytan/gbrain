@@ -79,7 +79,7 @@ function appendPages(rows: SearchResult[], more: SearchResult[], limit: number):
  * them while the vector arm is healthy). `runProbe` runs the arm's statement
  * with a match and a rank query; `runRelaxed` runs the engine's retry.
  *
- * GST-2735: with orFill (hybrid's keyword-only path) a first page whose strict
+ * GST-2762: with orFill (hybrid's keyword-only path) a first page whose strict
  * rows leave the candidate pool short also runs the retry, and its rows fill
  * the pool after every strict row, tagged `keyword_relaxed` and `keyword_fill`, each scored below
  * the lowest strict score so a raw-score sort keeps them under all-word hits.
@@ -88,7 +88,7 @@ export async function keywordArmRows<R>(a: {
   query: string;
   strict: R[];
   orFallback?: boolean;
-  /** GST-2735: fill a short first page of strict rows with the retry's rows (SearchOpts.orFill). */
+  /** GST-2762: fill a short first page of strict rows with the retry's rows (SearchOpts.orFill). */
   orFill?: boolean;
   limit: number;
   offset: number;

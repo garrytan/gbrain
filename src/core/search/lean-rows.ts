@@ -43,7 +43,7 @@ const KEPT_FIELDS: ReadonlySet<string> = new Set([
   'message_id', 'thread_id', 'source_subject', 'relational', 'matched_alias', 'result_type', 'fact_id', 'page_slug', 'follow_up',
   // `match: "keyword"`: an enumerated page whose text did not fit the evidence budget.
   'evidence_omitted',
-  // GST-2735: a row the keyless any-word fill appended after the rows that hold every query word.
+  // GST-2762: a row the keyless any-word fill appended after the rows that hold every query word.
   'keyword_fill',
   // #5575 A6: every row says how much it deserves influence.
   'trust_tier', 'origin', 'unconfirmed',
