@@ -38,11 +38,12 @@ import { existsSync, realpathSync } from 'node:fs';
 import { isHostAbsolutePath } from '../path-confine.ts';
 import { opError } from '../ops/contract.ts';
 import { resolveSlugForPath, unsyncableReason, type SyncableReason } from '../sync.ts';
-import { parseMarkdownHead } from '../markdown.ts';
+import { inferTypeFromPack, parseMarkdownHead } from '../markdown.ts';
 import { embeddingsDisabled } from '../embedding-disabled.ts';
 import { embeddingStateFix, type EmbeddingState } from '../embedding-state.ts';
 import { PAGE_SEARCHABLE, readPageSearchability } from '../page-searchability.ts';
 import { loadSyncEligibility, syncGit } from './sync-discovery.ts';
+import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { readBlobContents } from './sync-blobs.ts';
 import { readGitHold } from './sync-holds.ts';
 import { persistenceEnabledForHealth } from './ownership.ts';
@@ -169,6 +170,27 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
     if (byOrigin.has(page.source_path) || hidden.has(page.source_path)) continue;
     if (page.readable === true) byOrigin.set(page.source_path, page);
     else hidden.add(page.source_path);
+  }
+  const pageless = policy?.excludePrivate ? normalized.filter(p => !byOrigin.has(p.origin) && !hidden.has(p.origin) && (synced.has(p.gitPath) || atHead?.has(p.gitPath))) : [];
+  if (pageless.length) {
+    const blobOf = (p: typeof pageless[number]) => synced.get(p.gitPath) ?? atHead?.get(p.gitPath);
+    const later = readBlobContents(gitRoot, pageless.map(blobOf).filter(row => row !== undefined && row.size <= 256 * 1024 && !heads.has(row.oid)) as never);
+    const pack = (await loadActivePackForEngine(engine, { remote: false, sourceId }).catch(() => null))?.manifest ?? { page_types: [] };
+    const rows = pageless.map(p => {
+      const content = heads.get(blobOf(p)!.oid) ?? later.get(blobOf(p)!.oid);
+      let fm: Record<string, unknown> = { visibility: 'private' };
+      try { if (content !== undefined) fm = parseMarkdownHead(content).frontmatter as Record<string, unknown>; } catch { /* unreadable: decided as private */ }
+      return JSON.stringify({ source_id: sourceId, slug: resolveSlugForPath(p.origin), source_path: p.origin, frontmatter: fm,
+        type: typeof fm.type === 'string' ? fm.type : inferTypeFromPack(p.origin, pack) });
+    });
+    const params: unknown[] = [rows];
+    const readable = new Set((await engine.executeRaw<{ source_path: string }>(
+      `SELECT pages.source_path FROM unnest($1::text[]) AS candidate(row), LATERAL (SELECT candidate.row::jsonb AS j) AS c,
+        LATERAL jsonb_populate_record(NULL::pages, c.j || jsonb_build_object(
+          'page_readers', CASE WHEN c.j->'frontmatter' ? 'readable_by' THEN to_jsonb(gbrain_access_readers(c.j->'frontmatter')) END,
+          'folder_rule_ids', to_jsonb(gbrain_access_folder_rules(c.j->>'source_id', c.j->>'slug')))) AS pages
+        WHERE COALESCE(${pageReadFilter('pages', policy, params)}, false)`, params)).map(row => row.source_path));
+    for (const p of pageless) if (!readable.has(p.origin)) hidden.add(p.origin);
   }
   const slugs = [...new Set(origins.map(origin => resolveSlugForPath(origin)).filter(Boolean))];
   const ownerParams: unknown[] = [sourceId, slugs];
