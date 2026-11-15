@@ -37,7 +37,14 @@ export const PROPOSAL_FIELDS = ['participants', 'attendees', 'to', 'from', 'cc']
 export const PROPOSAL_DIR = 'visibility-proposals';
 
 export interface ProposedSet { source: string; readers: string[]; pages: number; file: string; command: string }
-export interface UnmatchedPage { source: string; slug: string; addresses: string[] }
+export interface UnmatchedPage {
+  source: string;
+  slug: string;
+  /** The listed entries that name no enabled member's declared email. */
+  addresses: string[];
+  /** Why the page gets no proposal when its addresses are not the reason (a slug a slugs file cannot carry). */
+  reason?: string;
+}
 export interface ProposedFolder { source: string; folder: string; pages: number; command: string }
 export interface VisibilityProposal {
   /** False on a one-person brain or one pinned to access.serves one: nothing was read or written. */
@@ -56,6 +63,7 @@ export interface VisibilityProposal {
 }
 
 const LINEAGE_COST = 'Labelling a page also hides its derived atoms, facts and chronicle events from every remote caller except the owner, unless access.members_read_lineage is on (gbrain access members-read-lineage on lets the members a page lists read them too).';
+const UNCARRIED_SLUG = 'the slug starts with # or has surrounding spaces or a line break, so a slugs file cannot carry it; label it with --slug';
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** The address entries a frontmatter value lists: a list or one string (comma or semicolon separated), each "Name <a@b>" read as a@b. */
@@ -119,6 +127,7 @@ export async function proposeVisibility(engine: BrainEngine, opts: { source?: st
   const groups = new Map<string, { source: string; readers: string[]; slugs: string[] }>();
   const unmatched: UnmatchedPage[] = [];
   const folders = new Map<string, ProposedFolder>();
+  let considered = 0;
   const ownerFirst = owner ? `${owner},` : '';
   for (const row of rows) {
     const listed = PROPOSAL_FIELDS.flatMap(f => entries(row.fields?.[f]));
@@ -132,6 +141,11 @@ export async function proposeVisibility(engine: BrainEngine, opts: { source?: st
         : shellQuote(['gbrain', 'access', 'rule', 'add', '--prefix', folder, '--readers', `${ownerFirst}<list>`, '--source', row.source]) };
       folders.set(key, f);
       f.pages++;
+      continue;
+    }
+    considered++;
+    if (row.slug.trim() !== row.slug || row.slug.startsWith('#') || /[\r\n]/.test(row.slug)) {
+      unmatched.push({ source: row.source, slug: row.slug, addresses: [], reason: UNCARRIED_SLUG });
       continue;
     }
     const members = new Set<string>();
@@ -167,7 +181,7 @@ export async function proposeVisibility(engine: BrainEngine, opts: { source?: st
   const chats = sorted.reduce((n, f) => n + f.pages, 0);
   return { applicable: true, owner, ...(view.inactive ? { owner_inactive: view.inactive.value } : {}), dir: sets.length ? dir : null, sets, unmatched, folders: sorted,
     members_read_lineage: lineage, cost: LINEAGE_COST,
-    message: `${plural(proposed, 'open page')} in ${plural(sets.length, 'reader set')}, ${unmatched.length} unmatched, ${plural(chats, 'DM, chat or mail page')} with no address list.` };
+    message: `${proposed} of ${plural(considered, 'open page')} with an address list in ${plural(sets.length, 'reader set')}, ${unmatched.length} unmatched; ${plural(chats, 'DM, chat or mail page')} with no address list.` };
 }
 
 /** The human preview: the sets and their commands, the unmatched pages, the folders and what labelling costs. */
@@ -179,8 +193,8 @@ export function proposalLines(p: VisibilityProposal, limit = 20): string[] {
   if (p.sets.length) lines.push('', `Reader sets (slugs files in ${p.dir}). Preview each, then run the --apply --expect <hash> it prints:`);
   for (const s of p.sets) lines.push(`  ${s.source}: ${plural(s.pages, 'page')} -> ${s.readers.join(', ')}`, `    ${s.command}`);
   if (p.unmatched.length) {
-    lines.push('', `Unmatched (${p.unmatched.length}): an address names no enabled member's declared email, so nothing is proposed. Declare it on the right member (gbrain access member set <id> --email <address>) and preview again, or label these by hand:`);
-    for (const u of p.unmatched.slice(0, limit)) lines.push(`  ${u.source}:${u.slug} (${u.addresses.join(', ')})`);
+    lines.push('', `Unmatched (${p.unmatched.length}): nothing is proposed for these. Where an address names no enabled member's declared email, declare it on the right member (gbrain access member set <id> --email <address>) and preview again; otherwise label these by hand:`);
+    for (const u of p.unmatched.slice(0, limit)) lines.push(u.reason ? `  ${u.source}:${JSON.stringify(u.slug)} (${u.reason})` : `  ${u.source}:${u.slug} (${u.addresses.join(', ')})`);
     if (p.unmatched.length > limit) lines.push(`  ... and ${p.unmatched.length - limit} more (--json lists every one)`);
   }
   if (p.folders.length) {

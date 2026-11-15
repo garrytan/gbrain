@@ -255,5 +255,24 @@ for (const kind of testBackends()) {
       expect(readFileSync(target, 'utf8')).toBe(before);
       expect(readdirSync(out).filter(n => n.endsWith('.tmp'))).toEqual([]);
     }, 60_000);
+
+    test('a slug a slugs file cannot carry (leading #, surrounding spaces, a line break) is unmatched with its reason, and the counts add up', async () => {
+      const SRC_B = 'source-b';
+      await engine.executeRaw("INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING", [SRC_B]);
+      const odd = ['#meetings/h', ' meetings/x', 'meetings/a' + String.fromCharCode(10) + 'b'];
+      for (const slug of ['meetings/x', ...odd]) {
+        await engine.executeRaw("INSERT INTO pages (source_id, slug, title, type, frontmatter, compiled_truth) VALUES ($1, $2, 't', 'meeting', jsonb_build_object('attendees', jsonb_build_array($3::text)), '')",
+          [SRC_B, slug, 'bob@example.com']);
+      }
+      const p = await propose(['--source', SRC_B]);
+      expect(p.sets.map(s => [s.readers.join(','), readFileSync(s.file, 'utf8')])).toEqual([['owner-example,bob-example', 'meetings/x\n']]);
+      expect(p.unmatched.map(u => u.slug).sort()).toEqual([...odd].sort());
+      for (const u of p.unmatched) { expect(u.addresses).toEqual([]); expect(u.reason).toContain('label it with --slug'); }
+      const [, proposed, considered, unmatched] = p.message.match(/^(\d+) of (\d+) open pages? with an address list in .*?, (\d+) unmatched;/)!.map(Number);
+      expect([proposed, considered, unmatched]).toEqual([1, 4, 3]);
+      expect(proposed! + unmatched!).toBe(considered!);
+      const text = await repair(['visibility', '--propose', '--source', SRC_B]);
+      expect(text).toContain(`source-b:${JSON.stringify('meetings/a' + String.fromCharCode(10) + 'b')} (the slug starts with #`);
+    }, 60_000);
   });
 }
