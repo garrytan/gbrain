@@ -93,6 +93,12 @@ async function keylessRowStages(
  * below the page's lowest row, marked keyword_fill, never more than the empty
  * slots. A failed fetch or a check that did not judge them adds nothing and
  * reports keyword_candidates_incomplete.
+ *
+ * Invariant (pinned by the property tests in test/search/keyless-any-word-fill.test.ts):
+ * with the fill on, the response begins with exactly the rows the fill-off
+ * response returns, here and at the search and query operations (chooseFill in
+ * ops/search.ts), and a fill row passes every stage a normal row passes,
+ * visibility and source scope included.
  */
 async function anyWordFill(req: HybridRequest, lexical: LexicalArms, postFusionOpts: PostFusionOpts, pool: SearchResult[]): Promise<SearchResult[]> {
   const { engine, query, opts, limit, offset, degraded, searchOpts } = req;
