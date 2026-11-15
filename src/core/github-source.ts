@@ -54,6 +54,7 @@ import { OperationError } from './ops/contract.ts';
 import { isWriteThroughDisabled } from './write-through.ts';
 import { isSourceDbOnlySlug } from './persistence/source-storage.ts';
 import { neutralizeOutsideText } from './outside-content.ts';
+import { connectorDryRunResult } from './connectors/api-source.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -1091,7 +1092,7 @@ export async function runGitHubSync(
   fetchImpl?: FetchImpl,
 ): Promise<import('../commands/sync.ts').SyncResult> {
   return withConnectorSync(engine, sourceId, 'github', cfg, opts,
-    (managed, options) => runGitHubSyncInner(engine, sourceId, cfg, options, managed, fetchImpl), pendingConnectorResult);
+    (managed, options) => options.dryRun ? connectorDryRunResult('github', sourceId) : runGitHubSyncInner(engine, sourceId, cfg, options, managed, fetchImpl), pendingConnectorResult);
 }
 
 async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: GitHubSourceConfig, opts: SyncOpts,

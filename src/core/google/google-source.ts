@@ -72,6 +72,7 @@ export type { GoogleSourceConfig } from './types.ts';
 export { runGoogleAttachmentBackfill } from './attachment-backfill.ts';
 export { parseGoogleSourceConfig } from './source-config.ts';
 import { parseGoogleSourceConfig } from './source-config.ts';
+import { connectorDryRunResult } from '../connectors/api-source.ts';
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -720,7 +721,7 @@ export async function runGoogleSync(
   vaultOverride?: CredentialVault,
 ): Promise<SyncResult> {
   return withConnectorSync(engine, sourceId, 'google', cfg, opts,
-    (managed, options) => runGoogleSyncInner(engine, sourceId, cfg, options, managed, fetchImpl, vaultOverride), pendingConnectorResult);
+    (managed, options) => options.dryRun ? connectorDryRunResult('google', sourceId) : runGoogleSyncInner(engine, sourceId, cfg, options, managed, fetchImpl, vaultOverride), pendingConnectorResult);
 }
 
 async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: GoogleSourceConfig, opts: SyncOpts,
