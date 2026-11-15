@@ -422,8 +422,7 @@ export async function resolveEntitiesToPointers(
               AND ( lower(p.title) = ANY($2::text[])
                  OR p.slug = ANY($3::text[])
                  OR p.slug LIKE ANY($4::text[])
-                 OR (lower(p.title) LIKE ANY($5::text[]) AND p.type = 'person') )
-            ORDER BY p.id`,
+                 OR (lower(p.title) LIKE ANY($5::text[]) AND p.type = 'person') ) ORDER BY p.id`,
           [sourceIds, titlesLc, exactSlugs, slugSuffixes, surnamePatterns],
         )
       : await engine.executeRaw<PageRow>(
@@ -433,8 +432,7 @@ export async function resolveEntitiesToPointers(
               AND p.source_id = ANY($1::text[])
               AND ( lower(p.title) = ANY($2::text[])
              OR p.slug = ANY($3::text[])
-             OR p.slug LIKE ANY($4::text[]) )
-            ORDER BY p.id`,
+             OR p.slug LIKE ANY($4::text[]) ) ORDER BY p.id`,
           [sourceIds, titlesLc, exactSlugs, slugSuffixes],
         );
   } catch {
