@@ -43,7 +43,11 @@
  * `password <value>`, and a key or token label left dangling at a line end
  * (`here is my API key:`, `ACCESS_TOKEN=`) with its value alone on the next
  * line. The transcript lane also carries a dangling label of any form into
- * the first line of the NEXT message (`ScanOpts.leadingDangling`).
+ * the first line of the NEXT message (`ScanOpts.leadingDangling`). A `.netrc`
+ * entry written over several lines (`machine host`, then `login alice` and
+ * `password …` on lines of their own) is read as one stanza
+ * (`netrcStanzaOpen`): a line that is only `password <value>` (optionally
+ * after `login`/`account` tokens) inside it is claimed.
  *
  * Accepted misses: an unquoted multi-word passphrase (`login: alice / pass
  * word`), a delimiter-free single label (`the password is hunter2`), a pair
@@ -76,7 +80,7 @@ const CLI_HEAD = '(?:^|\\s)--?(?!(?:no|skip|ask|prompt|reset|show|print|change|c
 const OPENSSL_PASS_HEAD = '(?:^|\\s)-pass(?:in|out)\\s{1,4}pass:';
 
 /** The label form a line leaves dangling for the next line: `key` is the transcript-lane key or token label. */
-export type DanglingForm = 'single' | 'pair' | 'key';
+export type DanglingForm = 'single' | 'pair' | 'key' | 'netrc';
 
 export interface LabeledPattern {
   source: string;
@@ -90,7 +94,7 @@ export interface LabeledPattern {
 export interface TranscriptLabeledPattern {
   source: string;
   form: 'single' | 'key';
-  continuation?: 'key';
+  continuation?: 'key' | 'netrc';
 }
 
 /** Group 1 = everything before the value, group 2 = the value (the scanner's shape). */
@@ -111,14 +115,28 @@ export const LABELED_CREDENTIAL_PATTERNS: readonly LabeledPattern[] = [
 /** A key or token label (`API key`, `access_token`, `client secret`), transcript lane only. */
 const KEY_LABEL = '(?:api[ _-]?key|access[ _-]?key|secret[ _-]?key|client[ _-]?secret|secret|token)s?';
 const NETRC_HEAD = '(?:^|\\s)(?:machine\\s{1,4}[^\\s]{1,253}|default)(?:\\s{1,4}(?:login|account)\\s{1,4}[^\\s]{1,128}){0,2}\\s{1,4}password\\s{1,4}';
+/** A `password` line inside a multi-line `.netrc` stanza, optionally after its `login`/`account` tokens. */
+const NETRC_LINE_HEAD = '^\\s{0,8}(?:(?:login|account)\\s{1,4}[^\\s]{1,128}\\s{1,4}){0,2}password\\s{1,4}';
+/** A line that opens a multi-line `.netrc` stanza (`machine host`, `default`, optionally with login/account but no password). */
+const NETRC_STANZA_OPEN_RE = /^\s{0,8}(?:machine\s{1,4}\S{1,253}|default)(?:\s{1,4}(?:login|account)\s{1,4}\S{1,128}){0,2}\s{0,4}$/;
+/** A line that keeps a `.netrc` stanza open: only `login`, `account` and `password` tokens. */
+const NETRC_STANZA_LINE_RE = /^\s{0,8}(?:(?:login|account|password)\s{1,4}\S{1,255}\s{0,4}){1,3}$/;
+
+/** True when the line after `line` is inside a multi-line `.netrc` stanza; `open` says whether `line` itself was. */
+export function netrcStanzaOpen(line: string, open: boolean): boolean {
+  return NETRC_STANZA_OPEN_RE.test(line) || (open && NETRC_STANZA_LINE_RE.test(line));
+}
 
 /**
  * GST-2768: the transcript-lane-only labeled shapes (`ScanOpts.transcriptRules`), claimed as
- * `labeled_credential`: a `.netrc` password, and the value on the line after a dangling key label.
+ * `labeled_credential`: a `.netrc` password (one line, or a `password` line inside a multi-line
+ * stanza), and the value on the line after a dangling key label.
  */
 export const TRANSCRIPT_LABELED_PATTERNS: readonly TranscriptLabeledPattern[] = [
   { form: 'single', source: `(${NETRC_HEAD}${QUOTE})(${QUOTED_VALUE})(?=${QUOTE})` },
   { form: 'single', source: `(${NETRC_HEAD})(${BARE_VALUE})${BARE_END}` },
+  { form: 'single', continuation: 'netrc', source: `(${NETRC_LINE_HEAD}${QUOTE})(${QUOTED_VALUE})(?=${QUOTE}\\s{0,8}$)` },
+  { form: 'single', continuation: 'netrc', source: `(${NETRC_LINE_HEAD})([^\\s"'\`]{1,256})(?=\\s{0,8}$)` },
   { form: 'key', continuation: 'key', source: `(^\\s{0,8}${QUOTE})(${QUOTED_VALUE})(?=${QUOTE}[,;]?\\s*$)` },
   { form: 'key', continuation: 'key', source: `(^\\s{0,8})(${BARE_VALUE})(?=[.,;]?\\s*$)` },
 ];

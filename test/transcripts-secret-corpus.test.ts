@@ -31,6 +31,31 @@ describe('synthetic credential corpus', () => {
     expect(out).toContain('password \\"<REDACTED:labeled_credential>\\"');
   });
 
+  test('a .netrc entry written over several lines: the password is redacted', () => {
+    const pw = ['Synth', 'NetrcMulti4321'].join('');
+    for (const text of [
+      `machine api.acme-example.test\n  login alice-example\n  password ${pw}`,
+      `machine api.acme-example.test\nlogin alice-example\npassword "${pw}"`,
+      `machine api.acme-example.test login alice-example\n    password ${pw}`,
+      `default\n  password ${pw}\n  login alice-example`,
+    ]) {
+      const out = run({ meta: { harness: 'claude-code', sessionId: 'netrc-multi' }, messages: [{ role: 'user', timestamp: TS(0), text }] });
+      expect([text, out.includes(pw)]).toEqual([text, false]);
+      expect(out).toContain('<REDACTED:labeled_credential>');
+    }
+  });
+
+  test('prose near a .netrc shape is not redacted', () => {
+    for (const text of [
+      'machine learning\npassword managers are useful',
+      'machine api.acme-example.test\nthen we talked\npassword hunter2x',
+      'we used the machine api.acme-example.test\npassword Synth4242pw',
+    ]) {
+      const out = redactSession({ meta: { harness: 'claude-code', sessionId: 'netrc-prose' }, messages: [{ role: 'user', timestamp: TS(0), text }] }, { patterns: [] }).session.messages[0]!.text;
+      expect(out).toBe(text);
+    }
+  });
+
   for (const e of SYNTHETIC_CREDENTIAL_CORPUS) {
     test(`${e.id} (${e.shape}) in message bodies`, () => {
       const out = run({
