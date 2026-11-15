@@ -15,7 +15,9 @@
  *   - ambiguous: no purge record (a retention purge of a soft-deleted page leaves none, and neither does a rename that
  *     did not carry the facts); retired only with `--include-ambiguous` and that preview's hash.
  *
- * The preview lists every candidate, prints a hash over all of it and saves the approved set. The apply, bound to that
+ * The preview lists every candidate, prints a hash over all of it and saves the approved set; a preview that approves
+ * nothing (only ambiguous or excluded rows) prints the empty set's hash, so its apply answers with nothing to do instead
+ * of preview_changed (#9407). The apply, bound to that
  * hash and the user's consent, expires exactly the approved rows that are still active, unchanged, of the same class
  * and still without a page (expired_at set, row_num cleared, as the fixed purge does); anything else is reported
  * changed_since_preview and kept. Rows are expired, never deleted. A managed brain publishes one database-only
@@ -156,13 +158,13 @@ export const purgedPageFactsRepair: RepairHandler = {
       return { items, preview_hash: opts.expect, residuals: {} };
     }
     const facts = await classifyPurgedPageFacts(engine, scope.source_ids);
-    const hash = await hashOf(facts);
     const batches: Approved[] = [];
     for (const fact of facts.filter(f => f.class === 'evidenced' || f.class === 'ambiguous' && includeAmbiguous)) {
       const open = batches.at(-1);
       if (open && open.source_id === fact.source_id && open.facts.length < BATCH_FACTS) open.facts.push(fact);
       else batches.push({ source_id: fact.source_id, include_ambiguous: includeAmbiguous, scope: scope.source_ids, facts: [fact] });
     }
+    const hash = await hashOf(batches.length ? facts : []);
     if (batches.length) await saveApprovedSet(engine, { command: COMMAND, hash }, batches);
     const count = (klass: PurgedPageFactClass) => facts.filter(f => f.class === klass).length;
     const listing: RepairListing[] = facts.map(fact => ({ item: `${fact.source_id}:${fact.slug}#${fact.id}`,

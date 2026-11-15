@@ -2,7 +2,8 @@ name: TLA+ specs
 
 # Model-checks the TLA+ specs under spec/tla/ (spec/tla/README.md): TLC on every config, then every guard
 # mutant, in the model and in the code (scripts/spec/mutants.ts). Nightly, on dispatch, and on pull requests and
-# pushes that touch a spec, its runner, the code a spec models, or a test a mutant names.
+# pushes that touch a spec, its runner, the code a spec models, or a test a mutant names. The *Nightly.cfg configs,
+# too big for every pull request, run in their own job (tla-nightly) on the schedule and on dispatch only.
 
 on:
   pull_request:
@@ -162,9 +163,8 @@ jobs:
           printf 'TLA2TOOLS=%s\n' "$jar" >> "$GITHUB_ENV"
       - name: The configs match the code
         run: bun test --timeout=60000 test/spec-${{ matrix.spec }}*.test.ts
-      - name: Model-check every config (the *Nightly.cfg ones on the schedule and on dispatch)
+      - name: Model-check every config but the *Nightly.cfg ones (tla-nightly runs those)
         env:
-          TLC_NIGHTLY: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
           TLC_TIMEOUT_S: '900'
         run: bash scripts/spec/tlc.sh ${{ matrix.spec }}
       # Only after the model check passed: a mutant means something only against a spec whose properties hold.
@@ -179,6 +179,51 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: tla-spec-logs-${{ matrix.spec }}
+          path: ${{ runner.temp }}/tlc
+          if-no-files-found: ignore
+          retention-days: 14
+
+  tla-nightly:
+    name: TLC nightly configs (${{ matrix.spec }})
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubicloud-standard-4-ubuntu-2404
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        spec: [drain-lease, refresh-barrier]
+    steps:
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        continue-on-error: true
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00  # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Scratch paths
+        run: |
+          echo "TLC_OUT=$RUNNER_TEMP/tlc" >> "$GITHUB_ENV"
+          echo "TLA_CACHE=$RUNNER_TEMP/tla-cache" >> "$GITHUB_ENV"
+      # TLA_JAR_DOWNLOAD_FAILED is a network failure (rerun the job); TLA_JAR_SHA_MISMATCH is never rerun.
+      - name: Fetch TLC (pinned in scripts/spec/tla-tools.env, checked against its sha256)
+        run: |
+          jar="$(bash scripts/spec/tla-jar.sh)" || exit "$?"
+          printf 'TLA2TOOLS=%s\n' "$jar" >> "$GITHUB_ENV"
+      - name: Model-check the *Nightly.cfg configs
+        env:
+          TLC_NIGHTLY: only
+          TLC_TIMEOUT_S: '900'
+        run: bash scripts/spec/tlc.sh ${{ matrix.spec }}
+      - name: Keep the logs and counterexample traces
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: tla-spec-nightly-logs-${{ matrix.spec }}
           path: ${{ runner.temp }}/tlc
           if-no-files-found: ignore
           retention-days: 14

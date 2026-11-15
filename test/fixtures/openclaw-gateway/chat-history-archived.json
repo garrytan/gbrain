@@ -1,0 +1,23 @@
+{
+  "sessionKey": "agent:dev:example-scratch-1",
+  "sessionId": "4afa4e52-4b37-451c-8337-f0c92ebab497",
+  "hasMore": false,
+  "totalMessages": 1,
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "note 1"
+        }
+      ],
+      "timestamp": 1794721340452,
+      "__openclaw": {
+        "id": "d0fb7bd2-9d73-4237-8c5b-7ba393d71c11",
+        "seq": 1,
+        "recordTimestampMs": 1794721340452
+      }
+    }
+  ]
+}

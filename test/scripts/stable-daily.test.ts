@@ -136,6 +136,7 @@ function world(w: World) {
       }
       if (path.includes('/releases/tags/')) return { draft: false, id: 42 };
       if (path.endsWith('/permission')) return { permission: 'none' };
+      if (path.endsWith('/releases/latest')) throw new Error(`gh api ${path} failed: HTTP 404: Not Found`);
       throw new Error(`unexpected api ${path}`);
     },
     git,

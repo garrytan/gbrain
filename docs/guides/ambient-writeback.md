@@ -14,6 +14,11 @@ verb; `remember` and `extract_facts` do all the writing.
 
 Off by default. Nothing in this feature ever enables itself.
 
+The [conversation archive](./conversation-archive.md) is a separate lane: it
+keeps the sessions themselves (one redacted page per conversation per day), is
+on by default on a personal brain, extracts no facts, and is turned off with
+`gbrain transcripts archive off`; `memory.auto_writeback` does not change it.
+
 ## Who gets asked (and who is never asked)
 
 gbrain distinguishes PERSONAL brains from company/team brains and only ever

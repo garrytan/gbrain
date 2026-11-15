@@ -28,7 +28,7 @@ export async function derivedVisibilityCheck(engine: BrainEngine, sourceId?: str
   const name = 'derived_visibility';
   try {
     const aliasesHonored = await readHonorAliases(engine);
-    const sources = sourceId ? [sourceId] : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources')).map(s => s.id);
+    const sources = (await engine.executeRaw<{ id: string }>(`SELECT id FROM sources WHERE archived IS NOT TRUE${sourceId ? ' AND id=$1' : ''}`, sourceId ? [sourceId] : [])).map(s => s.id);
     const facts = await worldFactsFromPrivateSources(engine, sources);
     const readable = facts.filter(f => f.readable);
     const factDetails = { world_facts_from_private_sources: facts.length, world_facts_remotely_readable: readable.length,
@@ -39,7 +39,7 @@ export async function derivedVisibilityCheck(engine: BrainEngine, sourceId?: str
     try {
       counts = await engine.executeRaw<{ unstamped_atoms: number; unstamped_concepts: number; looser_atoms: number; looser_concepts: number; looser_events: number; alias_pages_without_visibility: number }>(
       `WITH derived AS (
-         SELECT p.* FROM pages p WHERE p.deleted_at IS NULL ${sourceId ? 'AND p.source_id=$1' : ''}
+         SELECT p.* FROM pages p WHERE p.deleted_at IS NULL AND p.source_id=ANY($1::text[])
            AND (p.type='atom' OR (p.type='concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)
              OR (p.type='event' AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%')))
        SELECT
@@ -55,8 +55,8 @@ export async function derivedVisibilityCheck(engine: BrainEngine, sourceId?: str
          COUNT(*) FILTER (WHERE d.type='event' AND COALESCE(d.frontmatter->>'visibility','world')<>'private' AND EXISTS (SELECT 1 FROM pages o
            WHERE o.source_id=d.source_id AND o.slug=d.frontmatter->'event'->>'depth' AND o.deleted_at IS NULL
              AND ${derivationPrivateSql('o')}))::int AS looser_events,
-         (SELECT COUNT(*)::int FROM pages ap WHERE ${aliasOnlyPagesSql('ap')} ${sourceId ? 'AND ap.source_id=$1' : ''}) AS alias_pages_without_visibility
-       FROM derived d`, sourceId ? [sourceId] : [], { timeoutMs: PLAN_STATEMENT_MS });
+         (SELECT COUNT(*)::int FROM pages ap WHERE ${aliasOnlyPagesSql('ap')} AND ap.source_id=ANY($1::text[])) AS alias_pages_without_visibility
+       FROM derived d`, [sources], { timeoutMs: PLAN_STATEMENT_MS });
     } catch (e) {
       if ((e as { code?: string } | null)?.code !== '57014') throw e;
       return { name, status: 'warn', details: { ...factDetails, derived_counts: 'unknown', count: 'lower_bound', truncated: true, repair: 'visibility' },

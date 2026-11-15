@@ -49,6 +49,42 @@ export function isOpenclawCheckpointFile(path: string): boolean {
 }
 
 /**
+ * GST-2768: the retained transcript archives OpenClaw keeps under sessions/ (its isRetainedSessionTranscriptArchiveName,
+ * OpenClaw 2026.10.9 and 2026.11.3): `<id>.jsonl.reset.<stamp>`, `<id>.jsonl.deleted.<stamp>` and the legacy
+ * pre-compaction backup `<id>.jsonl.bak.<stamp>`, each optionally `.<32 hex>` and zstd `.zst` (recorded on both
+ * versions: `<id>.jsonl.deleted.2026-11-15T06-38-21.539Z.<hex>.zst`). Same line format as a live session file, so they
+ * are read; two files of one session merge in the archive reader.
+ */
+const ARCHIVED_RE = /\.jsonl\.(?:reset|deleted|bak)\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:\.\d{3})?Z(?:\.[0-9a-f]{32})?(?:\.zst)?$/;
+
+export function isOpenclawArchivedFile(path: string): boolean {
+  return ARCHIVED_RE.test(path);
+}
+
+/**
+ * Files OpenClaw keeps beside sessions that are never read as conversations: migration rollback copies
+ * (`*.migrated`, `*.migrated.<n>` and `<id>.jsonl.pre-doctor-<kind>-repair-<stamp>.bak`, its
+ * isMigrationArchiveArtifactName: the original of a transcript already imported into the session database, which
+ * the Gateway serves) and Doctor's recovery copies of a zero-byte transcript (`<id>.jsonl.bak-<pid>-<timestamp>`).
+ * Reading them would count one conversation twice.
+ */
+const SKIPPED_RE = /(?:\.migrated(?:\.\d+)?|\.jsonl\.pre-doctor-[a-z-]+-repair-[0-9TZ:.-]+\.bak|\.jsonl\.bak-\d+-[0-9TZ:.-]+)$/;
+
+export function isOpenclawSkippedArtifact(path: string): boolean {
+  return SKIPPED_RE.test(path);
+}
+
+async function readSessionText(path: string): Promise<string> {
+  const bytes = readFileSync(path);
+  if (!path.endsWith('.zst')) return bytes.toString('utf8');
+  const zlib = (await import('node:zlib')) as unknown as { zstdDecompressSync?: (b: Buffer) => Buffer };
+  const bun = (globalThis as { Bun?: { zstdDecompressSync?: (b: Buffer) => Uint8Array } }).Bun;
+  const out = zlib.zstdDecompressSync ? zlib.zstdDecompressSync(bytes) : bun?.zstdDecompressSync?.(bytes);
+  if (!out) throw new Error('openclaw archived session is zstd-compressed and this runtime has no zstd decoder');
+  return Buffer.from(out).toString('utf8');
+}
+
+/**
  * One parsed openclaw session line, classified (cathedral-5). Exported so the
  * compaction-boundary tail reader (corpus-segments) reuses the SAME
  * line→message mapping as the import adapter — the dated SPEC_TARGET above
@@ -123,7 +159,9 @@ export const openclawAdapter: TranscriptAdapter = {
   specTarget: OPENCLAW_SPEC_TARGET,
 
   detect(path: string, sample: Buffer): boolean {
-    if (!path.endsWith('.jsonl') || isOpenclawCheckpointFile(path)) return false;
+    if (isOpenclawCheckpointFile(path)) return false;
+    if (isOpenclawArchivedFile(path) && path.endsWith('.zst')) return true;
+    if (!path.endsWith('.jsonl') && !isOpenclawArchivedFile(path)) return false;
     const firstLine = sample.toString('utf8').split('\n', 1)[0]?.trim();
     if (!firstLine) return false;
     try {
@@ -140,7 +178,10 @@ export const openclawAdapter: TranscriptAdapter = {
     if (size > cap) {
       throw new Error(`openclaw session too large for import: ${size} bytes (cap ${cap})`);
     }
-    const raw = readFileSync(path, 'utf8');
+    const raw = await readSessionText(path);
+    if (raw.length > cap) {
+      throw new Error(`openclaw session too large for import: ${raw.length} characters decompressed (cap ${cap})`);
+    }
     let skippedLines = 0;
     let sessionId = '';
     let cwd: string | undefined;
@@ -171,7 +212,7 @@ export const openclawAdapter: TranscriptAdapter = {
     let sessions = 0;
     if (messages.length > 0) {
       sessions = 1;
-      const sid = sessionId || basename(path, '.jsonl');
+      const sid = sessionId || basename(path).split('.jsonl')[0]!;
       yield {
         meta: {
           harness: 'openclaw',

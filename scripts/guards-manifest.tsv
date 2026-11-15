@@ -39,6 +39,7 @@ check-source-scope-onboard.sh	scanner	yes	onboard SQL sites need source_id scopi
 check-synthetic-corpus-privacy.sh	scanner	todo
 check-system-of-record.sh	scanner	todo
 check-test-real-names.sh	scanner	todo
+check-test-fragment-reads.sh	scanner	yes	a test that reads a named changelog.d fragment from the repo root breaks on the release commit that folds it (v0.60.726.0); fixture trees under test/fixtures/guards/ are skipped; GBRAIN_GUARD_ROOT seam; bad-template fixture covers the template-string path
 check-worker-lock-renewal-shape.sh	scanner	todo
 check-worker-pool-atomicity.sh	scanner	todo
 check-gateway-routed-no-direct-anthropic.sh	scanner	yes	no runtime @anthropic-ai/sdk import or new Anthropic() in gateway-routed files; GBRAIN_GUARD_ROOT seam

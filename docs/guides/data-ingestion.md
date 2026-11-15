@@ -81,6 +81,8 @@ gbrain transcripts ingest --max-bytes 4gb <store>          # oversized store; om
 gbrain transcripts status                    # found vs imported, per harness
 ```
 
+For one redacted page per conversation per local day plus a daily index (off until `gbrain transcripts archive on`), see the [conversation archive](conversation-archive.md).
+
 **Say to your agent:** *"Import my conversations from my chatgpt export at ~/Downloads/conversations.json"* — *"Archive my session transcripts"* — and later, *"When did I first discuss agent memory?"* (the archive answers origin questions with dated quotes).
 
 Codex sessions imported before gbrain read codex 0.153+ rollouts lost their
@@ -122,7 +124,8 @@ forms are recognized, with bare, quoted or backticked values:
   `DB password` and the like, and the value in a `| password | … |` row,
   including rows without outer pipes, escaped `\|` pipes and tables with
   several credential columns;
-- a one-line `.netrc` entry, `machine host login alice password …`;
+- a `.netrc` entry, on one line (`machine host login alice password …`) or
+  over several (`machine`, `login` and `password` each on its own line);
 - a key or token label that ends its line (`here is my API key:`,
   `ACCESS_TOKEN=`), with one value of 12+ characters holding a letter and a
   digit alone on the next line;
@@ -131,13 +134,12 @@ forms are recognized, with bare, quoted or backticked values:
 
 Cookie values are redacted too (`cookie_header`): after a `Cookie:` or
 `Set-Cookie:` header (raw headers, `curl -H`, a copy-as-fetch JSON blob) and
-after `-b`/`--cookie` on the same line as `curl`, every value of 8+
-characters is replaced and the cookie names and `Set-Cookie` attributes
+after `-b`/`--cookie` in a `curl` command, including on a continued line
+of a multi-line command (what Chrome's "Copy as cURL" produces), every
+value of 8+ characters is replaced, quoted values inside escaped JSON
+(`sid=\"…\"`) too, and the cookie names and `Set-Cookie` attributes
 stay. These transcript-only rules never run in the `sources push` gate or
 the compiled-context scan.
-
-Known gaps: three cases still reach the page verbatim, as they did before
-these rules: a `.netrc` entry written over several lines (`machine`, `login` and `password` each on its own line), a `-b` cookie on its own continued line of a multi-line curl command (what Chrome's "Copy as cURL" produces), and a quoted cookie value inside escaped JSON (`sid=\"…\"`).
 
 To keep prose and code intact, a value is never redacted when it is a
 placeholder (`<…>`, `${…}`, `$VAR`), a mask (`****`), a URL, a path, a

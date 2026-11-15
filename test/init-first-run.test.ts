@@ -6,7 +6,7 @@
  * filesystem.
  */
 import { describe, expect, test } from 'bun:test';
-import { buildInitFirstRunNotices, setupFirstRunNotices, upkeepLine } from '../src/commands/init-first-run.ts';
+import { archiveLine, buildInitFirstRunNotices, setupFirstRunNotices, upkeepLine } from '../src/commands/init-first-run.ts';
 import { costMatrixSentence } from '../src/core/search/mode-advice.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -151,6 +151,15 @@ describe('setupFirstRunNotices (gbrain setup <harness>)', () => {
     expect(n.why).toContain('do not hold the install open');
   });
 
+  test('a Codex setup prices the matrix with OpenAI models, not Claude ones', () => {
+    const [n] = setupFirstRunNotices(fromInit({ searchMode }), 'Codex');
+    const mode = n.decisions!.find(d => d.id === 'search_mode')!;
+    for (const text of [n.user_message!, mode.question]) {
+      expect(text).not.toContain('Haiku');
+      expect(text).toContain('GPT-5.6 Luna / GPT-5.6 Terra / GPT-5.6 Sol');
+    }
+  });
+
   test('the search-mode matrix still reaches the user and every option keeps its command', () => {
     const [n] = setupFirstRunNotices(fromInit({ searchMode }), 'Claude Code');
     expect(n.user_message).toContain(costMatrixSentence());
@@ -173,5 +182,41 @@ describe('setupFirstRunNotices (gbrain setup <harness>)', () => {
     expect(setupFirstRunNotices([{ code: 'first_run_decisions', kind: 'ask', why: 'x', decisions: [wiring] }], 'Claude Code')).toEqual([]);
     expect(setupFirstRunNotices([{ code: 'other', kind: 'info', why: 'x' }, null], 'Claude Code')).toEqual([]);
     expect(setupFirstRunNotices([], 'Claude Code')).toEqual([]);
+  });
+});
+
+describe('the conversation archive line (GST-2768)', () => {
+  test('a personal brain: on, what is archived and where, nothing leaves a keyless machine, and the off command', () => {
+    const [bundle] = buildInitFirstRunNotices({ searchMode, upkeep: { embedding: false }, archive: { state: 'on', embedding: false } });
+    expect(bundle.decisions!.map(d => d.id)).toEqual(['search_mode', 'upkeep', 'conversation_archive']);
+    const archive = bundle.decisions!.find(d => d.id === 'conversation_archive')!;
+    expect(archive.question).toBe(archiveLine('on', false));
+    expect(archive.question).toContain('Conversation archive: on.');
+    expect(archive.question).toContain('conversations source');
+    expect(archive.question).toContain('nothing leaves this machine');
+    expect(archive.question).toContain('gbrain transcripts archive off');
+    expect(archive.default).toBe('on');
+    expect(archive.options.find(o => o.id === 'off')!.argv).toEqual(['gbrain', 'transcripts', 'archive', 'off']);
+    expect(archiveLine('on', true)).toContain('gbrain embed --held --dry-run');
+  });
+
+  test('a shared brain is offered it with the on command, default off', () => {
+    const [bundle] = buildInitFirstRunNotices({ searchMode, archive: { state: 'offered', embedding: false } });
+    const archive = bundle.decisions!.find(d => d.id === 'conversation_archive')!;
+    expect(archive.question).toBe(archiveLine('offered', false));
+    expect(archive.question).toContain('gbrain transcripts archive on');
+    expect(archive.default).toBe('off');
+    expect(archive.options.find(o => o.id === 'on')!.argv).toEqual(['gbrain', 'transcripts', 'archive', 'on']);
+  });
+
+  test('the archive line alone never opens a bundle', () => {
+    expect(buildInitFirstRunNotices({ archive: { state: 'on', embedding: false } })).toEqual([]);
+  });
+
+  test('setup relays it once in the settings in effect, never as a question', () => {
+    const [bundle] = buildInitFirstRunNotices({ searchMode, archive: { state: 'on', embedding: false } });
+    const [n] = setupFirstRunNotices([{ ...bundle, contract_version: 1 }], 'Codex');
+    expect(n.user_message!.split(archiveLine('on', false)).length).toBe(2);
+    expect(n.user_message).toContain('Nothing needs an answer now');
   });
 });

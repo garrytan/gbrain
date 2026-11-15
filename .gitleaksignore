@@ -67,3 +67,10 @@ d7a54effbc2e4ab26496bebb0d680ec5b82aaeed:test/storage-manifest.test.ts:generic-a
 f60d3d827947be5836e7a1ab530596494f3f4e25:test/storage-manifest.test.ts:generic-api-key:141
 f60d3d827947be5836e7a1ab530596494f3f4e25:test/storage-manifest.test.ts:generic-api-key:142
 f60d3d827947be5836e7a1ab530596494f3f4e25:test/storage-manifest.test.ts:generic-api-key:143
+# Conversation archive (GST-2768): synthetic Gateway tokens (tok-synthetic-000N) in test/transcripts-openclaw-gateway-argv.test.ts
+# and a synthetic redaction canary constant in test/transcripts-archive-redaction.test.ts read as generic-api-key.
+# History-only fingerprints of test fixtures, not secrets.
+abef0b6d4b3c475ab8a6ab991744562f1f579a4f:test/transcripts-openclaw-gateway-argv.test.ts:generic-api-key:105
+abef0b6d4b3c475ab8a6ab991744562f1f579a4f:test/transcripts-openclaw-gateway-argv.test.ts:generic-api-key:124
+5cdad604afa992a5af330606719f41299d05c29f:test/transcripts-openclaw-gateway-argv.test.ts:generic-api-key:34
+8d727757c32db0479ebc33e48c3ac6cb8a7f023c:test/transcripts-archive-redaction.test.ts:generic-api-key:31

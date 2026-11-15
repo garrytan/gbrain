@@ -65,8 +65,9 @@ for (const backend of testBackends()) {
     const doctor = async () => (await managedSyncBlockedEntry.run({ engine } as never) as Check[])[0]!;
     expect(await blocked()).toEqual([]);
 
-    // The pass's process was killed: its row is left open and its drain lease released (a SIGTERM's cleanup).
-    await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,telemetry,outcome}','"open"') WHERE op=$1`, [MANAGED_SYNC_PASS_OP]);
+    // The pass's process was killed: its row is left open and its drain lease released (a SIGTERM's cleanup). GST-2515: it
+    // committed nothing (a fresh pass id no committed write or hold carries), so a streak of such passes is abandoned.
+    await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(jsonb_set(completed_keys,'{0,telemetry,outcome}','"open"'),'{0,telemetry,pass_id}',to_jsonb(gen_random_uuid()::text)) WHERE op=$1`, [MANAGED_SYNC_PASS_OP]);
     const [{ pass_id }] = await engine.executeRaw<{ pass_id: string }>(`SELECT completed_keys->0->'telemetry'->>'pass_id' AS pass_id FROM op_checkpoints WHERE op=$1`, [MANAGED_SYNC_PASS_OP]);
     let status = await readSyncStatus(engine, 'default', { detail: false });
     expect([status.state, status.reason]).toEqual(['resumable', 'pass_interrupted']);
