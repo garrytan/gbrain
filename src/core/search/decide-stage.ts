@@ -245,7 +245,9 @@ export async function applyEvidenceGate(ctx: DecideSearchContext | undefined, qu
  * the `kept` rows already on the page, and its own meta. Null when a slot that
  * is on did not judge the page's rows or these (the fill is then not returned
  * and ctx.meta is left as it was); otherwise the surviving rows, with their
- * counts added to ctx.meta. Rows past EVIDENCE_MAX_CANDIDATES are not returned.
+ * counts added to ctx.meta. Rows past EVIDENCE_MAX_CANDIDATES are not returned,
+ * nor is a row a slot that is on never answered for (GST-2786: a row the
+ * egress check refused, such as one from a denied source, was never judged).
  */
 export async function gateFillRows(ctx: DecideSearchContext | undefined, query: string, rows: SearchResult[], kept: number): Promise<SearchResult[] | null> {
   if (!ctx || rows.length === 0) return rows;
@@ -258,7 +260,8 @@ export async function gateFillRows(ctx: DecideSearchContext | undefined, query: 
     ...ctx, meta: {},
     policies: { ...ctx.policies, ...(evidence ? { evidence: { ...evidence, minKeep: Math.max(0, evidence.minKeep - kept) } } : {}) },
   };
-  const out = await evidenceStage(attempt, query, rows.slice(0, EVIDENCE_MAX_CANDIDATES));
+  const unanswered = new Set<SearchResult>();
+  const out = await evidenceStage(attempt, query, rows.slice(0, EVIDENCE_MAX_CANDIDATES), unanswered);
   if (!judgedBy(attempt.meta)) return null;
   for (const slot of acting) {
     const [page, fill] = [ctx.meta[slot]!, attempt.meta[slot]!];
@@ -266,10 +269,11 @@ export async function gateFillRows(ctx: DecideSearchContext | undefined, query: 
     for (const [k, n] of Object.entries(fill.outcomes ?? {})) outcomes[k] = (outcomes[k] ?? 0) + n;
     ctx.meta[slot] = { ...page, judged: (page.judged ?? 0) + (fill.judged ?? 0), outcomes, latency_ms: (page.latency_ms ?? 0) + (fill.latency_ms ?? 0) };
   }
-  return out;
+  return out.filter((r) => !unanswered.has(r));
 }
 
-async function evidenceStage(ctx: DecideSearchContext, query: string, pool: SearchResult[]): Promise<SearchResult[]> {
+/** `unanswered` collects the candidates a slot that is on got no answer for (refused before transport, or left out by the provider). */
+async function evidenceStage(ctx: DecideSearchContext, query: string, pool: SearchResult[], unanswered?: Set<SearchResult>): Promise<SearchResult[]> {
   const policy = ctx.policies.evidence;
   const s3Requested = policy !== undefined && policy.requested !== 'off';
   const coRequested = coPackHandlers.filter((h) => ctx.policies[h.slot] && ctx.policies[h.slot]!.requested !== 'off');
@@ -330,6 +334,9 @@ async function evidenceStage(ctx: DecideSearchContext, query: string, pool: Sear
     } catch (err) {
       return failAll(err instanceof DecideError ? err.reason : 'provider_error', 'error', partialOf(err));
     }
+    const answered = (ids: readonly DecideQuestion[]) => ids.filter((q) => result.answers[q.id] !== undefined).length;
+    const acted = [...(s3Runs && policy.effective === 'on' ? [questions] : []), ...coPacked.filter((h) => ctx.policies[h.slot]!.effective === 'on').map((h) => coQuestions.get(h.slot)!)];
+    for (const q of acted.flat()) if (result.answers[q.id] === undefined) unanswered?.add(judged[q.rank!]!);
     let next = pool;
     if (s3Runs) {
       const mode = modeOf(policy);
@@ -345,7 +352,7 @@ async function evidenceStage(ctx: DecideSearchContext, query: string, pool: Sear
       });
       if (seen(policy)) ctx.meta.evidence = {
         mode: policy.requested, effective: acting ? 'on' : mode === 'shadow' ? 'shadow' : 'off', provider: result.provider,
-        model_resolved: result.model_resolved, threshold: policy.threshold, judged: questions.length,
+        model_resolved: result.model_resolved, threshold: policy.threshold, judged: answered(questions),
         outcomes: tally(outcomes), latency_ms: result.latency_ms, ...(drift ? { skipped: drift } : {}),
       };
       if (acting) {
@@ -367,7 +374,7 @@ async function evidenceStage(ctx: DecideSearchContext, query: string, pool: Sear
       });
       if (seen(hp)) ctx.meta[h.slot] = {
         mode: hp.requested, effective: applied.reason ? 'off' : hp.effective, provider: result.provider, model_resolved: result.model_resolved,
-        threshold: hp.threshold, judged: coQuestions.get(h.slot)!.length, outcomes: tally(applied.outcomes), latency_ms: result.latency_ms,
+        threshold: hp.threshold, judged: answered(coQuestions.get(h.slot)!), outcomes: tally(applied.outcomes), latency_ms: result.latency_ms,
         ...(applied.reason ? { skipped: applied.reason } : {}),
       };
     }
