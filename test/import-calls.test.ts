@@ -212,6 +212,30 @@ describe('gbrain import --calls', () => {
     expect(stored.stdout).toContain('Alice: two.');
     expect(stored.stdout).not.toMatch(/acme-example-\d/);
   }, 240_000);
+
+  test('a single call file imports, a later folder import finds it, and a file of another kind is an error', async () => {
+    const root = temp('gbrain-calls-single-');
+    const home = join(root, 'home');
+    mkdirSync(home);
+    const env = { HOME: home, GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_SOURCE: undefined, GBRAIN_SKIP_STARTUP_HOOKS: '1' };
+    expect((await runCli(['init', '--pglite', '--no-embedding', '--json'], { env })).exitCode).toBe(0);
+    const calls = join(root, 'calls');
+    mkdirSync(calls);
+    writeFileSync(join(calls, '2026-04-05 planning.txt'), 'Alice: plan.\n');
+    writeFileSync(join(calls, 'agenda.pdf'), 'x\n');
+    const imp = async (target: string) => {
+      const r = await runCli(['import', target, '--calls', '--no-embed', '--json'], { env });
+      return { code: r.exitCode, doc: JSON.parse(r.stdout) };
+    };
+    const single = await imp(join(calls, '2026-04-05 planning.txt'));
+    expect(single.doc).toMatchObject({ total_files: 1, imported: 1, errors: 0 });
+    expect(single.doc.pages[0]).toMatchObject({ file: '2026-04-05 planning.txt', slug: 'calls/2026-04-05-planning' });
+    expect((await runCli(['get', 'calls/2026-04-05-planning'], { env })).stdout).toContain('Alice: plan.');
+    expect((await imp(calls)).doc).toMatchObject({ total_files: 1, imported: 0, unchanged: 1, errors: 0 });
+    const other = await imp(join(calls, 'agenda.pdf'));
+    expect(other.code).toBe(1);
+    expect(other.doc).toMatchObject({ imported: 0, errors: 1 });
+  }, 240_000);
 });
 
 describe('call page embedding', () => {

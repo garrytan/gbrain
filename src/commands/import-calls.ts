@@ -25,7 +25,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { lstatSync, readdirSync, readFileSync } from 'node:fs';
-import { basename, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import type { RunImportResult } from './import.ts';
 import { setCliExitVerdict, writeJsonDocument } from '../core/cli-force-exit.ts';
@@ -167,7 +167,7 @@ function flagValue(args: string[], name: string): string | undefined {
   return i >= 0 ? args[i + 1] : undefined;
 }
 
-/** Import every call file under `dir` once, into `sourceId` (default when unset). */
+/** Import every call file under `dir` (or the one call file `dir` names, as its folder would) once, into `sourceId` (default when unset). */
 export async function runCallImport(engine: BrainEngine, dir: string, args: string[], opts: { sourceId?: string; json: boolean }): Promise<RunImportResult> {
   const prefix = (flagValue(args, '--prefix') ?? DEFAULT_CALL_PREFIX).split('/').map(slugifySegment).filter(Boolean).join('/') || DEFAULT_CALL_PREFIX;
   const sourceId = opts.sourceId ?? 'default';
@@ -176,8 +176,10 @@ export async function runCallImport(engine: BrainEngine, dir: string, args: stri
   const putPage = operations.find(op => op.name === 'put_page')!;
   const ctx = { engine, config: loadConfig() ?? { engine: engine.kind }, logger: { info() {}, warn: (m: string) => process.stderr.write(`${m}\n`), error: (m: string) => process.stderr.write(`${m}\n`) },
     dryRun: false, remote: false, cliOpts: getCliOptions(), sourceId, writeWaitMs: CLI_WRITE_WAIT_MS } as Parameters<typeof putPage.handler>[0];
-  const files = listCallFiles(dir);
-  const root = callRootId(dir);
+  const single = lstatSync(dir).isFile();
+  const folder = single ? dirname(dir) : dir;
+  const files = single ? [dir] : listCallFiles(dir);
+  const root = callRootId(folder);
   const prior = await engine.executeRaw<{ slug: string; file: string; path: string | null }>(
     `SELECT slug, frontmatter->'call_import'->>'file' AS file, frontmatter->'call_import'->>'path' AS path FROM pages
       WHERE source_id = $1 AND deleted_at IS NULL AND starts_with(slug, $2) AND frontmatter->'call_import'->>'root' = $3
@@ -193,10 +195,14 @@ export async function runCallImport(engine: BrainEngine, dir: string, args: stri
   const used = new Set<string>();
   let uncovered = 0;
   for (const path of files) {
-    const rel = relative(dir, path);
+    const rel = relative(folder, path);
     let page: CallPage;
+    if (!CALL_FILE_RE.test(path)) {
+      results.push({ file: redactCallPath(rel, patterns).file, slug: '', status: 'error', error: 'not a .txt or .md call transcript; pass one, or the folder that holds them' });
+      continue;
+    }
     try {
-      page = callPageFor(rel, readFileSync(path, 'utf8'), lstatSync(path).mtimeMs, prefix, patterns, root, createHash('sha256').update(`${dir}\u0000${rel}`).digest('hex').slice(0, 16));
+      page = callPageFor(rel, readFileSync(path, 'utf8'), lstatSync(path).mtimeMs, prefix, patterns, root, createHash('sha256').update(`${folder}\u0000${rel}`).digest('hex').slice(0, 16));
     } catch (e) {
       results.push({ file: redactCallPath(rel, patterns).file, slug: '', status: 'error', error: e instanceof Error ? e.message : String(e) });
       continue;
