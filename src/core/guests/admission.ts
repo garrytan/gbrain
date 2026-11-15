@@ -17,7 +17,9 @@ import { normalizeReaders } from '../access/principals.ts';
 import { ownerMemberId } from '../access/owner.ts';
 import type { Principal } from '../persistence/model.ts';
 import type { GuestSource } from './sources.ts';
-import type { GuestAttribution } from './note.ts';
+import { GUEST_SOURCES_HIDDEN_SQL, type GuestAttribution } from './note.ts';
+import { schemaAdmissionRefusal } from '../persistence/schema-admission.ts';
+import { isMissingSchemaObject } from '../utils.ts';
 
 export { GUEST_NOTE_INTENT_KEY, type GuestAttribution } from './note.ts';
 
@@ -65,6 +67,39 @@ export function parseGuestAttribution(channels: GuestChannels | undefined): Gues
   return fromMeta ?? fromHeader;
 }
 
+/** A lookup of guest_sources by a role that row-level security keeps from reading it (GUEST_SOURCES_HIDDEN_SQL). */
+export function guestSourcesUnreadable(sourceId: string): OperationError {
+  return new OperationError('writer_coordinator_required',
+    `writer_coordinator_required: writer state is unreadable to this database role: row-level security hides guest_sources, so gbrain cannot tell whether source ${sourceId} is a guest source. Nothing was written.`,
+    'Run gbrain as a database role that can read guest_sources (the table owner, a role that bypasses row-level security, or a scoped write role holding the guest_sources SELECT policy in docs/ENGINES.md#derived-state-maintainers), then retry with a new request ID.',
+    'docs/guides/write-refusals.md#writer-coordinator-required');
+}
+
+/**
+ * A guest-table read that failed: on a brain whose schema is behind the guest-notes migration (no guest_sources table)
+ * the write is refused migrations_pending (schema-admission.ts), as admission refuses any write on a schema behind this
+ * build, instead of failing with the raw missing-table error. Any other error is rethrown.
+ */
+export async function schemaBehindGuests(exec: Pick<BrainEngine, 'executeRaw'>, error: unknown): Promise<never> {
+  if (isMissingSchemaObject(error, 'table', 'guest_sources')) {
+    const refusal = await schemaAdmissionRefusal(exec as BrainEngine);
+    if (refusal) throw refusal;
+  }
+  throw error;
+}
+
+/**
+ * The guest_sources row of `sourceId`, or null when it is not a guest source. One statement; refuses
+ * (guestSourcesUnreadable) when row-level security hides guest_sources from the role instead of answering null.
+ */
+export async function lookupGuestSource(exec: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<GuestSource | null> {
+  const [row] = await exec.executeRaw<GuestSource & { hidden: boolean }>(
+    `SELECT ${GUEST_SOURCES_HIDDEN_SQL} AS hidden, g.source_id, g.writers, g.trust_ceiling FROM (SELECT 1) AS one LEFT JOIN guest_sources g ON g.source_id = $1`, [sourceId])
+    .catch(e => schemaBehindGuests(exec, e));
+  if (row?.hidden) throw guestSourcesUnreadable(sourceId);
+  return row?.source_id ? { source_id: row.source_id, writers: row.writers, trust_ceiling: row.trust_ceiling } : null;
+}
+
 export function sourceWriterRestricted(sourceId: string): OperationError {
   return new OperationError('source_writer_restricted', `Source ${sourceId} is a guest source: only its listed writers create pages there, and nothing else writes to it. Nothing was written.`,
     "Do not retry. Write to another source, or ask the brain owner whether this content belongs in the guest source; changing who may write there is the owner's decision.",
@@ -92,9 +127,11 @@ export function guestNoteNotYours(slug: string): OperationError {
  * mark names another writer than `principal` (a writer deletes only what it saved). Checked at submission and in publication.
  */
 export async function refuseRemoteGuestDelete(exec: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, principal: Principal): Promise<void> {
-  const [page] = await exec.executeRaw<{ guest: boolean; kept: boolean; writer: string | null }>(
-    `SELECT EXISTS (SELECT 1 FROM guest_sources g WHERE g.source_id = p.source_id) AS guest, EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = p.id) AS kept,
-       (SELECT m.writer_kind || ':' || m.writer_id FROM guest_marks m WHERE m.page_id = p.id) AS writer FROM pages p WHERE p.source_id = $1 AND p.slug = $2 LIMIT 1`, [sourceId, slug]);
+  const [page] = await exec.executeRaw<{ hidden: boolean; guest: boolean; kept: boolean; writer: string | null }>(
+    `SELECT ${GUEST_SOURCES_HIDDEN_SQL} AS hidden, EXISTS (SELECT 1 FROM guest_sources g WHERE g.source_id = p.source_id) AS guest, EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = p.id) AS kept,
+       (SELECT m.writer_kind || ':' || m.writer_id FROM guest_marks m WHERE m.page_id = p.id) AS writer FROM pages p WHERE p.source_id = $1 AND p.slug = $2 LIMIT 1`, [sourceId, slug])
+    .catch(e => schemaBehindGuests(exec, e));
+  if (page?.hidden) throw guestSourcesUnreadable(sourceId);
   if (!page?.guest && !page?.kept) return;
   if (page.kept) throw guestPagePromoted(slug);
   if (page.writer !== principalKey(principal)) throw guestNoteNotYours(slug);
@@ -126,7 +163,7 @@ export function admitGuestOperation(guest: GuestSource, input: { principal: Prin
 
 /** Refuses any write other than a page through admitGuestOperation (remember, links, import) on a guest source. */
 export async function refuseGuestSourceWrite(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, principalOf: () => Promise<Principal>, operation: string): Promise<void> {
-  const [guest] = await engine.executeRaw<{ writers: string[] }>('SELECT writers FROM guest_sources WHERE source_id = $1', [sourceId]);
+  const guest = await lookupGuestSource(engine, sourceId);
   if (!guest) return;
   if (isListedWriter(guest, await principalOf())) throw guestPageImmutable(`${operation} on a guest source`);
   throw sourceWriterRestricted(sourceId);
@@ -178,10 +215,17 @@ export async function assertGuestWriterAtPublication(tx: Pick<BrainEngine, 'exec
   if (!guest || !guest.writers.includes(`${row.principal_kind}:${row.principal_id}`)) throw sourceWriterRestricted(row.source_id);
 }
 
-/** The guest mark, written in the publication transaction right after the page row. */
+/**
+ * The guest mark, written in the publication transaction right after the page row. A mark that writes no row (the page
+ * row is not there to mark) throws, so the publication rolls back instead of leaving a guest page with no mark.
+ */
 export async function insertGuestMark(tx: Pick<BrainEngine, 'executeRaw'>, row: { source_id: string; slug: string; principal_kind: string; principal_id: string; request_id: string },
   note: GuestAttribution, audience: string): Promise<void> {
-  await tx.executeRaw(`INSERT INTO guest_marks (page_id, source_id, slug_at_write, audience_member, group_slug, sender_label, saved_at, writer_kind, writer_id, request_id)
-    SELECT p.id, p.source_id, p.slug, $3, $4, $5, now(), $6, $7, $8 FROM pages p WHERE p.source_id = $1 AND p.slug = $2`,
+  const marked = await tx.executeRaw(`INSERT INTO guest_marks (page_id, source_id, slug_at_write, audience_member, group_slug, sender_label, saved_at, writer_kind, writer_id, request_id)
+    SELECT p.id, p.source_id, p.slug, $3, $4, $5, now(), $6, $7, $8 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 RETURNING page_id`,
     [row.source_id, row.slug, audience, note.group, note.sender_label, row.principal_kind, row.principal_id, row.request_id]);
+  if (marked.length !== 1) {
+    throw new OperationError('storage_error', `The guest mark for ${row.slug} wrote ${marked.length} rows instead of one, so the guest note was not saved. Nothing was written.`,
+      'Retry the save with a new request_id; if it fails the same way, run gbrain doctor --json on the brain host and report the result.');
+  }
 }

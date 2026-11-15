@@ -25,9 +25,12 @@ export function guestViewerIsOwner(ctx: Pick<OperationContext, 'remote'>): boole
   return access.owner && !access.audience?.length;
 }
 
+/** A copy of `value` the stamp may mark; refuses the read when it cannot copy, so a handler's own (possibly cached) object is never marked. */
 function detachedCopy<T>(value: T): T {
   let copy: T;
-  try { copy = structuredClone(value); } catch { return value; }
+  try { copy = structuredClone(value); } catch (e) {
+    throw new Error(`The guest-note stamp could not copy this result (${e instanceof Error ? e.message : String(e)}), so the read was refused rather than mark the handler's own object or return a guest note unmarked.`);
+  }
   if (value && typeof value === 'object' && copy && typeof copy === 'object') {
     for (const key of Object.getOwnPropertySymbols(value)) (copy as Record<symbol, unknown>)[key] = (value as Record<symbol, unknown>)[key];
   }

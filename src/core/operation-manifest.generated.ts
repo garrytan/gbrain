@@ -556,7 +556,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "expected_revision": {
         "type": "string",
-        "description": "Revision read; omit to create."
+        "description": "Revision read; required unless force."
       },
       "force": {
         "type": "boolean",

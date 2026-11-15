@@ -6,7 +6,9 @@
  * config access.owner_member, speaking for no one else). Everyone else is refused guest_promotion_owner_only before
  * anything is read. The owner page is a normal put_page through the caller's own write path (git first where the target
  * source has a repository, database-only where it has none), carrying the guest note's type, title, body and readers
- * plus 'promoted_from: <guest source>:<slug>' for people reading it. The link itself lives in guest_promotions, which
+ * plus 'promoted_from: <guest source>:<slug>' for people reading it. The link itself lives in guest_promotions (one row
+ * per guest page and target; a link whose target page was purged no longer counts as kept, and promoting again rewrites
+ * the page and that one link), which
  * guest rows read as guest.promoted (guests/marker.ts), and which refuses the broker's delete of the note
  * (guests/admission.ts refuseRemoteGuestDelete). The guest page and its mark are never changed.
  */
@@ -16,6 +18,7 @@ import { serializeMarkdown } from '../markdown.ts';
 import { assertInlineBody } from '../page-body/page-shape.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import type { PageType } from '../types.ts';
+import type { BrainEngine } from '../engine.ts';
 
 const DOCS = 'docs/guides/write-refusals.md#guest_promotion_owner_only';
 
@@ -60,6 +63,20 @@ async function guestNote(ctx: OperationContext, slug: string, guestSource: strin
   return { id: Number(found[0]!.id), source_id: found[0]!.source_id };
 }
 
+/**
+ * Records the promotion link: relinks the one row for this guest page and target, else inserts it. A concurrent
+ * promotion that inserted the same link first keeps its row (ON CONFLICT on guest_promotions_link_key, v314), so the
+ * second call succeeds instead of failing on the unique key after its page was written.
+ */
+export async function linkGuestPromotion(engine: Pick<BrainEngine, 'executeRaw'>, link: { guestPageId: number; targetSource: string; targetSlug: string;
+  by: { kind: string; id: string }; requestId: string | null }): Promise<void> {
+  await engine.executeRaw(`WITH relinked AS (UPDATE guest_promotions SET promoted_by_kind = $4, promoted_by_id = $5, promoted_at = now(), request_id = $6
+      WHERE guest_page_id = $1 AND target_source_id = $2 AND target_slug = $3 RETURNING id)
+    INSERT INTO guest_promotions (guest_page_id, target_source_id, target_slug, promoted_by_kind, promoted_by_id, request_id)
+    SELECT $1, $2, $3, $4, $5, $6 WHERE NOT EXISTS (SELECT 1 FROM relinked) ON CONFLICT DO NOTHING`,
+    [link.guestPageId, link.targetSource, link.targetSlug, link.by.kind, link.by.id, link.requestId]);
+}
+
 export async function promoteGuestNote(ctx: OperationContext, p: Record<string, unknown>): Promise<Record<string, unknown>> {
   if (!isGuestPromotionOwner(ctx)) throw guestPromotionOwnerOnly(p.slug);
   const slug = text(p.slug, 'slug', true)!.toLowerCase();
@@ -72,8 +89,8 @@ export async function promoteGuestNote(ctx: OperationContext, p: Record<string, 
   }
   const target = (text(p.to, 'to') ?? slug).toLowerCase();
   const result = { guest: { source_id: note.source_id, slug }, page: { source_id: targetSource, slug: target } };
-  const [kept] = await ctx.engine.executeRaw('SELECT 1 FROM guest_promotions WHERE guest_page_id = $1 AND target_source_id = $2 AND target_slug = $3',
-    [note.id, targetSource, target]);
+  const [kept] = await ctx.engine.executeRaw(`SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = $1 AND g.target_source_id = $2 AND g.target_slug = $3
+    AND EXISTS (SELECT 1 FROM pages t WHERE t.source_id = g.target_source_id AND t.slug = g.target_slug)`, [note.id, targetSource, target]);
   if (kept) return { status: 'already_promoted', ...result };
   const page = await ctx.engine.getPage(slug, { sourceId: note.source_id });
   if (!page) throw new OperationError('page_not_found', 'Guest note ' + slug + ' was deleted while it was promoted; nothing was written.', 'Ask the brain owner to restore it, then promote it again.');
@@ -82,12 +99,8 @@ export async function promoteGuestNote(ctx: OperationContext, p: Record<string, 
   const content = serializeMarkdown({ ...(readers !== undefined ? { readable_by: readers } : {}), promoted_from: note.source_id + ':' + slug },
     page.compiled_truth ?? '', page.timeline ?? '', { type: page.type as PageType, title: page.title, tags: [] });
   if (ctx.dryRun) return { dry_run: true, status: 'would_promote', ...result };
-  const link = async (requestId: unknown) => {
-    const by = await requestPrincipalForContext(ctx);
-    await ctx.engine.executeRaw(
-      'INSERT INTO guest_promotions (guest_page_id, target_source_id, target_slug, promoted_by_kind, promoted_by_id, request_id) VALUES ($1, $2, $3, $4, $5, $6)',
-      [note.id, targetSource, target, by.kind, by.id, typeof requestId === 'string' ? requestId : null]);
-  };
+  const link = async (requestId: unknown) => linkGuestPromotion(ctx.engine, { guestPageId: note.id, targetSource, targetSlug: target,
+    by: await requestPrincipalForContext(ctx), requestId: typeof requestId === 'string' ? requestId : null });
   const written = await ctx.engine.getPage(target, { sourceId: targetSource });
   if (written?.frontmatter?.promoted_from === note.source_id + ':' + slug) {
     await link(null);

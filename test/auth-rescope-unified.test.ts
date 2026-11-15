@@ -192,6 +192,17 @@ describe('9. OAuth clients', () => {
     expect((await tokenRow('tok-all')).allowed_operations).toBeNull();
   }, 180_000);
 
+  test('rescope --client with no grant flag prints the operation snapshot and the slug prefixes', async () => {
+    const client = await withBrain(async engine => {
+      const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+      return provider.registerClientManual('client-ops-example', ['client_credentials'], 'read write');
+    });
+    expect((await cli('auth', 'rescope', '--client', client.clientId, '--operations', 'get_page,put_page')).exitCode).toBe(0);
+    const human = await cli('auth', 'rescope', '--client', client.clientId);
+    expect(human.stdout).toMatch(/Operations: get_page, put_page\n/);
+    expect(human.stdout).toContain('Slug prefixes: <none>');
+  }, 180_000);
+
   test('#6993 rescope --client with no grant flag prints the stored grants and writes nothing; an unknown id is client_not_found', async () => {
     const client = await withBrain(async engine => {
       const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
