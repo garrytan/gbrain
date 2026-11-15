@@ -16,6 +16,11 @@
  *   - temporal: a "when did ..." question prefers rows with a document or
  *     event date over undated ones.
  *   - redirect stubs that could not be replaced by their target (`redirect_to`).
+ *   - conversation archive (GST-2768): an archive row (the archive's day layout
+ *     `conversations/<harness>/<YYYY-MM-DD>/...` and `conversations/days/<day>`,
+ *     or a row of the archive source) ranks below a non-archive row that scores
+ *     close below it, and one list keeps at most ARCHIVE_HITS_PER_DAY archive
+ *     rows per day; a query that asks for a conversation or a date is unchanged.
  * `search.rank_priors false` turns them off.
  */
 import type { SearchResult } from '../types.ts';
@@ -24,6 +29,8 @@ export const PERSON_PRIOR = 0.85;
 export const OCR_PRIOR = 0.6;
 export const UNDATED_PRIOR = 0.85;
 export const REDIRECT_STUB_PRIOR = 0.5;
+export const ARCHIVE_PRIOR = 0.8;
+export const ARCHIVE_HITS_PER_DAY = 2;
 
 const PERSON_TYPES = new Set(['person']);
 const ORG_TYPES = new Set(['company', 'organization', 'org', 'startup', 'product']);
@@ -33,6 +40,10 @@ const ASKS_FOR_ORG = /\b(company|companies|startup|startups|business|businesses|
 const ASKS_FOR_QUOTE = /\b(quote|quoted|quotes|said|says|saying|statement|remark|remarks|told)\b/i;
 const TEMPORAL = /^\s*when\b|\bwhat (?:date|day|month|year)\b|\bsince when\b|\bhow long ago\b/i;
 const DATED_SOURCES = new Set(['date', 'published', 'filename', 'event_date']);
+const ARCHIVE_SOURCES = new Set(['conversations', 'conversations-owner']);
+const ARCHIVE_SLUG = /^conversations\/[a-z][a-z0-9-]*\/(\d{4}-\d{2}-\d{2})(?:\/|$)/;
+const ASKS_FOR_CONVERSATION = /\b(conversations?|chats?|chatted|talk(?:ed|ing)?|discuss(?:ed|ing|ion|ions)?|said|told|mentioned)\b/i;
+const NAMES_DATE = /\b\d{4}-\d{2}-\d{2}\b|\b(?:yesterday|today|tonight|last (?:week|night|month|year)|this (?:morning|week|month)|(?:mon|tues|wednes|thurs|fri|satur|sun)day|january|february|april|june|july|august|september|october|november|december)\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2}\b/i;
 const IMAGE_SLUG = /\.(?:jpe?g|png|gif|webp|heic|heif|tiff?)$/i;
 const STOP = new Set(['the', 'a', 'an', 'of', 'and', 'or', 'for', 'to', 'in', 'on', 'at', 'by', 'with', 'from', 'is', 'are', 'was', 'were', 'did', 'does', 'do', 'what', 'when', 'where', 'which', 'how', 'who', 'about', 'that', 'this']);
 
@@ -40,6 +51,18 @@ const words = (text: string) => (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? 
 
 function isImageRow(r: SearchResult): boolean {
   return r.type === 'image' || IMAGE_SLUG.test(r.slug);
+}
+
+/** The archive day of an archive row (null: an archive-source row outside the day layout), undefined for any other row. */
+function archiveDay(r: SearchResult): string | null | undefined {
+  const day = ARCHIVE_SLUG.exec(r.slug)?.[1];
+  if (day) return day;
+  return ARCHIVE_SOURCES.has(r.source_id ?? '') ? null : undefined;
+}
+
+/** A query about a conversation or a date reads archive rows as first-class evidence. */
+function archiveGated(query: string): boolean {
+  return !TEMPORAL.test(query) && !ASKS_FOR_CONVERSATION.test(query) && !NAMES_DATE.test(query);
 }
 
 function isDated(r: SearchResult): boolean {
@@ -73,18 +96,36 @@ export function rankPriors(rows: SearchResult[], query: string): number[] {
   const personDemoted = has(PERSON_TYPES) && !namesListedPerson(qWords, rows) && (
     (has(ORG_TYPES) && ASKS_FOR_ORG.test(query) && !ASKS_FOR_PERSON.test(query)) || (ASKS_FOR_QUOTE.test(query) && has(DOCUMENT_TYPES)));
   const temporal = TEMPORAL.test(query) && rows.some(isDated) && rows.some(r => !isDated(r));
+  const reranked = rows.some(r => Number.isFinite(r.rerank_score));
+  const value = (r: SearchResult) => (reranked ? r.rerank_score ?? -Infinity : r.score);
+  const written = archiveGated(query) ? rows.filter(r => archiveDay(r) === undefined).map(value) : [];
   return rows.map(r => {
     let prior = 1;
     if (personDemoted && PERSON_TYPES.has(r.type)) prior *= PERSON_PRIOR;
     if (isImageRow(r) && coverage(content, r.chunk_text ?? '') <= 0.5) prior *= OCR_PRIOR;
     if (temporal && !isDated(r)) prior *= UNDATED_PRIOR;
     if (r.redirect_to) prior *= REDIRECT_STUB_PRIOR;
+    if (written.length && archiveDay(r) !== undefined && written.some(v => v < value(r) && v >= value(r) * ARCHIVE_PRIOR)) prior *= ARCHIVE_PRIOR;
     return prior;
   });
 }
 
+/** At most ARCHIVE_HITS_PER_DAY archive rows per day, in list order; pinned rows always stay. */
+function capArchiveDays(rows: SearchResult[]): SearchResult[] {
+  const perDay = new Map<string, number>();
+  const kept = rows.filter(r => {
+    const day = archiveDay(r);
+    if (!day || r.relational_pinned) return true;
+    const n = (perDay.get(day) ?? 0) + 1;
+    perDay.set(day, n);
+    return n <= ARCHIVE_HITS_PER_DAY;
+  });
+  return kept.length === rows.length ? rows : kept;
+}
+
 /** Apply the priors (module comment). Returns a new array; changed rows are copies. */
-export function applyRankPriors(rows: SearchResult[], query: string): SearchResult[] {
+export function applyRankPriors(input: SearchResult[], query: string): SearchResult[] {
+  const rows = archiveGated(query) ? capArchiveDays(input) : input;
   if (rows.length === 0) return rows;
   const priors = rankPriors(rows, query);
   if (priors.every(p => p === 1) && !rows.some(isImageRow)) return rows;
