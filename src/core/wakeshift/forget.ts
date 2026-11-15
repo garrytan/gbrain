@@ -27,12 +27,13 @@ export async function forgetWakePrincipal(sql: SqlQuery, who: ForgetTarget): Pro
       await sql`DELETE FROM wake_terms_acceptances WHERE principal_key = ${`member:${who.member}`}`;
       return { ended: ended.length, queued: queued.length };
     }
+    const id = who.kind === 'legacy_token' ? who.id.toLowerCase() : who.id;
     const queued = await sql`INSERT INTO wake_forgets (wake_user) SELECT DISTINCT wake_user FROM wake_subscriptions
-      WHERE principal_kind = ${who.kind} AND principal_id = ${who.id} AND member_id IS NULL
+      WHERE principal_kind = ${who.kind} AND principal_id = ${id} AND member_id IS NULL
       ON CONFLICT (wake_user) WHERE state = 'pending' DO NOTHING RETURNING id`;
     const ended = await sql`UPDATE wake_subscriptions SET state = 'ended', last_error = 'principal_revoked', lease_until = NULL, updated_at = now()
-      WHERE principal_kind = ${who.kind} AND principal_id = ${who.id} AND state = 'open' RETURNING id`;
-    await sql`DELETE FROM wake_terms_acceptances WHERE principal_key = ${`${who.kind}:${who.id}`}`;
+      WHERE principal_kind = ${who.kind} AND principal_id = ${id} AND state = 'open' RETURNING id`;
+    await sql`DELETE FROM wake_terms_acceptances WHERE principal_key = ${`${who.kind}:${id}`}`;
     return { ended: ended.length, queued: queued.length };
   } catch (e) {
     console.error(`[wakeshift] could not end the removed principal's watches or queue its forget: ${e instanceof Error ? e.message : String(e)}`);

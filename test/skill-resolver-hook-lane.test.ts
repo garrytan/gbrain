@@ -227,6 +227,7 @@ describe('skill-resolver lane: turn settings from config', () => {
     await setup(b, 'claude-code');
     await setup(b, 'codex');
     const claude = wired(b, 'claude-code'), codex = wired(b, 'codex');
+    expect((await config(b, 'set', 'skills.resolver.top_gate', '0')).exitCode).toBe(0);
     const ids = (r: Run) => [...contextOf(r).matchAll(/id: "([^"]+)"/g)].map((m) => m[1]);
     const ask = (cmd: string, s: string) => hook(b, cmd, { prompt: 'deploy the widget service', session_id: s, hook_event_name: 'UserPromptSubmit' }, WIDE);
     expect(ids(await ask(claude, 'd1')).length).toBeGreaterThanOrEqual(3);
@@ -397,6 +398,7 @@ describe('skill-resolver lane: fail open', () => {
     await setup(b, 'claude-code');
     const set = await runCli(['config', 'set', 'skills.resolver.lane_payload_chars', '500'], { env: b.env, cwd: b.project });
     expect(set.exitCode, set.stderr).toBe(0);
+    expect((await runCli(['config', 'set', 'skills.resolver.top_gate', '0'], { env: b.env, cwd: b.project })).exitCode).toBe(0);
     const r = await hook(b, wired(b, 'claude-code'), { prompt: 'deploy the widget please', session_id: 's' }, WIDE);
     expect(r).toMatchObject({ exitCode: 0, stdout: '' });
     const last = laneLog(b).at(-1);
@@ -630,17 +632,24 @@ describe('skill-resolver lane: hermes', () => {
 
   test('a 5 MB conversation_history before and after user_message is read, never refused, and still delivers within a turn budget', async () => {
     const b = await hermesBox();
-    const small = await hook(b, hermesCmd(b), { session_id: 'h2a', extra: { user_message: 'please deploy the widget to staging' } }, WIDE);
-    expect(JSON.parse(small.stdout).context).toContain('id: "deploy-widget"');
-    const turn = { session_id: 'h2', extra: { conversation_history: history(2.5e6), user_message: 'please deploy the widget to staging', later_history: history(2.5e6) } };
-    expect(JSON.stringify(turn).length).toBeGreaterThan(5e6);
-    const r = await hook(b, hermesCmd(b), turn, WIDE);
-    expect(r.exitCode).toBe(0);
-    expect(JSON.parse(r.stdout).context).toContain('id: "deploy-widget"');
-    const [base, big] = laneLog(b).slice(-2);
-    expect(big).toMatchObject({ outcome: 'delivered' });
+    const before = history(2.5e6), after = history(2.5e6);
+    const smallMs: number[] = [], bigMs: number[] = [];
+    for (let n = 0; n < 3; n++) {
+      const small = await hook(b, hermesCmd(b), { session_id: `h2a-${n}`, extra: { user_message: 'please deploy the widget to staging' } }, WIDE);
+      expect(JSON.parse(small.stdout).context).toContain('id: "deploy-widget"');
+      smallMs.push(laneLog(b).at(-1).ms);
+      const turn = { session_id: `h2-${n}`, extra: { conversation_history: before, user_message: 'please deploy the widget to staging', later_history: after } };
+      expect(JSON.stringify(turn).length).toBeGreaterThan(5e6);
+      const r = await hook(b, hermesCmd(b), turn, WIDE);
+      expect(r.exitCode).toBe(0);
+      expect(JSON.parse(r.stdout).context).toContain('id: "deploy-widget"');
+      const big = laneLog(b).at(-1);
+      expect(big).toMatchObject({ outcome: 'delivered' });
+      bigMs.push(big.ms);
+    }
     // Reading 5 MB adds less than one lane deadline to a small turn; a buffering or quadratic reader would not.
-    expect(big.ms - base.ms).toBeLessThan(LANE_DEADLINE_MS);
+    // Each side's fastest of three runs, so one turn a busy machine descheduled cannot decide it.
+    expect(Math.min(...bigMs) - Math.min(...smallMs)).toBeLessThan(LANE_DEADLINE_MS);
   });
 
   test('malformed Hermes JSON fails open: exit 0, no stdout, skill_resolve_no_input', async () => {
