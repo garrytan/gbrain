@@ -255,6 +255,8 @@ export interface TranscriptsOutcome extends ImportOutcome {
   kept?: number;
   redactions?: number;
   readers?: { members: 'every_source_reader' | string[] | null; serves: 'one' | 'several' | null; detail: string };
+  /** What can send call text off this machine, from doctor's auto_chronicle and extract_atoms_backlog checks. */
+  egress?: { leaves: boolean; detail: string };
 }
 
 export interface LayoutOutcome {
@@ -354,11 +356,30 @@ function importCalls(exec: Run, launcher: string, dir: string, dryRun: boolean):
     ...(landed[0] ? { readers: readersOf(exec, launcher, landed[0].slug) } : {}) };
 }
 
-/** What the conversation archive is doing here, from doctor's transcript_archive_freshness check; its first-run notice is not repeated. */
-function archiveState(exec: Run, launcher: string): NonNullable<LayoutOutcome['archive']> {
-  const out = exec([launcher, 'doctor', '--only', 'transcript_archive_freshness', '--json'], undefined, null);
-  let details: { enabled?: boolean; offered?: boolean } | undefined;
-  try { details = (JSON.parse(out.stdout) as { checks?: Array<{ name: string; details?: typeof details }> }).checks?.find(c => c.name === 'transcript_archive_freshness')?.details; } catch { /* unknown below */ }
+type DoctorChecks = Array<{ name: string; details?: Record<string, unknown> }>;
+
+/** Whether scheduled extraction can send imported call text to a chat provider; embedding stays held either way. */
+export function callEgress(checks: DoctorChecks): NonNullable<TranscriptsOutcome['egress']> {
+  const details = (name: string) => checks.find(c => c.name === name)?.details;
+  const chronicle = details('auto_chronicle');
+  const chat = chronicle?.chat_available;
+  const readers: string[] = [];
+  if (chronicle?.enabled === true && chat === true) readers.push(`event extraction (auto_chronicle, at most ${chronicle.daily_limit} page(s) a day)`);
+  if (details('extract_atoms_backlog')?.pack_declares_phase === true && chat !== false) readers.push('atom extraction (within cycle.extract_atoms.budget_usd)');
+  const held = 'embedding waits for your approval';
+  return readers.length
+    ? { leaves: true, detail: `with a chat model key set, ${readers.join(' and ')} can send call text to your chat provider, within the limits you set; ${held}` }
+    : { leaves: false, detail: `nothing leaves this machine: no extraction reads call pages here, and ${held}` };
+}
+
+/** What the conversation archive is doing here, from doctor's transcript_archive_freshness check; its first-run notice is not repeated. With `calls`, the same doctor run also reads what can send call text off this machine. */
+function archiveState(exec: Run, launcher: string, calls: TranscriptsOutcome | null): NonNullable<LayoutOutcome['archive']> {
+  const only = ['transcript_archive_freshness', ...(calls ? ['auto_chronicle', 'extract_atoms_backlog'] : [])];
+  const out = exec([launcher, 'doctor', '--only', only.join(','), '--json'], undefined, null);
+  let checks: DoctorChecks = [];
+  try { checks = (JSON.parse(out.stdout) as { checks?: DoctorChecks }).checks ?? []; } catch { /* unknown below */ }
+  if (calls) calls.egress = callEgress(checks);
+  const details = checks.find(c => c.name === 'transcript_archive_freshness')?.details as { enabled?: boolean; offered?: boolean } | undefined;
   if (!details) return { state: 'unknown', detail: 'could not be read; gbrain transcripts archive status shows it' };
   if (details.enabled) return { state: 'on', detail: 'on: your agent conversations are kept, redacted, under conversations/; call transcripts are separate (gbrain transcripts archive off turns it off)' };
   if (details.offered) return { state: 'offered', detail: 'offered, not on: this brain may serve more than one person (gbrain transcripts archive on turns it on)' };
@@ -463,7 +484,7 @@ export function applyBrainLayout(opts: { harness: string; scope?: LayoutScope; s
       : { ok: false, query: null, detail: 'me/facts could not be read back' };
     outcome.next_question = 'Add one dated line to me/facts, then in a new session ask: "what does my brain say about me?"';
   }
-  if (!flags.dryRun) outcome.archive = archiveState(exec, launcher);
+  if (!flags.dryRun) outcome.archive = archiveState(exec, launcher, outcome.transcripts?.action === 'imported' ? outcome.transcripts : null);
   return outcome;
 }
 
@@ -497,6 +518,7 @@ export function describeLayout(o: LayoutOutcome, dryRun: boolean): string[] {
       : `  calls    ${would}import ${t.files} call file(s) from ${t.dir} as ${CALLS_PREFIX}/<date>-<title> (read only, credentials redacted)`
         + (t.imported === undefined ? '' : `: ${t.imported} new, ${t.unchanged} unchanged, ${t.kept} kept, ${t.redactions} credential(s) redacted${t.detail ? `; ${t.detail}` : ''}`));
     if (t.readers) lines.push(`           readable by: ${t.readers.detail}`);
+    if (t.egress) lines.push(`           leaves this machine: ${t.egress.detail}`);
   }
   if (o.archive) lines.push(`  archive  conversation archive ${o.archive.detail}`);
   if (!dryRun && o.shape !== 'none' && o.check.detail !== 'nothing to check') lines.push(`  check    ${o.check.ok ? 'ok' : 'not verified'}: ${o.check.detail}`);
