@@ -224,6 +224,23 @@ describe('maybeDelegateSyncToServe brain + source gates (F3)', () => {
     expect(await withBrainOption('Not-A-Valid-Id!', () => maybeDelegateSyncToServe(dir, []))).toBe(false);
   });
 
+  test('a live serve with no sync IPC is not told to restart on this version: the PGLite lock records no build to compare', async () => {
+    const savedExitCode = process.exitCode;
+    _resetCliExitVerdictForTests();
+    const cap = captureConsoleError();
+    try {
+      expect(await maybeDelegateSyncToServe(dirWithLiveServeLock(), [])).toBe(true);
+      const text = cap.lines.join('\n');
+      expect(text).toContain('exposes no sync IPC');
+      expect(text).not.toContain('Restart that serve on this gbrain version.');
+      expect(text).toContain('If that serve runs an older gbrain, restart it on this version.');
+    } finally {
+      cap.restore();
+      _resetCliExitVerdictForTests();
+      process.exitCode = savedExitCode ?? 0;
+    }
+  });
+
   test('brain resolver throw + live serve → the ladder CONTINUES as if host (fail open to old behavior)', async () => {
     // REALITY pin: the catch does NOT return false — it falls through to the
     // holder probe, so under a live serve the resolver throw still yields the

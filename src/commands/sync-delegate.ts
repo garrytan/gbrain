@@ -75,6 +75,7 @@ import { SYNC_FLAGS, syncFlagsRouted, type SyncFlagSpec } from '../core/sync-fla
 import type { BrainEngine } from '../core/engine.ts';
 import type { ConsumerRow } from '../core/persistence/consumer-heartbeat.ts';
 import type { SyncOpts, SyncResult } from './sync.ts';
+import { VERSION } from '../version.ts';
 
 /** Poll cadence for sync_status while a delegated job runs. */
 const POLL_MS = 1000;
@@ -237,7 +238,7 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[]):
     serr(
       `[sync] a live \`gbrain serve\` (PID ${holder.pid}) holds this PGLite brain's ` +
       `single-writer lock but exposes no sync IPC (older gbrain, \`serve --http\`, or ` +
-      `GBRAIN_SERVE_SYNC_IPC=0). ` + remediation(holder.pid, 'Restart that serve on this gbrain version.'),
+      `GBRAIN_SERVE_SYNC_IPC=0). ` + remediation(holder.pid, 'If that serve runs an older gbrain, restart it on this version.'),
     );
     await setVerdict(1);
     return true;
@@ -570,6 +571,7 @@ export async function maybeDelegateManagedSyncToServe(engine: BrainEngine, args:
   }
   if (!owner) return own('no_owner');
   const pid = owner.pid;
+  const sameBuild = owner.version === VERSION;
   if (owner.kind !== 'serve') {
     return own('owner_not_serve', `[sync] the live write owner on this host is a ${owner.kind} process (PID ${pid}), which cannot host a delegated sync; this run uses its own consumer beside it.`);
   }
@@ -585,7 +587,8 @@ export async function maybeDelegateManagedSyncToServe(engine: BrainEngine, args:
   const { sock, secret } = deps.socket ? await deps.socket(sourceId)
     : { sock: await hookResolveSocketForConfig(cfg, sourceId, { delegation: true }), secret: readIpcSecretForConfig(cfg) };
   if (!sock || !existsSync(sock) || !secret) {
-    return own('no_socket', fallbackLine(pid, 'the running gbrain serve exposes no sync IPC socket (older gbrain, or GBRAIN_SERVE_SYNC_IPC=0 on the serve)', false));
+    return own('no_socket', fallbackLine(pid, 'the running gbrain serve exposes no sync IPC socket (older gbrain, or GBRAIN_SERVE_SYNC_IPC=0 on the serve)', false,
+      sameBuild ? `That serve already runs this gbrain version (v${VERSION}), so restarting it changes nothing here: unset GBRAIN_SERVE_SYNC_IPC=0 on the serve, or read its log for why its sync IPC did not start.` : undefined));
   }
   // 5. The hand-off: this CLI's durable writer registration (the one its own consumer would run under).
   dispatch.endSyncDispatchRead();
@@ -617,7 +620,8 @@ export async function maybeDelegateManagedSyncToServe(engine: BrainEngine, args:
   let start = await requestSyncStart(sock, { secret, clientToken, options, registration });
   if (start === IPC_UNAVAILABLE && await ownerAlive()) start = await requestSyncStart(sock, { secret, clientToken, options, registration });
   if (start === IPC_UNAVAILABLE) {
-    return own('no_socket', fallbackLine(pid, 'the running gbrain serve is not answering its IPC socket', true), true);
+    return own('no_socket', fallbackLine(pid, 'the running gbrain serve is not answering its IPC socket', true,
+      sameBuild ? `That serve already runs this gbrain version (v${VERSION}); it may be wedged.` : undefined), true);
   }
   if ('degraded' in (start as object)) {
     return own('older_serve', fallbackLine(pid, 'the running gbrain serve predates serve-delegated managed sync', true), true);
