@@ -21,6 +21,7 @@ import { isKeywordSkippedAfterTimeout } from '../../postgres-engine/keyword-time
 import { collapsePool, prioritize } from './rank.ts';
 import { readGeneratedPages } from '../provenance-demotion.ts';
 import { warnOncePerProcess } from '../../utils.ts';
+import { hasCJK } from '../../cjk.ts';
 
 const pagesOf = (r: SearchResult) => [r.slug, ...(r.collapsed ?? []).map(c => c.slug), ...(r.redirect_to ? [r.redirect_to] : [])].map(slug => `${r.source_id ?? 'default'}:${slug}`);
 
@@ -92,7 +93,8 @@ async function keylessRowStages(
  * gate's request (gateFillRows), and are returned to be appended: scored at or
  * below the page's lowest row, marked keyword_fill, never more than the empty
  * slots. A failed fetch or a check that did not judge them adds nothing and
- * reports keyword_candidates_incomplete.
+ * reports keyword_candidates_incomplete. Only callers that pass
+ * HybridSearchOpts.anyWordFill (the search and query operations) get it.
  *
  * Invariant (pinned by the property tests in test/search/keyless-any-word-fill.test.ts):
  * with the fill on, the response begins with exactly the rows the fill-off
@@ -104,6 +106,8 @@ async function anyWordFill(req: HybridRequest, lexical: LexicalArms, postFusionO
   const { engine, query, opts, limit, offset, degraded, searchOpts } = req;
   const { earlyModality, keywordResults } = lexical;
   const room = limit - pool.length;
+  // Only a caller that asked gets the fill, and a Chinese, Japanese or Korean question has no any-word form: its keyword arm already matches term by term.
+  if (opts?.anyWordFill !== true || hasCJK(query)) return [];
   if (opts?.decide?.keywordOnly || offset > 0 || room <= 0 || earlyModality === 'image') return [];
   if (keywordResults.length === 0 || keywordResults.some(r => r.keyword_relaxed) || keywordResults.length >= (searchOpts.limit ?? Infinity)) return [];
   const heldPages = new Set(pool.flatMap(pagesOf));

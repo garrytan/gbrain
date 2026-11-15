@@ -32,6 +32,8 @@ const fillOff = (engine: BrainEngine): BrainEngine => new Proxy(engine, {
     ? (q: string, o?: Record<string, unknown>) => target.searchKeyword(q, { ...o, orFill: false } as never)
     : Reflect.get(target, prop, target),
 });
+/** The search function as the search and query operations call it: they alone ask for the fill. */
+const filledSearch = (engine: BrainEngine, query: string, opts: Parameters<typeof hybridSearch>[2] = {}) => hybridSearch(engine, query, { ...opts, anyWordFill: true });
 const CAROL = 'company/calls/carol-example';
 const PAGES: Array<[string, string, string, Record<string, unknown>?, string?]> = [
   ['company/pricing', 'Pricing', 'Our Starter plan costs 29 dollars a month. The Pro plan adds SSO and audit logs. Every plan bills monthly.'],
@@ -84,7 +86,7 @@ for (const kind of testBackends()) {
     });
 
     test('the fill only adds pages, after every row search returns without it', async () => {
-      const rows = await hybridSearch(engine, QUERY, { limit: 20, expansion: false });
+      const rows = await filledSearch(engine, QUERY, { limit: 20, expansion: false });
       const firstFill = rows.findIndex(r => r.keyword_fill === true);
       expect(firstFill).toBeGreaterThan(0);
       expect(rows.slice(firstFill).every(r => r.keyword_fill === true)).toBe(true);
@@ -92,7 +94,7 @@ for (const kind of testBackends()) {
     });
 
     test('a fill row is marked keyword_relaxed and ranks below every all-words row', async () => {
-      const rows = await hybridSearch(engine, QUERY, { limit: 10, expansion: false });
+      const rows = await filledSearch(engine, QUERY, { limit: 10, expansion: false });
       const firstFill = rows.findIndex(r => r.keyword_fill === true);
       const before = rows.slice(0, firstFill);
       expect(before.map(r => r.slug)).toEqual(expect.arrayContaining(['company/decisions', 'company/pricing']));
@@ -104,7 +106,7 @@ for (const kind of testBackends()) {
 
     test('explain_target names the fill: the arm rank is marked relaxed and the why says some words matched', async () => {
       const trace = new TargetTrace({ slug: CAROL });
-      const rows = await hybridSearch(engine, QUERY, { limit: 10, expansion: false, explainTarget: trace });
+      const rows = await filledSearch(engine, QUERY, { limit: 10, expansion: false, explainTarget: trace });
       const d = diagnoseTrace(trace, rows, { tool: 'query', arguments: { query: QUERY } });
       expect(d.state).toBe('retrieved');
       expect(d.arms.find(a => a.arm === 'keyword_fill')?.relaxed).toBe(true);
@@ -112,9 +114,9 @@ for (const kind of testBackends()) {
     });
 
     test('the fill applies the caller read policy: restricted pages fill for a local caller, never for a remote one', async () => {
-      const local = (await hybridSearch(engine, QUERY, { limit: 20, expansion: false })).map(r => r.slug);
+      const local = (await filledSearch(engine, QUERY, { limit: 20, expansion: false })).map(r => r.slug);
       for (const slug of RESTRICTED) expect(local).toContain(slug);
-      const remote = await hybridSearch(engine, QUERY, { limit: 20, expansion: false, excludePrivate: true, requireSafeChunks: true, sourceIds: ['default'] });
+      const remote = await filledSearch(engine, QUERY, { limit: 20, expansion: false, excludePrivate: true, requireSafeChunks: true, sourceIds: ['default'] });
       expect(remote.map(r => r.slug)).toContain(CAROL);
       for (const slug of RESTRICTED) expect(remote.map(r => r.slug)).not.toContain(slug);
     });
@@ -128,7 +130,7 @@ for (const kind of testBackends()) {
       const partial = 'Quokka Inc. is a company in the directory.';
       await engine.putPage('companies/quokka', { type: 'company', title: 'Directory entry', compiled_truth: partial, frontmatter: {} });
       await installFixtureChunks(engine, 'companies/quokka', [{ chunk_index: 0, chunk_text: partial, chunk_source: 'compiled_truth' }]);
-      const rows = await hybridSearch(engine, 'quokka workshop', { limit: 10, expansion: false });
+      const rows = await filledSearch(engine, 'quokka workshop', { limit: 10, expansion: false });
       const notes = rows.filter(r => !r.keyword_fill).map(r => r.slug).sort();
       expect(notes).toEqual(['notes/quokka-1', 'notes/quokka-2', 'notes/quokka-3', 'notes/quokka-4', 'notes/quokka-5']);
       expect(rows.map(r => r.slug)).toContain('companies/quokka');
@@ -139,7 +141,7 @@ for (const kind of testBackends()) {
       await engine.putPage('events/quokka-offsite', { type: 'event', title: 'Offsite', compiled_truth: dated, frontmatter: {} });
       await installFixtureChunks(engine, 'events/quokka-offsite', [{ chunk_index: 0, chunk_text: dated, chunk_source: 'compiled_truth' }]);
       await engine.executeRaw(`UPDATE pages SET effective_date = '2026-03-02', effective_date_source = 'frontmatter' WHERE slug = 'events/quokka-offsite'`);
-      const rows = await hybridSearch(engine, 'when quokka workshop', { limit: 20, expansion: false });
+      const rows = await filledSearch(engine, 'when quokka workshop', { limit: 20, expansion: false });
       const firstFill = rows.findIndex(r => r.keyword_fill === true);
       expect(firstFill).toBeGreaterThan(0);
       expect(rows.slice(firstFill).every(r => r.keyword_fill === true)).toBe(true);
@@ -154,7 +156,7 @@ for (const kind of testBackends()) {
       await put('notes/heron-audit', 'note', 'Heron ledger audit for the spring count.');
       await put('records/heron-old', 'concept-redirect', 'Heron ledger moved. See [current](/records/heron-current).', { redirect_to: '/records/heron-current' });
       await put('records/heron-current', 'concept', 'The marsh registry for this year.');
-      const rows = await hybridSearch(engine, 'heron ledger audit', { limit: 10, expansion: false });
+      const rows = await filledSearch(engine, 'heron ledger audit', { limit: 10, expansion: false });
       const slugs = rows.map(r => r.slug);
       expect(slugs[0]).toBe('notes/heron-audit');
       expect(slugs).not.toContain('records/heron-old');
@@ -171,7 +173,7 @@ for (const kind of testBackends()) {
       await put('records/egret-new', 'The colony count from the new survey.');
       await engine.addLink('records/egret-new', 'records/egret-old', '', 'supersedes', 'manual');
       _resetSupersedeProbeForTests();
-      const rows = await hybridSearch(engine, 'egret roster review', { limit: 10, expansion: false });
+      const rows = await filledSearch(engine, 'egret roster review', { limit: 10, expansion: false });
       const old = rows.find(r => r.slug === 'records/egret-old');
       expect(old?.keyword_fill).toBe(true);
       expect(old?.superseded).toBe(true);
@@ -190,14 +192,14 @@ for (const kind of testBackends()) {
       });
 
       test('the alias target leads at limit 1', async () => {
-        const rows = await hybridSearch(engine, 'hall of light', { limit: 1, expansion: false });
+        const rows = await filledSearch(engine, 'hall of light', { limit: 1, expansion: false });
         expect(rows.map(r => r.slug)).toEqual(['projects/atrium']);
       });
 
       test('the alias target, which also qualifies as a fill row, appears once, first, at the default limit', async () => {
         const kw = await engine.searchKeyword('hall of light', { limit: 50, orFallback: true, orFill: true });
         expect(kw.find(r => r.slug === 'projects/atrium')?.keyword_fill).toBe(true);
-        const slugs = (await hybridSearch(engine, 'hall of light', { expansion: false })).map(r => r.slug);
+        const slugs = (await filledSearch(engine, 'hall of light', { expansion: false })).map(r => r.slug);
         expect(slugs[0]).toBe('projects/atrium');
         expect(slugs.filter(s => s === 'projects/atrium')).toHaveLength(1);
         expect(slugs).toContain('notes/concert');
@@ -215,8 +217,8 @@ for (const kind of testBackends()) {
         await installFixtureChunks(engine, fan, [{ chunk_index: 0, chunk_text: body, chunk_source: 'compiled_truth' }]);
         await engine.addLink(fan, 'notes/second');
       }
-      const on = await hybridSearch(engine, 'zebra parade route', { limit: 1, expansion: false });
-      const off = await hybridSearch(fillOff(engine), 'zebra parade route', { limit: 1, expansion: false });
+      const on = await filledSearch(engine, 'zebra parade route', { limit: 1, expansion: false });
+      const off = await filledSearch(fillOff(engine), 'zebra parade route', { limit: 1, expansion: false });
       expect(on.map(r => [r.slug, r.score])).toEqual(off.map(r => [r.slug, r.score]));
     });
 
@@ -229,21 +231,21 @@ for (const kind of testBackends()) {
       await installFixtureChunks(engine, 'docs/walrus-plan-summary', [{ chunk_index: 0, chunk_text: summary, chunk_source: 'compiled_truth' }]);
       const kw = await engine.searchKeyword('walrus budget review', { limit: 50, orFallback: true, orFill: true });
       expect(kw.find(r => r.slug === 'docs/walrus-plan-summary')?.keyword_fill).toBe(true);
-      const slugs = (await hybridSearch(engine, 'walrus budget review', { expansion: false })).map(r => r.slug);
+      const slugs = (await filledSearch(engine, 'walrus budget review', { expansion: false })).map(r => r.slug);
       expect(slugs).toContain('docs/walrus-plan');
       expect(slugs).not.toContain('docs/walrus-plan-summary');
     });
 
     test('a later page (offset above zero) gets no fill', async () => {
-      const on = await hybridSearch(engine, QUERY, { limit: 1, offset: 1, expansion: false });
+      const on = await filledSearch(engine, QUERY, { limit: 1, offset: 1, expansion: false });
       expect(on.some(r => r.keyword_fill)).toBe(false);
-      const off = await hybridSearch(fillOff(engine), QUERY, { limit: 1, offset: 1, expansion: false });
+      const off = await filledSearch(fillOff(engine), QUERY, { limit: 1, offset: 1, expansion: false });
       expect(on.map(r => [r.slug, r.score])).toEqual(off.map(r => [r.slug, r.score]));
     });
 
     test('the fill never exceeds the limit and never repeats a page', async () => {
       for (const limit of [1, 2, 3, 5, 8]) {
-        const rows = await hybridSearch(engine, QUERY, { limit, expansion: false });
+        const rows = await filledSearch(engine, QUERY, { limit, expansion: false });
         expect(rows.length).toBeLessThanOrEqual(limit);
         const pages = rows.map(r => `${r.source_id ?? 'default'}:${r.slug}`);
         expect(new Set(pages).size).toBe(pages.length);
@@ -255,8 +257,8 @@ for (const kind of testBackends()) {
       const queries = [QUERY, 'sso', 'starter plan', 'starter checklist day one', 'quokka workshop', 'when quokka workshop', 'hall of light', 'zebra parade route', 'walrus budget review', 'pricing plan bills monthly', 'nothing matches this xylophone'];
       for (const query of queries) {
         for (const limit of [1, 3, 10, 20]) {
-          const on = await hybridSearch(engine, query, { limit, expansion: false });
-          const off = await hybridSearch(fillOff(engine), query, { limit, expansion: false });
+          const on = await filledSearch(engine, query, { limit, expansion: false });
+          const off = await filledSearch(fillOff(engine), query, { limit, expansion: false });
           const row = (r: SearchResult) => [r.source_id ?? 'default', r.slug, r.chunk_id, r.score];
           expect(on.slice(0, off.length).map(row)).toEqual(off.map(row));
           expect(on.slice(off.length).every(r => r.keyword_fill === true)).toBe(true);
@@ -335,8 +337,33 @@ for (const kind of testBackends()) {
       });
     });
 
+    test('only the search and query operations ask for the fill: any other caller of the search function gets the rows it got before', async () => {
+      setSystemTime(new Date('2026-11-15T00:00:00Z'));
+      for (const query of [QUERY, 'starter plan', 'quokka workshop', 'hall of light']) {
+        const rows = await hybridSearch(engine, query, { limit: 20, expansion: false });
+        expect(rows.some(r => r.keyword_fill)).toBe(false);
+        expect(rows).toEqual(await hybridSearch(fillOff(engine), query, { limit: 20, expansion: false }));
+      }
+      setSystemTime();
+    });
+
+    test('a question in Chinese, Japanese or Korean takes the keyword arm once: that path has no any-word form, so nothing runs twice', async () => {
+      for (const [slug, body] of [['notes/cjk-both', '会议 预算 审查 已经完成'], ['notes/cjk-one', '会议 记录 存档']] as const) {
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: body, frontmatter: {} });
+        await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_text: body, chunk_source: 'compiled_truth' }]);
+      }
+      let calls = 0;
+      const counted = new Proxy(engine, { get: (target, prop) => prop === 'searchKeyword'
+        ? (q: string, o?: unknown) => { calls++; return target.searchKeyword(q, o as never); }
+        : Reflect.get(target, prop, target) });
+      const rows = await filledSearch(counted, '会议 预算', { limit: 10, expansion: false });
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.length).toBeLessThan(10);
+      expect(calls).toBe(1);
+    });
+
     test('a keyword-only retrieval the caller asked for (decide.keywordOnly, used on brains with embeddings too) gets no fill', async () => {
-      const rows = await hybridSearch(engine, QUERY, { limit: 20, expansion: false, decide: { keywordOnly: true } } as never);
+      const rows = await filledSearch(engine, QUERY, { limit: 20, expansion: false, decide: { keywordOnly: true } } as never);
       expect(rows.some(r => r.keyword_fill)).toBe(false);
       expect(rows.map(r => r.slug)).not.toContain(CAROL);
     });

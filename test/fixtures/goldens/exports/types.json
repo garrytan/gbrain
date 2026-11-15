@@ -8351,7 +8351,6 @@
       {
         "kind": "interface",
         "members": [
-          "_anyWordFill?: boolean | undefined",
           "_embeddingOptedOut?: boolean | undefined",
           "_queryEmbedDeadline?: (() => QueryEmbedDeadline) | undefined",
           "_queryPrefix?: string | undefined",
@@ -8362,6 +8361,7 @@
           "afterDate?: string | undefined",
           "afterDateInclusive?: boolean | undefined",
           "aliasTokenHop?: boolean | undefined",
+          "anyWordFill?: boolean | undefined",
           "autocut?: AutocutInput",
           "beforeDate?: string | undefined",
           "beforeDateInclusive?: boolean | undefined",

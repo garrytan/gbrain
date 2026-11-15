@@ -865,7 +865,7 @@ const search: Operation = {
       _timings: timings,
     };
     const found = await hybridSearchCached(ctx.engine, queryText, {
-      ...searchOpts, onMeta: (m) => { capturedMeta = m; }, explain: p.explain === true, explainTarget: explainPrep?.trace,
+      ...searchOpts, anyWordFill: true, onMeta: (m) => { capturedMeta = m; }, explain: p.explain === true, explainTarget: explainPrep?.trace,
     }).finally(searchDone.resolve);
     // GST-2762: the stages run over the pipeline's rows less the keyless fill (first, with its notices), then over all of them (chooseFill).
     const opStages = async (hits: SearchResult[], first: boolean) => {
@@ -1118,7 +1118,7 @@ const query: Operation = {
       intentWeighting: typeof p.intent_weighting === 'boolean' ? (p.intent_weighting as boolean) : undefined,
       // v0.36 cross-modal routing param.
       crossModal: p.cross_modal as 'text' | 'image' | 'both' | 'auto' | undefined,
-      onMeta: (m) => { capturedMeta = m; }, onQueryEmbedding: (e) => { queryEmbedding = e; },
+      anyWordFill: true, onMeta: (m) => { capturedMeta = m; }, onQueryEmbedding: (e) => { queryEmbedding = e; },
       // v0.36 (D15): per-call embedding column override. Resolver rejects
       // unknown names at hybrid entry with EmbeddingColumnNotRegisteredError;
       // the error surfaces back to the agent as the op error envelope.
@@ -1189,7 +1189,7 @@ const query: Operation = {
           // the config reads only run on the rare escalation path.
           const effectiveLimit = await resolveEffectiveLimit(ctx, p);
           let escalatedMeta: HybridSearchMeta | null = null;
-          const escalated = withoutFill(await hybridSearchCached(ctx.engine, queryText, {
+          const escalated = await hybridSearchCached(ctx.engine, queryText, {
             excludePrivate,
             requireSafeChunks: ctx.remote !== false,
             takesHoldersAllowList: readHolders(ctx),
@@ -1216,7 +1216,7 @@ const query: Operation = {
             crossModal: p.cross_modal as 'text' | 'image' | 'both' | 'auto' | undefined,
             embeddingColumn: embeddingColumnParam,
             onMeta: (m) => { escalatedMeta = m; }, _timings: timings,
-          }));
+          });
           // Grade the FULL escalated sweep (rank-1 is what the grader reads),
           // then adopt only the caller-visible window. #4610: the re-run is
           // deliberately wide (limit >= 50, autocut off), but `limit` is the

@@ -80,7 +80,7 @@ beforeEach(async () => {
 
 describe('keyless any-word fill under the System One gates', () => {
   test('without a gate the partial-word pages fill in after the all-words rows', async () => {
-    const rows = await hybridSearch(engine, QUERY, { limit: 10, expansion: false });
+    const rows = await hybridSearch(engine, QUERY, { anyWordFill: true, limit: 10, expansion: false });
     expect(rows.slice(0, 2).map(r => r.slug).sort()).toEqual(['notes/plover-1', 'notes/plover-2']);
     expect(rows.filter(r => r.keyword_fill).map(r => r.slug).sort()).toEqual(['notes/plover-attack', 'notes/plover-tally']);
   });
@@ -88,7 +88,7 @@ describe('keyless any-word fill under the System One gates', () => {
   test('a fill row the evidence gate rejects is not returned', async () => {
     await setConfig(evidenceOn('1'));
     transport({ evidence: c => (c.includes('tally') ? 0.1 : 0.9) });
-    const rows = await hybridSearch(engine, QUERY, { limit: 10, expansion: false });
+    const rows = await hybridSearch(engine, QUERY, { anyWordFill: true, limit: 10, expansion: false });
     expect(rows.map(r => r.slug)).not.toContain('notes/plover-tally');
     expect(rows.slice(0, 2).map(r => r.slug).sort()).toEqual(['notes/plover-1', 'notes/plover-2']);
   });
@@ -96,7 +96,7 @@ describe('keyless any-word fill under the System One gates', () => {
   test('a fill row the injection detector flags carries the flag', async () => {
     await setConfig(INJECTION_ON);
     transport({ injection: c => (c.includes('ignore previous') ? 0.95 : 0.05) });
-    const rows = await hybridSearch(engine, QUERY, { limit: 10, expansion: false });
+    const rows = await hybridSearch(engine, QUERY, { anyWordFill: true, limit: 10, expansion: false });
     const attack = rows.find(r => r.slug === 'notes/plover-attack');
     expect(attack?.keyword_fill).toBe(true);
     expect(attack?.injection_suspected).toBe(true);
@@ -105,7 +105,7 @@ describe('keyless any-word fill under the System One gates', () => {
   test('fill scores stay finite when the evidence gate empties the first page (min_keep 0)', async () => {
     await setConfig(evidenceOn('0'));
     transport({ evidence: c => (c.includes('route') ? 0.1 : 0.9) });
-    const rows = await hybridSearch(engine, QUERY, { limit: 10, expansion: false });
+    const rows = await hybridSearch(engine, QUERY, { anyWordFill: true, limit: 10, expansion: false });
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every(r => r.keyword_fill === true)).toBe(true);
     expect(rows.every(r => Number.isFinite(r.score))).toBe(true);
@@ -127,7 +127,7 @@ describe('keyless any-word fill under the System One gates', () => {
     }
     const search = async () => {
       let meta: HybridSearchMeta | undefined;
-      const rows = await hybridSearch(engine, QUERY, { limit: 10, expansion: false, onMeta: m => { meta = m; } });
+      const rows = await hybridSearch(engine, QUERY, { anyWordFill: true, limit: 10, expansion: false, onMeta: m => { meta = m; } });
       return { rows, meta: meta as HybridSearchMeta & { decide?: { evidence?: { judged?: number; skipped?: string; outcomes?: Record<string, number> } } } };
     };
 

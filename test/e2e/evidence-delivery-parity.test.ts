@@ -22,10 +22,9 @@
  * retrieval meta and can reorder rows (the nightly full-corpus lane carries
  * OPENAI_API_KEY and ANTHROPIC_API_KEY, run 37273083933). So the golden is
  * compared under an explicitly keyless gateway in every lane, and a keyed lane
- * additionally checks the keyed capture: key-independent calls (keyword search)
- * still match the frozen bytes, and query/recall report the vector path as on.
- * Think's prompt is keyless-only since GST-2762: without a key its search also
- * fills with pages that hold only some of the question's words.
+ * additionally checks the keyed capture: key-independent calls (keyword search,
+ * think's prompt) still match the frozen bytes, and query/recall report the
+ * vector path as on.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
@@ -75,7 +74,7 @@ async function keyless<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-const KEY_INDEPENDENT = /^(search|search-remote|search-subagent|mcp-search)(:chunk)?$/;
+const KEY_INDEPENDENT = /^(search|search-remote|search-subagent|mcp-search)(:chunk)?$|^think-prompt$/;
 
 beforeAll(async () => {
   for (const backend of backends) {
@@ -112,7 +111,7 @@ describe('evidence delivery parity', () => {
         if (keyedLane) {
           const keyed = await captureOffPath(engine);
           const independent = Object.keys(want).filter(k => KEY_INDEPENDENT.test(k));
-          expect(independent.length).toBe(7);
+          expect(independent.length).toBe(8);
           for (const key of independent) expect(`${key}: ${keyed[key]}`).toBe(`${key}: ${withCostWave(key, want[key])}`);
           for (const key of Object.keys(want).filter(k => /^query/.test(k))) {
             const retrieval = (JSON.parse(keyed[key]).meta as Array<{ key: string; value: { vector_enabled: boolean; degraded?: Array<{ stage: string }> } }>)
