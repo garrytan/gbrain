@@ -30,7 +30,7 @@ export const OVERRIDE_LABEL = 'maintainer-override';
 /** Humans who may apply the override label. Edit only through a reviewed PR to master. */
 export const MAINTAINERS: readonly string[] = ['garrytan'];
 export const COMMENT_MARKER = '<!-- fix-wave-gate -->';
-const CONTRIBUTING_URL = 'https://github.com/garrytan/gbrain/blob/master/CONTRIBUTING.md#where-does-my-change-go';
+const CONTRIBUTING_URL = 'https://github.com/garrytan/gbrain/blob/master/CONTRIBUTING.md#how-an-outside-pull-request-is-handled';
 
 interface Repo { id?: number; full_name?: string }
 interface Actor { login?: string; type?: string }
@@ -54,15 +54,28 @@ export interface GateClient {
 }
 
 export function gateMessage(handle: string): string {
+  const credit = 'credit you as co-author: the commit says `Contributed by @' + handle + '` and carries a `Co-Authored-By:` trailer with your name';
   return [
     COMMENT_MARKER,
-    `Thanks for this pull request, @${handle}. The work is welcome, and this PR stays open.`,
+    `Thanks for this pull request, @${handle}. Here is how we handle outside pull requests, so you know what to expect:`,
     '',
-    'gbrain does not merge contributor pull requests into master directly. A maintainer folds the change into a fix-wave PR, revises it there (tests, agent-facing errors, conventions), and lands it with credit to you: the commit says `Contributed by @' + handle + '` and carries a `Co-Authored-By:` trailer with your name. When that fix wave merges, this PR is closed with a comment that links it.',
+    '- **Documentation people read** (not files agents load, such as SKILL.md or AGENTS.md) can be merged as it is, after we check every link, command and install step in it.',
+    `- **Small, plainly correct fixes** (under about 40 lines not counting tests, such as an error message or a typo) are taken even when the gain is small. We rebuild them on current master and ${credit}. We land at most one of these a day, so it can take a few days.`,
+    `- **Everything else**, including all other code and anything that runs, we read as a detailed bug report. When we take it, we rebuild it on current master with the same credit.`,
     '',
-    `You don't need to do anything else. To see where a change belongs and what the fix wave checks, read CONTRIBUTING.md, "Where does my change go?": ${CONTRIBUTING_URL}`,
+    "When we rebuild a change, we close this PR with a link to the PR that landed it. When we don't take one, we close it with a short note saying why and what would change our answer. So apart from documentation, \"closed, not merged\" is the normal outcome and doesn't mean your work was turned down.",
     '',
-    'This message comes from the fix-wave gate check, which stays red on contributor PRs by design.',
+    'For a larger change, show us:',
+    '',
+    '- a way to reproduce the problem on current master, or a failing test;',
+    '- what goes wrong for someone using gbrain because of it;',
+    '- the version you saw it on (`gbrain version`).',
+    '',
+    'A limit of 3 open pull requests applies only to someone whose recent pull requests have mostly been closed without being taken. It never applies to anyone who has had a pull request taken (merged or rebuilt) in the last 90 days.',
+    '',
+    `More in CONTRIBUTING.md, "How an outside pull request is handled": ${CONTRIBUTING_URL}`,
+    '',
+    'This comment comes from the fix-wave gate check. It is red on every outside pull request by design, and a maintainer clears it when merging a documentation change.',
   ].join('\n');
 }
 

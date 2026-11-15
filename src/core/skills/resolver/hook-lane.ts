@@ -68,8 +68,8 @@
  *
  * Turn settings: skills.resolver.top_k, min_match, top_gate, pinned (sent as
  * exclude) and per_harness.<harness>.{top_k,min_match,top_gate} (config.ts
- * laneTurnSettings); unset, a turn is top_k 5 with every match, no gate and
- * nothing excluded.
+ * laneTurnSettings); unset, a turn is top_k 5 with every match, the resolver's
+ * default top_gate (TOP_GATE_DEFAULT; 0 turns it off) and nothing excluded.
  *
  * Payload: the lane's own budget (skills.resolver.lane_payload_chars, default
  * 4000 characters of hook JSON, Hermes's included); a block that does not fit

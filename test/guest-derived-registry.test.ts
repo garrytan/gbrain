@@ -24,7 +24,7 @@ import { runPhaseProposeTakes } from '../src/core/cycle/propose-takes.ts';
 import { withWriteAttribution } from '../src/core/persistence/context.ts';
 
 const ROOT = join(import.meta.dir, '..');
-const HELPERS = ['skipsGuestSource', 'skipsGuestNote', 'withoutGuestSources', 'guestSourceExclusionSql'];
+const HELPERS = ['skipsGuestSource', 'guestSourceSkip', 'skipsGuestNote', 'withoutGuestSources', 'guestSourceExclusionSql'];
 
 describe('guest derived-producer registry', () => {
   test('every cycle phase is classified, and every none entry says why', () => {

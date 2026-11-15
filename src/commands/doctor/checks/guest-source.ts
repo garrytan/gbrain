@@ -18,7 +18,7 @@ import { connectedEngine, type DoctorContext, type DoctorEntry } from '../contex
 import { authSourcesFromGrant, grantFromClient, grantFromRow, grantFromTokenRow } from '../../../core/grants/model.ts';
 import { guestSourceSql } from '../../../core/guests/marker.ts';
 import { GUEST_TRUST_CEILING } from '../../../core/guests/sources.ts';
-import { ownerCredentials } from '../../../core/guests/owner-credentials.ts';
+import { ownerCredentials, tokenGrantJsonSql } from '../../../core/guests/owner-credentials.ts';
 import { GUEST_NOTES_MIGRATION } from '../../../core/guests/migration.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
 
@@ -34,7 +34,7 @@ async function writerFindings(engine: BrainEngine, source: string, writer: strin
   if (kind !== 'oauth_client' && kind !== 'legacy_token') return [{ level: 'warn', text: 'writer ' + writer + ' is not a remote credential (only an OAuth client or token can be a broker)' }];
   const [row] = kind === 'oauth_client'
     ? await engine.executeRaw<{ row: unknown; live: boolean }>("SELECT to_jsonb(c) - 'client_secret_hash' AS row, (to_jsonb(c)->>'deleted_at') IS NULL AS live FROM oauth_clients c WHERE c.client_id = $1", [id])
-    : await engine.executeRaw<{ row: unknown; live: boolean }>('SELECT to_jsonb(t) AS row, t.revoked_at IS NULL AS live FROM access_tokens t WHERE t.id::text = $1', [id]);
+    : await engine.executeRaw<{ row: unknown; live: boolean }>('SELECT ' + tokenGrantJsonSql('t') + ' AS row, t.revoked_at IS NULL AS live FROM access_tokens t WHERE t.id::text = $1', [id]);
   const drop = ['gbrain', 'sources', 'writers', source, '--remove', writer];
   if (!row || !row.live) return [{ level: 'fail', text: 'writer ' + writer + (row ? ' was removed or revoked' : ' names no credential'), fix: drop }];
   const grant = kind === 'oauth_client' ? grantFromClient(grantFromRow(json(row.row))) : grantFromTokenRow(json(row.row));

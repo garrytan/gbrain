@@ -489,7 +489,10 @@ migration v281 (#7637) each refuses with `writer_coordinator_required` (relation
 names the table) when row-level security applies to the role on a table it needs and no permissive policy for the role
 covers a command it runs there. Before, such a role kept stale derived state (a deleted page's retrieval rows stayed)
 or failed with a raw RLS error. The owner (without `FORCE ROW LEVEL SECURITY`) and a role that bypasses RLS are not
-affected. A scoped write role that does not own these tables needs these policies; the maintainer tables hold ids,
+affected. The guest-source guard in the trust trigger and guest admission read `guest_sources` the same way: since
+migration v314 a role that row-level security keeps from reading it is refused (`writer_coordinator_required`,
+`unreadable_state`, state `guest_sources`) on every page, fact, take and timeline write, because it cannot tell a guest
+source from an ordinary one. A scoped write role that does not own these tables needs these policies; the maintainer tables hold ids,
 timestamps and counters but no page text, so the writer sees every row, and a policy that filters them would leave the
 rows it hides stale:
 
@@ -518,6 +521,9 @@ CREATE POLICY page_projection_jobs_writer ON page_projection_jobs FOR ALL TO <wr
   USING (true) WITH CHECK (true);
 CREATE POLICY trust_policy_state_writer ON trust_policy_state FOR ALL TO <writer-role>
   USING (true) WITH CHECK (true);
+-- Which sources are guest sources and who writes them: every row, read only.
+CREATE POLICY guest_sources_writer ON guest_sources FOR SELECT TO <writer-role>
+  USING (true);
 ```
 <!-- gbrain:maintainer-rls-recipe:end -->
 

@@ -134,6 +134,28 @@ describe('promote_guest_note (pglite, repo-less)', () => {
     expect((await promotions(slug)).length).toBe(1);
   }, 120_000);
 
+  test('a link whose target page was purged is not already_promoted: promoting again writes the page and keeps one link', async () => {
+    const slug = slugOf();
+    await saveGuest(slug);
+    const to = 'notes/purged-' + slug.slice(-8);
+    expect((await local('promote_guest_note', { slug, to })).json.status).toBe('promoted');
+    await engine.executeRaw('DELETE FROM pages WHERE source_id = $1 AND slug = $2', [PLAIN, to]);
+    const again = await local('promote_guest_note', { slug, to });
+    expect({ isError: again.isError, status: again.json.status }).toEqual({ isError: false, status: 'promoted' });
+    expect((await engine.getPage(to, { sourceId: PLAIN }))?.frontmatter?.promoted_from).toBe(SRC + ':' + slug);
+    expect(await promotions(slug)).toEqual([{ target_source_id: PLAIN, target_slug: to, promoted_by_kind: 'local_cli' }]);
+  }, 120_000);
+
+  test('the promotion link is unique per guest page and target', async () => {
+    const slug = slugOf();
+    await saveGuest(slug);
+    expect((await local('promote_guest_note', { slug })).json.status).toBe('promoted');
+    const [link] = await engine.executeRaw<{ guest_page_id: number }>(
+      'SELECT g.guest_page_id FROM guest_promotions g JOIN pages p ON p.id = g.guest_page_id WHERE p.source_id = $1 AND p.slug = $2', [SRC, slug]);
+    expect(await engine.executeRaw(`INSERT INTO guest_promotions (guest_page_id, target_source_id, target_slug, promoted_by_kind, promoted_by_id)
+      VALUES ($1, $2, $3, 'local_cli', 'probe')`, [link!.guest_page_id, PLAIN, slug]).then(() => 'inserted', (e: Error) => e.message)).toMatch(/unique|duplicate/i);
+  }, 120_000);
+
   test('a credential bound to the owner promotes into its write source, and so do one speaking only for the owner and an owner-bound stdio server', async () => {
     const slug = slugOf();
     await saveGuest(slug);

@@ -19,6 +19,8 @@ import { extractTimelineFromDB } from '../src/commands/extract-timeline-db.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { runPhaseProposeTakes } from '../src/core/cycle/propose-takes.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { runPhaseExtractAtoms } from '../src/core/cycle/extract-atoms.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 
 const FLAGGED = 'source-a';
 const GUEST_PAGE = 'notes/flagged-a';
@@ -121,4 +123,25 @@ describe('a brain whose schema is behind the guest-notes migration (v' + GUEST_N
     expect(scanned.filter(slug => slug === GUEST_PAGE || slug === 'people/erin-example')).toEqual([]);
     expect(await flaggedRows(engine)).toEqual({ links: 0, timeline: 0, facts: 0, proposals: 0 });
   }, 180_000);
+
+  test('a skip caused by the failed guest lookup says the lookup failed', async () => {
+    const atoms = await runPhaseExtractAtoms(engine, { sourceId: FLAGGED });
+    expect(atoms.details).toMatchObject({ reason: 'guest_source_lookup_failed', source_id: FLAGGED });
+    expect(String((atoms.details as { error?: string }).error)).toContain('guest_sources');
+    const report = await runCycle(engine, { sourceId: FLAGGED, phases: ['extract_facts'], brainDir: null } as never);
+    expect(report.phases.find(p => p.phase === 'extract_facts')?.details).toMatchObject({ reason: 'guest_source_lookup_failed', source_id: FLAGGED });
+  }, 120_000);
+
+  test('a page write is refused migrations_pending, not with the missing-table error', async () => {
+    const [version] = await engine.executeRaw<{ value: string }>("SELECT value FROM config WHERE key = 'version'");
+    await engine.executeRaw("UPDATE config SET value = $1 WHERE key = 'version'", [String(GUEST_NOTES_MIGRATION - 1)]);
+    try {
+      const out = await dispatchToolCall(engine, 'put_page', { slug: 'notes/behind-a', content: '---\ntype: note\ntitle: Behind\n---\n# Behind\n' }, { remote: false, sourceId: 'default' });
+      const text = out.content.map(c => c.text).join('\n');
+      expect({ isError: out.isError, migrationsPending: text.includes('migrations_pending'), raw: text.includes('does not exist') })
+        .toEqual({ isError: true, migrationsPending: true, raw: false });
+    } finally {
+      await engine.executeRaw("UPDATE config SET value = $1 WHERE key = 'version'", [version!.value]);
+    }
+  }, 120_000);
 });

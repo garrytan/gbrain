@@ -174,7 +174,9 @@ describe('guest warning on reads', () => {
   test('a source made a guest source while the process runs is stamped on its next read, with no restart', async () => {
     const before = await dispatchToolCall(engine, 'get_page', { slug: 'notes/late-page' }, { remote: false, sourceId: LATE });
     expect(parse(before.content[0]!.text).origin).not.toBe('guest');
-    await initGuestSource(engine, LATE, []);
+    // initGuestSource refuses a source that already holds pages, so the fixture writes the two guest records itself.
+    await engine.executeRaw(`UPDATE sources SET config = config || '{"federated": true, "guest": true}'::jsonb WHERE id = $1`, [LATE]);
+    await engine.executeRaw('INSERT INTO guest_sources (source_id, writers) VALUES ($1, ARRAY[]::text[])', [LATE]);
     const after = parse((await dispatchToolCall(engine, 'get_page', { slug: 'notes/late-page' }, { remote: false, sourceId: LATE })).content[0]!.text);
     expect({ origin: after.origin, unattributed: after.guest?.unattributed }).toEqual({ origin: 'guest', unattributed: true });
   }, 60_000);
