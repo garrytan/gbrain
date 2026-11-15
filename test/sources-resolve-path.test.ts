@@ -194,7 +194,9 @@ test('a page the caller may not read answers exactly like a path with no file or
     await unmanaged(engine, () => engine.executeRaw(
       `INSERT INTO pages (slug, source_path, deleted_at, ${columns}) SELECT 'team/old-kept', 'team/kept.md', now() - interval '1 day', ${columns} FROM pages WHERE source_id = $1 AND slug = 'team/open'`, [s.id]));
     await s.legacy({ 'team/later-kept.md': RESTRICTED('readable_by: [alice-example, owner-example]', 'Kept later'), 'team/later-open.md': note('Open later') });
-    const paths = ['team/kept.md', 'team/private.md', 'team/open.md', 'team/KEPT.md', 'team/nothing-here.md', 'team/later-kept.md', 'team/later-open.md'];
+    s.write('team/head-kept.md', RESTRICTED('readable_by: [alice-example, owner-example]', 'Kept at head'));
+    commit(s.repo);
+    const paths = ['team/kept.md', 'team/private.md', 'team/open.md', 'team/KEPT.md', 'team/nothing-here.md', 'team/later-kept.md', 'team/later-open.md', 'team/head-kept.md'];
     const call = async (stdioMember?: string) => {
       const result = await dispatchToolCall(engine, 'sources_resolve_path', { id: s.id, paths },
         { remote: true, transport: 'stdio', sourceId: s.id, ...(stdioMember ? { stdioMember } : {}) });
@@ -212,11 +214,13 @@ test('a page the caller may not read answers exactly like a path with no file or
       expect(seen[2]!.page?.slug).toBe('team/open');
       expect(answer(seen[5]!)).toEqual(nothing);
       expect(seen[6]).toMatchObject({ state: 'missing', in_synced_commit: true });
+      expect(answer(seen[7]!)).toEqual(nothing);
       expect(JSON.stringify(seen)).not.toContain('Kept');
     }
     const alice = await call('alice-example');
     expect(alice[0]!.page?.slug).toBe('team/kept');
     expect(alice[5]).toMatchObject({ state: 'missing', in_synced_commit: true });
+    expect(alice[7]).toMatchObject({ at_head: true, in_synced_commit: false });
     expect(alice[3]!.slug_owner).toEqual({ slug: 'team/kept', source_path: 'team/kept.md' });
     expect(answer(alice[1]!)).toEqual(answer(alice[4]!));
     const local = await s.resolve(...paths);

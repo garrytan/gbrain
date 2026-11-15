@@ -172,9 +172,13 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
   }
   const pageless = policy?.excludePrivate ? normalized.filter(p => !byOrigin.has(p.origin) && !hidden.has(p.origin) && (synced.has(p.gitPath) || atHead?.has(p.gitPath))) : [];
   if (pageless.length) {
+    const blobOf = (p: typeof pageless[number]) => synced.get(p.gitPath) ?? atHead?.get(p.gitPath);
+    const later = readBlobContents(gitRoot, pageless.map(blobOf).filter(row => row !== undefined && row.size <= 256 * 1024 && !heads.has(row.oid)) as never);
+    const unread = new Set<string>();
     const rows = pageless.map(p => {
-      const blob = synced.get(p.gitPath);
-      const content = blob ? heads.get(blob.oid) : undefined;
+      const blob = blobOf(p)!;
+      const content = heads.get(blob.oid) ?? later.get(blob.oid);
+      if (content === undefined) unread.add(p.origin);
       const fm = content !== undefined ? parseMarkdownHead(content).frontmatter as Record<string, unknown> : {};
       return JSON.stringify({ source_id: sourceId, slug: resolveSlugForPath(p.origin), source_path: p.origin, frontmatter: fm,
         type: typeof fm.type === 'string' ? fm.type : inferTypeFromPack(p.origin, { page_types: [] }) });
@@ -186,7 +190,7 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
           'page_readers', CASE WHEN c.j->'frontmatter' ? 'readable_by' THEN to_jsonb(gbrain_access_readers(c.j->'frontmatter')) END,
           'folder_rule_ids', to_jsonb(gbrain_access_folder_rules(c.j->>'source_id', c.j->>'slug')))) AS pages
         WHERE COALESCE(${pageReadFilter('pages', policy, params)}, false)`, params)).map(row => row.source_path));
-    for (const p of pageless) if (!readable.has(p.origin)) hidden.add(p.origin);
+    for (const p of pageless) if (!readable.has(p.origin) || unread.has(p.origin)) hidden.add(p.origin);
   }
   const slugs = [...new Set(origins.map(origin => resolveSlugForPath(origin)).filter(Boolean))];
   const ownerParams: unknown[] = [sourceId, slugs];
