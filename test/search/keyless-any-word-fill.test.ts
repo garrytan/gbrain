@@ -18,6 +18,7 @@ import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import { TargetTrace, diagnoseTrace } from '../../src/core/search/explain-target.ts';
+import { keywordArmRows } from '../../src/core/search/keyword-identifier-probe.ts';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -117,3 +118,16 @@ for (const kind of testBackends()) {
     });
   });
 }
+
+test('a failed any-word fill keeps the all-words rows and reports the keyword arm incomplete', async () => {
+  const reasons: string[] = [];
+  const row = { page_id: 1, slug: 'company/pricing', score: 0.5 } as never;
+  const rows = await keywordArmRows<never>({
+    query: 'sso starter plan', strict: [row], orFallback: true, orFill: true, limit: 10, offset: 0, toResult: r => r,
+    runProbe: async () => [],
+    runRelaxed: async () => { throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }); },
+    onIncomplete: reason => reasons.push(reason),
+  });
+  expect(rows.map(r => r.slug)).toEqual(['company/pricing']);
+  expect(reasons).toEqual(['timeout']);
+});

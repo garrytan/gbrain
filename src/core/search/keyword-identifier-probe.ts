@@ -108,7 +108,8 @@ export async function keywordArmRows<R>(a: {
   const probe = probeQuery ? (await a.runProbe(probeQuery, orQuery!).catch(failed<R>)).map(a.toResult) : [];
   const fill = a.orFill === true && a.offset === 0 && a.strict.length > 0 && a.strict.length < a.limit;
   if ((a.strict.length > 0 && !fill) || !orQuery) return appendPages(named, appendPages(a.strict.map(a.toResult), probe, a.limit), a.limit);
-  const relaxed = (await a.runRelaxed(orQuery)).map(r => ({ ...a.toResult(r), keyword_relaxed: true as const }));
+  const relaxedRows = fill ? await a.runRelaxed(orQuery).catch(failed<R>) : await a.runRelaxed(orQuery);
+  const relaxed = relaxedRows.map(r => ({ ...a.toResult(r), keyword_relaxed: true as const }));
   if (!fill) return appendPages(named, appendPages(probe, relaxed, a.limit), a.limit);
   const strict = appendPages(a.strict.map(a.toResult), probe, a.limit);
   const floor = Math.min(...strict.map(r => r.score));
