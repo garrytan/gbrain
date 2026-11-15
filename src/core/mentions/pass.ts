@@ -236,12 +236,15 @@ export async function writePageAliases(tx: BrainEngine, slug: string, sourceId: 
 /** Turn the index off for one source: plain mention links, derived aliases, entries and page state go; typed_ner rows stay. */
 async function disableSource(engine: BrainEngine, managed: boolean, sourceId: string): Promise<number> {
   const { removed, beliefs } = await aliasWrite(engine, managed, sourceId, async tx => {
-    const sourcePages = await tx.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id = $1 ORDER BY slug', [sourceId]);
-    await tx.lockPageKeys(sourcePages.map(p => ({ sourceId, slug: p.slug })));
+    const journaled = (await beliefCoveredSources(tx, [sourceId])).has(sourceId);
+    const origins = await tx.executeRaw<{ slug: string }>(
+      `SELECT DISTINCT f.slug FROM links l JOIN pages f ON f.id = l.from_page_id
+        WHERE f.source_id = $1 AND l.link_source = 'mentions' AND (l.link_kind IS NULL OR l.link_kind = 'plain')`, [sourceId]);
+    if (journaled) await tx.lockPageKeys(origins.map(p => ({ sourceId, slug: p.slug })));
     const rows = await tx.executeRaw<{ id: number; slug: string }>(
       `SELECT l.id, f.slug FROM links l JOIN pages f ON f.id = l.from_page_id
         WHERE f.source_id = $1 AND f.slug = ANY($2::text[]) AND l.link_source = 'mentions'
-          AND (l.link_kind IS NULL OR l.link_kind = 'plain')`, [sourceId, sourcePages.map(p => p.slug)]);
+          AND (l.link_kind IS NULL OR l.link_kind = 'plain')`, [sourceId, origins.map(p => p.slug)]);
     const write = async () => {
       if (rows.length) await tx.executeRaw('DELETE FROM links WHERE id = ANY($1::int[])', [rows.map(r => Number(r.id))]);
       await tx.executeRaw(`DELETE FROM page_aliases WHERE source_id = $1 AND origin IN ('declared','subject')`, [sourceId]);
@@ -250,7 +253,7 @@ async function disableSource(engine: BrainEngine, managed: boolean, sourceId: st
       await writeStatus(tx, sourceId, { state: 'disabled', pending: 0, error: null, bumpGeneration: true, fingerprint: null });
       return rows.length;
     };
-    const beliefs = rows.length && (await beliefCoveredSources(tx, [sourceId])).has(sourceId)
+    const beliefs = rows.length && journaled
       ? unmanagedBeliefPoint(sourceId, rows.map(r => r.slug), 'mention_pass') : null;
     const removed = beliefs ? await beliefs.run(tx, write) : await write();
     return { removed, beliefs };
