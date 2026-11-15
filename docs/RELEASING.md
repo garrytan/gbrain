@@ -644,7 +644,9 @@ manual tag push is part of the ship flow — the workflow reads `VERSION` (the
 single source of truth), mints tag `v<VERSION>` at the pushed commit, titles
 the release the same, uses that version's `CHANGELOG.md` entry as the notes
 (`scripts/changelog-entry.sh`; falls back to a CHANGELOG link if the entry is
-missing), and attaches the compiled binaries.
+missing), and attaches the compiled binaries. Every one is published as a
+pre-release; only the stable release is GitHub's "Latest" ([Which release GitHub
+calls Latest](#which-release-github-calls-latest)).
 
 The executable build job pins Bun 1.4.4, the first release with the Brotli fix
 for CVE-2026-111497 (#7373): a standalone binary embeds the Bun it was built
@@ -706,6 +708,38 @@ release already exists with all assets):
 ```bash
 git push origin "+refs/tags/v<VERSION>^{commit}:refs/tags/latest-stable"
 ```
+
+### Which release GitHub calls Latest
+
+release.yml publishes every batch release with `prerelease: true` and
+`make_latest: false`, so the Releases page and its Latest badge point at the
+release installs follow. Each promotion (`scripts/promote-stable.ts`, from the
+promote dispatch or the daily check) ends by marking the promoted release
+Latest and clearing its pre-release flag. A forward promotion also replaces its
+notes with every CHANGELOG entry since the previous stable, newest first; the
+oldest entries drop with a link to the full CHANGELOG once the notes would pass
+GitHub's 125,000-character limit. A rollback keeps the notes.
+
+Nothing that installs or updates gbrain reads GitHub's Latest: `#stable` and
+`gbrain upgrade` follow the `stable` tag and its record; the alpha channel
+(binary self-update included) reads `VERSION` at `latest-stable` and fetches
+that exact release; the upgrade matrix counts pre-releases as releases; the
+macOS signature check resolves its tag from `latest-stable`. Anyone who
+downloads from `releases/latest` by hand now gets the stable release, about a
+day behind the newest. People who watch the repository for releases are still
+notified of pre-releases: GitHub has no setting to skip them.
+
+`scripts/release-channel.ts` handles GitHub release state outside a promotion;
+each command prints its plan and writes nothing without `--apply`:
+
+- `backfill`: every published release newer than the current stable becomes a
+  pre-release and the stable release becomes Latest with rolled-up notes. It is
+  also the repair when a promotion moved `stable` but could not mark it Latest
+  (the refusal names it).
+- `undo`: every pre-release goes back to a normal release and the newest release
+  becomes Latest, as before this rule. Revert the workflow change with it.
+- `preview-promotion [--version <v>]`: the release a promotion would make
+  Latest and the notes it would write.
 
 ### Stable channel promotion
 
@@ -895,11 +929,10 @@ the template repository ONLY — no other repositories, no other permissions.
 Configure it as a repo secret; when absent, template publishing is disabled
 and the job skips cleanly.
 
-Why every bump, not selective: `gbrain check-update` resolves the latest
-version from `VERSION` on master, while binary self-update
-(`src/core/binary-self-update.ts`) downloads assets from `releases/latest`.
-Any release that lags `VERSION` tells binary installs an upgrade exists that
-self-update cannot apply. `releases/latest` must track `VERSION`.
+Why every bump, not selective: the alpha update check reads `VERSION` at
+`latest-stable`, and binary self-update downloads that exact release
+(`src/core/binary-self-update.ts`). Any version without a release tells binary
+installs an upgrade exists that self-update cannot apply.
 
 Invariants:
 

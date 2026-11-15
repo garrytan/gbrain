@@ -2,14 +2,14 @@
  * Contract pin between .github/workflows/release.yml and
  * src/core/binary-self-update.ts (#3521).
  *
- * Binary installs download upgrade assets from `releases/latest` by the exact
+ * Binary installs download upgrade assets from the release `latest-stable` names, by the exact
  * names expectedAssetName() returns. If the workflow's build matrix or the
  * release `files:` list drifts from those names, self-update silently degrades
  * to notify-only (`no_asset`) for everyone — this test is the guard.
  */
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EXPECTED_BUILDER_IDS, expectedAssetName } from '../src/core/binary-self-update.ts';
@@ -215,5 +215,23 @@ describe('release.yml publish-template skip is visible (D-10)', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('which release GitHub calls Latest', () => {
+  test('release.yml publishes every batch release as a pre-release that never becomes Latest', () => {
+    const step = WORKFLOW.slice(WORKFLOW.indexOf('- name: Create release'), WORKFLOW.indexOf('- name: Advance latest-stable'));
+    expect(step).toMatch(/^\s+prerelease: true$/m);
+    expect(step).toMatch(/^\s+make_latest: 'false'$/m);
+  });
+
+  test('no workflow reads releases/latest, and the macOS signature check takes its tag from latest-stable', () => {
+    const dir = join(ROOT, '.github/workflows');
+    for (const file of readdirSync(dir)) {
+      const body = readFileSync(join(dir, file), 'utf8').split('\n').filter(l => !l.trimStart().startsWith('#')).join('\n');
+      expect({ file, reads: body.includes('releases/latest') }).toEqual({ file, reads: false });
+    }
+    const mac = readFileSync(join(dir, 'macos-validation.yml'), 'utf8');
+    expect(mac).toContain('https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/VERSION');
   });
 });

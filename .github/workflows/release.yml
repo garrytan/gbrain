@@ -5,11 +5,14 @@ name: Release
 # compiled binaries attached (#3521), plus the skill resolver library bundle
 # for Node adapters (gbrain-skill-resolver.mjs, GBRA-377).
 #
-# Why every bump: `gbrain check-update` resolves the latest version from the
-# VERSION file on master, but binary self-update
-# (src/core/binary-self-update.ts) downloads assets from `releases/latest`.
-# If releases lag VERSION, binary installs are told an upgrade exists that
-# self-update cannot apply. Keeping releases/latest == VERSION closes that gap.
+# Every release is published as a pre-release that never becomes GitHub's
+# "Latest": scripts/promote-stable.ts marks the stable release Latest, with
+# notes rolled up since the previous stable, so the Releases page and its
+# Latest badge show the release installs follow. The alpha channel follows
+# the latest-stable tag this workflow moves last; binary self-update reads
+# VERSION there and downloads that exact release (src/core/binary-self-update.ts),
+# never releases/latest. Bring older releases in line, or take the rule out,
+# with scripts/release-channel.ts (docs/RELEASING.md).
 #
 # Idempotent: the `version` job skips build+release when a release for
 # v<VERSION> already exists WITH all expected assets. A half-published release
@@ -257,6 +260,8 @@ jobs:
           name: v${{ needs.version.outputs.version }}
           target_commitish: ${{ needs.ci-gate.outputs.sha }}
           body_path: /tmp/release-notes.md
+          prerelease: true
+          make_latest: 'false'
           fail_on_unmatched_files: true
           files: |
             artifacts/gbrain-darwin-arm64/gbrain-darwin-arm64

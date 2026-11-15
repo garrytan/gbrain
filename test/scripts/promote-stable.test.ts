@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { load } from 'js-yaml';
 import {
-  checkOrder, checkSoakRun, compareVersions, mergeKnownBad, mergeNotPromotable, normaliseWorkflowPath, parseRunUrl, parseTagMessage, processDeps, promote, Refusal, renderRecord, renderSummary, renderTagMessage, STABLE_RECORD_MAX_BYTES,
+  checkOrder, checkSoakRun, compareVersions, RELEASE_NOTES_MAX, rolledUpNotes, mergeKnownBad, mergeNotPromotable, normaliseWorkflowPath, parseRunUrl, parseTagMessage, processDeps, promote, Refusal, renderRecord, renderSummary, renderTagMessage, STABLE_RECORD_MAX_BYTES,
   type GitResult, type PromoteDeps, type PromoteInputs, type SoakRun, type TagFields,
 } from '../../scripts/promote-stable.ts';
 import { offeredVersion } from '../../src/core/self-upgrade.ts';
@@ -56,6 +56,8 @@ interface FakeRepo {
   records?: Record<string, string>;
   /** The remote stable-record branch head (fetched into refs/remotes/origin/stable-record); absent before the first promotion. */
   recordBranch?: string;
+  /** What `git show v<version>:CHANGELOG.md` prints; absent: the tag has no CHANGELOG.md. */
+  changelog?: string;
 }
 
 const ok = (stdout = ''): GitResult => ({ code: 0, stdout: `${stdout}\n`, stderr: '' });
@@ -78,6 +80,7 @@ function fakeGit(repo: FakeRepo, calls: string[]) {
     if (cmd === 'mktree') { const id = `tree-${++objects}`; trees[id] = /blob (\S+)	stable\.json/.exec(input ?? '')![1]!; return ok(id); }
     if (cmd === 'commit-tree') { const id = `rec-${++objects}`; (repo.records ??= {})[id] = blobs[trees[rest[0]!]!]!; return ok(id); }
     if (cmd === 'rev-parse' && rest.at(-1) === 'refs/remotes/origin/stable-record^{commit}') return repo.recordBranch ? ok(repo.recordBranch) : fail;
+    if (cmd === 'show' && rest[0]!.endsWith(':CHANGELOG.md')) return repo.changelog === undefined ? fail : ok(repo.changelog);
     if (cmd === 'show' && rest[0]!.endsWith(':stable.json')) {
       const body = repo.records?.[rest[0]!.replace(/:stable\.json$/, '')];
       return body === undefined ? fail : ok(body);
@@ -133,7 +136,9 @@ interface Setup {
   role?: { permission: string; role_name?: string };
   run?: SoakRun;
   /** The GitHub release for the tag; null: there is none (404). */
-  release?: { draft: boolean } | null;
+  release?: { draft: boolean; id?: number } | null;
+  /** Make the release edit (marking it Latest) fail. */
+  failWrite?: boolean;
   soakWorkflow?: string;
   repo?: FakeRepo;
 }
@@ -143,6 +148,7 @@ function harness(setup: Setup = {}) {
   const api: string[] = [];
   const logs: string[] = [];
   const summaries: string[] = [];
+  const writes: Array<{ method: string; path: string; body: Record<string, unknown> }> = [];
   const repo: FakeRepo = setup.repo ?? {
     commits: { [sha('a')]: sha('1'), [sha('b')]: sha('2'), [sha('c')]: sha('3') },
     tags: { 'v0.60.360.0': { commit: sha('a') }, 'v0.60.361.0': { commit: sha('b') }, stable: { commit: sha('a'), object: 'tagobj-stable-old' }, 'stable-v0.60.360.0': { commit: sha('a'), object: 'tagobj-record-360' } },
@@ -158,16 +164,21 @@ function harness(setup: Setup = {}) {
       if (path.endsWith('/permission')) return setup.role ?? { permission: 'write', role_name: 'maintain' };
       if (path.includes('/releases/tags/')) {
         if (setup.release === null) throw new Error(`gh api ${path} failed: HTTP 404: Not Found`);
-        return setup.release ?? { draft: false };
+        return setup.release ?? { draft: false, id: 42 };
       }
       return run;
+    },
+    async ghApiWrite(method, path, body) {
+      if (setup.failWrite) throw new Error(`gh api ${method} ${path} failed: HTTP 502`);
+      writes.push({ method, path, body });
+      return {};
     },
     git: fakeGit(repo, calls),
     now: () => NOW,
     log: line => logs.push(line),
     summary: md => summaries.push(md),
   };
-  return { deps, calls, api, logs, summaries, repo };
+  return { deps, calls, api, logs, summaries, repo, writes };
 }
 
 const bad = (version: string, fixed_in = '0.60.365.0') => ({ version, reason: 'preview exceeds its statement bound', fixed_in });
@@ -532,8 +543,9 @@ describe('promote against real git', () => {
       const deps = (version: string): PromoteDeps => ({
         ...processDeps(env, work), repo: REPO, actor: 'alice-example', soakWorkflow: 'soak.yml', now: () => NOW, log: () => {}, summary: () => {},
         ghApi: async path => (path.endsWith('/permission') ? { permission: 'admin', role_name: 'admin' }
-          : path.includes('/releases/tags/') ? { draft: false }
+          : path.includes('/releases/tags/') ? { draft: false, id: 7 }
           : { ...run, head_sha: git(work, 'rev-parse', `v${version}^{commit}`) }),
+        ghApiWrite: async () => ({}),
       });
 
       await promote(deps('1.0.0'), inputs({ version: '1.0.0' }));
@@ -650,7 +662,7 @@ describe('stable.json bridge for a stable promoted before the evidence record (G
 
   test('the soak run is verified again: a failed run writes nothing', async () => {
     const h = preRecord();
-    h.deps.ghApi = async path => (path.endsWith('/permission') ? { permission: 'admin' } : path.includes('/releases/') ? { draft: false } : { status: 'completed', conclusion: 'failure', path: SOAK, head_sha: sha('b') });
+    h.deps.ghApi = async path => (path.endsWith('/permission') ? { permission: 'admin' } : path.includes('/releases/') ? { draft: false, id: 42 } : { status: 'completed', conclusion: 'failure', path: SOAK, head_sha: sha('b') });
     await refusedAsync(promote(h.deps, inputs()), /concluded failure, not success/);
     expect(h.calls.filter(c => c.startsWith('push'))).toEqual([]);
   });
@@ -689,7 +701,8 @@ describe('stable.json bridge for a stable promoted before the evidence record (G
       const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
       const deps = (): PromoteDeps => ({
         ...processDeps(env, work), repo: REPO, actor: 'alice-example', soakWorkflow: 'soak.yml', now: () => NOW, log: () => {}, summary: () => {},
-        ghApi: async path => (path.endsWith('/permission') ? { permission: 'admin', role_name: 'admin' } : path.includes('/releases/tags/') ? { draft: false } : { status: 'completed', conclusion: 'success', path: SOAK, head_sha: commit }),
+        ghApi: async path => (path.endsWith('/permission') ? { permission: 'admin', role_name: 'admin' } : path.includes('/releases/tags/') ? { draft: false, id: 7 } : { status: 'completed', conclusion: 'success', path: SOAK, head_sha: commit }),
+        ghApiWrite: async () => ({}),
       });
 
       await promote(deps(), inputs({ version: '1.0.0' }));
@@ -751,5 +764,77 @@ describe('promote-stable.yml', () => {
     }
     expect(steps[0]!.with).toMatchObject({ 'fetch-depth': 0 });
     expect(workflowYml).not.toMatch(/bun install|ci-bun-install/);
+  });
+});
+
+describe('GitHub Latest release', () => {
+  const CHANGELOG = [
+    '# Changelog', '',
+    '## [0.60.362.0] - 2026-10-22', '', 'Newer than the release.', '',
+    '## [0.60.361.0] - 2026-10-21', '', 'Second change.', '',
+    '## [0.60.360.5] - 2026-10-21', '', 'First change since stable.', '',
+    '## [0.60.360.0] - 2026-10-20', '', 'The previous stable.', '',
+  ].join('\n');
+
+  test('rolledUpNotes takes every entry after the previous stable up to the release, newest first', () => {
+    const notes = rolledUpNotes(CHANGELOG, '0.60.360.0', '0.60.361.0', REPO);
+    expect(notes.split('\n')[0]).toBe('Stable release v0.60.361.0: every change since the previous stable release, v0.60.360.0, newest first.');
+    expect(notes).toContain('## [0.60.361.0] - 2026-10-21\n\nSecond change.');
+    expect(notes).toContain('## [0.60.360.5] - 2026-10-21\n\nFirst change since stable.');
+    expect(notes.indexOf('0.60.361.0] -')).toBeLessThan(notes.indexOf('0.60.360.5] -'));
+    expect(notes).not.toContain('Newer than the release.');
+    expect(notes).not.toContain('The previous stable.');
+  });
+
+  test('rolledUpNotes with no previous stable is the release entry; with no entry it is the CHANGELOG link', () => {
+    const first = rolledUpNotes(CHANGELOG, null, '0.60.361.0', REPO);
+    expect(first).toContain('Second change.');
+    expect(first).not.toContain('First change since stable.');
+    expect(rolledUpNotes('', '0.60.360.0', '0.60.361.0', REPO)).toBe(`See [CHANGELOG.md](https://github.com/${REPO}/blob/v0.60.361.0/CHANGELOG.md) for v0.60.361.0.\n`);
+  });
+
+  test('rolledUpNotes drops the oldest entries past GitHub\'s size limit and links the rest', () => {
+    const big = (v: string) => [`## [${v}] - 2026-10-21`, '', 'x'.repeat(50_000), ''].join('\n');
+    const notes = rolledUpNotes(['0.60.363.0', '0.60.362.0', '0.60.361.0'].map(big).join('\n'), '0.60.360.0', '0.60.363.0', REPO);
+    expect(notes.length).toBeLessThanOrEqual(RELEASE_NOTES_MAX);
+    expect(notes).toContain('## [0.60.363.0]');
+    expect(notes).not.toContain('## [0.60.361.0]');
+    expect(notes).toContain(`1 older entry is in [CHANGELOG.md](https://github.com/${REPO}/blob/v0.60.363.0/CHANGELOG.md).`);
+  });
+
+  test('a forward promotion marks the release Latest, clears pre-release and writes the rolled-up notes, after the push', async () => {
+    const h = harness();
+    h.repo.changelog = CHANGELOG;
+    await promote(h.deps, inputs());
+    expect(h.writes).toHaveLength(1);
+    expect(h.writes[0]).toMatchObject({ method: 'PATCH', path: `repos/${REPO}/releases/42`, body: { prerelease: false, make_latest: 'true' } });
+    expect(h.writes[0]!.body.body).toBe(rolledUpNotes(CHANGELOG, '0.60.360.0', '0.60.361.0', REPO));
+    expect(h.calls.findIndex(c => c.startsWith('push'))).toBeGreaterThanOrEqual(0);
+    expect(h.logs.at(-1)).toContain('the GitHub release v0.60.361.0 is now Latest, with notes rolled up');
+  });
+
+  test('a rollback marks the older release Latest and keeps its notes', async () => {
+    const h = harness({ run: { status: 'completed', conclusion: 'success', path: SOAK, head_sha: sha('c') } });
+    h.repo.tags['v0.60.359.0'] = { commit: sha('c') };
+    await promote(h.deps, inputs({ version: '0.60.359.0', rollback: true, reason: 'regression in 0.60.360.0' }));
+    expect(h.writes).toHaveLength(1);
+    expect(h.writes[0]!.body).toEqual({ prerelease: false, make_latest: 'true' });
+  });
+
+  test('a failed push marks nothing Latest; a failed release edit after the push says stable moved and names the repair', async () => {
+    const pushFails = harness();
+    pushFails.repo.failPush = true;
+    await refusedAsync(promote(pushFails.deps, inputs()), /Moving the stable tag failed/);
+    expect(pushFails.writes).toHaveLength(0);
+
+    const editFails = harness({ failWrite: true });
+    await refusedAsync(promote(editFails.deps, inputs()), /stable now points at v0\.60\.361\.0, but marking its GitHub release Latest failed \(gh api PATCH .* HTTP 502\); run `bun scripts\/release-channel\.ts backfill --apply`/);
+    expect(editFails.repo.remote!.stable).not.toBe('tagobj-stable-old');
+  });
+
+  test('a release with no id refuses before anything moves', async () => {
+    const h = harness({ release: { draft: false } });
+    await refusedAsync(promote(h.deps, inputs()), /has no id, so it cannot be marked Latest/);
+    expect(h.calls.some(c => c.startsWith('push'))).toBe(false);
   });
 });
