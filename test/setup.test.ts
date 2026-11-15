@@ -38,6 +38,7 @@ import { hookLauncherFix, hookLauncherProblems } from '../src/commands/doctor/ch
 import { launcherLaneFindings, setupRerunArgv } from '../src/core/setup/launcher-lanes.ts';
 import { harnessWiringEntry } from '../src/core/readiness.ts';
 import { applyClaudeSetup, readSetupReceipt } from '../src/core/setup/claude-code.ts';
+import { CODEX_FORWARDED_PROVIDER_ENV } from '../src/core/setup/codex.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
 const roots: string[] = [];
@@ -565,7 +566,8 @@ describe('gbrain setup codex: install lifecycle', () => {
     expect(first.doc.consent.capture).toMatchObject({ value: 'declined', source: 'default' });
     expect(first.doc.notices.find((n: any) => n.code === 'first_run_decisions').user_message).toContain('Report back (Wakeshift): off. gbrain wakeshift enable turns it on.');
     expect(readJson(join(b.gbrainHome, '.gbrain', 'config.json')).embedding_disabled).toBe(true);
-    expect(toml(b).mcp_servers.gbrain).toEqual({ command: launcher(b), args: [b.bin, 'serve', '--surface', 'starter', '--advertise', 'verbs'], env: { GBRAIN_HOME: b.gbrainHome } });
+    expect(toml(b).mcp_servers.gbrain).toEqual({ command: launcher(b), args: [b.bin, 'serve', '--surface', 'starter', '--advertise', 'verbs'], env: { GBRAIN_HOME: b.gbrainHome },
+      env_vars: [...CODEX_FORWARDED_PROVIDER_ENV] });
     expect(Object.keys(readJson(hooksJson(b)).hooks).sort()).toEqual(['SessionStart', 'UserPromptSubmit']);
     expect(groups(b, 'UserPromptSubmit')).toEqual([{ hooks: [{ type: 'command', timeout: 15,
       command: `env GBRAIN_HOOK_LANE=setup GBRAIN_HOME=${b.gbrainHome} ${b.gbrainHome}/.gbrain/hook-launcher/gbrain-hook ${b.bin} hook user-prompt --harness codex` }] }]);
@@ -732,7 +734,7 @@ describe('gbrain setup codex: install lifecycle', () => {
     expect(readFileSync(codexToml(b), 'utf8')).toBe(foreign);
     expect(existsSync(hooksJson(b))).toBe(false);
 
-    const same = `[mcp_servers.gbrain]\ncommand = ${JSON.stringify(launcher(b))}\nargs = [${JSON.stringify(b.bin)}, "serve", "--surface", "starter"]\nenv = { GBRAIN_HOME = ${JSON.stringify(b.gbrainHome)} }\n`;
+    const same = `[mcp_servers.gbrain]\ncommand = ${JSON.stringify(launcher(b))}\nargs = [${JSON.stringify(b.bin)}, "serve", "--surface", "starter"]\nenv = { GBRAIN_HOME = ${JSON.stringify(b.gbrainHome)} }\nenv_vars = [${CODEX_FORWARDED_PROVIDER_ENV.map(n => JSON.stringify(n)).join(', ')}]\n`;
     writeFileSync(codexToml(b), same);
     expect((await setup(b, ['codex'])).exitCode).toBe(0);
     expect(readJson(codexReceipt(b)).mcp_adopted).toBe(true);

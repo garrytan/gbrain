@@ -140,12 +140,32 @@ export function readCodexSetupReceipt(receiptPath: string): { setup: CodexSetupR
 
 const writeReceipt = (path: string, receipt: CodexSetupReceipt) => atomicWriteTextFile(path, `${JSON.stringify(receipt, null, 2)}\n`, { forceMode: 0o600 });
 
+/**
+ * Provider key and endpoint names Codex forwards from its own environment to
+ * serve. Codex starts stdio servers with a scrubbed environment, so a key the
+ * user exported never reached serve and search stayed keyword-only. Names
+ * only: Codex reads each value from its own environment at launch and skips
+ * a name that is unset, so no value is ever written to config.toml. The
+ * provider subset of the plugin lane's .codex-plugin/mcp.json env_vars
+ * (test/setup-codex-env-vars.test.ts keeps them equal).
+ */
+export const CODEX_FORWARDED_PROVIDER_ENV: readonly string[] = [
+  'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'AZURE_OPENAI_API_KEY', 'DASHSCOPE_API_KEY', 'DEEPGRAM_API_KEY', 'DEEPSEEK_API_KEY',
+  'GEMINI_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY', 'GOOGLE_GENERATIVE_AI_BASE_URL', 'GROQ_API_KEY', 'JEV_TYPESAFE_API_KEY',
+  'LITELLM_API_KEY', 'LITELLM_BASE_URL', 'LLAMA_SERVER_API_KEY', 'LLAMA_SERVER_BASE_URL', 'LLAMA_SERVER_RERANKER_API_KEY',
+  'LLAMA_SERVER_RERANKER_BASE_URL', 'LMSTUDIO_API_KEY', 'LMSTUDIO_BASE_URL', 'MINIMAX_API_KEY', 'MISTRAL_API_KEY', 'MOONSHOT_API_KEY',
+  'NAN_API_KEY', 'NVIDIA_API_KEY', 'OLLAMA_API_KEY', 'OLLAMA_BASE_URL', 'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENROUTER_API_KEY',
+  'OPENROUTER_BASE_URL', 'PARTICLE_API_KEY', 'PERPLEXITY_API_KEY', 'PPLX_API_KEY', 'TOGETHER_API_KEY', 'TYPESAFE_API_KEY',
+  'VOYAGE_API_KEY', 'ZHIPUAI_API_KEY',
+];
+
 export function desiredCodexMcpEntry(plan: Pick<CodexSetupPlan, 'launcher' | 'brainHome' | 'surface' | 'advertise' | 'gbrainHomeEnv' | 'sourceId' | 'stdioMember'>): Record<string, CodexTomlValue> {
   const env: Record<string, string> = {};
   if (plan.gbrainHomeEnv) env.GBRAIN_HOME = plan.gbrainHomeEnv;
   if (plan.sourceId) env.GBRAIN_SOURCE = plan.sourceId;
   // Codex starts stdio servers in the session's directory, so serve starts through the launcher too (#8426).
-  return { command: hookLauncherPath(plan.brainHome), args: stdioServeArgv(plan.launcher, plan.surface, plan.advertise, plan.stdioMember), ...(Object.keys(env).length ? { env } : {}) };
+  return { command: hookLauncherPath(plan.brainHome), args: stdioServeArgv(plan.launcher, plan.surface, plan.advertise, plan.stdioMember), ...(Object.keys(env).length ? { env } : {}),
+    env_vars: [...CODEX_FORWARDED_PROVIDER_ENV] };
 }
 
 function desiredGroups(plan: CodexSetupPlan): Partial<Record<CodexSetupEvent, CodexHookGroup>> {
