@@ -8,7 +8,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isCwdDotenvProtectedKey } from '../src/core/env-trust.ts';
+import { isCwdDotenvProtectedKey, quarantineCwdDotenv } from '../src/core/env-trust.ts';
 import { cliGatewayTransport, openclawGatewayReader } from '../src/core/transcripts/openclaw-gateway.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -101,8 +101,16 @@ describe('openclaw gateway call child environment', () => {
   chmodSync(envBin, 0o755);
   const lastEnv = () => JSON.parse(readFileSync(envLog, 'utf8').trim().split('\n').pop()!) as Record<string, string>;
 
-  test('a planted OPENCLAW_GATEWAY_URL in the parent environment never reaches the child', async () => {
+  const planted = (line: string) => {
+    const project = mkdtempSync(join(dir, 'project-'));
+    writeFileSync(join(project, '.env'), line + '\n');
+    return () => quarantineCwdDotenv(process.env, project, { warn: () => {} });
+  };
+
+  test('a planted OPENCLAW_GATEWAY_URL in a working-folder .env never reaches the child', async () => {
+    const quarantine = planted('OPENCLAW_GATEWAY_URL=wss://planted.invalid');
     await withEnv({ OPENCLAW_GATEWAY_URL: 'wss://planted.invalid', GBRAIN_OPENCLAW_GATEWAY_URL: undefined, GBRAIN_OPENCLAW_GATEWAY_TOKEN: 'tok-synthetic-0002' }, async () => {
+      quarantine();
       await cliGatewayTransport({ bin: envBin }).call('sessions.list', {});
     });
     const env = lastEnv();
@@ -110,13 +118,24 @@ describe('openclaw gateway call child environment', () => {
     expect(env.OPENCLAW_GATEWAY_TOKEN).toBe('tok-synthetic-0002');
   }, 30_000);
 
-  test('a planted OPENCLAW_GATEWAY_TOKEN in the parent environment never reaches the child', async () => {
+  test('a planted OPENCLAW_GATEWAY_TOKEN in a working-folder .env never reaches the child', async () => {
+    const quarantine = planted('OPENCLAW_GATEWAY_TOKEN=tok-planted-0003');
     await withEnv({ OPENCLAW_GATEWAY_TOKEN: 'tok-planted-0003', GBRAIN_OPENCLAW_GATEWAY_TOKEN: undefined, GBRAIN_OPENCLAW_GATEWAY_URL: 'ws://127.0.0.1:18789' }, async () => {
+      quarantine();
       await cliGatewayTransport({ bin: envBin }).call('sessions.list', {});
     });
     const env = lastEnv();
     expect(env.OPENCLAW_GATEWAY_TOKEN).toBeUndefined();
     expect(env.OPENCLAW_GATEWAY_URL).toBe('ws://127.0.0.1:18789');
+  }, 30_000);
+
+  test('a stock OpenClaw environment with no GBRAIN_ variables reaches the Gateway', async () => {
+    await withEnv({ OPENCLAW_GATEWAY_URL: 'ws://127.0.0.1:18790', OPENCLAW_GATEWAY_TOKEN: 'tok-stock-0005', GBRAIN_OPENCLAW_GATEWAY_URL: undefined, GBRAIN_OPENCLAW_GATEWAY_TOKEN: undefined }, async () => {
+      await cliGatewayTransport({ bin: envBin }).call('sessions.list', {});
+    });
+    const env = lastEnv();
+    expect(env.OPENCLAW_GATEWAY_URL).toBe('ws://127.0.0.1:18790');
+    expect(env.OPENCLAW_GATEWAY_TOKEN).toBe('tok-stock-0005');
   }, 30_000);
 
   test('the child gets only PATH, HOME, locale and the resolved Gateway URL and token from the parent', async () => {

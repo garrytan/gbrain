@@ -111,8 +111,10 @@ export function cliGatewayTransport(opts: {
   const bin = opts.bin ?? 'openclaw';
   const maxOutputBytes = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const launch = opts.spawn ?? execFileBounded;
-  const url = opts.url ?? process.env.GBRAIN_OPENCLAW_GATEWAY_URL;
-  const token = opts.token ?? process.env.GBRAIN_OPENCLAW_GATEWAY_TOKEN;
+  // OpenClaw's own OPENCLAW_GATEWAY_URL/_TOKEN count when gbrain's are unset: a working-folder .env cannot set them (env-trust).
+  const { GBRAIN_OPENCLAW_GATEWAY_URL, GBRAIN_OPENCLAW_GATEWAY_TOKEN, OPENCLAW_GATEWAY_URL, OPENCLAW_GATEWAY_TOKEN } = process.env;
+  const url = opts.url ?? GBRAIN_OPENCLAW_GATEWAY_URL ?? OPENCLAW_GATEWAY_URL;
+  const token = opts.token ?? GBRAIN_OPENCLAW_GATEWAY_TOKEN ?? OPENCLAW_GATEWAY_TOKEN;
   const timeoutMs = opts.timeoutMs ?? 60_000;
   return {
     call(method, params) {
