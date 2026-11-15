@@ -526,6 +526,27 @@ for (const kind of testBackends()) {
       await expectCarriedHidden(k);
     }, 240_000);
 
+    test('restoring a parked origin drops its park: doctor stops naming it, and the next purge run deletes the park row (GST-2128, #9347 finding 6)', async () => {
+      const k = 'restorepark';
+      await seed(k);
+      const origin = slugOf(k, 'origin');
+      const failing = spyOn(labelWrite, 'importAtRevision').mockImplementation(async () => { throw new Error('forced label failure'); });
+      let held: Record<string, any>;
+      try { held = JSON.parse((await localCall('delete_page', { slug: origin, purge: true, request_id: randomUUID(), expected_revision: await revision(origin) })).text); }
+      finally { failing.mockRestore(); }
+      expect(held.purge_held?.code).toBe('derived_origin_parked');
+      const id = String((await row(origin))!.id);
+      const parkRows = async () => (await engine.executeRaw('SELECT 1 FROM op_checkpoints WHERE op = $1 AND fingerprint = $2', ['derived-origin-park', id])).length;
+      expect((await readDerivedOriginParks(engine)).map(park => park.slug)).toContain(origin);
+      const restored = await localCall('restore_page', { slug: origin, request_id: randomUUID(), expected_revision: await revision(origin) });
+      expect(restored.isError ? restored.text : '').toBe('');
+      expect((await row(origin))?.deleted_at).toBeNull();
+      expect((await readDerivedOriginParks(engine)).map(park => park.slug)).not.toContain(origin);
+      await purgeDeletedPagesCoordinated(engine, 72, { automatic: true });
+      expect(await parkRows()).toBe(0);
+      expect((await row(origin))?.deleted_at).toBeNull();
+    }, 240_000);
+
     test('an explicit purge rechecks inside its transaction: a derived page written after the carry keeps the origin soft-deleted and parked', async () => {
       const k = 'midsingle';
       await seed(k);
