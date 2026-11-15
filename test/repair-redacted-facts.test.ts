@@ -57,6 +57,12 @@ async function refusal(run: () => Promise<unknown>): Promise<OperationError> {
 
 const factText = async (engine: BrainEngine, id: number) =>
   (await engine.executeRaw<{ fact: string; active: boolean }>('SELECT fact, expired_at IS NULL AS active FROM facts WHERE id=$1', [id]))[0];
+const CONVERSATION = 'conversations/planning-call';
+const insertExtractorFact = async (db: BrainEngine, fact: string, rowNum: number) => Number((await db.executeRaw<{ id: number }>(`INSERT INTO facts
+  (source_id, entity_slug, fact, kind, visibility, source, context, row_num, source_markdown_slug)
+  VALUES ('default', $1, $2, 'fact', 'private', 'cli:extract-conversation-facts', $3, $4, $3) RETURNING id`, [ACME, fact, CONVERSATION, rowNum]))[0].id);
+const extractorRow = async (engine: BrainEngine, id: number) => (await engine.executeRaw<{ fact: string; row_num: number; source_markdown_slug: string; active: boolean }>(
+  'SELECT fact, row_num::int AS row_num, source_markdown_slug, expired_at IS NULL AS active FROM facts WHERE id=$1', [id]))[0];
 const putPage = (ctx: OperationContext, slug: string, content: string) =>
   submitPageMutation(ctx, { operation: 'put_page', params: { request_id: randomUUID(), slug, source_id: 'default', content } });
 
@@ -155,6 +161,22 @@ ${SOURCE_TEXT}
         expect((await factText(engine, id)).fact).toBe(EXOS_DAMAGED);
       }, { databaseUrl });
     }, 180_000);
+
+    test('#8820: a conversation-extractor row (legacy row number, no Facts fence) is restored in place; its page is unchanged', async () => {
+      await managedBrain(async ({ engine, ctx }) => {
+        await putPage(ctx, CONVERSATION, `---\ntype: note\ntitle: Planning call\n---\n${SOURCE_TEXT}\n`);
+        const before = (await engine.readPageSnapshot(CONVERSATION, { sourceId: 'default' }))!;
+        const id = await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => insertExtractorFact(tx, ABS_DAMAGED, 3), TEST_WRITE_ATTRIBUTION));
+        const preview = await repair(engine, []);
+        expect(preview.results[0].residuals).toEqual({ evidenced: 1, ambiguous: 0, unproven: 0, segmented: 0 });
+        expect((await repair(engine, applyArgs(preview))).results[0].outcomes).toEqual({ restored: 1 });
+        expect(await extractorRow(engine, id)).toEqual({ fact: ABS_RESTORED, row_num: 3, source_markdown_slug: CONVERSATION, active: true });
+        const after = (await engine.readPageSnapshot(CONVERSATION, { sourceId: 'default' }))!;
+        expect(after.revision).toBe(before.revision);
+        expect(after.page.compiled_truth).toBe(before.page.compiled_truth);
+        expect((await factsRedactionMarkerCheck(engine)).status).toBe('ok');
+      }, { databaseUrl });
+    }, 180_000);
   });
 
   describe(`gbrain repair redacted-facts, unmanaged (${backend})`, () => {
@@ -202,6 +224,21 @@ ${SOURCE_TEXT}
       expect((await factText(engine, dbOnly)).fact).toBe(EXOS_RESTORED);
       expect((await factText(engine, fenced)).fact).toBe(ABS_DAMAGED);
       await engine.executeRaw('DELETE FROM facts WHERE id=$1', [fenced]);
+    }, 120_000);
+
+    test('#8820: a conversation-extractor row is restored in place; a fenced row number whose fence row is gone is not', async () => {
+      await engine.putPage(CONVERSATION, { type: 'note', title: 'Planning call', compiled_truth: SOURCE_TEXT }, { sourceId: 'default' });
+      const id = await insertExtractorFact(engine, ABS_DAMAGED, 3);
+      const other = Number((await engine.executeRaw<{ id: number }>(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, row_num, source_markdown_slug)
+        VALUES ('default', NULL, $1, 'fact', 'private', 'mcp:put_page', 4, $2) RETURNING id`, [EXOS_DAMAGED, CONVERSATION]))[0].id);
+      const preview = await repair(engine, []);
+      const listed = Object.fromEntries(preview.results[0].listing!.map(l => [Number(l.item.split('#')[1]), l.class]));
+      expect(listed[id]).toBe('evidenced');
+      expect(listed[other]).not.toBe('evidenced');
+      expect((await repair(engine, applyArgs(preview))).results[0].outcomes).toEqual({ restored: 1 });
+      expect(await extractorRow(engine, id)).toEqual({ fact: ABS_RESTORED, row_num: 3, source_markdown_slug: CONVERSATION, active: true });
+      expect((await factText(engine, other)).fact).toBe(EXOS_DAMAGED);
+      await engine.executeRaw('DELETE FROM facts WHERE id = ANY($1::bigint[])', [[id, other]]);
     }, 120_000);
 
     test('the publication rewrites a row only while it is exactly as previewed (a change after the recheck wins)', async () => {
