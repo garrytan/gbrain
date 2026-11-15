@@ -151,6 +151,15 @@ describe('setupFirstRunNotices (gbrain setup <harness>)', () => {
     expect(n.why).toContain('do not hold the install open');
   });
 
+  test('a Codex setup prices the matrix with OpenAI models, not Claude ones', () => {
+    const [n] = setupFirstRunNotices(fromInit({ searchMode }), 'Codex');
+    const mode = n.decisions!.find(d => d.id === 'search_mode')!;
+    for (const text of [n.user_message!, mode.question]) {
+      expect(text).not.toContain('Haiku');
+      expect(text).toContain('GPT-5.6 Luna / GPT-5.6 Terra / GPT-5.6 Sol');
+    }
+  });
+
   test('the search-mode matrix still reaches the user and every option keeps its command', () => {
     const [n] = setupFirstRunNotices(fromInit({ searchMode }), 'Claude Code');
     expect(n.user_message).toContain(costMatrixSentence());

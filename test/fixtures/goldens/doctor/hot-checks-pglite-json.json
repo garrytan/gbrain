@@ -1077,6 +1077,144 @@
           },
           {
             "category": "brain",
+            "details": {
+              "docs": "docs/designs/GIT_CANONICAL_MEMORY.md#the-model",
+              "sources": [],
+              "warn_seconds": 900
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No source is strict (git-canonical), so no index trails a commit.",
+            "name": "git_index_lag",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "docs": "docs/designs/GIT_CANONICAL_MEMORY.md#the-git-gap-census",
+              "errors": [],
+              "informational": true,
+              "newest": 800,
+              "partial_sources": [],
+              "sources": [
+                {
+                  "complete": true,
+                  "declared": {
+                    "alias_private": 0,
+                    "database_only": 0,
+                    "database_only_source": 0,
+                    "db_only_prefix": 0,
+                    "derive_folder": 0,
+                    "git_ignored": 0,
+                    "lineage_private": 0,
+                    "mirror_source": 0,
+                    "private": 0
+                  },
+                  "live_pages": 19,
+                  "newest": 800,
+                  "newest_since": "<ts>",
+                  "pages": 19,
+                  "source_id": "notes",
+                  "states": {
+                    "database_ahead": 4,
+                    "declared_database_only": 0,
+                    "equal": 11,
+                    "git_ahead": 0,
+                    "undeclared_database_only": 0,
+                    "unparseable": 4,
+                    "unsafe_path": 0,
+                    "worktree_only": 0
+                  },
+                  "worktree": {
+                    "absent": 0,
+                    "clean": 18,
+                    "deleted": 0,
+                    "modified": 1,
+                    "untracked": 0
+                  }
+                }
+              ],
+              "sources_without_git_checkout": 2,
+              "timeout_ms": "<volatile>"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 19 live page(s), 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
+            "name": "db_ahead_of_git",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "docs": "docs/guides/repair.md#facts-home",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No source is strict (git-canonical), so no fact is required to have a Git home.",
+            "name": "strict_facts_outside_git",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/troubleshooting.md#owner-host-stale",
+              "stale": [],
+              "stale_after_ms": "<volatile>"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No managed write is waiting on an owner host.",
+            "name": "owner_host_stale",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "by_source": [
+                {
+                  "checked": 0,
+                  "other_writer": 0,
+                  "source_id": "default",
+                  "status": "known",
+                  "sync_deleted": 0,
+                  "tombstones": 0,
+                  "truncated": false,
+                  "unknown": 0
+                },
+                {
+                  "checked": 0,
+                  "other_writer": 0,
+                  "source_id": "notes",
+                  "status": "known",
+                  "sync_deleted": 0,
+                  "tombstones": 0,
+                  "truncated": false,
+                  "unknown": 0
+                },
+                {
+                  "checked": 0,
+                  "other_writer": 0,
+                  "source_id": "plain",
+                  "status": "known",
+                  "sync_deleted": 0,
+                  "tombstones": 0,
+                  "truncated": false,
+                  "unknown": 0
+                }
+              ],
+              "count": 0,
+              "docs": "docs/guides/repair.md#uncommitted-deletions",
+              "exact": true,
+              "other_writer_count": 0,
+              "purged": "Pages already purged cannot be restored by this command; only a backup (pg_dump, or gbrain backup create taken before the purge) can bring them back.",
+              "samples": [],
+              "truncated": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No soft-deleted page was removed by a sync while Git never held its file (0 tombstone(s) checked).",
+            "name": "uncommitted_sync_deletions",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
             "elapsed_ms": "<volatile>",
             "message": "Not applicable: no page names readers and no member exists.",
             "name": "access_readers_malformed",
@@ -4029,54 +4167,6 @@
           {
             "category": "brain",
             "details": {
-              "by_source": [
-                {
-                  "checked": 0,
-                  "other_writer": 0,
-                  "source_id": "default",
-                  "status": "known",
-                  "sync_deleted": 0,
-                  "tombstones": 0,
-                  "truncated": false,
-                  "unknown": 0
-                },
-                {
-                  "checked": 0,
-                  "other_writer": 0,
-                  "source_id": "notes",
-                  "status": "known",
-                  "sync_deleted": 0,
-                  "tombstones": 0,
-                  "truncated": false,
-                  "unknown": 0
-                },
-                {
-                  "checked": 0,
-                  "other_writer": 0,
-                  "source_id": "plain",
-                  "status": "known",
-                  "sync_deleted": 0,
-                  "tombstones": 0,
-                  "truncated": false,
-                  "unknown": 0
-                }
-              ],
-              "count": 0,
-              "docs": "docs/guides/repair.md#uncommitted-deletions",
-              "exact": true,
-              "other_writer_count": 0,
-              "purged": "Pages already purged cannot be restored by this command; only a backup (pg_dump, or gbrain backup create taken before the purge) can bring them back.",
-              "samples": [],
-              "truncated": false
-            },
-            "elapsed_ms": "<volatile>",
-            "message": "No soft-deleted page was removed by a sync while Git never held its file (0 tombstone(s) checked).",
-            "name": "uncommitted_sync_deletions",
-            "status": "ok"
-          },
-          {
-            "category": "brain",
-            "details": {
               "docs": "docs/guides/repair.md#unindexed-files",
               "sources": [
                 {
@@ -4257,80 +4347,6 @@
           {
             "category": "brain",
             "details": {
-              "docs": "docs/designs/GIT_CANONICAL_MEMORY.md#the-git-gap-census",
-              "errors": [],
-              "informational": true,
-              "partial_sources": [],
-              "sources": [
-                {
-                  "complete": true,
-                  "declared": {
-                    "alias_private": 0,
-                    "database_only": 0,
-                    "database_only_source": 0,
-                    "db_only_prefix": 0,
-                    "derive_folder": 0,
-                    "git_ignored": 0,
-                    "lineage_private": 0,
-                    "mirror_source": 0,
-                    "private": 0
-                  },
-                  "live_pages": 19,
-                  "pages": 19,
-                  "source_id": "notes",
-                  "states": {
-                    "database_ahead": 4,
-                    "declared_database_only": 0,
-                    "equal": 11,
-                    "git_ahead": 0,
-                    "undeclared_database_only": 0,
-                    "unparseable": 4,
-                    "unsafe_path": 0,
-                    "worktree_only": 0
-                  },
-                  "worktree": {
-                    "absent": 0,
-                    "clean": 18,
-                    "deleted": 0,
-                    "modified": 1,
-                    "untracked": 0
-                  }
-                }
-              ],
-              "sources_without_git_checkout": 2,
-              "timeout_ms": "<volatile>"
-            },
-            "elapsed_ms": "<volatile>",
-            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 19 live page(s), 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
-            "name": "db_ahead_of_git",
-            "status": "ok"
-          },
-          {
-            "category": "brain",
-            "details": {
-              "docs": "docs/designs/GIT_CANONICAL_MEMORY.md#the-model",
-              "sources": [],
-              "warn_seconds": 900
-            },
-            "elapsed_ms": "<volatile>",
-            "message": "No source is strict (git-canonical), so no index trails a commit.",
-            "name": "git_index_lag",
-            "status": "ok"
-          },
-          {
-            "category": "brain",
-            "details": {
-              "docs": "docs/guides/repair.md#facts-home",
-              "sources": []
-            },
-            "elapsed_ms": "<volatile>",
-            "message": "No source is strict (git-canonical), so no fact is required to have a Git home.",
-            "name": "strict_facts_outside_git",
-            "status": "ok"
-          },
-          {
-            "category": "brain",
-            "details": {
               "docs": "docs/guides/write-refusals.md#file_database_drift",
               "sources": []
             },
@@ -4349,19 +4365,6 @@
             "elapsed_ms": "<volatile>",
             "message": "No fact, take or link is indexed from a fence on an imported email, calendar, GitHub or transcript page.",
             "name": "outside_content_fences",
-            "status": "ok"
-          },
-          {
-            "category": "ops",
-            "details": {
-              "count": 0,
-              "docs": "docs/guides/troubleshooting.md#owner-host-stale",
-              "stale": [],
-              "stale_after_ms": "<volatile>"
-            },
-            "elapsed_ms": "<volatile>",
-            "message": "No managed write is waiting on an owner host.",
-            "name": "owner_host_stale",
             "status": "ok"
           },
           {
@@ -6455,6 +6458,144 @@
             "elapsed_ms": "<volatile>",
             "message": "Every derived page and fact carries a visibility no looser than its source, and no page relies on a privacy alias alone.",
             "name": "derived_visibility",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "docs": "docs/designs/GIT_CANONICAL_MEMORY.md#the-model",
+              "sources": [],
+              "warn_seconds": 900
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No source is strict (git-canonical), so no index trails a commit.",
+            "name": "git_index_lag",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "docs": "docs/designs/GIT_CANONICAL_MEMORY.md#the-git-gap-census",
+              "errors": [],
+              "informational": true,
+              "newest": 800,
+              "partial_sources": [],
+              "sources": [
+                {
+                  "complete": true,
+                  "declared": {
+                    "alias_private": 0,
+                    "database_only": 0,
+                    "database_only_source": 0,
+                    "db_only_prefix": 0,
+                    "derive_folder": 0,
+                    "git_ignored": 0,
+                    "lineage_private": 0,
+                    "mirror_source": 0,
+                    "private": 0
+                  },
+                  "live_pages": 19,
+                  "newest": 800,
+                  "newest_since": "<ts>",
+                  "pages": 19,
+                  "source_id": "notes",
+                  "states": {
+                    "database_ahead": 4,
+                    "declared_database_only": 0,
+                    "equal": 11,
+                    "git_ahead": 0,
+                    "undeclared_database_only": 0,
+                    "unparseable": 4,
+                    "unsafe_path": 0,
+                    "worktree_only": 0
+                  },
+                  "worktree": {
+                    "absent": 0,
+                    "clean": 18,
+                    "deleted": 0,
+                    "modified": 1,
+                    "untracked": 0
+                  }
+                }
+              ],
+              "sources_without_git_checkout": 2,
+              "timeout_ms": "<volatile>"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 19 live page(s), 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
+            "name": "db_ahead_of_git",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "docs": "docs/guides/repair.md#facts-home",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No source is strict (git-canonical), so no fact is required to have a Git home.",
+            "name": "strict_facts_outside_git",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/troubleshooting.md#owner-host-stale",
+              "stale": [],
+              "stale_after_ms": "<volatile>"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No managed write is waiting on an owner host.",
+            "name": "owner_host_stale",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "by_source": [
+                {
+                  "checked": 0,
+                  "other_writer": 0,
+                  "source_id": "default",
+                  "status": "known",
+                  "sync_deleted": 0,
+                  "tombstones": 0,
+                  "truncated": false,
+                  "unknown": 0
+                },
+                {
+                  "checked": 0,
+                  "other_writer": 0,
+                  "source_id": "notes",
+                  "status": "known",
+                  "sync_deleted": 0,
+                  "tombstones": 0,
+                  "truncated": false,
+                  "unknown": 0
+                },
+                {
+                  "checked": 0,
+                  "other_writer": 0,
+                  "source_id": "plain",
+                  "status": "known",
+                  "sync_deleted": 0,
+                  "tombstones": 0,
+                  "truncated": false,
+                  "unknown": 0
+                }
+              ],
+              "count": 0,
+              "docs": "docs/guides/repair.md#uncommitted-deletions",
+              "exact": true,
+              "other_writer_count": 0,
+              "purged": "Pages already purged cannot be restored by this command; only a backup (pg_dump, or gbrain backup create taken before the purge) can bring them back.",
+              "samples": [],
+              "truncated": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No soft-deleted page was removed by a sync while Git never held its file (0 tombstone(s) checked).",
+            "name": "uncommitted_sync_deletions",
             "status": "ok"
           },
           {
@@ -9423,54 +9564,6 @@
           {
             "category": "brain",
             "details": {
-              "by_source": [
-                {
-                  "checked": 0,
-                  "other_writer": 0,
-                  "source_id": "default",
-                  "status": "known",
-                  "sync_deleted": 0,
-                  "tombstones": 0,
-                  "truncated": false,
-                  "unknown": 0
-                },
-                {
-                  "checked": 0,
-                  "other_writer": 0,
-                  "source_id": "notes",
-                  "status": "known",
-                  "sync_deleted": 0,
-                  "tombstones": 0,
-                  "truncated": false,
-                  "unknown": 0
-                },
-                {
-                  "checked": 0,
-                  "other_writer": 0,
-                  "source_id": "plain",
-                  "status": "known",
-                  "sync_deleted": 0,
-                  "tombstones": 0,
-                  "truncated": false,
-                  "unknown": 0
-                }
-              ],
-              "count": 0,
-              "docs": "docs/guides/repair.md#uncommitted-deletions",
-              "exact": true,
-              "other_writer_count": 0,
-              "purged": "Pages already purged cannot be restored by this command; only a backup (pg_dump, or gbrain backup create taken before the purge) can bring them back.",
-              "samples": [],
-              "truncated": false
-            },
-            "elapsed_ms": "<volatile>",
-            "message": "No soft-deleted page was removed by a sync while Git never held its file (0 tombstone(s) checked).",
-            "name": "uncommitted_sync_deletions",
-            "status": "ok"
-          },
-          {
-            "category": "brain",
-            "details": {
               "docs": "docs/guides/repair.md#unindexed-files",
               "sources": [
                 {
@@ -9651,80 +9744,6 @@
           {
             "category": "brain",
             "details": {
-              "docs": "docs/designs/GIT_CANONICAL_MEMORY.md#the-git-gap-census",
-              "errors": [],
-              "informational": true,
-              "partial_sources": [],
-              "sources": [
-                {
-                  "complete": true,
-                  "declared": {
-                    "alias_private": 0,
-                    "database_only": 0,
-                    "database_only_source": 0,
-                    "db_only_prefix": 0,
-                    "derive_folder": 0,
-                    "git_ignored": 0,
-                    "lineage_private": 0,
-                    "mirror_source": 0,
-                    "private": 0
-                  },
-                  "live_pages": 19,
-                  "pages": 19,
-                  "source_id": "notes",
-                  "states": {
-                    "database_ahead": 4,
-                    "declared_database_only": 0,
-                    "equal": 11,
-                    "git_ahead": 0,
-                    "undeclared_database_only": 0,
-                    "unparseable": 4,
-                    "unsafe_path": 0,
-                    "worktree_only": 0
-                  },
-                  "worktree": {
-                    "absent": 0,
-                    "clean": 18,
-                    "deleted": 0,
-                    "modified": 1,
-                    "untracked": 0
-                  }
-                }
-              ],
-              "sources_without_git_checkout": 2,
-              "timeout_ms": "<volatile>"
-            },
-            "elapsed_ms": "<volatile>",
-            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 19 live page(s), 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
-            "name": "db_ahead_of_git",
-            "status": "ok"
-          },
-          {
-            "category": "brain",
-            "details": {
-              "docs": "docs/designs/GIT_CANONICAL_MEMORY.md#the-model",
-              "sources": [],
-              "warn_seconds": 900
-            },
-            "elapsed_ms": "<volatile>",
-            "message": "No source is strict (git-canonical), so no index trails a commit.",
-            "name": "git_index_lag",
-            "status": "ok"
-          },
-          {
-            "category": "brain",
-            "details": {
-              "docs": "docs/guides/repair.md#facts-home",
-              "sources": []
-            },
-            "elapsed_ms": "<volatile>",
-            "message": "No source is strict (git-canonical), so no fact is required to have a Git home.",
-            "name": "strict_facts_outside_git",
-            "status": "ok"
-          },
-          {
-            "category": "brain",
-            "details": {
               "docs": "docs/guides/write-refusals.md#file_database_drift",
               "sources": []
             },
@@ -9743,19 +9762,6 @@
             "elapsed_ms": "<volatile>",
             "message": "No fact, take or link is indexed from a fence on an imported email, calendar, GitHub or transcript page.",
             "name": "outside_content_fences",
-            "status": "ok"
-          },
-          {
-            "category": "ops",
-            "details": {
-              "count": 0,
-              "docs": "docs/guides/troubleshooting.md#owner-host-stale",
-              "stale": [],
-              "stale_after_ms": "<volatile>"
-            },
-            "elapsed_ms": "<volatile>",
-            "message": "No managed write is waiting on an owner host.",
-            "name": "owner_host_stale",
             "status": "ok"
           },
           {

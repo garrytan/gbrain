@@ -181,4 +181,13 @@ describe('#8859 purged-page-facts repair, unmanaged PGLite', () => {
     await engine.executeRaw("UPDATE facts SET expired_at = now() WHERE expired_at IS NULL");
     await edgeCases(engine);
   }, 120_000);
+  test('a preview that lists only ambiguous rows prints an apply command that answers, not preview_changed (#9407)', async () => {
+    await engine.executeRaw("UPDATE facts SET expired_at = now() WHERE expired_at IS NULL");
+    const ambiguous = await fact(engine, 'An unrecorded example claim', 'notes/gone-example');
+    const preview = await repair(engine, []);
+    expect(preview.results[0]!.residuals).toMatchObject({ evidenced: 0, ambiguous: 1 });
+    const applied = await repair(engine, ['--apply', '--expect', hashOf(preview), '--yes']);
+    expect(applied.results[0]!.applied ?? 0).toBe(0);
+    expect(await active(engine, [ambiguous])).toEqual([ambiguous]);
+  }, 120_000);
 });

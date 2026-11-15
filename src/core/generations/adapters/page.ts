@@ -88,14 +88,21 @@ export async function importPageItem(tx: BrainEngine, sourceId: string, slug: st
   await importFromContent(tx, slug, content, { noEmbed: true, ...opts, sourceId, preserveGateMarkers: true });
 }
 
-/** Rows whose retained page version was written by the producer (`producer`: a predicate over version alias `v`) at the row's identity. */
+/**
+ * Rows whose retained page version was written by the producer (`producer`: a predicate over version alias `v`) at the row's identity.
+ * The version is compared under the row's own visibility, which `repair visibility` stamps after the fact (#9386); adoption keeps
+ * the row, so its visibility never widens.
+ */
 export async function pageVersionEvidence(engine: BrainEngine, sourceId: string, rows: readonly ItemRow[], producer: string): Promise<Set<string>> {
   if (!rows.length) return new Set();
-  const versions = await engine.executeRaw<PageIdentityInput & { slug: string; tags: string[] | null }>(
-    `SELECT p.slug, v.type, v.title, v.compiled_truth, v.timeline, v.frontmatter, v.tags
+  const versions = await engine.executeRaw<PageIdentityInput & { slug: string; tags: string[] | null; live_visibility: unknown }>(
+    `SELECT p.slug, v.type, v.title, v.compiled_truth, v.timeline, v.frontmatter, v.tags, p.frontmatter->'visibility' AS live_visibility
        FROM page_versions v JOIN pages p ON p.id = v.page_id
       WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND v.compiled_truth IS NOT NULL AND v.title IS NOT NULL AND (${producer})`,
     [sourceId, rows.map(row => row.key)]);
   const wanted = new Map(rows.map(row => [row.key, row.identityHash]));
-  return new Set(versions.filter(v => pageIdentityHash({ ...v, tags: v.tags ?? [] }) === wanted.get(v.slug)).map(v => v.slug));
+  return new Set(versions.filter(({ live_visibility, ...v }) => {
+    const { visibility: _ignored, ...frontmatter } = v.frontmatter ?? {};
+    return pageIdentityHash({ ...v, frontmatter: live_visibility == null ? frontmatter : { ...frontmatter, visibility: live_visibility }, tags: v.tags ?? [] }) === wanted.get(v.slug);
+  }).map(v => v.slug));
 }

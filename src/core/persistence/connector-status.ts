@@ -15,7 +15,7 @@ import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { CONNECTOR_STOPPED_RUNS, readManagedConnectorState, type ConnectorPurgedItem, type ConnectorRunCounts, type ConnectorRunFailure, type UpgradeRecovery } from './connector-state.ts';
 import { classifySyncFault, type SyncFaultVerdict } from './sync-fault-class.ts';
-import type { Action } from '../agent-output.ts';
+import { cliRenderContext, renderAction, type Action } from '../agent-output.ts';
 import { managedBrain, readAllSourceHolds } from '../connectors/item-holds-store.ts';
 import type { ItemHoldRecord } from '../connectors/item-holds.ts';
 import { fenceAutoRepairFor, gitHoldItem, readGitHoldListing, readSyncConversions, readSyncHoldPolicy, type GitHoldItem, type SyncConversion } from './sync-holds.ts';
@@ -188,8 +188,8 @@ export async function readGitHoldStatuses(engine: Pick<BrainEngine, 'executeRaw'
 export type GitHoldListing = { mode: 'summary' } | { mode: 'all' } | { mode: 'page'; request: ListingRequest };
 
 /** Held items per code, largest first, each with its first item as the example (its fix and docs apply to the rest). */
-function holdsByCode(items: readonly GitHoldItem[]): Array<{ code: string; count: number; example: GitHoldItem }> {
-  const groups = new Map<string, { code: string; count: number; example: GitHoldItem }>();
+function holdsByCode<T extends { code: string }>(items: readonly T[]): Array<{ code: string; count: number; example: T }> {
+  const groups = new Map<string, { code: string; count: number; example: T }>();
   for (const item of items) {
     const group = groups.get(item.code);
     if (group) group.count++;
@@ -198,9 +198,11 @@ function holdsByCode(items: readonly GitHoldItem[]): Array<{ code: string; count
   return [...groups.values()].sort((a, b) => b.count - a.count || (a.code < b.code ? -1 : 1));
 }
 
-/** A source's `git_holds` for `sources status --json`, summary first and items last, bounded by `listing`. */
+/** A source's `git_holds` for `sources status --json`, summary first and items last, bounded by `listing`; each fix rendered with the CLI routing pin (#9319). */
 export function gitHoldStatusJson(sourceId: string, status: GitHoldStatus, listing: GitHoldListing) {
-  const { items, ...rest } = status;
+  const ctx = cliRenderContext();
+  const { items: held, ...rest } = status;
+  const items = held.map(item => ({ ...item, fix: renderAction(item.fix, ctx) }));
   const head = { ...rest, by_code: holdsByCode(items) };
   if (listing.mode === 'all') return { ...head, items };
   if (listing.mode === 'page') {

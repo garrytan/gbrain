@@ -31,6 +31,13 @@ export const COST_MATRIX_MODELS: ReadonlyArray<{ label: string; id: string }> = 
   { label: 'Opus 5.5', id: 'anthropic:claude-opus-5-5' },
 ];
 
+/** The same three tiers in OpenAI's newest fully priced family, for a Codex setup. */
+export const OPENAI_COST_MATRIX_MODELS: ReadonlyArray<{ label: string; id: string }> = [
+  { label: 'GPT-5.6 Luna', id: 'openai:gpt-5.6-luna' },
+  { label: 'GPT-5.6 Terra', id: 'openai:gpt-5.6-terra' },
+  { label: 'GPT-5.6 Sol', id: 'openai:gpt-5.6-sol' },
+];
+
 /** Assumed retrieved payload per query, in tokens, for each mode. */
 export const COST_MATRIX_PAYLOAD_TOKENS: Readonly<Record<SearchMode, number>> = { conservative: 4_000, balanced: 10_000, tokenmax: 20_000 };
 export const COST_MATRIX_QUERIES_PER_MONTH = 10_000;
@@ -77,9 +84,9 @@ export function costMatrixLines(indent = '  '): string[] {
 }
 
 /** The matrix in one sentence (init's first-run decision). */
-export function costMatrixSentence(): string {
-  const labels = COST_MATRIX_MODELS.map(x => x.label).join(' / ');
-  const cells = MODES.map(m => `${m} ${COST_MATRIX_MODELS.map(x => usd(monthlyPayloadCost(m, x.id))).join(' / ')}`).join(', ');
+export function costMatrixSentence(models = COST_MATRIX_MODELS): string {
+  const labels = models.map(x => x.label).join(' / ');
+  const cells = MODES.map(m => `${m} ${models.map(x => usd(monthlyPayloadCost(m, x.id))).join(' / ')}`).join(', ');
   return `Estimated downstream input cost of the retrieved payload at ${COST_MATRIX_QUERIES_PER_MONTH / 1000}K queries/month (${labels}): ${cells} per month.`;
 }
 
