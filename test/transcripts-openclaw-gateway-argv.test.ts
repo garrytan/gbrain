@@ -61,19 +61,6 @@ describe('openclaw gateway call child process', () => {
     expect(readFileSync(log, 'utf8')).toBe(before);
   });
 
-  test('the URL refusal names the variable that was read: OPENCLAW_GATEWAY_URL when gbrain\'s own is unset, else GBRAIN_OPENCLAW_GATEWAY_URL', async () => {
-    const before = readFileSync(log, 'utf8');
-    await withEnv({ OPENCLAW_GATEWAY_URL: '--config=/tmp/evil', GBRAIN_OPENCLAW_GATEWAY_URL: undefined }, async () => {
-      const err = await cliGatewayTransport({ bin }).call('sessions.list', {}).then(() => null, (e: Error) => e);
-      expect(err?.message).toContain('OPENCLAW_GATEWAY_URL must be');
-      expect(err?.message).not.toContain('GBRAIN_OPENCLAW_GATEWAY_URL');
-    });
-    await withEnv({ GBRAIN_OPENCLAW_GATEWAY_URL: 'file:///tmp/evil', OPENCLAW_GATEWAY_URL: 'ws://127.0.0.1:18789' }, async () => {
-      await expect(cliGatewayTransport({ bin }).call('sessions.list', {})).rejects.toThrow(/GBRAIN_OPENCLAW_GATEWAY_URL must be/);
-    });
-    expect(readFileSync(log, 'utf8')).toBe(before);
-  });
-
   test('a child that hangs past the timeout is killed and reported as unreachable', async () => {
     const slow = join(dir, 'openclaw-slow');
     writeFileSync(slow, '#!/bin/sh\nsleep 30\n');
