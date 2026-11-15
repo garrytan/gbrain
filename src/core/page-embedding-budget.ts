@@ -119,9 +119,10 @@ async function segmentedSampleWindows(engine: BrainEngine, pageId: number): Prom
 /**
  * GST-2768: holds that apply to a page of any size. A small page is otherwise unmetered, so the conversation archive's
  * backfill (archive_backfill: waits for the owner's approval of the previewed cost) and its open day (archive_open_day:
- * waits until the day closes or goes quiet) name the page here and the embed paths skip it until then.
+ * waits until the day closes or goes quiet) name the page here and the embed paths skip it until then. GST-2731: an
+ * imported call transcript (call_import: gbrain import --calls) is held the same way until the owner approves it.
  */
-export const ANY_SIZE_HOLD_REASONS: readonly string[] = ['archive_backfill', 'archive_open_day'];
+export const ANY_SIZE_HOLD_REASONS: readonly string[] = ['archive_backfill', 'archive_open_day', 'call_import'];
 
 /**
  * One point read per plan: the archive's frontmatter hold marker (transcript_archive.embedding_hold) and the page's
@@ -131,7 +132,7 @@ export const ANY_SIZE_HOLD_REASONS: readonly string[] = ['archive_backfill', 'ar
  */
 async function readHolds(engine: BrainEngine, pageId: number): Promise<{ marker: string | null; state: string | null; reason: string | null }> {
   const [row] = await engine.executeRaw<{ marker: string | null; state: string | null; reason: string | null }>(
-    `SELECT p.frontmatter->'transcript_archive'->>'embedding_hold' AS marker, b.state, b.reason
+    `SELECT COALESCE(p.frontmatter->'transcript_archive'->>'embedding_hold', p.frontmatter->'call_import'->>'embedding_hold') AS marker, b.state, b.reason
      FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id WHERE p.id = $1`, [pageId]);
   return row ?? { marker: null, state: null, reason: null };
 }

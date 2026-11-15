@@ -10,13 +10,17 @@
  *     a --prefix value read as the import folder, a page written under conversations/.
  *  3. A new mode on an existing command; test/setup-brain-layout.test.ts covers it through gbrain setup.
  */
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
 import { callPageFor, listCallFiles } from '../src/commands/import-calls.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { parseMarkdown } from '../src/core/markdown.ts';
+import { planPageEmbedding } from '../src/core/page-embedding-budget.ts';
 
 const roots: string[] = [];
 afterAll(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }); });
@@ -61,6 +65,14 @@ describe('call pages', () => {
   });
 });
 
+describe('operations filter guard', () => {
+  test('accepts the call importer as a local put_page caller', () => {
+    const guard = spawnSync('bash', [join(import.meta.dir, '..', 'scripts/check-operations-filter-bypass.sh')], { encoding: 'utf8' });
+    expect(guard.stderr + guard.stdout).not.toContain('src/commands/import-calls.ts');
+    expect(guard.status).toBe(0);
+  });
+});
+
 describe('gbrain import --calls', () => {
   test('imports each call once, never overwrites a changed one, and reads --prefix before the folder', async () => {
     const root = temp('gbrain-calls-cli-');
@@ -99,4 +111,74 @@ describe('gbrain import --calls', () => {
     const listed = JSON.parse((await runCli(['list', '--json'], { env })).stdout) as Array<{ slug: string }>;
     expect(listed.some((p) => p.slug.startsWith('conversations/'))).toBe(false);
   }, 240_000);
+
+  test('a rerun finds each file by its path: a new modified day or a mixed-case prefix imports nothing twice', async () => {
+    const root = temp('gbrain-calls-rerun-');
+    const home = join(root, 'home');
+    mkdirSync(home);
+    const env = { HOME: home, GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_SOURCE: undefined, GBRAIN_SKIP_STARTUP_HOOKS: '1' };
+    expect((await runCli(['init', '--pglite', '--no-embedding', '--json'], { env })).exitCode).toBe(0);
+    const calls = join(root, 'calls');
+    mkdirSync(calls);
+    const kickoff = join(calls, 'kickoff.txt');
+    writeFileSync(kickoff, 'Kickoff with acme-example\nBob: onboarding first.\n');
+    utimesSync(kickoff, new Date(MTIME), new Date(MTIME));
+    writeFileSync(join(calls, '2026-03-04 Renewal.txt'), 'Alice: hi\n');
+    const run = async () => JSON.parse((await runCli(['import', calls, '--calls', '--prefix', 'Company/Calls', '--no-embed', '--json'], { env })).stdout);
+    const first = await run();
+    expect(first).toMatchObject({ prefix: 'company/calls', imported: 2, errors: 0 });
+    expect(first.pages.map((p: any) => p.slug).sort()).toEqual(['company/calls/2026-01-15-kickoff-with-acme-example', 'company/calls/2026-03-04-renewal']);
+
+    const later = MTIME + 36 * 86_400_000;
+    utimesSync(kickoff, new Date(later), new Date(later));
+    expect(await run()).toMatchObject({ imported: 0, unchanged: 2, kept: 0, errors: 0 });
+    writeFileSync(kickoff, 'Kickoff with acme-example\nBob: an edited export.\n');
+    utimesSync(kickoff, new Date(later), new Date(later));
+    const edited = await run();
+    expect(edited).toMatchObject({ imported: 0, unchanged: 1, kept: 1, errors: 0 });
+    expect(edited.pages.find((p: any) => p.file === 'kickoff.txt').slug).toBe('company/calls/2026-01-15-kickoff-with-acme-example');
+    const listed = JSON.parse((await runCli(['list', '--json'], { env })).stdout) as Array<{ slug: string }>;
+    expect(listed.filter((p) => p.slug.startsWith('company/calls/')).length).toBe(2);
+  }, 240_000);
+
+  test('a credential in a file name is never stored or printed, and two folders with the same file name both import', async () => {
+    const root = temp('gbrain-calls-paths-');
+    const home = join(root, 'home');
+    mkdirSync(home);
+    const env = { HOME: home, GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_SOURCE: undefined, GBRAIN_SKIP_STARTUP_HOOKS: '1' };
+    expect((await runCli(['init', '--pglite', '--no-embedding', '--json'], { env })).exitCode).toBe(0);
+    const token = plantedToken();
+    const a = join(root, 'a');
+    mkdirSync(join(a, `key ${token}`), { recursive: true });
+    writeFileSync(join(a, `key ${token}`, 'standup.txt'), 'Standup 2026-04-01\nAlice: hi\n');
+    writeFileSync(join(a, 'notes.txt'), 'Planning 2026-04-02\nAlice: plan.\n');
+    const b = join(root, 'b');
+    mkdirSync(b);
+    writeFileSync(join(b, 'notes.txt'), 'Retro 2026-04-03\nBob: retro.\n');
+    const imp = async (dir: string) => runCli(['import', dir, '--calls', '--no-embed', '--json'], { env });
+    const first = await imp(a);
+    expect(first.stdout).not.toContain(token);
+    expect(JSON.parse(first.stdout)).toMatchObject({ imported: 2, errors: 0 });
+    const stored = await runCli(['get', 'calls/2026-04-01-standup'], { env });
+    expect(stored.stdout).toContain('Alice: hi');
+    expect(stored.stdout).not.toContain(token);
+    expect(stored.stdout).toContain('<REDACTED:github_pat>');
+    expect(JSON.parse((await imp(b)).stdout)).toMatchObject({ imported: 1, kept: 0, errors: 0 });
+    expect((await runCli(['get', 'calls/2026-04-03-retro'], { env })).stdout).toContain('Bob: retro.');
+  }, 240_000);
+});
+
+describe('call page embedding', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 120_000);
+  afterAll(async () => { await engine.disconnect(); });
+
+  test('an imported call page is held from embedding until the owner approves it, at any size', async () => {
+    const page = callPageFor('2026-03-04 sync.txt', 'Alice: short call.\n', MTIME, 'calls', []);
+    const parsed = parseMarkdown(page.content);
+    await engine.putPage(page.slug, { type: 'meeting', title: page.title, compiled_truth: parsed.compiled_truth, frontmatter: parsed.frontmatter });
+    const stored = await engine.getPage(page.slug);
+    const plan = await planPageEmbedding(engine, { id: stored!.id, compiled_truth: parsed.compiled_truth, timeline: '' }, [{ chunk_index: 0, chunk_text: 'Alice: short call.' }], { signature: null });
+    expect(plan).toEqual({ kind: 'held', reason: 'call_import' });
+  });
 });

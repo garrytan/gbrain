@@ -47,10 +47,14 @@ gbrain setup claude-code --shape both --notes ~/notes --docs ~/acme-example/docs
   file's modified day; the title is the rest of a dated file name, else the first line.
   The words are kept as written, except that every credential (API keys, tokens,
   passwords) is replaced by a `<REDACTED:…>` marker before anything is stored, with the
-  same redaction the conversation archive uses. A line that would read as page structure
-  gets a leading backslash. The pages are keyword-only (no embedding cost) and are not
-  mined for facts. Each file is imported once: a re-run reports it unchanged, and a file
-  you changed since keeps its first page (delete the page to import it again). Above 500
+  same redaction the conversation archive uses; the file's path is redacted the same way
+  before it is stored or printed. A line that would read as page structure gets a
+  leading backslash. The pages are keyword-only (no embedding cost): embedding them waits
+  for your approval, with the same hold the conversation archive uses. The facts
+  backstop skips them; the scheduled atom extraction still reads them when a model key
+  is set, within `cycle.extract_atoms.budget_usd`. Each file is imported once: a re-run from the same folder reports it
+  unchanged, and a file you changed since keeps its first page (delete the page to
+  import it again). Above 500
   files setup prints the import command instead (`gbrain import DIR --calls --prefix
   company/calls --no-embed --source company`). It needs the company part on this brain,
   so it does not go with `--team`.
