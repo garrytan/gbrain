@@ -1243,7 +1243,7 @@ export class PostgresEngine implements BrainEngine {
     // relaxes; precision consumers keep the strict-AND contract. #7491: the
     // identifier probe and the relaxed-row tag (#3617 follow-up) live in
     // search/keyword-identifier-probe.ts.
-    return keywordArmRows<Record<string, unknown>>({ query, strict, orFallback: opts?.orFallback, limit, offset, toResult: rowToSearchResult, onIncomplete: opts?.onKeywordIncomplete,
+    return keywordArmRows<Record<string, unknown>>({ query, strict, orFallback: opts?.orFallback, orFill: opts?.orFill, limit, offset, toResult: rowToSearchResult, onIncomplete: opts?.onKeywordIncomplete,
       runProbe: (match, rank) => runKeyword(match, true, rank),
       runHandles: handles => keywordPagesImpl.searchHandlePages((read, settings) => this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx => read(scopedRead(this.engineSqlOn(tx))), { alwaysTransaction: true, jitOff: true, settings }), query, handles, opts, limit, { statementTimeout, statementSettings: KEYWORD_STATEMENT_SETTINGS }),
       runRelaxed: async (orQuery) => {

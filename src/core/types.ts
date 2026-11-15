@@ -1365,6 +1365,14 @@ export interface SearchOpts extends PageReadPolicy {
    * ignores this flag.
    */
   orFallback?: boolean;
+  /**
+   * GST-2735: with orFallback, a first page whose strict rows leave the keyword
+   * candidate pool short is filled with the any-word retry's rows, after every
+   * strict row and tagged `keyword_relaxed`. hybridSearch sets it only on its
+   * keyword-only path (no embedding provider), where no vector arm can recover
+   * a page that holds most but not all of the query's words.
+   */
+  orFill?: boolean;
   /** #6495: hybrid's keyword arm opts in to the Postgres keyword timeout negative cache (postgres-engine/keyword-timeout-cache.ts); PGLite ignores it. */
   keywordTimeoutCache?: boolean;
   /** Keyword `score` query (websearch syntax) while `query` decides the matches (alias fan-out); ignored on the CJK path. */

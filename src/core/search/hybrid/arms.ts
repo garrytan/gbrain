@@ -45,8 +45,9 @@ export async function resolveEarlyModality(req: HybridRequest): Promise<Modality
 }
 
 /** Keyword + title FTS arms, fetched concurrently (fail-open per arm, rethrow when both hit a dead database). */
-export async function runLexicalArms(req: HybridRequest, earlyModality: ModalityMode): Promise<LexicalArms> {
-  const { engine, query, opts, searchOpts, identityTierOpts, degraded } = req;
+export async function runLexicalArms(req: HybridRequest, earlyModality: ModalityMode, keywordOnly = false): Promise<LexicalArms> {
+  const { engine, query, opts, identityTierOpts, degraded } = req;
+  const searchOpts = keywordOnly ? { ...req.searchOpts, orFill: true } : req.searchOpts;
   // Run keyword search (always available, no API key needed).
   //
   // v0.36 cross-modal (D9): skip keyword for 'image'-only modality. Image
@@ -288,7 +289,7 @@ export function startVectorSide(req: HybridRequest, multimodalProviderProbe: str
 /** Lexical then relational arms on the critical path; a failure waits for the vector side to settle before it is rethrown. */
 export async function runLexicalAndRelational(req: HybridRequest, earlyModality: ModalityMode, vectorSide: VectorSide | null) {
   try {
-    const lexical = await req.timer.stage('lexical', () => withUrgentSearchConnections(() => runLexicalArms(req, earlyModality)));
+    const lexical = await req.timer.stage('lexical', () => withUrgentSearchConnections(() => runLexicalArms(req, earlyModality, vectorSide === null)));
     const relationalList = await req.timer.stage('relational', () => withUrgentSearchConnections(() => buildRelationalList(req)));
     return { lexical, relationalList };
   } catch (err) {
