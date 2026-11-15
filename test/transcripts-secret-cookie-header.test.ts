@@ -63,6 +63,14 @@ describe('cookie_header: cookie values are redacted, names kept', () => {
     expect(out).not.toContain(SID);
     expect(out).toContain("-b 'sid=<REDACTED:cookie_header>'");
   });
+  test('many cookie values never crowd a later password out of the echo pass', () => {
+    const PW = ['Synth', 'Labeled4242pw'].join('');
+    const jar = Array.from({ length: 70 }, (_, i) => `c${i}=${['SYNTH', 'jarvalue', String(i).padStart(4, '0')].join('')}`).join('; ');
+    const out = redact([`Cookie: ${jar}`, `password: ${PW}`, `I typed ${PW} again`]);
+    expect(out[0]).not.toContain('SYNTHjarvalue');
+    expect(out[1]).toMatch(/^password: <REDACTED:[a-z_]+>$/);
+    expect(out[2]).toMatch(/^I typed <REDACTED:[a-z_]+> again$/);
+  });
   test('a cookie value echoed in a later message is scrubbed too', () => {
     const out = redact([`Cookie: sid=${SID}`, `the session id is ${SID} right?`]);
     expect(out.join('\n')).not.toContain(SID);

@@ -114,7 +114,7 @@ import {
 } from './secret-scan-assignment.ts';
 import type { ScanWork } from './secret-scan-work.ts';
 export { createScanWork, type ScanWork } from './secret-scan-work.ts';
-import { COOKIE_PRECHECK_RE, cookieHeaderValues } from './secret-scan-cookie.ts';
+import { COOKIE_PRECHECK_RE, ECHO_MAX_UNIQUE_COOKIE, cookieHeaderValues } from './secret-scan-cookie.ts';
 export { TRANSCRIPT_LANE_SCAN_OPTS, trailingDanglingLabel } from './secret-scan-labeled.ts';
 
 // ── Patterns ────────────────────────────────────────────────────────────────
@@ -1244,9 +1244,9 @@ export function scanFiles(paths: string[], opts: ScanOpts = {}): SecretFinding[]
 // `pwd: 1234` never scrubs every later "1234"), must be at most
 // ECHO_MAX_VALUE_CHARS long,
 // and only the first ECHO_MAX_UNIQUE unique bearer, assignment and labeled
-// values plus the first ECHO_MAX_UNIQUE_VENDOR unique vendor or jwt values, in
-// claim order, join (two caps, so planted vendor strings never crowd out a
-// bearer token's echo). A value past a cap is still redacted at its claimed
+// values, the first ECHO_MAX_UNIQUE_VENDOR vendor or jwt values and the first
+// ECHO_MAX_UNIQUE_COOKIE cookie values, in claim order, join (three caps, so
+// planted vendor strings or a cookie jar never crowd out a bearer's echo). A value past a cap is still redacted at its claimed
 // span; only its echoes are the accepted miss.
 //
 // The pass is a streaming merge over the ORIGINAL text: per value, the
@@ -1364,10 +1364,10 @@ function addEchoValue(into: EchoDictionary, pattern: string, value: string): voi
             ? ECHO_MIN_CHARS_ENTROPY
           : VENDOR_ECHO_PATTERNS.has(pattern) ? ECHO_MIN_CHARS_VENDOR : Infinity;
   if (value.length < floor || value.length > ECHO_MAX_VALUE_CHARS || into.has(value)) return;
-  const vendor = VENDOR_ECHO_PATTERNS.has(pattern);
+  const bucket = (p: string): 'cookie' | 'vendor' | 'shared' => (p === 'cookie_header' ? 'cookie' : VENDOR_ECHO_PATTERNS.has(p) ? 'vendor' : 'shared');
   let used = 0;
-  for (const claimedBy of into.values()) if (VENDOR_ECHO_PATTERNS.has(claimedBy) === vendor) used++;
-  if (used >= (vendor ? ECHO_MAX_UNIQUE_VENDOR : ECHO_MAX_UNIQUE)) return;
+  for (const claimedBy of into.values()) if (bucket(claimedBy) === bucket(pattern)) used++;
+  if (used >= { cookie: ECHO_MAX_UNIQUE_COOKIE, vendor: ECHO_MAX_UNIQUE_VENDOR, shared: ECHO_MAX_UNIQUE }[bucket(pattern)]) return;
   into.set(value, pattern);
   const unescaped = value.replaceAll('\\/', '/');
   if (unescaped !== value) addEchoValue(into, pattern, unescaped);

@@ -1,8 +1,7 @@
 /**
  * secret-scan-cookie.ts: the transcript-lane `cookie_header` rule (GST-2768).
  * A session cookie pasted into an agent session (a curl `-H 'Cookie: …'` or
- * `-b` argument, raw request or response headers, a browser devtools copy, a
- * copy-as-fetch JSON blob) is not a known token shape, so no other rule
+ * `-b` argument, raw request or response headers, a copy-as-fetch JSON blob) is not a known token shape, so no other rule
  * claimed it and it reached the conversation page verbatim.
  *
  * OPT-IN (`ScanOpts.transcriptRules`): only the transcript page lane and
@@ -20,6 +19,8 @@
  * Values shorter than 8 characters (preference flags such as
  * `theme=dark`), placeholders (`<…>`, `$VAR`, `{…}`, `%VAR%`) and masks (`...`, `***`)
  * are left alone. Every quantifier is bounded; the parse is linear in the line.
+ * Not caught: a `-b` on a continued line of a multi-line curl command
+ * (Chrome's "Copy as cURL") and a JSON-escaped quoted value (`sid=\"…\"`).
  */
 
 const COOKIE_HEAD_RE = /(?:(?:^|[^A-Za-z0-9_-])(set-)?cookie\\?["'`]?\s{0,4}:|(?:^|\s)(-b|--cookie)(?=[\s=]))[\s=]{0,4}\\?["'`]?/gi;
@@ -28,6 +29,13 @@ const COOKIE_SEP_RE = /\s{0,4};\s{0,4}/y;
 const PLACEHOLDER_RE = /^(?:[<${[]|%[A-Za-z_][A-Za-z0-9_]{0,64}%$)/;
 const CURL_RE = /(?:^|[^A-Za-z0-9_-])curl(?:\.exe)?(?:\s|$)/i;
 const MASK_RE = /^[.*xX•_-]+$/;
+
+/**
+ * Cap on the unique `cookie_header` values in the echo dictionary, apart from
+ * ECHO_MAX_UNIQUE and ECHO_MAX_UNIQUE_VENDOR, so a pasted cookie jar never
+ * crowds out a later bearer, assignment or labeled value's echo.
+ */
+export const ECHO_MAX_UNIQUE_COOKIE = 64;
 
 /** Minimum cookie value length claimed. */
 export const COOKIE_VALUE_MIN_CHARS = 8;
