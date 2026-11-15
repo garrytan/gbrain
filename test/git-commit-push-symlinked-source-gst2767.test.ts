@@ -270,4 +270,4 @@ test('a FIFO or other special file where a nested .git keeps HEAD is never read,
   mkdirSync(join(f.repo, 'brain', 'notes', '.git', 'refs'));
   execFileSync('mkfifo', [join(f.repo, 'brain', 'notes', '.git', 'HEAD')]);
   expect(nestedRepositoryOf(f.repo, 'brain/' + YEAR)).toBeNull();
-}, 10_000);
+});
