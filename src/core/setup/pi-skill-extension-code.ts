@@ -196,7 +196,7 @@ async function beforeAgentStart(event, ctx) {
   const hidden = hiddenFrom(event, s);
   const exclude = [...(Array.isArray(s.pinned_ids) ? s.pinned_ids : []), ...(Array.isArray(s.exclude_ids) ? s.exclude_ids : []), ...hidden].slice(0, 1024);
   const deadline = warm ? DEADLINE_MS : COLD_DEADLINE_MS;
-  const input = { message: text, session_id: key, harness: 'pi', top_k: Number.isInteger(s.top_k) ? s.top_k : 3, exclude, ...(reset ? { reset_session: true } : {}) };
+  const input = { message: text, session_id: key, harness: 'pi', top_k: Number.isInteger(s.top_k) ? s.top_k : 3, exclude, ...(typeof s.top_gate === 'number' ? { top_gate: s.top_gate } : {}), ...(reset ? { reset_session: true } : {}) };
   const reply = await ask(w, { type: 'resolve', input, catalog: s.catalog, deadlineMs: deadline - 5, floor: s.min_match || null, dirs: s.skill_dirs || [] }, deadline);
   if (reply.late) {
     if (reset) resetNext.add(key);
@@ -235,7 +235,7 @@ export async function selfTest(message) {
   });
   if (warmed.code) { dropWorker(); return { ok: false, code: warmed.code }; }
   const t0 = Date.now();
-  const reply = await ask(w, { type: 'resolve', input: { message, harness: 'pi', top_k: Number.isInteger(s.top_k) ? s.top_k : 3, shadow: true }, catalog: s.catalog, deadlineMs: 1000, floor: s.min_match || null, dirs: [] }, 2000);
+  const reply = await ask(w, { type: 'resolve', input: { message, harness: 'pi', top_k: Number.isInteger(s.top_k) ? s.top_k : 3, shadow: true, ...(typeof s.top_gate === 'number' ? { top_gate: s.top_gate } : {}) }, catalog: s.catalog, deadlineMs: 1000, floor: s.min_match || null, dirs: [] }, 2000);
   dropWorker();
   if (reply.late) return { ok: false, code: 'skill_resolve_timeout', ms: Date.now() - t0 };
   if (reply.code && !reply.block) return { ok: false, code: reply.code, ms: Date.now() - t0 };

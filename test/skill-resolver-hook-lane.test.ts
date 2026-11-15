@@ -227,6 +227,7 @@ describe('skill-resolver lane: turn settings from config', () => {
     await setup(b, 'claude-code');
     await setup(b, 'codex');
     const claude = wired(b, 'claude-code'), codex = wired(b, 'codex');
+    expect((await config(b, 'set', 'skills.resolver.top_gate', '0')).exitCode).toBe(0);
     const ids = (r: Run) => [...contextOf(r).matchAll(/id: "([^"]+)"/g)].map((m) => m[1]);
     const ask = (cmd: string, s: string) => hook(b, cmd, { prompt: 'deploy the widget service', session_id: s, hook_event_name: 'UserPromptSubmit' }, WIDE);
     expect(ids(await ask(claude, 'd1')).length).toBeGreaterThanOrEqual(3);
@@ -397,6 +398,7 @@ describe('skill-resolver lane: fail open', () => {
     await setup(b, 'claude-code');
     const set = await runCli(['config', 'set', 'skills.resolver.lane_payload_chars', '500'], { env: b.env, cwd: b.project });
     expect(set.exitCode, set.stderr).toBe(0);
+    expect((await runCli(['config', 'set', 'skills.resolver.top_gate', '0'], { env: b.env, cwd: b.project })).exitCode).toBe(0);
     const r = await hook(b, wired(b, 'claude-code'), { prompt: 'deploy the widget please', session_id: 's' }, WIDE);
     expect(r).toMatchObject({ exitCode: 0, stdout: '' });
     const last = laneLog(b).at(-1);

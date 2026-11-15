@@ -66,7 +66,7 @@ describe('OpenClaw skills list --json', () => {
     expect(rec.catalog.skill_count).toBe(2);
     expect(rec.catalog.source).toMatchObject({ kind: 'json', dirs: [root] });
     expect(rec.build.rebuild_argv).toEqual(['gbrain', 'skills', 'index', 'build', '--catalog', 'oc', '--dir', root, '--from-json', file, '--harness', 'openclaw']);
-    const t = await resolveSkills({ message: 'zebrafinch rollout' }, { home, catalogs: ['oc'] });
+    const t = await resolveSkills({ message: 'zebrafinch rollout', top_gate: 0 }, { home, catalogs: ['oc'] });
     expect(t.output.suggestions.map((s) => [s.id, s.path])).toEqual([['deploy-widget', path]]);
     expect((await resolveSkills({ message: 'not listed skill' }, { home, catalogs: ['oc'] })).output.suggestions.map((s) => s.id)).not.toContain('not-listed');
     expect((await catalogStatus('oc', { home })).fresh).toBe(true);
