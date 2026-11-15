@@ -720,6 +720,15 @@ notes with every CHANGELOG entry since the previous stable, newest first; the
 oldest entries drop with a link to the full CHANGELOG once the notes would pass
 GitHub's 125,000-character limit. A rollback keeps the notes.
 
+A forward promotion never moves Latest to an older release than the one it
+marks now, because binaries released before this rule download
+`releases/latest` as their update. So during the changeover Latest stays on
+the newest release published before the rule, until stable passes it; that
+promotion sets Latest, and from then on Latest is stable. `backfill` should
+not be needed. A hand re-run of release.yml that would republish the current
+stable release as a pre-release refuses; upload missing assets with
+`gh release upload` instead.
+
 Nothing that installs or updates gbrain reads GitHub's Latest: `#stable` and
 `gbrain upgrade` follow the `stable` tag and its record; the alpha channel
 (binary self-update included) reads `VERSION` at `latest-stable` and fetches

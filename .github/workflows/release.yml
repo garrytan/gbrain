@@ -253,6 +253,19 @@ jobs:
           if ! bash scripts/changelog-entry.sh "$v" > /tmp/release-notes.md || ! [ -s /tmp/release-notes.md ]; then
             echo "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/master/CHANGELOG.md) for v$v." > /tmp/release-notes.md
           fi
+      # A re-run that repairs a half-published release republishes it as a
+      # pre-release. If that release is already the stable one, the re-run
+      # would take away the stable flag and GitHub's Latest; refuse instead.
+      - name: Refuse to republish the current stable release
+        env:
+          RELEASE_SHA: ${{ needs.ci-gate.outputs.sha }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          stable="$(git ls-remote origin 'refs/tags/stable^{}' | cut -f1)"
+          if [ -n "$stable" ] && [ "$stable" = "$RELEASE_SHA" ]; then
+            echo "::error::v$RELEASE_VERSION is the current stable release; re-publishing it would mark it a pre-release. Upload the missing assets with gh release upload v$RELEASE_VERSION <files> instead (docs/RELEASING.md)."
+            exit 1
+          fi
       - name: Create release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
