@@ -64,6 +64,7 @@ describe('openclaw gateway call child process', () => {
     chmodSync(slow, 0o755);
     const started = Date.now();
     await expect(cliGatewayTransport({ bin: slow, timeoutMs: 200 }).call('sessions.list', {})).rejects.toMatchObject({ code: 'archive_gateway_unreachable' });
+    // gstack-timing-ok: the kill bound is the contract under test (timeoutMs + 10 s grace), with 10 s of slack
     expect(Date.now() - started).toBeLessThan(20_000);
   }, 30_000);
 });

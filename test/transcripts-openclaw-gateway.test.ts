@@ -16,6 +16,7 @@ import { gatewayChannel, openclawGatewayReader, parseGatewayCliOutput, type Gate
 import { ARCHIVE_TIMEZONE_KEY, archiveGroupPrincipal, runTranscriptArchive, setArchiveEnabled } from '../src/core/transcripts/archive.ts';
 import { archivedPages, conversation, ledgerRows, staticReader } from './helpers/transcript-archive.ts';
 
+const SYNTHETIC_ANTHROPIC = ['sk', 'ant', 'api03', 'SYNTHETIC'.repeat(4) + '0000000000-AAAAAAAA'].join('-');
 const FIX = join(import.meta.dir, 'fixtures', 'openclaw-gateway');
 const load = (name: string) => JSON.parse(readFileSync(join(FIX, name), 'utf8')) as Record<string, unknown>;
 
@@ -43,17 +44,17 @@ function recordedTransport(opts: { list: Array<Record<string, unknown>>; history
 const recorded = () => recordedTransport({
   list: [load('sessions-list-page1.json'), { ...load('sessions-list-page2.json'), __offset: 2 }],
   history: {
-    'agent:dev:scratch-alpha': [load('chat-history-scratch-alpha-page1.json'), { ...load('chat-history-scratch-alpha-page2.json'), __offset: 2 }],
-    'agent:dev:scratch-3': [load('chat-history-scratch-3.json')],
-    'agent:dev:telegram:group:-1009990001': [load('chat-history-group-shaped-key.json')],
+    'agent:dev:example-scratch-alpha': [load('chat-history-scratch-alpha-page1.json'), { ...load('chat-history-scratch-alpha-page2.json'), __offset: 2 }],
+    'agent:dev:example-scratch-3': [load('chat-history-scratch-3.json')],
+    'agent:dev:telegram:group:example-group-9': [load('chat-history-group-shaped-key.json')],
   },
 });
 
 const docShaped = () => recordedTransport({
   list: [load('sessions-list-group-docshape.json')],
   history: {
-    'agent:main:telegram:group:-1000000000001': [load('chat-history-group-docshape.json')],
-    'agent:main:webhook:legacy-row': [load('chat-history-legacy-row.json')],
+    'agent:main:telegram:group:example-group-1': [load('chat-history-group-docshape.json')],
+    'agent:main:webhook:example-legacy-row': [load('chat-history-legacy-row.json')],
   },
 });
 
@@ -62,7 +63,7 @@ describe('openclaw gateway reader (recorded fixtures)', () => {
     const transport = recorded();
     const convs = await openclawGatewayReader({ transport }).list({});
     expect(transport.calls.filter(([m]) => m === 'sessions.list').map(([, p]) => p.offset ?? 0)).toEqual([0, 2]);
-    expect(convs.map(c => c.conversationKey)).toEqual(['agent:dev:scratch-alpha', 'agent:dev:telegram:group:-1009990001']);
+    expect(convs.map(c => c.conversationKey)).toEqual(['agent:dev:example-scratch-alpha', 'agent:dev:telegram:group:example-group-9']);
     const alpha = convs[0]!;
     expect(alpha.harness).toBe('openclaw');
     expect(alpha.session.meta.sessionId).toBe('318c6a69-4cfa-4aba-bda5-8babbb465c4e');
@@ -85,7 +86,7 @@ describe('openclaw gateway reader (recorded fixtures)', () => {
     expect(codeOf('error-auth.json')).toBe('archive_gateway_auth');
     expect(codeOf('error-credentials-required.json')).toBe('archive_gateway_auth');
     expect(codeOf('error-unreachable.json')).toBe('archive_gateway_unreachable');
-    const leaky = JSON.stringify({ ok: false, error: { type: 'gateway_request_error', code: 'INVALID_REQUEST', message: 'unauthorized: token sk-ant-api03-SYNTHETICSYNTHETICSYNTHETICSYNTHETIC0000000000-AAAAAAAA rejected', details: { code: 'AUTH_TOKEN_MISMATCH' } } });
+    const leaky = JSON.stringify({ ok: false, error: { type: 'gateway_request_error', code: 'INVALID_REQUEST', message: 'unauthorized: token ' + SYNTHETIC_ANTHROPIC + ' rejected', details: { code: 'AUTH_TOKEN_MISMATCH' } } });
     let message = '';
     try { parseGatewayCliOutput(leaky, 1); } catch (e) { message = (e as Error).message; }
     expect(message).toContain('<REDACTED:');
@@ -118,7 +119,7 @@ describe('gateway reader inside the archive (pglite)', () => {
     await addMember(engine, 'alice-example');
     await addMember(engine, 'bob-example');
     await setOwner(engine, 'alice-example');
-    const groupKey = 'agent:main:telegram:group:-1000000000001';
+    const groupKey = 'agent:main:telegram:group:example-group-1';
     await addGroup(engine, archiveGroupPrincipal('openclaw', groupKey), ['bob-example']);
     const result = await runTranscriptArchive(engine, { mode: 'backfill', from: '2026-11-14', to: '2026-11-15', readers: [openclawGatewayReader({ transport: docShaped() })], now: new Date('2026-11-20T00:00:00Z') });
     expect(result.held).toBe(0);

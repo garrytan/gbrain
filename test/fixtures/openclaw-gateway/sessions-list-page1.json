@@ -8,7 +8,7 @@
   "hasMore": true,
   "sessions": [
     {
-      "key": "agent:dev:scratch-3",
+      "key": "agent:dev:example-scratch-3",
       "sessionId": "9eb7e494-36f2-4762-8537-70b6a1a97c7d",
       "agentId": "dev",
       "kind": "direct",
@@ -26,7 +26,7 @@
       "visibility": "shared"
     },
     {
-      "key": "agent:dev:scratch-alpha",
+      "key": "agent:dev:example-scratch-alpha",
       "sessionId": "318c6a69-4cfa-4aba-bda5-8babbb465c4e",
       "agentId": "dev",
       "kind": "direct",

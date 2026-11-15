@@ -7,7 +7,7 @@
   "hasMore": false,
   "sessions": [
     {
-      "key": "agent:main:telegram:group:-1000000000001",
+      "key": "agent:main:telegram:group:example-group-1",
       "sessionId": "00000000-0000-4000-8000-000000000101",
       "agentId": "main",
       "kind": "group",
@@ -25,7 +25,7 @@
       "visibility": "shared"
     },
     {
-      "key": "agent:main:webhook:legacy-row",
+      "key": "agent:main:webhook:example-legacy-row",
       "sessionId": "00000000-0000-4000-8000-000000000102",
       "agentId": "main",
       "displayName": "legacy row without chatType",

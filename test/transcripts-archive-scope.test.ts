@@ -27,7 +27,7 @@ async function readable(who: string, slug: string, canary: string): Promise<bool
   return out.content.map(c => c.text).join('\n').includes(canary);
 }
 
-const GROUP_KEY = 'agent:main:telegram:group:-1000000000002';
+const GROUP_KEY = 'agent:main:telegram:group:example-group-2';
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
