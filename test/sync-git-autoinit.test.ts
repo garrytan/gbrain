@@ -390,7 +390,7 @@ describe('GST-2767: the self-heal never initializes a brain dir that sits inside
       const brain = via === 'real' ? join(outer, 'repo-a', 'brain') : join(outer, 'source-a');
       if (via === 'link') symlinkSync(join(outer, 'repo-a', 'brain'), brain);
       await engine.setConfig('sync.repo_path', brain);
-      await expect(performSync(engine, { repoPath: brain, noPull: true, noEmbed: true, full: true })).rejects.toThrow(/git repository/i);
+      await expect(performSync(engine, { repoPath: brain, noPull: true, noEmbed: true, full: true })).rejects.toThrow(/sits above it and git cannot open it/);
       expect(existsSync(join(outer, 'repo-a', 'brain', '.git'))).toBe(false);
     });
   }

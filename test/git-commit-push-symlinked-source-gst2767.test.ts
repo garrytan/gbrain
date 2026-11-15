@@ -13,6 +13,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { getLastPushOutcome } from '../src/core/brain-repo-durability.ts';
 import { recordManagedRoots } from '../src/core/persistence/root-registry.ts';
 import { runCli } from './helpers/cli-spawn.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -141,6 +142,7 @@ test('a real nested repository: each skipped path carries its reason in the JSON
   expect(existsSync(log)).toBe(true);
   const line = readFileSync(log, 'utf8').split('\n').find(l => l.includes('SKIPPED'));
   expect(line).toContain('brain/imports/export.csv (not_staged: it sits inside the nested Git repository brain/imports');
+  expect((await withEnv({ GBRAIN_HOME: f.home }, () => getLastPushOutcome('main'))).status).toBe('needs_attention');
 }, 60_000);
 
 const dryRun = (f: Fixture, ...paths: string[]) =>
@@ -260,3 +262,12 @@ test('a nested repository git refuses to open for its ownership still counts as 
   expect(nestedRepositoryOf(f.repo, 'brain/' + YEAR)).toBeNull();
   expect(nestedRepositoryOf(f.repo, 'brain/imports/sub')).toBe('brain/imports');
 });
+
+test('a FIFO or other special file where a nested .git keeps HEAD is never read, so the check returns at once instead of blocking under the commit lock', async () => {
+  const { nestedRepositoryOf } = await import('../src/core/git/skipped-paths.ts');
+  const f = fixture('nested-fifo', 'classic');
+  mkdirSync(join(f.repo, 'brain', 'notes', '.git', 'objects'), { recursive: true });
+  mkdirSync(join(f.repo, 'brain', 'notes', '.git', 'refs'));
+  execFileSync('mkfifo', [join(f.repo, 'brain', 'notes', '.git', 'HEAD')]);
+  expect(nestedRepositoryOf(f.repo, 'brain/' + YEAR)).toBeNull();
+}, 10_000);

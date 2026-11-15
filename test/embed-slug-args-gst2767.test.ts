@@ -25,6 +25,8 @@ test('the slug is never a flag value: --source, --batch-size, --priority, --max-
   expect(embedSlugTarget(['--max-usd', '2', '--pace-max-concurrency', '3', 'people/alice-example'])).toBe('people/alice-example');
   expect(embedSlugTarget(['--pace=gentle', '--source=source-a', 'people/alice-example'])).toBe('people/alice-example');
   expect(embedSlugTarget(['--source', 'source-a', '--dry-run'])).toBeUndefined();
+  expect(embedSlugTarget(['--non-interactive', 'people/alice-example'])).toBe('people/alice-example');
+  expect(embedSlugTarget(['--dry-run', '--', '-odd-slug', '--status'])).toBe('-odd-slug');
 });
 
 test('a flag no embed mode takes is refused as unknown_flag, naming the read-only way to see embedding coverage for --status', () => {

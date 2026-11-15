@@ -100,21 +100,28 @@ export function nestedRepositoryOf(root: string, path: string): string | null {
  * discovery would take it as a repository: HEAD names a ref or an object, and objects/ and refs/ exist. Ownership is never
  * read, as `git add` in the outer repository does not read it, so a nested repository git refuses to open still counts.
  */
-function validGitDir(dotGit: string): string | null {
+export function validGitDir(dotGit: string): string | null {
   try {
     let dir = dotGit;
     if (statSync(dotGit).isFile()) {
-      const named = /^gitdir: (.+)$/m.exec(readFileSync(dotGit, 'utf8'));
+      const named = /^gitdir: (.+)$/m.exec(readSmallFile(dotGit));
       if (!named) return null;
       dir = resolve(dirname(dotGit), named[1]!.trim());
     }
-    const head = readFileSync(join(dir, 'HEAD'), 'utf8').trim();
+    const head = readSmallFile(join(dir, 'HEAD')).trim();
     if (!/^ref: refs\//.test(head) && !/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(head)) return null;
-    const common = existsSync(join(dir, 'commondir')) ? resolve(dir, readFileSync(join(dir, 'commondir'), 'utf8').trim()) : dir;
+    const common = existsSync(join(dir, 'commondir')) ? resolve(dir, readSmallFile(join(dir, 'commondir')).trim()) : dir;
     return existsSync(join(common, 'objects')) && existsSync(join(common, 'refs')) ? canonicalFilesystemPath(dir) : null;
   } catch {
     return null;
   }
+}
+
+/** A git metadata file's text, refusing anything but a small regular file: a FIFO or device there would block the read under the commit lock. */
+function readSmallFile(path: string): string {
+  const stat = statSync(path);
+  if (!stat.isFile() || stat.size > 4096) throw new Error(path + ' is not a small regular file');
+  return readFileSync(path, 'utf8');
 }
 
 /** The `git status` entries under the named paths that are directories, as path (a nested repository keeps its trailing /) to XY code. */
