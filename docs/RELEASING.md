@@ -642,9 +642,10 @@ If any SHA differs from what's in the workflow files, update the pin and version
 `VERSION`, plus `workflow_dispatch` for a manual first run or repair). No
 manual tag push is part of the ship flow — the workflow reads `VERSION` (the
 single source of truth), mints tag `v<VERSION>` at the pushed commit, titles
-the release the same, uses that version's `CHANGELOG.md` entry as the notes
-(`scripts/changelog-entry.sh`; falls back to a CHANGELOG link if the entry is
-missing), and attaches the compiled binaries. Every one is published as a
+the release the same, uses that version's `CHANGELOG.md` entry as the notes,
+opened by one line per folded changelog fragment with the pull request that
+added it (`scripts/changelog-entry.sh --pr-list`; falls back to a CHANGELOG
+link if the entry is missing), and attaches the compiled binaries. Every one is published as a
 pre-release; only the stable release is GitHub's "Latest" ([Which release GitHub
 calls Latest](#which-release-github-calls-latest)).
 
