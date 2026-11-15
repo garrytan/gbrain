@@ -70,6 +70,11 @@ export function committedSymlinks(gitRoot: string, head: string, paths: readonly
   return links;
 }
 
+/** GBRA-542: the dangling links whose path `head` records as a symlink. */
+export function keepCommittedLinks<T extends { entry: { path: string } }>(links: T[], committed: ReadonlySet<string>): T[] {
+  return links.filter(link => committed.has(link.entry.path));
+}
+
 /** S-39: the `content_null_bytes` refusal of a Markdown text holding U+0000 (the first one's 1-based line), or null. */
 export function nullBytesRefusal(path: string, content: string): { code: 'content_null_bytes'; line: number; message: string } | null {
   const at = content.indexOf('\u0000');

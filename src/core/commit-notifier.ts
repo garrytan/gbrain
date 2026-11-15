@@ -56,7 +56,8 @@ export interface NotifierSource {
   commonDir?: string | null;
   lastCommit: string | null;
   kind?: 'managed' | 'classic';
-  /** `config.syncEnabled=false`: HEAD is not watched and no owed run restarts it; explicit wanted markers still run. */
+  /** `config.syncEnabled=false`: HEAD is not watched and no owed run restarts it; an explicit wanted marker runs once, and a failed run waits
+   * (operator_blocked, `sync_disabled`) for a new request instead of being retried. */
   syncDisabled?: boolean;
 }
 export interface SkippedSource { sourceId: string; reason: string }
@@ -408,6 +409,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
   };
 
   const failure = async (rt: Rt, code: string, message: string, progressed: boolean) => {
+    if (rt.syncDisabled) { rt.blockedKey = markerKey(rt); await transition(rt, { state: 'operator_blocked', reason: 'sync_disabled', firstDue: 'keep', progress: progressed, error: { code, message, tracePath: trace(rt, { event: 'failure', code, error: message }) } }); decide(rt.sourceId, 'operator_blocked', { detail: code }); return; }
     const { attempts, wait, stalled } = retryPlan(rt.attempts, progressed);
     const tracePath = trace(rt, { event: 'failure', code, error: message, attempts, next_retry_ms: wait, stalled });
     await transition(rt, { state: 'retry', reason: stalled ? 'notifier_stalled' : code, firstDue: 'keep', attempts, nextRetryInMs: wait, progress: progressed,
@@ -528,8 +530,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
     if (t - listedAt >= LIST_EVERY_MS) { listedAt = t; await refreshSources(); }
     if (stopped) return;
     for (const rt of sources.values()) {
-      const w = enabled && !excluded.has(rt.sourceId) && !rt.syncDisabled;
-      if (w !== rt.watched) { rt.watched = w; if (w) listedAt = -Infinity; else closeWatch(rt); } else if (!rt.syncDisabled) continue; if (!w && (rt.state === 'retry' || rt.state === 'due') && !rt.markers.length) await transition(rt, { state: 'idle', reason: null, firstDue: 'clear', attempts: 0, error: null });
+      const w = enabled && !excluded.has(rt.sourceId) && !rt.syncDisabled; if (w !== rt.watched) { rt.watched = w; if (w) listedAt = -Infinity; else closeWatch(rt); } else if (!rt.syncDisabled) continue; if (!w && (rt.state === 'retry' || rt.state === 'due') && !rt.markers.length) await transition(rt, { state: 'idle', reason: null, firstDue: 'clear', attempts: 0, error: null });
     }
     const wasNudged = nudged;
     nudged = false;

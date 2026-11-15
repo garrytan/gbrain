@@ -95,7 +95,7 @@ a sync is finishing is still served.
 |---|---|
 | sync.on_commit (config, default false) | Watch commits on this brain's sources |
 | sync.on_commit.sources (config) | Comma-separated source ids never watched for commits |
-| `gbrain sources set-sync <id> off` | The source is not watched for commits and owes no retry; a sync trigger or webhook still runs it, and `set-sync <id> on` restores the watch |
+| `gbrain sources set-sync <id> off` | The source is not watched for commits and owes no retry; a sync trigger or webhook still runs it once (a failed run waits for a new request instead of retrying), and `set-sync <id> on` restores the watch |
 | GBRAIN_NOTIFIER=0 | No notifier in this process |
 | GBRAIN_NOTIFIER_DETECTION=poll | Never use file watches |
 | GBRAIN_NOTIFIER_POLL_MS | HEAD poll interval (default 3000) |

@@ -21,6 +21,7 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readPassRow } from '../src/core/persistence/sync-pass-row.ts';
 import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
 import { writeGitHold } from '../src/core/persistence/sync-holds.ts';
+import { keepCommittedLinks } from '../src/core/persistence/sync-entry-fault.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -129,6 +130,13 @@ describe.each(testBackends())('GST-2515: a read-only mirror (%s)', backend => {
     expect(status.reason).not.toBe('held');
     expect(Number((await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pages WHERE slug LIKE 'keep/k1%' AND deleted_at IS NULL"))[0]!.n)).toBe(11);
   }, seed(25, databaseUrl)), 600_000);
+});
+
+test('GST-2515: narrowing a very large set of dangling links to the committed ones never spreads it into one call', () => {
+  const links = Array.from({ length: 1_000_000 }, (_, i) => ({ entry: { path: `links/l${i}.md` } }));
+  const kept = keepCommittedLinks(links, new Set(links.filter((_, i) => i !== 1).map(link => link.entry.path)));
+  expect(kept).toHaveLength(999_999);
+  expect(kept[1]!.entry.path).toBe('links/l2.md');
 });
 
 describe.each(testBackends())('GST-2515: dangling symlinks (%s)', backend => {

@@ -73,6 +73,26 @@ describe('GST-2515: the commit notifier honours config.syncEnabled=false', () =>
     await n.stop();
   });
 
+  test('on a source with sync off an explicit request runs once, and the notifier does not retry it when it fails', async () => {
+    const w = world(true);
+    const store = memoryNotifierStore({ lastCommit: () => A });
+    store.upsert(SOURCE, 'full', null);
+    const n = resident(w, store);
+    await n.tick();
+    w.t += QUIET; await n.tick();
+    expect(w.starts).toHaveLength(1);
+    w.jobs.set('job-1', { state: 'error', error: 'boom' });
+    w.t += QUIET; await n.tick();
+    for (const wait of [...RETRY_BACKOFF_MS, RETRY_BACKOFF_MS.at(-1)!]) { w.t += wait; await n.tick(); }
+    expect(w.starts).toHaveLength(1);
+    store.upsert(SOURCE, 'full', null);
+    n.nudge();
+    w.t += QUIET; await n.tick();
+    w.t += QUIET; await n.tick();
+    expect(w.starts).toHaveLength(2);
+    await n.stop();
+  });
+
   test('turning sync off drops the retry an already-unwatched source owed: turning it back on starts nothing', async () => {
     const w = world(false);
     const store = memoryNotifierStore({ lastCommit: () => A });

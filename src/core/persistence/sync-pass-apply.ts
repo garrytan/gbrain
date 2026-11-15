@@ -30,7 +30,7 @@
  *
  * A remote caller (`remote: true`) writes nothing here: no hold, marker, record, withheld record or keep_db write.
  */
-import { committedSymlinks, danglingLink } from './sync-entry-fault.ts';
+import { committedSymlinks, danglingLink, keepCommittedLinks } from './sync-entry-fault.ts';
 import { VERSION } from '../../version.ts';
 import type { BrainEngine } from '../engine.ts';
 import { resolveSlugForPath } from '../sync.ts';
@@ -280,7 +280,7 @@ async function applyDeleteValve(engine: BrainEngine, level: ShadowLevel, input: 
  */
 async function skipDanglingLinks(engine: BrainEngine, level: ShadowLevel, input: PassApplyInput, state: PassApplyState): Promise<void> {
   const step = loopYield();
-  const links: Array<{ entry: ShadowPath; path: string; slug: string | null }> = [];
+  let links: Array<{ entry: ShadowPath; path: string; slug: string | null }> = [];
   for (const entry of level.paths) {
     if (step.due()) await step.pause();
     const r = entry.result, held = entry.state.hold !== null;
@@ -289,10 +289,7 @@ async function skipDanglingLinks(engine: BrainEngine, level: ShadowLevel, input:
     const { path, sourcePath } = passEntryPaths(level, entry.path);
     links.push({ entry, path, slug: resolveSlugForPath(sourcePath) });
   }
-  if (level.mode === 'committed' && links.length) {
-    const committed = committedSymlinks(level.gitRoot, level.head, links.map(link => link.entry.path));
-    links.splice(0, links.length, ...links.filter(link => committed.has(link.entry.path)));
-  }
+  if (level.mode === 'committed' && links.length) links = keepCommittedLinks(links, committedSymlinks(level.gitRoot, level.head, links.map(link => link.entry.path)));
   if (!links.length) return;
   const slugs = [...new Set(links.flatMap(link => link.slug ? [link.slug] : []))];
   const live = new Set(slugs.length ? (await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND slug=ANY($2::text[])',
