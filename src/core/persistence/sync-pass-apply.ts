@@ -30,7 +30,7 @@
  *
  * A remote caller (`remote: true`) writes nothing here: no hold, marker, record, withheld record or keep_db write.
  */
-import { danglingLink } from './sync-entry-fault.ts';
+import { committedSymlinks, danglingLink } from './sync-entry-fault.ts';
 import { VERSION } from '../../version.ts';
 import type { BrainEngine } from '../engine.ts';
 import { resolveSlugForPath } from '../sync.ts';
@@ -288,6 +288,10 @@ async function skipDanglingLinks(engine: BrainEngine, level: ShadowLevel, input:
     if (!danglingLink(level.gitRoot, entry.path, level.mode === 'committed' ? entry.state.level : undefined)) continue;
     const { path, sourcePath } = passEntryPaths(level, entry.path);
     links.push({ entry, path, slug: resolveSlugForPath(sourcePath) });
+  }
+  if (level.mode === 'committed' && links.length) {
+    const committed = committedSymlinks(level.gitRoot, level.head, links.map(link => link.entry.path));
+    links.splice(0, links.length, ...links.filter(link => committed.has(link.entry.path)));
   }
   if (!links.length) return;
   const slugs = [...new Set(links.flatMap(link => link.slug ? [link.slug] : []))];

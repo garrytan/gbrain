@@ -9,7 +9,9 @@
  *     stays held; an unreadable hold an older pass wrote for a dangling link is released.
  * PGLite always; Postgres when DATABASE_URL is set (managedBrain). Synthetic content only.
  */
-import { describe, expect, setSystemTime, test } from 'bun:test';
+import { describe, expect, setSystemTime, spyOn, test } from 'bun:test';
+import * as passStatus from '../src/core/persistence/sync-pass-status.ts';
+import { buildSingleSyncJsonEnvelope } from '../src/core/sync-embed-backfill.ts';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -79,6 +81,18 @@ describe.each(testBackends())('GST-2515: a stopped pass that banked work is not 
     expect(t?.settled).toBeGreaterThan(0);
   }, seed(3, databaseUrl)), 600_000);
 
+  test('a failed read of whether the stopped pass banked work counts it the old way instead of stopping the next pass', () => managedBrain(async ({ engine, root }) => {
+    await performManagedSync(engine, OPTS);
+    mkdirSync(join(root, 'new'), { recursive: true });
+    for (let i = 0; i < 30; i++) writeFileSync(join(root, 'new', `n${i}.md`), note(`new/n${i}`, `New ${i}.`));
+    git(root, 'add', '-A'); git(root, 'commit', '-qm', 'upstream adds files');
+    const inc = await incarnation(engine);
+    await killedSync(engine, 3);
+    const failed = spyOn(passStatus, 'passBanked').mockRejectedValue(new Error('statement timeout'));
+    try { await killedSync(engine, 3); } finally { failed.mockRestore(); }
+    expect((await readPassRow(engine, 'default', inc))?.value.obligations.abandoned_streak).toBe(1);
+  }, seed(3, databaseUrl)), 600_000);
+
   test('passes stopped before committing anything still build the streak', () => managedBrain(async ({ engine, root }) => {
     await performManagedSync(engine, OPTS);
     mkdirSync(join(root, 'new'), { recursive: true });
@@ -108,6 +122,7 @@ describe.each(testBackends())('GST-2515: a read-only mirror (%s)', backend => {
     expect(second.carried).toEqual([expect.objectContaining({ class: 'mirror_database_only', count: 10 })]);
     expect(second.carried[0].sample.length).toBeLessThanOrEqual(5);
     expect(JSON.stringify(second)).not.toContain('--prefer database');
+    expect(buildSingleSyncJsonEnvelope('default', second)).toMatchObject({ carried: [expect.objectContaining({ class: 'mirror_database_only', count: 10 })] });
     const status: any = await readSyncStatus(engine, 'default');
     expect(JSON.stringify(status)).not.toContain('--prefer database');
     expect(status.carried).toEqual([expect.objectContaining({ class: 'mirror_database_only', count: 10 })]);
@@ -131,6 +146,7 @@ describe.each(testBackends())('GST-2515: dangling symlinks (%s)', backend => {
       code: 'file_unreadable', message: 'links/l0.md: unreadable', upstream_version: null, observed_at: new Date(Date.now() - 60_000).toISOString(), run_id: null, mode: 'managed', meta: {} } as any));
     const result: any = await performManagedSync(engine, OPTS);
     expect(result.skipped?.symlink_dangling?.count).toBe(6);
+    expect(buildSingleSyncJsonEnvelope('default', result)).toMatchObject({ skipped: { symlink_dangling: { count: 6 } } });
     const held = await engine.executeRaw<{ path: string }>("SELECT completed_keys->0->>'path' AS path FROM op_checkpoints WHERE op='sync-hold'");
     expect(held.map(h => h.path).filter(p => p.startsWith('links/'))).toEqual([]);
     expect(held.map(h => h.path)).toContain('keep/k0.md');
@@ -148,5 +164,19 @@ describe.each(testBackends())('GST-2515: dangling symlinks (%s)', backend => {
     const held = (await engine.executeRaw<{ path: string }>("SELECT completed_keys->0->>'path' AS path FROM op_checkpoints WHERE op='sync-hold'")).map(h => h.path);
     const page = Number((await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pages WHERE slug='fresh/b' AND deleted_at IS NULL"))[0]!.n);
     expect(page === 1 || held.includes('fresh/b.md')).toBe(true);
+  }, seed(3, databaseUrl)), 600_000);
+  test('a dangling link whose target text is the committed file\'s bytes is still not skipped: only a committed symlink is', () => managedBrain(async ({ engine, root }) => {
+    await performManagedSync(engine, OPTS);
+    mkdirSync(join(root, 'fresh'), { recursive: true });
+    const body = note('fresh/c', 'Committed body.');
+    writeFileSync(join(root, 'fresh', 'c.md'), body);
+    git(root, 'add', '-A'); git(root, 'commit', '-qm', 'upstream adds c');
+    rmSync(join(root, 'fresh', 'c.md'));
+    symlinkSync(body, join(root, 'fresh', 'c.md'));
+    const result: any = await performManagedSync(engine, OPTS);
+    expect(result.skipped?.symlink_dangling?.count ?? 0).toBe(0);
+    const held = (await engine.executeRaw<{ path: string }>("SELECT completed_keys->0->>'path' AS path FROM op_checkpoints WHERE op='sync-hold'")).map(h => h.path);
+    const page = Number((await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pages WHERE slug='fresh/c' AND deleted_at IS NULL"))[0]!.n);
+    expect(page === 1 || held.includes('fresh/c.md')).toBe(true);
   }, seed(3, databaseUrl)), 600_000);
 });

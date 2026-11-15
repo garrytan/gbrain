@@ -420,7 +420,7 @@ async function pinPass(engine: BrainEngine, input: SyncPassInput, lease: NonNull
     : { baseline_commit: context.source.last_commit, mismatch: {}, not_converged_streak: 0, faults: {} };
   obligations.mismatch ??= {}; obligations.faults ??= {}; obligations.not_converged_streak ??= 0;
   const abandoned = prior && (prior.value.telemetry.outcome === 'open' || transientEnding(prior.value.telemetry))
-    && !await passBanked(engine, sourceId, incarnation, prior.value.telemetry) ? (obligations.abandoned_streak ?? 0) + 1 : 0;
+    && !await passBanked(engine, sourceId, incarnation, prior.value.telemetry).catch(() => false) ? (obligations.abandoned_streak ?? 0) + 1 : 0;
   if (abandoned) obligations.abandoned_streak = abandoned; else delete obligations.abandoned_streak;
   if (handover.episode && !obligations.episode) obligations.episode = handover.episode;
   const passId = randomUUID();

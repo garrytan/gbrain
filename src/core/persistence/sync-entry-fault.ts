@@ -34,7 +34,8 @@ import { isWriteCapacityWait } from './admission-retry.ts';
 import { PAGE_BODY_FAULT_CODES } from './sync-fault-class.ts';
 import { gitBlobOid } from './digest.ts';
 import { readBlobBytes, type MissingAttributes, type TreeBlob } from './sync-blobs.ts';
-import { readSyncFile, syncPartialClone, type SyncEntry } from './sync-discovery.ts';
+import { readSyncFile, syncGit, syncPartialClone, type SyncEntry } from './sync-discovery.ts';
+import { literalPathspecs } from '../git-env.ts';
 import type { GitHoldRecord } from './sync-holds.ts';
 
 type HoldEntry = Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld' | 'action'>;
@@ -51,6 +52,22 @@ export function danglingLink(root: string, path: string, levelOid?: string | nul
     if (levelOid !== undefined && gitBlobOid(readlinkSync(join(root, path), 'buffer'), levelOid?.length === 64 ? 'sha256' : 'sha1') !== levelOid) return false;
   } catch { return false; }
   try { realpathSync(join(root, path)); return false; } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT'; }
+}
+
+/**
+ * GBRA-542: of these Git-root paths, the ones `head`'s tree records as symlinks (mode 120000). A link's target text and a file's
+ * bytes hash alike, so only the tree mode says the committed entry is a link; a failed listing names none, so nothing is skipped.
+ */
+export function committedSymlinks(gitRoot: string, head: string, paths: readonly string[]): Set<string> {
+  const links = new Set<string>();
+  try {
+    for (let start = 0; start < paths.length; start += 500) {
+      for (const line of syncGit(gitRoot, ['ls-tree', '-r', '-z', head, '--', ...literalPathspecs(paths.slice(start, start + 500))]).split('\0')) {
+        if (line.startsWith('120000 ')) links.add(line.slice(line.indexOf('\t') + 1));
+      }
+    }
+  } catch { return new Set(); }
+  return links;
 }
 
 /** S-39: the `content_null_bytes` refusal of a Markdown text holding U+0000 (the first one's 1-based line), or null. */

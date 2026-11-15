@@ -21,12 +21,12 @@ const QUIET = 400;
 
 interface World { t: number; starts: StartRequest[]; jobs: Map<string, JobStatus>; disabled: boolean }
 
-function resident(w: World, store: NotifierStore): CommitNotifier {
+function resident(w: World, store: NotifierStore, flag = { on: true }): CommitNotifier {
   return startCommitNotifier({
     resident: 'serve', log: () => {}, hostId: HOST, store, now: () => w.t, pollMs: 3000, quietMs: QUIET, heartbeatMs: 10_000,
     firstSliceSeconds: 30, sliceSeconds: 120, maxConcurrent: 1,
     setInterval: () => 'interval', clearInterval: () => {}, setTimeout: () => 'timer', clearTimeout: () => {},
-    readFlag: async () => true,
+    readFlag: async () => flag.on,
     listSources: async (): Promise<NotifierSource[]> => [{ sourceId: SOURCE, root: '/nonexistent/source-a', gitDir: null, lastCommit: A, kind: 'managed', ...(w.disabled ? { syncDisabled: true } : {}) }],
     lastCommit: async () => A, revParse: async () => B, syncRunning: () => false, drainHeld: async () => false,
     startSync: async (_s, req) => { w.starts.push(req); const jobId = 'job-' + w.starts.length; w.jobs.set(jobId, { state: 'running' }); return { jobId }; },
@@ -70,6 +70,29 @@ describe('GST-2515: the commit notifier honours config.syncEnabled=false', () =>
     w.t += QUIET; await n.tick();
     w.t += QUIET; await n.tick();
     expect(w.starts).toHaveLength(2);
+    await n.stop();
+  });
+
+  test('turning sync off drops the retry an already-unwatched source owed: turning it back on starts nothing', async () => {
+    const w = world(false);
+    const store = memoryNotifierStore({ lastCommit: () => A });
+    store.upsert(SOURCE, 'freshness', B);
+    const n = resident(w, store, { on: false });
+    await n.tick();
+    expect(w.starts).toHaveLength(1);
+    w.jobs.set('job-1', { state: 'done', outcome: 'resumable', reason: 'deadline', committed: false });
+    store.markers.clear();
+    w.t += QUIET; await n.tick();
+    expect(store.states.get(SOURCE)).toMatchObject({ state: 'retry' });
+    w.disabled = true;
+    w.t += LIST_EVERY_MS; await n.tick();
+    w.t += QUIET; await n.tick();
+    expect(w.starts).toHaveLength(1);
+    expect(store.states.get(SOURCE)).toMatchObject({ state: 'idle' });
+    w.disabled = false;
+    w.t += LIST_EVERY_MS; await n.tick();
+    for (const wait of RETRY_BACKOFF_MS) { w.t += wait; await n.tick(); }
+    expect(w.starts).toHaveLength(1);
     await n.stop();
   });
 });
