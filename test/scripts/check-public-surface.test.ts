@@ -281,6 +281,7 @@ describe('the base it compares with', () => {
     const ci = run(clone, { GBRAIN_SURFACE_BASE_REF: 'origin/base', CI: 'true' });
     expect(ci.code).toBe(1);
     expect(ci.out).toContain('FAIL: check-public-surface: this change drops public entries, and the stable ref refs/tags/stable could not be fetched from origin, so it cannot tell which of them reached stable.');
+    expect(ci.out).toMatch(/git: .*(does not appear to be a git repository|not found|No such file)/);
     expect(ci.out).not.toContain('mcp-tool `search`');
     const local = run(clone, { GBRAIN_SURFACE_BASE_REF: 'origin/base' });
     expect(local.code).toBe(1);

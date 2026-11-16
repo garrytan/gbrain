@@ -80,6 +80,7 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
   const fetchTimeout = (seconds: number) => Number(env.GBRAIN_SURFACE_FETCH_TIMEOUT_S) || seconds;
   let fetchError = '';
   const fetch = (seconds: number, ...args: string[]): 'ok' | 'timeout' | 'failed' => {
+    fetchError = '';
     const r = spawnSync('git', ['fetch', '--no-tags', '--quiet', ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], timeout: fetchTimeout(seconds) * 1000, killSignal: 'SIGKILL' });
     if (r.status === 0) return 'ok';
     if ((r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') return 'timeout';
