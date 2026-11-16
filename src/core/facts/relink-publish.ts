@@ -31,6 +31,7 @@ import { digest } from '../persistence/digest.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { readFacts, type FactSnapshot } from '../persistence/prepared-maintenance.ts';
+import { withTrustKeep } from '../persistence/context.ts';
 import { decideSingleFact } from './single-prepare.ts';
 import { isFactWithdrawn } from './withdrawal.ts';
 import { appendContextNote } from './subject-infer.ts';
@@ -68,8 +69,8 @@ function fenceRow(v: Record<string, unknown>, rowNum: number, context: string) {
   return {
     rowNum, claim: String(v.fact), kind: v.kind as never, confidence: Number(v.confidence ?? 1),
     visibility: v.visibility as never, notability: (v.notability ?? 'medium') as never,
-    validFrom: formatFenceDate(new Date(String(v.valid_from))),
-    validUntil: v.valid_until ? formatFenceDate(new Date(String(v.valid_until))) : undefined,
+    validFrom: fenceInstant(v.valid_from)!,
+    validUntil: v.valid_until ? fenceInstant(v.valid_until)! : undefined,
     source: v.source == null ? undefined : String(v.source),
     context,
     ...(v.claim_metric ? { claimMetric: String(v.claim_metric) } : {}),
@@ -81,11 +82,24 @@ function fenceRow(v: Record<string, unknown>, rowNum: number, context: string) {
 }
 
 /**
+ * A stored validity instant as its fence cell. Whole seconds keep formatFenceDate's shapes; milliseconds are kept, since
+ * the page projection writes the cell back to the row. Null for an instant finer than a millisecond, which no cell carries.
+ */
+function fenceInstant(value: unknown): string | null {
+  const text = String(value);
+  const date = new Date(text);
+  if (/\.\d{3}\d*[1-9]/.test(text) || !Number.isFinite(date.getTime())) return null;
+  return date.getUTCMilliseconds() ? date.toISOString() : formatFenceDate(date);
+}
+
+/**
  * A claim the fence cannot carry unchanged (wrapped in ~~, or otherwise not
- * parsing back to the same active claim and visibility) would be expired and
- * re-inserted as a different fact by the page projection, so it is never moved.
+ * parsing back to the same active claim and visibility, or a validity instant
+ * a cell cannot hold) would be expired and re-inserted as a different fact, or
+ * have its dates rounded, by the page projection, so it is never moved.
  */
 function roundTrips(v: Record<string, unknown>, context: string): boolean {
+  if (fenceInstant(v.valid_from) === null || v.valid_until != null && fenceInstant(v.valid_until) === null) return false;
   const parsed = parseFactsFence(upsertFactRow('', fenceRow(v, 1, context)).body);
   const cell = parsed.facts[0];
   return parsed.warnings.length === 0 && parsed.facts.length === 1 && cell!.active && cell!.claim === String(v.fact)
@@ -217,7 +231,8 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
     }
     await page?.validate?.(tx);
   };
-  const apply = async (tx: BrainEngine): Promise<Record<string, unknown>> => {
+  // Linking places a fact; it does not author it, so its rows keep the tier and write origin they were written with.
+  const apply = (tx: BrainEngine): Promise<Record<string, unknown>> => withTrustKeep(tx, ['facts'], async () => {
     const outcome: RelinkGroupOutcome = { linked: [], deduped: [], skipped: [], queued: 0 };
     const guard = 'WHERE source_id=$1 AND id=$2 AND entity_slug IS NULL AND row_num IS NULL AND source_markdown_slug IS NULL AND expired_at IS NULL RETURNING id';
     // Rows take their fence positions before the page projection runs, so the
@@ -255,7 +270,7 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
       outcome.queued = await enqueueRelinked(tx, row.source_id, outcome.linked.map(l => l.id));
     }
     return { ...published, status: 'relinked', slug: row.slug, ...outcome, ...normalized };
-  };
+  });
   if (!page) return { observedRevision, validate, apply };
   return { ...page, validate, apply };
 }
