@@ -143,7 +143,11 @@ function world(w: World) {
       api.push(path);
       if (path.startsWith('search/issues')) return { items: (w.importantPrs ?? []).map(p => ({ number: p.number })) };
       if (path.includes('/issues?')) return w.breakIssues ?? [];
-      if (path.includes('/actions/workflows/upgrade-matrix.yml/runs')) return { workflow_runs: matrix.map(({ receipt: _, ...run }) => run) };
+      if (path.includes('/actions/workflows/upgrade-matrix.yml/runs')) {
+        const q = new URLSearchParams(path.split('?')[1] ?? '');
+        const rows = matrix.filter(r => !q.get('branch') || r.head_branch === q.get('branch'));
+        return { workflow_runs: rows.slice(0, Number(q.get('per_page') ?? 30)).map(({ receipt: _, ...run }) => run) };
+      }
       const matrixHit = matrix.find(r => path.endsWith(`/actions/runs/${r.id}`));
       if (matrixHit) { const { receipt: _, ...run } = matrixHit; return { ...run, path: '.github/workflows/upgrade-matrix.yml' }; }
       const pull = /\/pulls\/(\d+)$/.exec(path);
@@ -181,7 +185,7 @@ function matrixRun(id: number, commit: number, releases: Record<string, number>,
     html_url: `https://github.com/${REPO}/actions/runs/${id}`, ...over,
     receipt: {
       schema: 'gbrain-upgrade-matrix-run/1', harness: { sha: HARNESS }, candidate: { tag: `v${version}`, sha: sha(commit), tree: tree(commit) }, profile: 'full',
-      status: red.length ? 'red' : 'green', cells: [], red, holds: [], foreign_receipts: [], ...receipt,
+      status: red.length ? 'red' : 'green', cells: [], red, holds: [], foreign_receipts: [], from: [{ tag: 'v1.0.1', roles: ['N-1', 'stable', 'stable-window'] }], skipped: [], ...receipt,
     },
   };
 }
@@ -507,6 +511,24 @@ describe('daily: the upgrade matrix gates stable (stability plan 3a)', () => {
       expect(await daily(w.deps)).toMatchObject({ action: 'matrix_dispatched', version: '1.0.4' });
       expect(w.pushes).toEqual([]);
     }
+  });
+
+  test('a red run on the candidate behind 30 newer pull-request runs is still found: stable holds and nothing is re-dispatched', async () => {
+    const prRuns = Array.from({ length: 30 }, (_, i) => ({ ...matrixRun(900 + i, 4, RELEASES, { event: 'pull_request', head_branch: `fix/pr-${i}` }), receipt: null }));
+    const w = world(base({ stable: old, runs: [soak(9, 4)], matrix: [...prRuns, redFrom(704, 4, [OLD_UPDATER])] }));
+    const r = await daily(w.deps);
+    expect(r.action).toBe('held');
+    expect(r.why).toContain('failing from v0.60.241.0');
+    expect(w.posts).toEqual([]);
+  });
+
+  test('a green run whose receipt predates the stable-window from-versions does not qualify: the check dispatches a fresh run', async () => {
+    const preWindow = matrixRun(807, 4, RELEASES, {}, { from: [{ tag: 'v1.0.1', roles: ['N-1', 'stable'] }], skipped: [] });
+    const w = world(base({ stable: old, runs: [soak(9, 4)], matrix: [preWindow] }));
+    expect(await daily(w.deps)).toMatchObject({ action: 'matrix_dispatched', version: '1.0.4' });
+    expect(w.pushes).toEqual([]);
+    const skippedWindow = world(base({ stable: old, runs: [soak(9, 4)], matrix: [matrixRun(808, 4, RELEASES, {}, { from: [{ tag: 'v1.0.1', roles: ['N-1'] }], skipped: [{ role: 'stable-window', reason: 'no stable release older than the candidate is in the window' }] })] }));
+    expect((await daily(skippedWindow.deps)).action).toBe('promoted');
   });
 
   test('a green run on the exact tag and tree promotes, and stable.json and the tag carry matrix_run', async () => {

@@ -40,6 +40,8 @@ export interface MatrixReceipt {
   harness?: { sha?: string };
   candidate?: { tag?: string | null; sha?: string; tree?: string };
   profile?: string;
+  from?: Array<{ tag: string; roles?: string[] }>;
+  skipped?: Array<{ role: string; reason?: string }>;
   status?: string;
   cells?: Array<{ id: string; from: string; verdict: string; fault?: string | null }>;
   red?: string[];
@@ -56,9 +58,13 @@ const normalise = (p: string) => p.trim().replace(/@.*$/, '').replace(/^\.\//, '
 /** Runs whose receipt can be gate evidence: master's harness, by schedule or dispatch (pull-request runs test their own harness). */
 export const isGateRun = (run: MatrixRunRow) => (run.event === 'schedule' || run.event === 'workflow_dispatch') && run.head_branch === 'master';
 
-/** Does this receipt test this release as a gate run (full profile, no fault injection)? A candidate tag alone picks the run; judgeMatrixRun checks the rest. */
+/** A receipt from a harness that resolves the stable-window role (scripts/upgrade-matrix/versions.ts): it tested or skipped it. Older receipts never tested the stable releases users may still be on. */
+const coversStableWindow = (r: MatrixReceipt) =>
+  (r.from ?? []).some(f => (f.roles ?? []).includes('stable-window')) || (r.skipped ?? []).some(s => s.role === 'stable-window');
+
+/** Does this receipt test this release as a gate run (full profile with the stable window, no fault injection)? A candidate tag alone picks the run; judgeMatrixRun checks the rest. */
 export const receiptNames = (r: MatrixReceipt | null, version: string) =>
-  !!r && r.candidate?.tag === `v${version}` && r.profile === 'full' && !(r.cells ?? []).some(c => c.fault);
+  !!r && r.candidate?.tag === `v${version}` && r.profile === 'full' && coversStableWindow(r) && !(r.cells ?? []).some(c => c.fault);
 
 /**
  * Whether a matrix run qualifies the release for stable. `excuse` is the break path: the open break issue's named
@@ -77,6 +83,7 @@ export function judgeMatrixRun(run: MatrixRunRow, receipt: MatrixReceipt | null,
     return { ok: false, why: `upgrade matrix run ${url} tested ${c.tag ?? 'an untagged commit'} (commit ${c.sha ?? '?'}, tree ${c.tree ?? '?'}), not v${release.version} (commit ${release.commit}, tree ${release.tree})` };
   }
   if (receipt.profile !== 'full') return { ok: false, why: `upgrade matrix run ${url} ran the ${receipt.profile ?? 'unknown'} profile, not the full from-version set` };
+  if (!coversStableWindow(receipt)) return { ok: false, why: `upgrade matrix run ${url} predates the stable-window from-versions, so it never tested upgrades from the stable releases users may still be on` };
   if ((receipt.cells ?? []).some(cell => cell.fault)) return { ok: false, why: `upgrade matrix run ${url} injected a fault (a proof run), so it qualifies nothing` };
   if (receipt.status === 'green' && run.conclusion === 'success') return { ok: true, why: `upgrade matrix run ${url} is green on v${release.version}`, excused: [] };
   const failing = failingFrom(receipt);

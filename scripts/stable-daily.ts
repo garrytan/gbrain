@@ -226,7 +226,7 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
   deps.log(`[stable-daily] reason: ${reason}.`);
 
   const matrixFile = MATRIX_WORKFLOW.split('/').at(-1);
-  const matrixRuns = (((await deps.ghApi(`repos/${deps.repo}/actions/workflows/${matrixFile}/runs?per_page=30`)) as { workflow_runs?: MatrixRunRow[] }).workflow_runs ?? []).filter(isGateRun);
+  const matrixRuns = (((await deps.ghApi(`repos/${deps.repo}/actions/workflows/${matrixFile}/runs?branch=master&per_page=100`)) as { workflow_runs?: MatrixRunRow[] }).workflow_runs ?? []).filter(isGateRun);
   const receipts = new Map<number, MatrixReceipt | null>();
   /** The newest completed gate run whose receipt tests this release, or null. */
   const matrixRunFor = async (version: string): Promise<{ run: MatrixRunRow; receipt: MatrixReceipt | null } | null> => {

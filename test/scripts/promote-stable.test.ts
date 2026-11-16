@@ -739,7 +739,7 @@ describe('promote: the upgrade matrix run (stability plan 3a)', () => {
   const greenRun = { id: 777, status: 'completed', conclusion: 'success', head_sha: HARNESS, head_branch: 'master', event: 'schedule', path: '.github/workflows/upgrade-matrix.yml' };
   const greenReceipt = (): MatrixReceipt => ({
     schema: 'gbrain-upgrade-matrix-run/1', harness: { sha: HARNESS }, candidate: { tag: 'v0.60.361.0', sha: sha('b'), tree: sha('2') }, profile: 'full',
-    status: 'green', cells: [], red: [], holds: [], foreign_receipts: [],
+    status: 'green', cells: [], red: [], holds: [], foreign_receipts: [], from: [{ tag: 'v0.60.360.0', roles: ['N-1', 'stable-window'] }], skipped: [],
   });
   function withMatrix(run: Record<string, unknown>, receipt: MatrixReceipt | null, setup: Parameters<typeof harness>[0] = {}) {
     const h = harness(setup);
@@ -778,6 +778,7 @@ describe('promote: the upgrade matrix run (stability plan 3a)', () => {
       [{ ...greenRun, status: 'in_progress', conclusion: null }, greenReceipt(), /is in_progress, not completed/],
       [{ ...greenRun, path: '.github/workflows/soak.yml' }, greenReceipt(), /ran \.github\/workflows\/soak\.yml, not the upgrade matrix/],
       [greenRun, { ...greenReceipt(), profile: 'explicit' }, /ran the explicit profile/],
+      [greenRun, { ...greenReceipt(), from: [{ tag: 'v0.60.360.0', roles: ['N-1'] }], skipped: [] }, /predates the stable-window from-versions/],
       [greenRun, null, /has no upgrade-matrix-receipt artifact/],
       [greenRun, greenReceipt(), /matrix_run_url names a run of acme-example\/gbrain/, 'https://github.com/acme-example/gbrain/actions/runs/777'],
       [greenRun, greenReceipt(), /matrix_run_url names attempt 2/, `${MATRIX_URL}/attempts/2`],
