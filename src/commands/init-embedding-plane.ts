@@ -31,6 +31,17 @@ export async function keptEmbeddingIdentity(engine: BrainEngine, aiOpts: Resolve
   return agrees ? { model: stored!.model!, dimensions: stored!.dimensions } : null;
 }
 
+/**
+ * #9451: an init that resolved an embedding model clears embedding_disabled and records the model and width in the
+ * database plane too. assertInitEmbeddingIdentity already refused when stored vectors belong to another model, so only a
+ * brain with no vectors (or the same model) gets here.
+ */
+export async function recordInitEmbedding(engine: BrainEngine, model: string, dimensions: number): Promise<void> {
+  await engine.unsetConfig('embedding_disabled');
+  await engine.setConfig('embedding_model', model);
+  await engine.setConfig('embedding_dimensions', String(dimensions));
+}
+
 /** The notice init prints instead of the deferred-setup hint when it kept the database's identity. */
 export function keptEmbeddingNotice(kept: KeptEmbedding): string {
   let key = 'the provider API key';

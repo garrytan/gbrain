@@ -8,6 +8,32 @@ The install command in the README, `bun install -g github:garrytan/gbrain#stable
 
 Check which channel you are on with `gbrain doctor`, which prints `channel=<channel>` when one is set.
 
+## What stays the same on stable
+
+Since 16 November 2026, stable comes with a written promise about what a script or an agent built on gbrain can rely on.
+
+**What it covers:**
+
+- Command names and their documented flags (the ones `gbrain <command> --help` and these docs describe).
+- MCP tool names and their parameters.
+- Documented config keys (`gbrain config set <key>`).
+- The page file and frontmatter format.
+- Exit codes and the top-level fields of `--json` output for documented commands.
+- Upgrading a brain from any stable release of the last six months. The channel started on 28 October 2026, so today that means every stable release.
+
+**How those things may change.** A removal or a rename is announced first, in a stable release: in the one-time upgrade notice and in the release notes. The old name or behaviour keeps working, with a warning that names the new one. It is removed no sooner than 14 days and two stable releases after that announcement. A change that makes a command or tool refuse something it used to accept counts as a break under this rule too.
+
+**The one exception: security and data-loss fixes.** A fix for a security hole or for something that loses data may change behaviour at once. Its upgrade notice says which of the two it is and what you need to do. It may leave out how the problem worked until the fix has had time to reach people.
+
+**What it does not cover:**
+
+- Wording of messages meant for people (not `--json`), and undocumented or internal flags.
+- The alpha channel. Its releases can change anything between one build and the next.
+- Search ranking, speed and the exact results of model-backed features.
+- Very large brains during an upgrade. The upgrade tests build small brains, on PGLite and on Postgres, with and without a git repository. The two-hour load test runs a 600,000-page brain on the new release but does not upgrade one. Until [#9192](https://github.com/garrytan/gbrain/issues/9192) is fixed, a large brain on a remote Postgres database can return no search results for hours after an upgrade while it catches up.
+
+**How it is checked.** Today each change is checked against these rules when its pull request is reviewed. A planned removal is recorded in [deprecations.d/](../deprecations.d/README.md) before it is announced. If a stable release breaks one of these rules anyway, that is a regression, and it is handled like any other: fixed, with the fix sent to stable as an important fix.
+
 ## How a release becomes stable
 
 1. **Every release passes the full test suite first.** A release is published only after the full unit and end-to-end test runs pass on its exact code.

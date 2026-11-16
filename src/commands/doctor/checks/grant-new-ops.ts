@@ -1,6 +1,8 @@
 /**
  * D4 `grant_new_ops_available` (warn when non-zero): active OAuth clients and
- * legacy tokens that cannot call operations their scopes allow.
+ * legacy tokens that cannot call operations their scopes allow. A grant missing
+ * only operations the owner approves by name is listed with its by-name command
+ * and the check stays ok: granting those is the owner's call, not a repair.
  *
  * Proven blockers come from the stored grant: the operation snapshot, the
  * client's own stored surface (pin) and the configured server surface. They
@@ -69,13 +71,16 @@ function shownCommand(argv: string[]): string {
   return argv.map(arg => arg.length > 80 ? `<${arg.split(',').length} operations: see details.grants>` : arg).join(' ');
 }
 
+function labelOf(f: GrantFinding): string {
+  return f.kind === 'oauth_client' ? `client ${f.name} (${f.id})` : `token ${f.name}`;
+}
+
 function describeFinding(f: GrantFinding): string {
-  const label = f.kind === 'oauth_client' ? `client ${f.name} (${f.id})` : `token ${f.name}`;
   const parts = f.blockers.filter(b => b.blocker !== 'scope').map(b => b.blocker === 'operation_snapshot' ? `its operation snapshot excludes ${b.excluded_count}`
     : b.blocker === 'client_pin' ? `its stored ${b.surface} surface excludes ${b.excluded_count}`
     : `the configured ${b.surface} server surface excludes ${b.excluded_count}`);
   const age = 'statement' in f.grant_age ? ` ${f.grant_age.statement}` : '';
-  return `${label}: ${parts.join(', ')}.${age}${f.preview_argv ? ` Preview: ${shownCommand(f.preview_argv)}` : ''}${byNameNote(f)}`;
+  return `${labelOf(f)}: ${parts.join(', ')}.${age}${f.preview_argv ? ` Preview: ${shownCommand(f.preview_argv)}` : ''}${byNameNote(f)}`;
 }
 
 function byNameNote(f: GrantFinding): string {
@@ -133,9 +138,16 @@ export async function checkGrantNewOps(engine: BrainEngine, opts: { cfg?: GBrain
         details: { grants: [], server_surface: ceiling, docs: DOCS } };
     }
     const first = findings.find(f => f.argv);
-    const placeholder = first?.argv?.includes('<OPERATIONS>');
-    const fix: Action | undefined = !first?.argv ? undefined : {
-      preview_argv: first.preview_argv!, argv: first.argv, consent: ['credentials'], actor: 'agent', requires_exclusive: false, docs: DOCS,
+    if (!first) {
+      return { name: 'grant_new_ops_available', status: 'ok',
+        message: 'Every active client and token can call the operations its scopes allow, except operations the owner approves by name: '
+          + findings.map(f => `${labelOf(f)}: ${f.by_name_operations.join(', ')}; an owner who approves them adds them with ${shownCommand(f.by_name_argv!)}`).join('; ')
+          + `. Leave them out unless the owner names them.${ceilingNote} See ${DOCS}.`,
+        details: { grants: findings, server_surface: ceiling, docs: DOCS } };
+    }
+    const placeholder = first.argv!.includes('<OPERATIONS>');
+    const fix: Action = {
+      preview_argv: first.preview_argv!, argv: first.argv!, consent: ['credentials'], actor: 'agent', requires_exclusive: false, docs: DOCS,
       verify: doctorVerify('grant_new_ops_available'),
       why: 'An operation snapshot or a stored client surface keeps this grant from operations its scopes allow; changing it widens what that credential can do.',
       user_message: `${findings.length} connection grant(s) cannot call operations their scopes allow (first: ${first.name}). `
@@ -151,7 +163,7 @@ export async function checkGrantNewOps(engine: BrainEngine, opts: { cfg?: GBrain
         + `Ask the user before changing any grant; nothing widens automatically, and --operations all (${ALL_OPERATIONS_CHOICE}) is a separate choice, not the default repair.`
         + `${ceilingNote} See ${DOCS}.`,
       details: { grants: findings, server_surface: ceiling, all_operations_choice: ALL_OPERATIONS_CHOICE, docs: DOCS },
-      ...(fix ? { fix } : {}),
+      fix,
     };
   } catch (e) {
     return checkError('grant_new_ops_available', 'read client and token grants', e);

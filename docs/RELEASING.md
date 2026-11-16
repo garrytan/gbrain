@@ -778,12 +778,15 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   version's first promotion and never moved or deleted. Both carry the same
   message: a title line (`gbrain`, then `stable channel: v<VERSION>`), then one
   `key: value` line each for `version`, `commit`, `tree`, `soak_run`,
-  `scoreboard`, `promoted_by`, `promoted_at` (UTC), `previous`
+  `scoreboard`, `matrix_run` (only when the promotion named one; `stable.json`
+  always has the key, `null` without one), `promoted_by`, `promoted_at` (UTC), `previous`
   (`none` on the first promotion), `rollback` and `reason` (`-` when
   empty).
 - **Inputs.** `version` (an existing `v<VERSION>` release tag),
   `soak_run_url` (the soak's Actions run URL, optionally
-  `/attempts/<n>`), `scoreboard_url` (optional, defaults to the run URL),
+  `/attempts/<n>`), `matrix_run_url` (optional for a maintainer: a green
+  upgrade matrix run on this release, see below), `scoreboard_url` (optional,
+  defaults to the run URL),
   `rollback` (default false), `reason` (required with rollback) and
   `withdraw` (versions added to the carried-forward `known_bad` list;
   clients on one are offered the current stable, even when older), and
@@ -816,6 +819,16 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   variables → Actions → Variables; a bare file name like `soak.yml` or the
   full `.github/workflows/soak.yml` path). With the variable unset, every
   promotion is refused.
+- **Upgrade matrix run.** When `matrix_run_url` is given, it must be a
+  completed run of `.github/workflows/upgrade-matrix.yml` from master's harness
+  (a schedule or dispatch run, not a pull request's), with the full from-version
+  set and no fault injection, whose `upgrade-matrix-receipt` artifact names this
+  release's tag, commit and tree and was written by that run's own commit, and
+  it must be green; a red or foreign run is refused
+  (`scripts/stable-matrix.ts` `judgeMatrixRun`). A maintainer may promote
+  without one, for example past an upgrade break the matrix found: the record
+  then says `matrix_run: null` and names the maintainer as `promoted_by`. A
+  scheduled promotion always names one.
 - **Published release.** The tag's `VERSION` file must say the version, and
   its GitHub release must exist and not be a draft, so binary clients can
   fetch the stable release.
@@ -899,6 +912,27 @@ and keeps stable between one day and one week behind what matters:
   (never while another soak runs, and never after a soak on any newer release
   failed to qualify: then a maintainer decides, and the check warns once stable
   is past the weekly floor), and a later run promotes it.
+- **Upgrade matrix next.** The soaked candidate also needs a green
+  [upgrade matrix](ci-upgrade-matrix.md) run on its exact tag and tree: a
+  schedule or dispatch run of master's harness with the full from-version set
+  (which includes every stable release in the window), checked as under
+  "Upgrade matrix run" above and again by `promote()`, and recorded as
+  `matrix_run`. With no run yet it dispatches one on the candidate's tag
+  (`upgrade-matrix.yml` on master, `candidate=v<version>`), unless a matrix run
+  is active, and a later run promotes; when it dispatches a soak on the
+  newest release it dispatches the matrix on that release too. A red or
+  foreign run holds stable with a warning and is never re-dispatched by the
+  schedule: a maintainer fixes the break or promotes by hand.
+- **Upgrade breaks hold.** While the matrix's own break issue is open (the
+  one the nightly run opens with the `<!-- gbrain-upgrade-matrix:nightly -->`
+  marker; another issue with the `upgrade-break` label holds nothing), the
+  check holds stable, the weekly floor included, and dispatches nothing. The
+  one way past it on the schedule is a released `stable:important` fix whose
+  `changelog.d` fragment says `important: security` or `important: data-loss`,
+  on a candidate whose matrix run fails on no from-version the issue names
+  (its `red-from` line) and on nothing else; the record's `reason` names the
+  excused from-versions. Everything else waits for the nightly run to close
+  the issue, or for a maintainer's promotion.
 - **Who.** A schedule event runs only the workflow file as merged on the
   default branch, so a scheduled run promotes by rule without a maintainer. A
   manual dispatch defaults to `dry_run` (report only); `dry_run=false` needs an

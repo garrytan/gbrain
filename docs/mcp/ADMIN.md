@@ -339,6 +339,10 @@ server's surface is narrower. The connection itself sees counts, never names,
 in `whoami` (`grant_diagnosis`) and `gbrain://capabilities`; operations outside
 the grant's scopes are never counted. On the host, `gbrain doctor` reports
 `grant_new_ops_available` with each grant's blockers and the operation names.
+A grant missing only the membership operations the owner approves by name
+(`join_brain`, `sync_brain_skills`, `leave_brain`) leaves the check `ok`: it
+lists them with the command that adds them, because adding them is the owner's
+choice, not a repair.
 
 The connection is also told in band, without asking: the
 `grant_blocked_operations` notice arrives once per session (once per
