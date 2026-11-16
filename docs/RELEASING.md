@@ -722,8 +722,10 @@ release.yml publishes every batch release with `prerelease: true` and
 release installs follow. Each promotion (`scripts/promote-stable.ts`, from the
 promote dispatch or the daily check) ends by marking the promoted release
 Latest and clearing its pre-release flag. A forward promotion also replaces its
-notes with every CHANGELOG entry since the previous stable, newest first; the
-oldest entries drop with a link to the full CHANGELOG once the notes would pass
+notes with a short summary of the behaviour changes since the previous stable
+(`upgradeSummary()` in `src/core/upgrade-summary.ts`, the same summary
+`gbrain post-upgrade` prints, left out when it alone would not fit), then every
+CHANGELOG entry since it, newest first; the oldest entries drop with a link to the full CHANGELOG once the notes would pass
 GitHub's 125,000-character limit. A rollback keeps the notes.
 
 A forward promotion never moves Latest to an older release than the one it
