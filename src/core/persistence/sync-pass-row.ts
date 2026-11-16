@@ -123,6 +123,12 @@ export interface ManagedSyncPassValue {
     /** #6712 PR 4b (design §9): the newest round's classes (`{count, action}`) and level summary, for `sync status`'s live `convergence`. */
     classes?: Record<string, { count: number; action: 'none' | 'owner' | 'repair' }>;
     summary?: PassRoundSummary;
+    /**
+     * GST-2843: the long step before a batch drains that an open pass was last seen in (the level read, or the Git history
+     * read of re-screened holds with how many of the batch's paths it read), written by the 30 s beat and cleared when the
+     * step ends; status names it for a pass that stopped there.
+     */
+    step?: { name: 'level_read' | 'drift_history'; at: string; done?: number; total?: number };
   };
 }
 

@@ -63,8 +63,9 @@ export interface SyncPathState {
    * An active hold at `p`: whether it is at level `L` in its own domain, re-screen due, or in the retry set. #7199 `unscreened`:
    * a side-`unknown` drift hold an older gbrain wrote before the drift screen compared the page with the file at the baseline commit.
    * GST-2201 `deletionSide`: a `file_drift` hold on the deletion side (`tombstone_edited`, `purged_differs`, `file_gone`).
+   * GST-2843 `moved`: the hold's basis or drift moved since it was written (`holdBasisMoved`, `movedDriftHolds`).
    */
-  hold: { atLevel: boolean; rescreenDue: boolean; retried: boolean; unscreened?: boolean; deletionSide?: boolean } | null;
+  hold: { atLevel: boolean; rescreenDue: boolean; retried: boolean; unscreened?: boolean; deletionSide?: boolean; moved?: boolean } | null;
   /**
    * A deletion marker at the origin: `deleted` (with the blob ids it held) or `legacy` (the baseline blob of a page deleted
    * before PR 4; `deletion` is the committed deleting request that proves it, and a legacy marker without one settles nothing).

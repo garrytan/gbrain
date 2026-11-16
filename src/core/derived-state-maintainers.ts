@@ -18,8 +18,11 @@
 export type PolicyCommand = 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE';
 const POLICY_COMMAND: Record<PolicyCommand, string> = { SELECT: 'r', INSERT: 'a', UPDATE: 'w', DELETE: 'd' };
 
-/** PL/pgSQL for a trigger body: refuse unless the caller may run every one of `commands` on `table`. `pad` indents lines after the first. */
-export function requireMaintainerPoliciesSql(table: string, commands: readonly PolicyCommand[], pad = '  '): string {
+/**
+ * PL/pgSQL for a trigger body: refuse unless the caller may run every one of `commands` on `table`. `pad` indents lines after
+ * the first; `hint`, a constant without quotes, becomes the refusal's HINT.
+ */
+export function requireMaintainerPoliciesSql(table: string, commands: readonly PolicyCommand[], pad = '  ', hint?: string): string {
   return [
     `IF pg_catalog.row_security_active('${table}') THEN`,
     `  IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY[${commands.map(c => `'${POLICY_COMMAND[c]}'`).join(',')}]) AS needed(cmd) WHERE NOT EXISTS (`,
@@ -27,10 +30,20 @@ export function requireMaintainerPoliciesSql(table: string, commands: readonly P
     `        AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN`,
     `    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',`,
     `      TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',`,
-    `      DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','${table}')::text;`,
+    `      DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','${table}')::text${hint ? `,\n${pad}      HINT='${hint}'` : ''};`,
     '  END IF;',
     'END IF;',
   ].join(`\n${pad}`);
+}
+
+/**
+ * #7632/#7659: the purge and withdrawal guards read their ledgers as the writing role, which read a ledger it holds no
+ * policy on as empty and let a purged claim, take, page or derivation, or a withdrawn fact, through. Each guard checks
+ * first, as the maintainers do; the refusal's HINT names the table, the policy the role needs and the recipe.
+ */
+export function requireLedgerPoliciesSql(table: string, commands: readonly PolicyCommand[], pad = '  '): string {
+  return requireMaintainerPoliciesSql(table, commands, pad, `Give this database role a policy on ${table} allowing ${commands.join(' and ')}`
+    + ' on the rows of the sources it writes (docs/ENGINES.md#purge-and-withdrawal-guards), or connect as the table owner.');
 }
 
 /**

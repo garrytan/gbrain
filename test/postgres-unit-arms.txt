@@ -562,6 +562,7 @@ test/purge-root-metafile-7613.test.ts
 test/purge-scrub-followups-9068.test.ts
 test/purge-slug-stores-9146.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
+test/purged-change-reason-8635.test.ts
 test/qm-attest-write-boundary.test.ts
 test/qm-memory-propose.test.ts
 test/qm-memory-tools.test.ts
@@ -588,6 +589,7 @@ test/refresh-write-barrier.test.ts
 test/remediation-manual-only.test.ts
 test/remember-batch-entity-7432.test.ts
 test/remember-pageless-entity-gst2446.test.ts
+test/remember-restated-private-2875.test.ts
 test/remember-segmented-entity-9213.test.ts
 test/remember-share-gst2243.test.ts
 test/remember-strict-held-gst2492.test.ts
@@ -708,6 +710,7 @@ test/sync-legacy-sweep-resume-7189.test.ts
 test/sync-level-reuse-across-gbra133.test.ts
 test/sync-metafile-foreign-slug-7341.test.ts
 test/sync-mirror-catchup-gst2515.test.ts
+test/sync-mirror-parked-gst2843.test.ts
 test/sync-origin-live-wins-6517.test.ts
 test/sync-page-identity-hold-gbra130.test.ts
 test/sync-page-write-failed-gbra130.test.ts
