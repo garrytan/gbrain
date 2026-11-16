@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 311,
+    "count": 312,
     "gaps": [
       17,
       18,
@@ -103,7 +103,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 316,
+    "latest": 317,
     "records": [
       {
         "handler": {
@@ -5152,6 +5152,35 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 316
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "ACTIVATION_SERVED_REVISION",
+            "PLANNER_REPAIR_TABLES",
+            "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
+            "migrationNotice",
+            "quietMigrationNotices",
+            "tableRows"
+          ],
+          "sha256": "247e56b25c60144716ebde796118016cc9e24c1a17e338d47df750101917e8a7"
+        },
+        "idempotent": true,
+        "name": "pages_projection_waiting_index",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 317
       }
     ],
     "versions": [
@@ -5465,7 +5494,8 @@
       313,
       314,
       315,
-      316
+      316,
+      317
     ]
   },
   "normalizer": "migrations-record-v1"

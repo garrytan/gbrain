@@ -19,6 +19,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const TEXT = 'The okapi theremin appears in this synthetic note.';
 const SLUGS = ['notes/okapi-one', 'notes/okapi-two'];
@@ -205,6 +206,19 @@ for (const backend of testBackends()) {
       expect(await count(engine, '(p.text_projection_revision = p.knowledge_revision) IS TRUE')).toBe(0);
       expect(await count(engine, 'p.deleted_at IS NULL AND p.text_projection_revision IS DISTINCT FROM p.knowledge_revision')).toBe(2);
       expect((await projectionBacklog(engine)).pending).toBe(2);
+    }, url), 120_000);
+
+    test('the readiness probe reads the index of pages waiting for a rebuild, which leaves out pages served from their old index (v317)', () => activated(async engine => {
+      const captured: Array<{ sql: string; params?: unknown[] }> = [];
+      const recording = { executeRaw: (sql: string, params?: unknown[]) => { captured.push({ sql, params }); return engine.executeRaw(sql, params); } } as unknown as BrainEngine;
+      expect((await withEnv({ GBRAIN_PROJECTION_READINESS_CACHE: '0' }, () => probeProjectionReadiness(recording))).status).toBe('ready');
+      const probe = captured.find(call => call.sql.includes('IS DISTINCT FROM'));
+      expect(probe).toBeDefined();
+      const plan = await engine.transaction(async tx => {
+        await tx.executeRaw('SET LOCAL enable_seqscan = off');
+        return (await tx.executeRaw<Record<string, string>>(`EXPLAIN ${probe!.sql}`, probe!.params)).map(row => Object.values(row)[0]).join('\n');
+      });
+      expect(plan).toContain('idx_pages_projection_waiting');
     }, url), 120_000);
 
     test('the v153 handler says which pages stay served and which wait', () => activated(async engine => {
