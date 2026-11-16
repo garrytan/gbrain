@@ -29,6 +29,7 @@ import { scannerSlugRootMode } from '../../../core/write-through.ts';
 import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts';
 import { quarantineFilterFragment } from '../../../core/quarantine.ts';
 import { persistenceEnabledForHealth } from '../../../core/persistence/ownership.ts';
+import { syncContentDirectory } from '../../../core/sync-applicability.ts';
 import { upstreamFreshness } from '../../../core/sync-upstream.ts';
 import type { Check } from '../../doctor.ts';
 import { isOwnedContentSchemaMissing, ownedContentFreshness } from '../../../core/shared-skills/content-freshness.ts';
@@ -1268,6 +1269,8 @@ export async function checkSyncFreshness(
     for (const source of sources) {
       if (ownedContent.has(source.id)) { writer_owned_count++; continue; }
       if (catalogPacks.ids.has(source.id)) { read_only_pack_count++; continue; }
+      // `sync` refuses a gbrain-owned content directory (`sync_not_applicable`), so doctor must not ask for a sync there.
+      if (localOnly && !source.last_commit && await syncContentDirectory(engine, { sourceId: source.id })) { writer_owned_count++; continue; }
       // Embed source.id in user-visible messages so `gbrain sync --source <id>`
       // matches what the user copy-pastes. Show display name in parens when set.
       const display = source.name && source.name !== source.id
