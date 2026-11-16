@@ -159,9 +159,10 @@ reader of the log should see.
 - `changelog.d/<branch-slug>.md`: the PR's CHANGELOG entry with no version
   heading (bold one-line summary, then the itemized sections; voice rules
   below). /ship writes it. Front matter may say
-  `important: security|regression|data-loss|blocker`; releases are PATCH
+  `important: security|regression|data-loss`, where regression means one in
+  a release that is on stable ("Daily stable check"); releases are PATCH
   only, so `scripts/build-behavior-changes.ts` (in `check:regen-all`) refuses
-  a `bump:` line other than `patch`. Format:
+  a `bump:` line other than `patch` and any other `important:` class. Format:
   [changelog.d/README.md](../changelog.d/README.md).
 - One `behavior-changes.d/<id>.md` file per new upgrade-notice row, named
   in the fragment as `<!-- behavior-change: <id> -->`
@@ -883,9 +884,14 @@ and keeps stable between one day and one week behind what matters:
 - **Reason first.** It acts only when a merged PR labelled `stable:important` is in a
   published release but not in stable, or stable is more than 7 days old and
   a newer release exists (the weekly floor). Otherwise it does nothing. The
-  merge lane sets the label at merge on a security, regression or data-loss
-  fix, or a fix for something that blocks a crew or a user (on a train PR,
-  the train carries it); a label added after the merge counts too.
+  merge lane sets the label at merge on a security fix, a data-loss fix or a
+  fix for a regression in a release that is on stable (on a train PR, the
+  train carries it); a label added after the merge counts too. Anything else,
+  a regression only alpha has or a fix that unblocks one setup included, rides
+  the weekly floor unless a maintainer promotes by hand. The rule: an
+  important fix reaches stable within a day once it passes the full gate and
+  soak; everything else rides a weekly cut; stable never sits more than seven
+  days behind gated changes on master.
 - **Soak first.** The candidate is the newest release newer than stable whose
   commit is on master and whose exact tree passed a successful
   `STABLE_SOAK_WORKFLOW` run with the integrity gates (`privacy_leaks`,
