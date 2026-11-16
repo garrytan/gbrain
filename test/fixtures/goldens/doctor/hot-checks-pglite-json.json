@@ -1819,6 +1819,10 @@
                 {
                   "name": "persistence_requests_slug_sequence",
                   "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_facts_batch",
+                  "state": "valid"
                 }
               ],
               "repair": "request-indexes"
@@ -7271,6 +7275,10 @@
                 },
                 {
                   "name": "persistence_requests_slug_sequence",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_facts_batch",
                   "state": "valid"
                 }
               ],

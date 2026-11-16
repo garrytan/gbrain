@@ -60,9 +60,21 @@ export const PERSISTENCE_REQUEST_REPLAY_ID_INDEX = { name: 'persistence_requests
 export const PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_slug_sequence
   ON persistence_requests(source_id,slug,sequence)`;
 export const PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX = { name: 'persistence_requests_slug_sequence', table: 'persistence_requests', sql: PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL } as const;
+/**
+ * #9302: managed fact extraction finds a batch's journaled requests by batch key (facts-maintenance.ts `storedBatch`, run
+ * for every batch, and facts-prepare.ts `predecessorPartRevision`). The key is `intent.batchKey`, or `outcome.batch_key`
+ * once compaction drops the intent. No index held it, so each lookup read every extract_facts receipt of the principal
+ * (on a personal brain, all of them) and decompressed each intent, mostly fact embeddings, to test the key: 14.5 s a
+ * call on a small Postgres brain. The index is keyed on the expression those reads use; with the request-id index the
+ * planner serves storedBatch's `request_id OR batch key` as a BitmapOr. Postgres builds it CONCURRENTLY in the
+ * persistence_request_facts_batch_index migration (`transaction: false`); PGLite inline.
+ */
+export const PERSISTENCE_REQUEST_FACTS_BATCH_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_facts_batch
+  ON persistence_requests(source_id,(COALESCE(intent->>'batchKey',outcome->>'batch_key'))) WHERE operation='extract_facts'`;
+export const PERSISTENCE_REQUEST_FACTS_BATCH_INDEX = { name: 'persistence_requests_facts_batch', table: 'persistence_requests', sql: PERSISTENCE_REQUEST_FACTS_BATCH_INDEX_SQL } as const;
 /** Every request-table index built online (a migration, then `gbrain repair request-indexes` and doctor `persistence_request_indexes`). */
 export const PERSISTENCE_REQUEST_ONLINE_INDEXES = [...PERSISTENCE_SYNC_RUN_INDEXES, PERSISTENCE_REQUEST_SLUG_INTENT_INDEX, PERSISTENCE_REQUEST_ID_INDEX,
-  PERSISTENCE_FOREGROUND_COMMITTED_INDEX, PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX] as const;
+  PERSISTENCE_FOREGROUND_COMMITTED_INDEX, PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX, PERSISTENCE_REQUEST_FACTS_BATCH_INDEX] as const;
 /**
  * #6317: the movement watermark (the newest committed receipt of a worktree)
  * that `writer movement`, `data_moving` and doctor `managed_sync_not_moving`
@@ -134,7 +146,7 @@ export const PERSISTENCE_CONSUMERS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS persi
 export const POSTGRES_CONCURRENT_PERSISTENCE_INDEXES: ReadonlySet<string> = new Set([
   PERSISTENCE_DATABASE_PENDING_INDEX_SQL, PERSISTENCE_SYNC_RUN_OPEN_INDEX_SQL, PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL, PERSISTENCE_SYNC_WATERMARK_INDEX_SQL, PERSISTENCE_COMPACTABLE_INDEX_SQL,
   PERSISTENCE_REQUEST_SLUG_INTENT_INDEX_SQL, PERSISTENCE_REQUEST_ID_INDEX_SQL, PERSISTENCE_FOREGROUND_COMMITTED_INDEX_SQL,
-  PERSISTENCE_REQUEST_REPLAY_ID_INDEX_SQL, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL,
+  PERSISTENCE_REQUEST_REPLAY_ID_INDEX_SQL, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL, PERSISTENCE_REQUEST_FACTS_BATCH_INDEX_SQL,
 ]);
 /** Durable infrastructure: never reconstruct or discard these rows during page reindexing. */
 export const PERSISTENCE_SCHEMA_STATEMENTS = [
@@ -233,6 +245,7 @@ export const PERSISTENCE_SCHEMA_STATEMENTS = [
   PERSISTENCE_FOREGROUND_COMMITTED_INDEX_SQL,
   PERSISTENCE_REQUEST_REPLAY_ID_INDEX_SQL,
   PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL,
+  PERSISTENCE_REQUEST_FACTS_BATCH_INDEX_SQL,
   `CREATE INDEX IF NOT EXISTS persistence_requests_principal ON persistence_requests(principal_kind,principal_id,sequence DESC)`,
   `CREATE TABLE IF NOT EXISTS persistence_effects (
     id bigserial PRIMARY KEY,
