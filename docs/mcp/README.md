@@ -42,6 +42,32 @@ Client-specific details: [ChatGPT](CHATGPT.md), [Claude Code](CLAUDE_CODE.md),
 [opencode](OPENCODE.md), [Perplexity](PERPLEXITY.md),
 [OpenClaw](OPENCLAW.md), and the [adapter reference](../guides/harness-adapters.md).
 
+## One-click client links
+
+Claude and Cursor can each add GBrain from one link. The link opens the
+client's own "add server" form with the MCP URL already filled in. You check
+it, confirm, and sign in there as usual. The link holds no password or token.
+
+**Hosted GBrain** (MCP URL `https://gbrain.io/mcp`):
+
+- Claude (claude.ai and Claude Desktop), open in a browser:
+  `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=GBrain&connectorUrl=https%3A%2F%2Fgbrain.io%2Fmcp`
+- Cursor, open in a browser or click where links work:
+  `cursor://anysphere.cursor-deeplink/mcp/install?name=gbrain&config=eyJ1cmwiOiJodHRwczovL2dicmFpbi5pby9tY3AifQ%3D%3D`
+
+**Your own brain:** `gbrain mcp expose` prints these links for your URL in
+its `Next` block, `gbrain mcp expose --status` repeats them, and `--json`
+returns them as `install_links`. The Cursor link is always printed, because
+Cursor connects from your own computer (on a tailnet-only brain, that computer
+must be on your tailnet). The Claude link is printed only with `--funnel`,
+because claude.ai connects from Anthropic's servers, which can't reach a
+tailnet-only address.
+
+If the form opens empty, add the server by hand: [Claude
+Desktop](CLAUDE_DESKTOP.md#2-add-the-integration). Today Claude's form loses
+the filled-in values after a sign-in redirect and on iPhone Safari. ChatGPT
+and Perplexity have no such link, so follow their pages.
+
 ## A tool call returned an error
 
 Every gbrain tool error is one content block holding a JSON envelope. Read
