@@ -409,6 +409,9 @@ export function thinkingDisabledBelowFloor(maxOutputTokens: number | undefined):
     && maxOutputTokens <= CLAUDE_THINKING_BUDGET_FLOOR;
 }
 
+/** Grace between SIGTERM and SIGKILL when a call is aborted. */
+const CLAUDE_KILL_GRACE_MS = 2_000;
+
 /**
  * Spawn `claude --print` with the contamination-suppression flags and return
  * the parsed result envelope. Aborts propagate to SIGTERM on
@@ -508,6 +511,11 @@ function runClaude(
 
     const onAbort = () => {
       child.kill('SIGTERM');
+      // A child that ignores SIGTERM would otherwise outlive the rejected call
+      // and keep the whole process (and its cycle lock) alive. Escalate.
+      const killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already gone */ } }, CLAUDE_KILL_GRACE_MS);
+      killTimer.unref?.();
+      child.once('close', () => clearTimeout(killTimer));
       reject(new Error('claude-cli adapter aborted'));
     };
     if (signal) {
