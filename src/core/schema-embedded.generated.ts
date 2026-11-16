@@ -2304,6 +2304,26 @@ DECLARE
   src TEXT;
   page INTEGER;
 BEGIN
+  IF pg_catalog.row_security_active('page_segment_derivation_purges') THEN
+    IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r']) AS needed(cmd) WHERE NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'page_segment_derivation_purges'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+          AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+        TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+        DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','page_segment_derivation_purges')::text,
+        HINT='Give this database role a policy on page_segment_derivation_purges allowing SELECT on the rows of the sources it writes (docs/ENGINES.md#purge-and-withdrawal-guards), or connect as the table owner.';
+    END IF;
+  END IF;
+  IF pg_catalog.row_security_active('page_segment_derivation_purge_pages') THEN
+    IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['a']) AS needed(cmd) WHERE NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'page_segment_derivation_purge_pages'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+          AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+        TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+        DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','page_segment_derivation_purge_pages')::text,
+        HINT='Give this database role a policy on page_segment_derivation_purge_pages allowing INSERT on the rows of the sources it writes (docs/ENGINES.md#purge-and-withdrawal-guards), or connect as the table owner.';
+    END IF;
+  END IF;
   IF TG_TABLE_NAME = 'pages' THEN
     src := NEW.source_id;
     page := NEW.id;
@@ -2328,6 +2348,26 @@ CREATE TRIGGER pages_derivation_scope_delete AFTER UPDATE OF deleted_at ON pages
   FOR EACH ROW WHEN (OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL) EXECUTE FUNCTION gbrain_mark_derivation_scope_entry();
 CREATE OR REPLACE FUNCTION gbrain_refuse_purging_derivation() RETURNS trigger SET search_path = pg_catalog, public, pg_temp AS \$func\$
 BEGIN
+  IF pg_catalog.row_security_active('page_segment_derivation_purges') THEN
+    IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r']) AS needed(cmd) WHERE NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'page_segment_derivation_purges'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+          AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+        TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+        DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','page_segment_derivation_purges')::text,
+        HINT='Give this database role a policy on page_segment_derivation_purges allowing SELECT on the rows of the sources it writes (docs/ENGINES.md#purge-and-withdrawal-guards), or connect as the table owner.';
+    END IF;
+  END IF;
+  IF pg_catalog.row_security_active('pages') THEN
+    IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r']) AS needed(cmd) WHERE NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'pages'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+          AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+        TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+        DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','pages')::text,
+        HINT='Give this database role a policy on pages allowing SELECT on the rows of the sources it writes (docs/ENGINES.md#purge-and-withdrawal-guards), or connect as the table owner.';
+    END IF;
+  END IF;
   IF EXISTS (SELECT 1 FROM page_segment_derivation_purges x JOIN pages p ON p.source_id = x.source_id
     WHERE p.id = NEW.page_id AND (NEW.page_id = ANY(x.page_ids::int[]) OR p.deleted_at IS NOT NULL OR NOT EXISTS (SELECT 1 FROM page_body_manifest m
     WHERE m.page_id = NEW.page_id AND m.occurrence_id = NEW.occurrence_id AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.sha256 = NEW.segment_sha256))
