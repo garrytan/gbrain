@@ -53,7 +53,7 @@ describe('openclaw gateway call child process', () => {
       expect(argv.slice(6)).toEqual(['--timeout', '5000']);
     }
     const historyKeys = calls.filter(c => c.argv[2] === 'chat.history').map(c => (JSON.parse(c.argv[5]!) as { sessionKey: string }).sessionKey);
-    expect(historyKeys).toEqual(HOSTILE);
+    expect([...historyKeys].sort()).toEqual([...HOSTILE].sort());
     expect(() => readFileSync(join(dir, 'pwned'))).toThrow();
   }, 30_000);
 

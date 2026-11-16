@@ -30,6 +30,7 @@ import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts
 import { quarantineFilterFragment } from '../../../core/quarantine.ts';
 import { persistenceEnabledForHealth } from '../../../core/persistence/ownership.ts';
 import { upstreamFreshness } from '../../../core/sync-upstream.ts';
+import { syncContentDirectory } from '../../../core/sync-applicability.ts';
 import type { Check } from '../../doctor.ts';
 import { isOwnedContentSchemaMissing, ownedContentFreshness } from '../../../core/shared-skills/content-freshness.ts';
 import { readOnlyCatalogPackSourceIds } from '../../../core/shared-skills/adopted-packs.ts';
@@ -1212,6 +1213,8 @@ export async function checkSyncFreshness(
     // #6076: an adopted read-only catalog pack (no commit history) has nothing to sync.
     const catalogPacks = await readOnlyCatalogPackSourceIds(engine, sources, localOnly);
     let writer_owned_count = 0, read_only_pack_count = 0;
+    // #9471: roots inside gbrain's own content directory, which sync refuses (a receipt-claimed root stays writer-owned above).
+    const contentDirectories: Array<{ id: string; keyless: boolean }> = [];
     // v0.41.27.0: D6 count math. Every source falls into
     // EXACTLY ONE bucket per iteration. Invariant pinned by unit test:
     //   unchanged + synced_recently + stale + writer_owned + read_only_pack counts === sources.length
@@ -1268,6 +1271,8 @@ export async function checkSyncFreshness(
     for (const source of sources) {
       if (ownedContent.has(source.id)) { writer_owned_count++; continue; }
       if (catalogPacks.ids.has(source.id)) { read_only_pack_count++; continue; }
+      const contentDirectory = await syncContentDirectory(engine, { sourceId: source.id, repoPath: source.local_path ?? undefined });
+      if (contentDirectory?.ownedBy === 'content_root') { contentDirectories.push({ id: source.id, keyless: contentDirectory.keyless }); continue; }
       // Embed source.id in user-visible messages so `gbrain sync --source <id>`
       // matches what the user copy-pastes. Show display name in parens when set.
       const display = source.name && source.name !== source.id
@@ -1432,14 +1437,16 @@ export async function checkSyncFreshness(
 
     // D6 invariant: every source incremented exactly one bucket.
     const details = { unchanged_count, synced_recently_count, stale_count, ...(writer_owned_count ? { writer_owned_count } : {}),
-      ...(read_only_pack_count ? { read_only_pack_count } : {}), ...(catalogPacks.note ? { read_only_pack_note: catalogPacks.note } : {}),
+      ...(read_only_pack_count ? { read_only_pack_count } : {}), ...(contentDirectories.length ? { content_directory_count: contentDirectories.length } : {}), ...(catalogPacks.note ? { read_only_pack_note: catalogPacks.note } : {}),
       ...(outcomes.length ? { code: outcomes[0]!.code, no_successful_sync: outcomes } : {}),
       ...(upstream_unknown_count ? { upstream_unknown_count } : {}), ...(upstream_behind_count ? { upstream_behind_count } : {}) };
     // BUG 4: append in-progress context when any source is actively syncing.
     // Empty otherwise, so steady-state messages are byte-for-byte unchanged.
     const inProgressNote = (inProgress.length ? `. ${inProgress.join('; ')}` : '')
       + (writer_owned_count ? `. ${writer_owned_count} writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status` : '')
-      + (read_only_pack_count ? `. ${read_only_pack_count} read-only skill-pack source(s): no commits to sync` : '') + (catalogPacks.note ? `. ${catalogPacks.note}` : '');
+      + (read_only_pack_count ? `. ${read_only_pack_count} read-only skill-pack source(s): no commits to sync` : '')
+      + (contentDirectories.length ? `. ${contentDirectories.length} gbrain-owned content director${contentDirectories.length === 1 ? 'y' : 'ies'}, where sync does not apply: add files with ${contentDirectories.map(dir => `\`gbrain import <dir>${dir.keyless ? ' --no-embed' : ''} --source ${dir.id}\``).join(', ')}` : '')
+      + (catalogPacks.note ? `. ${catalogPacks.note}` : '');
 
     const remedy = issues.length > outcomes.length;
     const moved = managed && localOnly && staleIds.length ? await checkpointMovedFix(engine, staleIds) : null;
@@ -1456,7 +1463,7 @@ export async function checkSyncFreshness(
       name: 'sync_freshness', status: 'ok',
       message: `${writer_owned_count} writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status.`, details,
     };
-    const upstreamCount = sources.length - writer_owned_count - read_only_pack_count;
+    const upstreamCount = sources.length - writer_owned_count - read_only_pack_count - contentDirectories.length;
     if (upstreamCount === 0) return { name: 'sync_freshness', status: 'ok', message: `No upstream-synced sources${inProgressNote}.`, details };
     // v0.41.27.0: D2 ok-message reshape. Three branches surface what the
     // git short-circuit actually did so operators understand "unchanged
