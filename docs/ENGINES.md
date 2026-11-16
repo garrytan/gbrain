@@ -438,15 +438,77 @@ segmented chunk (`test/e2e/segmented-switch-off-write-role.test.ts`). With the
 policies above it creates segmented pages and sees only its sources' rows
 (`test/e2e/segmented-rls-scope.test.ts`).
 
+<a id="purge-and-withdrawal-guards"></a>
 **Purge and withdrawal guards.** The guards that refuse purged content and keep withdrawn
 facts withdrawn run as the writing role (`SECURITY INVOKER`) and read their ledgers
 (`fact_purges`, `fact_withdrawals`, `take_purges`, `page_purges` and the derivation purge
-tables) under that role's RLS. Every gbrain function that pins a search_path ends it with
+tables) under that role's RLS. Since migration v318 (#7632, #7659) they fail closed: when
+RLS applies to the writing role on a ledger and no permissive policy of the role covers it,
+the guard refuses the write with `writer_coordinator_required: writer state is unreadable to
+this database role` (P0001, relationship `unreadable_state`), whose `HINT` names the table
+and the policy to add, instead of reading the ledger as empty and letting a purged claim,
+take, page or derivation, or a withdrawn fact, through. The refused writes are fact inserts
+and claim updates, fact re-activations, take writes, page content writes, segment derivation
+writes, and page soft-deletes or segment retirements while the derivation purge tables are
+unreadable. The owner (without `FORCE ROW LEVEL SECURITY`), a role that bypasses RLS, a
+ledger without RLS and PGLite are not affected. A scoped write role needs these policies, on
+top of the maintainer recipe below for `pages` and `sources`; they let it read only the
+ledger rows of the sources it writes and change none:
+
+<!-- gbrain:ledger-rls-recipe:begin (applied verbatim by test/guard-ledgers-fail-closed-7632.test.ts) -->
+```sql
+-- The ledgers of the writer's own sources, with the pages_scope_filter predicate.
+CREATE POLICY fact_purges_writer_scope ON fact_purges FOR SELECT TO <writer-role>
+  USING (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+CREATE POLICY fact_withdrawals_writer_scope ON fact_withdrawals FOR SELECT TO <writer-role>
+  USING (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+CREATE POLICY take_purges_writer_scope ON take_purges FOR SELECT TO <writer-role>
+  USING (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+CREATE POLICY page_purges_writer_scope ON page_purges FOR SELECT TO <writer-role>
+  USING (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+CREATE POLICY page_segment_derivation_purges_writer_scope ON page_segment_derivation_purges FOR SELECT TO <writer-role>
+  USING (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+-- The note a page leaving a running derivation sweep's scope leaves for that sweep.
+CREATE POLICY page_segment_derivation_purge_pages_writer_note ON page_segment_derivation_purge_pages FOR INSERT TO <writer-role>
+  WITH CHECK (EXISTS (SELECT 1 FROM page_segment_derivation_purges r
+                      WHERE r.request_id = page_segment_derivation_purge_pages.request_id));
+```
+<!-- gbrain:ledger-rls-recipe:end -->
+
+**Check that the upgrade replaced every guard.** Migration v318 can only replace a guard function
+the role running it owns. A guard owned by another role is left as it was, so it still lets a
+scoped writer without ledger policies through, and v318 only names it in one stderr line
+(`guards: N purge or withdrawal guard(s) still read their ledgers as empty ...`). After upgrading,
+run this as any role that can read the catalog. Every one of the seven rows must show
+`fails_closed = t`:
+
+```sql
+SELECT p.proname, pg_get_userbyid(p.proowner) AS owner,
+       strpos(p.prosrc, 'row_security_active(') > 0 AS fails_closed
+FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public' AND p.proname IN ('gbrain_guard_inserted_facts',
+  'gbrain_preserve_fact_withdrawal', 'gbrain_refuse_purged_fact', 'gbrain_refuse_purged_take',
+  'gbrain_refuse_purged_page', 'gbrain_refuse_purging_derivation', 'gbrain_mark_derivation_scope_entry')
+ORDER BY 1;
+```
+
+For a row with `fails_closed = f`, connect as the role in its `owner` column and run
+`ALTER FUNCTION public.<proname>() OWNER TO <the role gbrain migrates as>;`. Then run
+`gbrain apply-migrations --yes`, or start gbrain: every migration run re-creates a guard that
+is missing its check, provided the migrating role owns it. You can also run gbrain once as the
+owning role instead. Run the query again to confirm.
+
+The segmented storage recipe above already covers the two derivation purge tables for a
+role it applies to. A policy that filters out ledger rows of a source the role writes hides
+them from the guard, as before. Every gbrain function that pins a search_path ends it with
 `pg_temp` (migration v277, #7632), so a session's temp table or view named like a ledger
 cannot hide it from a guard; before, any session, the owner included, could store purged
-content that way. A write role with no policy on a ledger still reads it empty, so its
-purged or withdrawn writes still go through: give a scoped write role a `SELECT` policy on
-the ledgers of the sources it writes (gbrain#7659 tracks the fix). Each definition outside
+content that way. Each definition outside
 `src/core/schema-migrations/` pins `pg_catalog, public, pg_temp` itself (`bun run check:search-path`
 fails one that does not, or a pinned function missing from `PINNED_FUNCTION_NAMES`), so a schema
 replay keeps it; historical migration bodies still pin the old path, so every migration run ends by
