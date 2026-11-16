@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { resolve, sep } from 'node:path';
@@ -17,6 +17,35 @@ import {
 import { __setDnsLookupForTests } from '../src/core/ssrf-validate.ts';
 
 const RECIPES_DIR = resolve(import.meta.dir, '..', 'recipes');
+
+// Runs the shipped recipe through the command runner: unrelated doctor failures
+// must not mark this integration unhealthy. Generic command tests use `true`
+// and cannot catch recipe scope regressions. No production seam is needed.
+test('retrieval-reflex health isolates its check and propagates its failures', async () => {
+  const recipe = parseRecipe(readFileSync(join(RECIPES_DIR, 'retrieval-reflex.md'), 'utf8'), 'retrieval-reflex.md')!;
+  const check = recipe.frontmatter.health_checks[0];
+  if (typeof check === 'string' || check.type !== 'command') throw new Error('Expected command check');
+  const dir = mkdtempSync(join(tmpdir(), 'reflex-health-'));
+  try {
+    const doctor = join(dir, 'gbrain');
+    for (const healthy of [true, false]) {
+      writeFileSync(doctor, `#!/bin/sh
+# An unrelated doctor check fails unless the invocation selects this check.
+case "$*" in
+  "doctor --only retrieval_reflex_health --json")
+    echo '{"checks":[{"name":"retrieval_reflex_health","status":"${healthy ? 'ok' : 'error'}"}]}'
+    exit ${healthy ? 0 : 1} ;;
+  *) echo 'unrelated check failed'; exit 1 ;;
+esac
+`, { mode: 0o755 });
+      const result = await executeHealthCheck({ ...check, argv: [doctor, ...check.argv.slice(1)] }, recipe.frontmatter.id, true);
+      expect(result.status).toBe(healthy ? 'ok' : 'fail');
+      expect(result.output).toContain('retrieval_reflex_health');
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 // --- parseRecipe tests ---
 
