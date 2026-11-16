@@ -21,11 +21,11 @@ import { parentPort, workerData } from 'node:worker_threads';
 import { resolveSkills } from './resolve.ts';
 
 export interface LaneWorkerData { stall?: string }
-export interface LaneWorkerTurn { input: unknown; home: string; catalogs: string[]; deadlineMs: number }
+export interface LaneWorkerTurn { input: unknown; home: string; catalogs: string[]; deadlineMs: number; excludeNamespaces?: string[] }
 
 const { stall } = (workerData ?? {}) as LaneWorkerData;
 if (stall === 'load-error') throw new Error('forced worker load failure');
-const { input, home, catalogs, deadlineMs } = await new Promise<LaneWorkerTurn>(resolve => parentPort!.once('message', resolve));
+const { input, home, catalogs, deadlineMs, excludeNamespaces } = await new Promise<LaneWorkerTurn>(resolve => parentPort!.once('message', resolve));
 
 if (stall === 'block') { const end = Date.now() + 10_000; while (Date.now() < end) { /* forced synchronous stall */ } }
 if (stall === 'hang') await new Promise(() => setInterval(() => {}, 60_000));
@@ -33,7 +33,7 @@ if (stall === 'exit') await new Promise(() => {});
 if (stall === 'late') await new Promise(r => setTimeout(r, 300));
 
 try {
-  const r = await resolveSkills(input, { home, catalogs, deadlineMs, failOpen: true });
+  const r = await resolveSkills(input, { home, catalogs, deadlineMs, failOpen: true, excludeNamespaces });
   parentPort!.postMessage({ output: r.output, pending: r.pending ?? null });
 } catch (e) {
   const code = (e as { code?: unknown }).code;

@@ -100,6 +100,8 @@ export interface ResolveOptions {
   sessionTokenBudget?: number;
   loadHint?: string;
   namesOnly?: boolean;
+  /** Plugin namespaces whose skills are never suggested this turn (a project that turns the plugin off). */
+  excludeNamespaces?: string[];
   explainTarget?: string;
   env?: NodeJS.ProcessEnv;
   now?: () => number;
@@ -354,12 +356,13 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
       return STRENGTH_FIELDS.find(f => fields[f]?.length) ?? 'body';
     };
     const excluded = new Set(input.exclude);
+    const offNamespaces = new Set(opts.excludeNamespaces);
     const floor = MATCH_STRENGTHS.indexOf(input.min_match_strength ?? 'body');
     const window: Cand[] = [];
     const seen = new Set<string>();
     const admit = (x: Cand) => {
       seen.add(x.id);
-      if (window.length < kEff && !excluded.has(x.id) && MATCH_STRENGTHS.indexOf(strengthOf(x)) <= floor) window.push(x);
+      if (window.length < kEff && !excluded.has(x.id) && !offNamespaces.has(metaOf(x.c, x.doc).ns ?? '') && MATCH_STRENGTHS.indexOf(strengthOf(x)) <= floor) window.push(x);
     };
     loaded.forEach((_, c) => {
       for (const r of ranks[c]!.ranked) {
