@@ -31,6 +31,29 @@ export const IMAGE_SEAL_PAGES_PER_SECOND = 1500;
 export const TEXT_REBUILD_PAGES_PER_SECOND = 80;
 
 /**
+ * #9192: database round trips one queued Markdown page's rebuild makes, fitted from a 50,000-page drain on Postgres 16
+ * at a 0.1 ms and a 17.3 ms round trip (85 and 1.6 pages/s): the time behind a remote pooler is round trips, not work.
+ */
+export const TEXT_REBUILD_ROUND_TRIPS_PER_PAGE = 36;
+
+/** How long a text rebuild of `pages` takes at a measured round trip of `rttMs`, in words. */
+export function textRebuildDuration(pages: number, rttMs: number): string {
+  const minutes = Math.max(1, Math.ceil(pages * (1 / TEXT_REBUILD_PAGES_PER_SECOND + TEXT_REBUILD_ROUND_TRIPS_PER_PAGE * rttMs / 1000) / 60));
+  return minutes >= 120 ? `${Math.round(minutes / 60)} hour(s)` : `${minutes} minute(s)`;
+}
+
+/** The median of five `SELECT 1` round trips to the engine, in milliseconds. */
+export async function measuredRoundTripMs(engine: Pick<BrainEngine, 'executeRaw'>): Promise<number> {
+  const samples: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    const started = performance.now();
+    await engine.executeRaw('SELECT 1');
+    samples.push(performance.now() - started);
+  }
+  return Math.round(samples.sort((a, b) => a - b)[2]! * 10) / 10;
+}
+
+/**
  * Pages one drain run takes in doctor's fix: half the agent tool limit at the
  * measured rate, so a run fits the limit with room to spare. The drain takes
  * queued text first, so while `textPending` rows wait the slower text rate sizes it.
