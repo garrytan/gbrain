@@ -245,13 +245,7 @@ const targetSlug = (row: Pick<FactRow, 'source_markdown_slug' | 'entity_slug'>) 
 export async function classifyAgentSessionFacts(db: BrainEngine, sourceIds: string[],
   opts: AgentSessionOptions & { corpusDir?: string | null; ids?: number[]; indexes?: Map<string | null, CorpusIndex> } = {}): Promise<AgentSessionFactsClassification> {
   const rows = await db.executeRaw<FactRow>(`
-    SELECT f.id, f.source_id, f.source_session, f.fact, f.visibility, f.entity_slug, f.row_num, f.source_markdown_slug, f.attributed_to, f.context,
-           EXISTS (SELECT 1 FROM facts a WHERE a.source_id=f.source_id AND a.id<>f.id AND a.expired_at IS NULL AND a.superseded_by IS NULL
-             AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug AND gbrain_fact_fingerprint(a.fact)=gbrain_fact_fingerprint(f.fact)
-             AND (a.attributed_to IS NULL OR a.attributed_to='user') AND COALESCE(a.source,'') <> ALL($2::text[])) AS owner_twin,
-           ARRAY(SELECT DISTINCT COALESCE(a.source_session,'') FROM facts a WHERE a.source_id=f.source_id AND a.id<>f.id AND a.expired_at IS NULL
-             AND a.superseded_by IS NULL AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug AND gbrain_fact_fingerprint(a.fact)=gbrain_fact_fingerprint(f.fact)
-             AND (a.attributed_to IS NULL OR a.attributed_to='user') AND a.source=ANY($2::text[])) AS twin_sessions
+    SELECT f.id, f.source_id, f.source_session, f.fact, f.visibility, f.entity_slug, f.row_num, f.source_markdown_slug, f.attributed_to, f.context
       FROM facts f
      WHERE f.source_id=ANY($1::text[]) AND f.source=ANY($2::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
        AND (f.attributed_to IS NULL OR f.attributed_to='user') AND ($3::bigint[] IS NULL OR f.id=ANY($3::bigint[]))
@@ -271,11 +265,30 @@ export async function classifyAgentSessionFacts(db: BrainEngine, sourceIds: stri
   const candidates: AgentSessionFactCandidate[] = [];
   let unclassifiable = 0;
   let notSuspect = 0;
+  const suspects: Array<{ row: FactRow; hit: Exclude<Verdict, string> }> = [];
   for (const row of rows) {
     const hit = verdict(row.source_session);
     if (hit === 'unclassifiable') { unclassifiable++; continue; }
     if (hit === 'not_suspect') { notSuspect++; continue; }
-    const owner = row.owner_twin || (row.twin_sessions ?? []).some(s => typeof verdict(s) === 'string');
+    suspects.push({ row, hit });
+  }
+  // The owner-twin lookup fingerprints every active fact of the source per row, so it runs for suspect rows only.
+  const twins = new Map<number, { owner_twin: boolean; twin_sessions: string[] | null }>();
+  if (suspects.length) {
+    const twinRows = await db.executeRaw<{ id: number | string; owner_twin: boolean; twin_sessions: string[] | null }>(`
+    SELECT f.id,
+           EXISTS (SELECT 1 FROM facts a WHERE a.source_id=f.source_id AND a.id<>f.id AND a.expired_at IS NULL AND a.superseded_by IS NULL
+             AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug AND gbrain_fact_fingerprint(a.fact)=gbrain_fact_fingerprint(f.fact)
+             AND (a.attributed_to IS NULL OR a.attributed_to='user') AND COALESCE(a.source,'') <> ALL($2::text[])) AS owner_twin,
+           ARRAY(SELECT DISTINCT COALESCE(a.source_session,'') FROM facts a WHERE a.source_id=f.source_id AND a.id<>f.id AND a.expired_at IS NULL
+             AND a.superseded_by IS NULL AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug AND gbrain_fact_fingerprint(a.fact)=gbrain_fact_fingerprint(f.fact)
+             AND (a.attributed_to IS NULL OR a.attributed_to='user') AND a.source=ANY($2::text[])) AS twin_sessions
+      FROM facts f WHERE f.id=ANY($1::bigint[])`, [suspects.map(({ row }) => Number(row.id)), [...CAPTURE_LANES]]);
+    for (const t of twinRows) twins.set(Number(t.id), t);
+  }
+  for (const { row, hit } of suspects) {
+    const twin = twins.get(Number(row.id));
+    const owner = twin?.owner_twin || (twin?.twin_sessions ?? []).some(s => typeof verdict(s) === 'string');
     candidates.push({ id: Number(row.id), source_id: row.source_id, slug: targetSlug(row), row_num: row.row_num === null ? null : Number(row.row_num),
       class: owner ? 'excluded' : hit.klass, reason: owner ? 'excluded:owner_also_said' : hit.reason, session: captureSessionId(row.source_session)!,
       evidence: hit.evidence, principal: hit.principal, fact_hash: factHash(row) });
