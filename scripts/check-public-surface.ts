@@ -10,18 +10,20 @@
  *   1. an entry of docs/contracts/public-surface.json that the base has and this tree drops (or an exit code whose
  *      number changed), unless deprecations.d/<id>.md names it (same surface and name, or the command or MCP tool a
  *      dropped flag or parameter belongs to) and its remove_after date has passed. Exempt: an entry the manifest at the
- *      stable release ($GBRAIN_SURFACE_STABLE_REF, default refs/tags/stable) lacks, every drop when a new
- *      kind: breaking row has exception: security or data-loss, and, while no stable manifest can be read (it is said
- *      so), every drop when one has exception: revert;
+ *      stable release ($GBRAIN_SURFACE_STABLE_REF, default refs/tags/stable; fetched from origin when the clone lacks
+ *      it, and under CI=true a fetch that fails or times out refuses) lacks, every drop when a new kind: breaking row
+ *      has exception: security or data-loss, and, while no stable manifest can be read (it is said so), every drop
+ *      when one has exception: revert;
  *   2. a deprecations.d record added here whose remove_after is less than 14 days away, a record whose remove_after
- *      moved earlier, or any record with a bad field;
+ *      moved earlier or whose surface or name changed, or any record with a bad field;
  *   3. a behavior-changes.d fragment added here with no `kind:`, or with `kind: breaking` and neither
  *      `exception: security|data-loss` nor `deprecation: <id>` naming a record whose remove_after has passed;
  *   4. a change to the CLI or agent-contract goldens with no new behavior-changes.d fragment and no changelog.d line
  *      `<!-- public-surface: no-behavior-change: <reason> -->`.
  * The manifest's freshness is regen:all's (scripts/build-public-surface.ts --check). Dates are UTC days;
  * GBRAIN_SURFACE_TODAY (YYYY-MM-DD) overrides today for tests. When the base ref or a merge base is unavailable the
- * check fails under CI=true and skips locally. Exit: 0 ok or skipped, 1 refused.
+ * check fails under CI=true and skips locally. Fetches (the stable ref, deepening a shallow clone with
+ * --filter=tree:0) stop after 20 s and 30 s, or $GBRAIN_SURFACE_FETCH_TIMEOUT_S. Exit: 0 ok or skipped, 1 refused.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -73,6 +75,12 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
     const r = spawnSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
     return { ok: r.status === 0, out: r.stdout ?? '' };
   };
+  const fetchTimeout = (seconds: number) => Number(env.GBRAIN_SURFACE_FETCH_TIMEOUT_S) || seconds;
+  const fetch = (seconds: number, ...args: string[]): 'ok' | 'timeout' | 'failed' => {
+    const r = spawnSync('git', ['fetch', '--no-tags', '--quiet', ...args], { cwd: root, stdio: 'ignore', timeout: fetchTimeout(seconds) * 1000, killSignal: 'SIGKILL' });
+    if (r.status === 0) return 'ok';
+    return (r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT' ? 'timeout' : 'failed';
+  };
   const ref = env.GBRAIN_SURFACE_BASE_REF || 'origin/master';
   if (!git('rev-parse', '--verify', '-q', `${ref}^{commit}`).ok) {
     if (env.CI === 'true') {
@@ -84,19 +92,20 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
     return 0;
   }
   let mergeBase = git('merge-base', ref, 'HEAD');
+  let deepened: ReturnType<typeof fetch> | null = null;
   if (!mergeBase.ok && git('rev-parse', '--is-shallow-repository').out.trim() === 'true') {
     const tip = git('rev-parse', `${ref}^{commit}`).out.trim();
     const parents = git('cat-file', '-p', 'HEAD').out.split('\n').filter(l => l.startsWith('parent ')).map(l => l.slice('parent '.length));
     if (parents.includes(tip)) mergeBase = { ok: true, out: tip };
     for (const depth of [200, 2000]) {
-      if (mergeBase.ok) break;
-      git('fetch', '--no-tags', '--quiet', `--deepen=${depth}`, 'origin', git('rev-parse', 'HEAD').out.trim(), tip);
+      if (mergeBase.ok || deepened === 'timeout') break;
+      deepened = fetch(30, '--filter=tree:0', `--deepen=${depth}`, 'origin', git('rev-parse', 'HEAD').out.trim(), tip);
       mergeBase = git('merge-base', ref, 'HEAD');
     }
   }
   if (!mergeBase.ok) {
     if (env.CI === 'true') {
-      log(`FAIL: check-public-surface: no merge base between HEAD and ${ref}, even after deepening the clone.`);
+      log(`FAIL: check-public-surface: no merge base between HEAD and ${ref}, ${deepened === 'timeout' ? `because the fetch that deepens the clone timed out after ${fetchTimeout(30)} s` : 'even after deepening the clone'}.`);
       log('Fix:  fetch more history in the workflow (actions/checkout fetch-depth: 0)');
       return 1;
     }
@@ -122,7 +131,11 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
       !DATE.test(record.remove_after) && 'remove_after: must be a date (YYYY-MM-DD)',
     ].filter(Boolean);
     for (const b of bad) problems.push(`${path}: ${b}`);
-    const baseDate = onBase(path) ? frontOf(git('show', `${base}:${path}`).out).remove_after ?? '' : null;
+    const baseFront = onBase(path) ? frontOf(git('show', `${base}:${path}`).out) : null;
+    const baseDate = baseFront ? baseFront.remove_after ?? '' : null;
+    if (!bad.length && baseFront?.surface && baseFront.name && (baseFront.surface !== record.surface || baseFront.name !== record.name)) {
+      problems.push(`${path}: it named ${baseFront.surface} \`${baseFront.name}\` on ${ref}; a record keeps the surface and name it was announced with, so add a new record for ${record.surface} \`${record.name}\``);
+    }
     if (!bad.length && baseDate !== null && DATE.test(baseDate) && record.remove_after < baseDate) {
       problems.push(`${path}: remove_after moves from ${baseDate} to ${record.remove_after}; an announced date can move later, never earlier`);
     }
@@ -140,16 +153,28 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
   const baseManifest = git('show', `${base}:${MANIFEST}`);
   if (baseManifest.ok && existsSync(join(root, MANIFEST))) {
     const head: PublicSurface = JSON.parse(readFileSync(join(root, MANIFEST), 'utf8'));
+    const dropped = exceptions.has('security') || exceptions.has('data-loss') ? [] : droppedEntries(JSON.parse(baseManifest.out), head);
     const stableRef = env.GBRAIN_SURFACE_STABLE_REF || 'refs/tags/stable';
-    const stableCommit = git('rev-parse', '--verify', '-q', `${stableRef}^{commit}`);
+    const resolveStable = () => git('rev-parse', '--verify', '-q', `${stableRef}^{commit}`);
+    let stableCommit = resolveStable();
+    if (dropped.length && !stableCommit.ok && stableRef.startsWith('refs/')) {
+      const shallow = git('rev-parse', '--is-shallow-repository').out.trim() === 'true';
+      const fetched = fetch(20, ...(shallow ? ['--depth=1'] : []), 'origin', `+${stableRef}:${stableRef}`);
+      stableCommit = resolveStable();
+      if (!stableCommit.ok && env.CI === 'true') {
+        log(`FAIL: check-public-surface: this change drops public entries, and the stable ref ${stableRef} could not be fetched from origin${fetched === 'timeout' ? ` (timed out after ${fetchTimeout(20)} s)` : ''}, so it cannot tell which of them reached stable.`);
+        log(`Fix:  rerun once origin answers, or fetch it in the workflow (git fetch --no-tags --depth=1 origin +${stableRef}:${stableRef})`);
+        return 1;
+      }
+    }
     const stableManifest = stableCommit.ok ? git('show', `${stableCommit.out.trim()}:${MANIFEST}`) : null;
     const stable: PublicSurface | null = stableManifest?.ok ? JSON.parse(stableManifest.out) : null;
     if (!stableCommit.ok) log(`check-public-surface: stable ref ${stableRef} is unavailable (a shallow clone or a missing tag), so every entry counts as on stable`);
     else if (!stable) log(`check-public-surface: stable (${stableRef}) has no ${MANIFEST} yet, so every entry counts as on stable`);
     const onStable = (surface: string, name: string) => !stable
       || (surface === 'exit-code' ? name in (stable['exit-code'] ?? {}) && stable['exit-code'][name] !== head['exit-code']?.[name] : (stable[surface as Exclude<Surface, 'exit-code'>] ?? []).includes(name));
-    for (const { surface, name } of droppedEntries(JSON.parse(baseManifest.out), head)) {
-      if (!onStable(surface, name) || exceptions.has('security') || exceptions.has('data-loss') || (exceptions.has('revert') && !stable)) continue;
+    for (const { surface, name } of dropped) {
+      if (!onStable(surface, name) || (exceptions.has('revert') && !stable)) continue;
       const parent = surface === 'cli-flag' ? { surface: 'cli-command', name: name.slice(0, name.lastIndexOf(' --')) }
         : surface === 'mcp-param' ? { surface: 'mcp-tool', name: name.slice(0, name.indexOf('.')) } : null;
       const record = [...records.values()].find(r => r.surface === surface && r.name === name)

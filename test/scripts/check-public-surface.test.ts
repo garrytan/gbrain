@@ -5,7 +5,7 @@
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { main } from '../../scripts/check-public-surface.ts';
@@ -64,6 +64,30 @@ function tagStable(root: string, stableManifest: string | null) {
   git(root, 'commit', '-q', '--allow-empty', '-m', 'stable');
   git(root, 'tag', 'stable');
   git(root, 'checkout', '-q', 'head');
+}
+function shallowClone(origin: string, branch: string): string {
+  const clone = mkdtempSync(join(tmpdir(), 'gbrain-public-surface-clone-'));
+  roots.push(clone);
+  git(clone, 'clone', '-q', '--depth=1', '--no-tags', '--branch', branch, `file://${origin}`, '.');
+  git(clone, 'fetch', '-q', '--no-tags', '--depth=1', 'origin', '+refs/heads/base:refs/remotes/origin/base');
+  return clone;
+}
+function mergeClone(head: Record<string, string>): string {
+  const origin = repo({}, head);
+  tagStable(origin, manifest());
+  git(origin, 'checkout', '-q', 'base');
+  write(origin, { 'README.md': 'base moved\n' });
+  git(origin, 'commit', '-qam', 'base moves on');
+  git(origin, 'checkout', '-q', '-b', 'merge', 'base');
+  git(origin, 'merge', '-q', '--no-ff', '--no-edit', 'head');
+  return shallowClone(origin, 'merge');
+}
+function hangOrigin(clone: string) {
+  const script = join(clone, '..', `${clone.split('/').pop()}-hang.sh`);
+  writeFileSync(script, '#!/bin/sh\nexec sleep 10\n');
+  chmodSync(script, 0o755);
+  roots.push(script);
+  git(clone, 'config', 'remote.origin.uploadpack', script);
 }
 const row = (front: string, text = 'Text.') => `---\n${front}\n---\n${text}\n`;
 const record = (surface: string, name: string, removeAfter: string) => `---\nsurface: ${surface}\nname: ${name}\nowner: alice-example\nremove_after: ${removeAfter}\n---\nUse the new one.\n`;
@@ -214,6 +238,47 @@ describe('the base it compares with', () => {
     expect(r.code).toBe(0);
   });
 
+  test('a shallow CI clone with no tags fetches the stable tag, so an entry stable never had can go', () => {
+    const origin = repo({ [MANIFEST]: manifest({ 'mcp-tool': ['search', 'think'] }) }, { [MANIFEST]: manifest() });
+    tagStable(origin, manifest());
+    const r = run(shallowClone(origin, 'head'), { GBRAIN_SURFACE_BASE_REF: 'origin/base', CI: 'true' });
+    expect(r.out).not.toContain('FAIL');
+    expect(r.code).toBe(0);
+  });
+
+  test('a stable tag that cannot be fetched fails loudly under CI and falls back locally', () => {
+    const clone = mergeClone({ [MANIFEST]: manifest({ 'mcp-tool': [] }) });
+    git(clone, 'remote', 'set-url', 'origin', join(clone, 'no-such-remote'));
+    const ci = run(clone, { GBRAIN_SURFACE_BASE_REF: 'origin/base', CI: 'true' });
+    expect(ci.code).toBe(1);
+    expect(ci.out).toContain('FAIL: check-public-surface: this change drops public entries, and the stable ref refs/tags/stable could not be fetched from origin, so it cannot tell which of them reached stable.');
+    expect(ci.out).not.toContain('mcp-tool `search`');
+    const local = run(clone, { GBRAIN_SURFACE_BASE_REF: 'origin/base' });
+    expect(local.code).toBe(1);
+    expect(local.out).toContain('stable ref refs/tags/stable is unavailable');
+    expect(local.out).toContain('mcp-tool `search` is removed or changed');
+  });
+
+  test('a fetch that hangs is stopped at its timeout and says so', () => {
+    const stable = mergeClone({ [MANIFEST]: manifest({ 'mcp-tool': [] }) });
+    hangOrigin(stable);
+    const env = { GBRAIN_SURFACE_BASE_REF: 'origin/base', CI: 'true', GBRAIN_SURFACE_FETCH_TIMEOUT_S: '1' };
+    const started = Date.now();
+    const s = run(stable, env);
+    expect(s.code).toBe(1);
+    expect(s.out).toContain('could not be fetched from origin (timed out after 1 s)');
+    const origin = repo({}, {});
+    git(origin, 'checkout', '-q', 'base');
+    write(origin, { [MANIFEST]: manifest({ 'mcp-tool': ['search', 'think'] }) });
+    git(origin, 'commit', '-qam', 'base adds think');
+    const deep = shallowClone(origin, 'head');
+    hangOrigin(deep);
+    const d = run(deep, env);
+    expect(d.code).toBe(1);
+    expect(d.out).toContain('no merge base between HEAD and origin/base, because the fetch that deepens the clone timed out after 1 s');
+    expect(Date.now() - started).toBeLessThan(8000);
+  }, 15000);
+
   test('a missing base ref fails under CI and skips locally', () => {
     const root = repo({}, {});
     const ci = run(root, { GBRAIN_SURFACE_BASE_REF: 'nope', CI: 'true' });
@@ -241,6 +306,15 @@ describe('deprecation records', () => {
     expect(early.code).toBe(1);
     expect(early.out).toContain(`${path}: remove_after moves from 2026-12-20 to 2026-11-16`);
     expect(run(repo({ [path]: record('cli-flag', 'gbrain search --limit', '2026-11-20') }, { [path]: record('cli-flag', 'gbrain search --limit', '2026-12-20') })).code).toBe(0);
+  });
+
+  test('a record on the base keeps the surface and name it was announced with', () => {
+    const path = 'deprecations.d/search_limit_flag_1234.md';
+    const r = run(repo({ [path]: record('cli-flag', 'gbrain search --limit', '2026-11-20') },
+      { [path]: record('cli-flag', 'gbrain search --match', '2026-11-20'), [MANIFEST]: manifest({ 'cli-flag': ['gbrain search --limit'] }) }));
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(`${path}: it named cli-flag \`gbrain search --limit\` on base; a record keeps the surface and name it was announced with, so add a new record for cli-flag \`gbrain search --match\``);
+    expect(run(repo({ [path]: record('cli-flag', 'gbrain search --limit', '2026-11-20') }, { [path]: record('cli-flag', 'gbrain search --limit', '2026-11-20').replace('alice-example', 'bob-example') })).code).toBe(0);
   });
 
   test('a record with a bad surface, no owner or no date is refused', () => {

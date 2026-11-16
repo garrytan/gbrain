@@ -30,7 +30,9 @@ key, a page-format rule, an exit code or a top-level `--json` field.
    `remove_after` is at least 14 days after the stable release that first
    carries the announcement. `bun run check:public-surface` refuses a new
    record whose date is less than 14 days after the day it is added; the
-   stable-release part is checked in review.
+   stable-release part is checked in review. Once a record is merged, its
+   `surface` and `name` stay as announced and `remove_after` can only move
+   later; to cover something else, add a new record.
 3. Announce it in the same pull request: add a behaviour-change row with the
    same id (`behavior-changes.d/<id>.md`, see its README) so the upgrade
    notice carries it, and say it in your changelog fragment
@@ -64,9 +66,10 @@ pull request adds that row.
 The promise covers what is on stable. The check compares with the list at
 the current stable release (the `stable` tag), so a command, flag, tool,
 config key or exit code added since then can be removed, or reverted, with
-no record here. Until a stable release carries the list, or when the tag
-can't be read (a shallow clone), the check says so and counts everything as
-on stable. A revert then adds a behaviour-change row with `kind: breaking`
+no record here. When the clone lacks the tag, the check fetches it; in CI a
+fetch that fails or takes more than 20 seconds fails the check (rerun it).
+Until a stable release carries the list, the check says so and counts
+everything as on stable. A revert then adds a behaviour-change row with `kind: breaking`
 and `exception: revert` whose text names the reverted pull request
 (`#<number>`). Once stable carries the list, `exception: revert` no longer
 covers anything on it.
