@@ -73,6 +73,8 @@ false` turns both off.
 - a harness's newest archived day is more than `transcripts.archive.stale_days` (default 2) behind the newest session
   day the last run read. The fix is `gbrain transcripts archive run`, or
   `gbrain transcripts archive backfill --from <first missing day>` when the gap is wider than one run;
+- no archive run has read a reader successfully in that long, for example when maintenance passes keep stopping at
+  their deadline before that reader. The fix is `gbrain transcripts archive run`;
 - the archive is on but no maintenance pass has run it in that long. The fix is `gbrain autopilot --install`
   (a persistent service, so it asks first);
 - days are held (each is listed with its code, such as `archive_owner_unset` or `archive_redaction_failed`), a reader
