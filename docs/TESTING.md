@@ -801,7 +801,7 @@ scaffolds the next version; `bun run build:schema-migrations` regenerates the co
 `registry.generated.ts` + `latest.generated.ts` (regenerate, never hand-merge). The
 array order is master's historical order (`HISTORICAL_ARRAY_ORDER` in
 `scripts/build-schema-migrations.ts`), then ascending; the runner sorts by version.
-Three guards run in `bun run verify`:
+Two guards run in `bun run verify`:
 
 - `check:schema-migrations` (`scripts/check-schema-migrations-fresh.sh`) regenerates
   both into temp files and diffs them; the generator also fails on a
@@ -812,12 +812,6 @@ Three guards run in `bun run verify`:
   latest version (it would be skipped forever on current brains) or reuses a version
   with a different name. Base ref: `GBRAIN_MIGRATION_BASE_REF` (default
   `origin/master`); skipped with a notice when the ref is missing, failed under `CI=true`.
-- `check:migration-projection` (`scripts/check-migration-projection.ts`, #9192) fails
-  on a migration whose SQL, or whose handler's own source, updates a page column the
-  page revision trigger watches or writes `tags`, since that takes every touched page
-  out of search until `gbrain projections drain` rebuilds it. A migration that must do
-  this is listed in `scripts/migration-projection-baseline.tsv` with the reason search
-  keeps answering; a listed migration that no longer matches fails as stale.
 
 Collision recovery: an unapplied branch migration is renumbered (`git mv`, edit
 `version`, regenerate); one already applied to a disposable dev DB means rebuilding
