@@ -138,7 +138,7 @@ for (const backend of testBackends()) describe(`[${backend}] #8707 the failed-wr
           await tx.executeRaw('LOCK TABLE persistence_requests IN ACCESS EXCLUSIVE MODE');
           return refused(timed);
         });
-        expect(refusal.fix).toMatchObject({ actor: 'host_admin', argv: ['gbrain', 'repair', 'failed-writes', '--source', sourceId, '--json'] });
+        expect(refusal.fix).toMatchObject({ actor: 'host_admin', argv: ['env', 'GBRAIN_STATEMENT_TIMEOUT=15min', 'gbrain', 'repair', 'failed-writes', '--source', sourceId, '--json'] });
       } finally { await timed.disconnect(); }
     } else {
       const timeout = new Proxy(engine, { get(target, key) {
@@ -148,7 +148,7 @@ for (const backend of testBackends()) describe(`[${backend}] #8707 the failed-wr
           ? Promise.reject(Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }))
           : (value as Function).call(target, sql, ...rest);
       } }) as BrainEngine;
-      expect((await refused(timeout)).fix).toMatchObject({ actor: 'host_admin', argv: ['gbrain', 'repair', 'failed-writes', '--source', sourceId, '--json'] });
+      expect((await refused(timeout)).fix).toMatchObject({ actor: 'host_admin', argv: ['env', 'GBRAIN_STATEMENT_TIMEOUT=15min', 'gbrain', 'repair', 'failed-writes', '--source', sourceId, '--json'] });
       await engine.executeRaw(`DROP INDEX ${PERSISTENCE_REQUEST_REPLAY_ID_INDEX.name}`);
       try {
         const refusal = await refused(timeout);
@@ -173,6 +173,98 @@ for (const backend of testBackends()) describe(`[${backend}] #8707 the failed-wr
     }
     expect(await checkpoints()).toBe(before);
   }, 120_000);
+  test('#8714 lock waits and user cancellation do not recommend statement-timeout or index repairs', async () => {
+    const { sourceId } = await seed(engine, 0);
+    const snapshot = async () => engine.executeRaw(`SELECT
+      (SELECT count(*)::int FROM op_checkpoints WHERE op='repair-approval') AS approvals,
+      (SELECT count(*)::int FROM pages) AS pages,
+      (SELECT count(*)::int FROM persistence_requests) AS requests`);
+    const before = await snapshot();
+    const cases = [
+      { code: '55P03', message: 'canceling statement due to lock timeout', expected: 'repair_preview_locked' },
+      { code: '57014', message: 'canceling statement due to user request', expected: 'cancelled' },
+    ];
+    for (const scenario of cases) {
+      const failure = Object.assign(new Error(scenario.message), { code: scenario.code });
+      let indexReads = 0;
+      const view = new Proxy(engine, { get(target, key) {
+        const value = Reflect.get(target, key, target);
+        if (key !== 'executeRaw') return typeof value === 'function' ? value.bind(target) : value;
+        return (sql: string, ...rest: unknown[]) => {
+          if (sql.includes('pg_index')) indexReads++;
+          if (sql.includes('request_id = ANY')) return Promise.reject(failure);
+          return (value as Function).call(target, sql, ...rest);
+        };
+      } }) as BrainEngine;
+      const error = await preview(view, sourceId).then(() => null, caught => caught);
+      expect(error).toBeInstanceOf(OperationError);
+      expect(error.code).toBe(scenario.expected);
+      expect(error.suggestion).not.toContain('raise the statement timeout');
+      expect(error.fix.argv).toEqual(['gbrain', 'repair', 'failed-writes', '--source', sourceId, '--json']);
+      expect(indexReads).toBe(0);
+    }
+    // SQLSTATE alone is not proof of a timeout or of an operator cancellation.
+    for (const failure of [Object.assign(new Error('other query cancellation'), { code: '57014' }),
+      Object.assign(new Error('canceling statement due to statement timeout'), { code: '42501' })]) {
+      const view = new Proxy(engine, { get(target, key) {
+        const value = Reflect.get(target, key, target);
+        if (key !== 'executeRaw') return typeof value === 'function' ? value.bind(target) : value;
+        return (sql: string, ...rest: unknown[]) => sql.includes('request_id = ANY')
+          ? Promise.reject(failure) : (value as Function).call(target, sql, ...rest);
+      } }) as BrainEngine;
+      expect(await preview(view, sourceId).then(() => null, caught => caught)).toBe(failure);
+    }
+    expect(await snapshot()).toEqual(before);
+  }, 120_000);
+
+  if (backend === 'postgres') test('#8714 real lock timeout and pg_cancel_backend retain distinct remedies', async () => {
+    const { sourceId } = await seed(engine, 0);
+    const scope = await resolveRepairScope(engine, sourceId);
+    const timed = await withEnv({ GBRAIN_STATEMENT_TIMEOUT: '10s' }, async () => {
+      const e = new PostgresEngine(); await e.connect({ database_url: databaseUrl!, poolSize: 1 }); return e;
+    });
+    const run = async () => (await repairRunner(timed, { apply: false, logger }))
+      .run('failed-writes', scope, { explicit: true, sourceFlag: sourceId }).then(() => null, caught => caught);
+    // Count rather than inspect checkpoint contents: no approval may be saved by either refusal.
+    const count = async () => Number((await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM op_checkpoints WHERE op='repair-approval'"))[0]!.n);
+    const before = await count();
+    try {
+      await timed.executeRaw("SET lock_timeout='100ms'");
+      const locked = await engine.transaction(async tx => {
+        await tx.executeRaw('LOCK TABLE persistence_requests IN ACCESS EXCLUSIVE MODE');
+        return run();
+      });
+      expect(locked.code).toBe('repair_preview_locked');
+      expect(locked.suggestion).toContain('lock');
+      await timed.executeRaw('SET lock_timeout=0');
+      const [{ pid }] = await timed.executeRaw<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+      const cancelled = await engine.transaction(async tx => {
+        await tx.executeRaw('LOCK TABLE persistence_requests IN ACCESS EXCLUSIVE MODE');
+        const pending = run();
+        try {
+          const until = Date.now() + 5_000;
+          let waiting = false;
+          while (Date.now() < until) {
+            const rows = await tx.executeRaw<{ waiting: boolean }>("SELECT wait_event_type='Lock' AND query LIKE '%persistence_requests%' AS waiting FROM pg_stat_activity WHERE pid=$1", [pid]);
+            if (rows[0]?.waiting) { waiting = true; break; }
+            await Bun.sleep(10);
+          }
+          expect(waiting).toBe(true);
+          expect((await tx.executeRaw<{ cancelled: boolean }>('SELECT pg_cancel_backend($1) AS cancelled', [pid]))[0]!.cancelled).toBe(true);
+        } finally {
+          // Always drain the blocked preview before releasing the table lock.
+          await pending;
+        }
+        return pending;
+      });
+      expect(cancelled.code).toBe('cancelled');
+      expect(cancelled.message).toContain('cancelled');
+      expect(cancelled.fix.argv).toEqual(['gbrain', 'repair', 'failed-writes', '--source', sourceId, '--json']);
+      expect(await count()).toBe(before);
+      expect(await run()).toBeNull();
+    } finally { await timed.disconnect(); }
+  }, 120_000);
+
   if (backend === 'postgres') test('one page with many refused writes and a long later history stays inside the statement timeout', async () => {
     const sourceId = `b8707-${randomUUID().slice(0, 8)}`;
     await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,NULL)', [sourceId]);

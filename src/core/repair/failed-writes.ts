@@ -61,7 +61,6 @@ import { readFactsBackstopJobPage } from '../persistence/effect-facts.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
 import { CALLER_REPLAYABLE_OPERATIONS, dispositionOf, DRIFT_REFUSAL_SQL, GUARD_REFUSAL_SQL, PAGE_REMOVAL_OPERATIONS, supersessionOrderSql, supersessionSql } from '../persistence/terminal-classify.ts';
-import { isStatementTimeout } from '../persistence/bounded-reads.ts';
 import { readRequestIndexStates } from '../persistence/checkpoint-validation.ts';
 import { PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX } from '../persistence/schema.ts';
 import { StatementDeadlineError, withStatementDeadline } from '../statement-deadline.ts';
@@ -450,9 +449,33 @@ function item(write: ApprovedWrite, hash: string, last: boolean): FailedWriteIte
  * candidate is classed. When an index the preview reads is not valid, building it is the fix.
  */
 async function previewTimeoutRefusal(engine: BrainEngine, error: unknown, scope: RepairScope): Promise<unknown> {
-  if (!isStatementTimeout(error) && !(error instanceof StatementDeadlineError)) return error;
   const command = previewCommand(scope);
   const argv = ['gbrain', 'repair', 'failed-writes', ...(scope.source_ids.length === 1 ? ['--source', scope.source_ids[0]!] : []), '--json'];
+  // The preparation-budget predicate deliberately groups lock timeouts and all
+  // 57014 cancellations. An operator remedy must distinguish their causes.
+  const pg = error as { code?: unknown; message?: unknown } | null;
+  const cancelled = pg?.code === '57014' && pg.message === 'canceling statement due to user request';
+  if (pg?.code === '55P03' || cancelled) {
+    const refusal = new OperationError(cancelled ? 'cancelled' : 'repair_preview_locked',
+      cancelled
+        ? 'The failed-writes preview was cancelled by a user request. Nothing was saved and no page changed.'
+        : 'The failed-writes preview stopped waiting for a database lock. Nothing was saved and no page changed.',
+      cancelled ? `Run ${command} again only if the preview is still wanted.`
+        : `Let the transaction holding the lock finish, then run ${command} again. If it persists, ask the brain host administrator to inspect the lock holder.`,
+      'docs/guides/troubleshooting.md#repair-preview-timeout');
+    refusal.retryable = !cancelled;
+    refusal.fix = { argv, consent: [], actor: 'agent', requires_exclusive: false,
+      why: cancelled ? 'Re-runs the read-only preview if it is still wanted; no timeout increase is needed.'
+        : 'Re-runs the read-only preview after the competing transaction releases its lock.', verify: { argv } };
+    if (cancelled) {
+      refusal.fix.ask_user = true;
+      refusal.fix.user_message = 'The failed-writes preview was cancelled. Do you still want to run the read-only preview?';
+    }
+    return refusal;
+  }
+  if (!(error instanceof StatementDeadlineError)
+    && !(pg?.code === '57014' && pg.message === 'canceling statement due to statement timeout')) return error;
+  const longerTimeoutArgv = ['env', 'GBRAIN_STATEMENT_TIMEOUT=15min', ...argv];
   const unbuilt = (await withStatementDeadline(null, () => readRequestIndexStates(engine, [PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX])).catch(() => []))
     .filter(index => index.state !== 'valid').map(index => `${index.name} (${index.state})`);
   const refusal = new OperationError('repair_preview_timeout',
@@ -468,9 +491,9 @@ async function previewTimeoutRefusal(engine: BrainEngine, error: unknown, scope:
     ? { argv: ['gbrain', 'repair', 'request-indexes', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Previews the request-table indexes a rebuild would build, without changing anything; its apply command builds them online.',
       verify: { argv: ['gbrain', 'doctor', '--only', 'persistence_request_indexes', '--json'] }, docs: 'docs/guides/repair.md#request-indexes' }
-    : { argv, consent: [], actor: 'host_admin', requires_exclusive: false, why: 'Re-runs the read-only preview.',
+    : { argv: longerTimeoutArgv, consent: [], actor: 'host_admin', requires_exclusive: false, why: 'Re-runs the read-only preview with a longer statement timeout.',
       user_message: `The preview of refused writes did not finish within the database statement timeout. On the brain host, run ${command} with a longer timeout for that one command (GBRAIN_STATEMENT_TIMEOUT=15min; behind a transaction-mode pooler that setting is dropped, so raise the role's default instead).`,
-      verify: { argv }, docs: 'docs/guides/troubleshooting.md#repair-preview-timeout' };
+      verify: { argv: longerTimeoutArgv }, docs: 'docs/guides/troubleshooting.md#repair-preview-timeout' };
   return refusal;
 }
 

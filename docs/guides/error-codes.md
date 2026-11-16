@@ -4552,6 +4552,16 @@ Reasons: `rename_source_changed`.
 |---|---|---|---|---|---|---|
 | A renamed file imported, but removing the page of its old name failed unexpectedly, so that page was kept and may be a duplicate. | An unexpected error is deterministic, so a blocking marker would stop the source on every run; the rename is held instead and the rest of the source keeps syncing. | Ask the user before a full sync of the source (gbrain sync --source <source> --full --no-pull), which removes pages whose file is gone, or remove the old page with gbrain delete. | agent | `repeat the read that failed` | 1 | no |
 
+### repair_preview_locked
+
+<a id="repair_preview_locked"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A failed-writes preview stopped waiting for a database lock; no approval checkpoint was saved and no page changed. | Another transaction holds a lock needed to read the write journal. | Let the competing transaction finish, then retry the preview; ask the brain host administrator to inspect persistent lock waits. A longer statement timeout or an index rebuild does not release the lock. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/troubleshooting.md#repair-preview-timeout](../../docs/guides/troubleshooting.md#repair-preview-timeout)
+
 ### repair_preview_timeout
 
 <a id="repair_preview_timeout"></a>
