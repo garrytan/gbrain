@@ -536,8 +536,12 @@ seconds and comes back with only vector hits; search metadata carries
 statement timeout` (SQLSTATE 57014). Keyword-mode paging and the strict page
 count rank every matching page, so their cost grows with how common the terms
 are. Hybrid search's keyword arm ranks at most 50,000 matching chunks (its metadata
-carries `keyword_candidates_incomplete` when that bound applies). A local
-caller's statement usually stops reading matches at that bound. A remote MCP
+carries `keyword_candidates_incomplete` when that bound applies). For a local
+caller, hybrid search's title step ranks at most 5,000 of the pages whose title
+or timeline matches (the lowest page ids) and reports the same
+`keyword_candidates_incomplete` when it cuts; a remote caller's title step
+matches titles only. A local
+caller's keyword statement usually stops reading matches at the 50,000 bound. A remote MCP
 caller's arm stops there when the call sets no type, frontmatter or date filter
 and no source scope narrower than every live source; with such a filter it
 can still read every match before ranking. (A remote caller's arm used to read
