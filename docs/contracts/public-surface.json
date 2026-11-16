@@ -2819,6 +2819,7 @@
     "proposal_expired": 1,
     "proposals_pending_limit": 1,
     "provenance_required": 1,
+    "provider_response_unparseable": 1,
     "publication_pending": 1,
     "publish_scan_unreadable": 1,
     "publish_secret_found": 1,
