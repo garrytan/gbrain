@@ -39,6 +39,7 @@ import { runRepairCommand } from '../src/commands/repair.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { parseFactsFence, renderFactsTable } from '../src/core/facts-fence.ts';
 import { insertTrustProposal, listTrustProposals } from '../src/core/trust/proposals.ts';
+import { proposeRevision } from '../src/core/access/policy.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -260,7 +261,8 @@ for (const managed of [false, true]) {
         await page(b, 'companies/quarantine-example', '', [[1, 'Orchardline quarantined fact', 'private']]);
         await page(b, 'secret/old-example', 'visibility: private\n', []);
         await coordinated(b, "UPDATE pages SET deleted_at=now() WHERE source_id=$1 AND slug='secret/old-example'", [b.sourceId]);
-        await coordinated(b, "UPDATE pages SET folder_rule_ids=ARRAY[1]::int[] WHERE source_id=$1 AND slug='companies/folder-example'", [b.sourceId]);
+        await proposeRevision(engine, b.sourceId, [{ id: 'folder', prefix: 'companies/folder-example', readable_by: ['member:alice-example'] }], { origin: 'cli', store: 'database' });
+        expect(await engine.executeRaw("SELECT slug FROM pages WHERE source_id=$1 AND folder_rule_ids IS NOT NULL", [b.sourceId])).toEqual([{ slug: 'companies/folder-example' }]);
         await coordinated(b, `UPDATE pages SET frontmatter = frontmatter || '{"quarantine":{"reason":"junk_pattern","detail":"fixture","assessed_at":"2026-09-01T00:00:00Z"}}'::jsonb WHERE source_id=$1 AND slug='companies/quarantine-example'`, [b.sourceId]);
         const acme = 'companies/acme-example';
         const ids: Record<string, number> = {

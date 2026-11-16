@@ -11,7 +11,12 @@ import { gbrainPath } from '../core/config.ts';
 import type { PrivateLabelsLedger } from '../core/repair/private-labels.ts';
 
 export function privateLabelsLedger(brainId: string): PrivateLabelsLedger {
-  const path = gbrainPath('repair', 'private-labels', `${brainId.replace(/[^A-Za-z0-9._-]/g, '_')}.jsonl`);
+  return repairLedger('private-labels', brainId);
+}
+
+/** A repair kind's undo ledger at <gbrain home>/repair/<kind>/<brain_id>.jsonl (`gbrain repair open-facts` keeps one too). */
+export function repairLedger<Line>(kind: string, brainId: string): { path: string; lines: unknown[]; unreadable: number; record(line: Line): void } {
+  const path = gbrainPath('repair', kind, `${brainId.replace(/[^A-Za-z0-9._-]/g, '_')}.jsonl`);
   const lines: unknown[] = [];
   let unreadable = 0;
   for (const text of existsSync(path) ? readFileSync(path, 'utf8').split('\n') : []) {

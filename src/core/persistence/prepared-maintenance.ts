@@ -254,14 +254,17 @@ export interface MaintenanceEventProjection { depth_slug: string; date: string; 
  * `labelEdit` (GST-2468): the label keys the write sets or removes; the canonical file keeps its bytes except those lines (page-prepare.ts labelEditFile).
  */
 type MaintenancePageOptions = { requestId?: string; expectedRevision: string | null; file?: boolean;
-  eventProjection?: MaintenanceEventProjection; derivation?: DerivationDeclaration; keepTrust?: true; labelEdit?: LabelEdit };
+  eventProjection?: MaintenanceEventProjection; derivation?: DerivationDeclaration; keepTrust?: true; labelEdit?: LabelEdit;
+  /** #8194: with keepTrust, the fence rows `gbrain repair open-facts` opens in place (repair/open-facts.ts openFactsPublication). */
+  openFacts?: Array<{ id: number; row_num: number | null; fact_md5: string }> };
 
 /** A maintenance page publication's intent and request id; `batch` (G6) is the run's batch id, part of both. */
 function maintenancePageRequest(authority: MaintenanceAuthority, slug: string, content: string, options: MaintenancePageOptions, batch?: string) {
   const projection = options.eventProjection ? { event_projection: options.eventProjection } : {};
   const derivation = options.derivation ? { derivation: options.derivation } : {};
   const grouped = batch ? { maintenance_batch: batch } : {};
-  const keep = { ...(options.keepTrust ? { keep_trust: true } : {}), ...(options.labelEdit ? { label_edit: options.labelEdit } : {}) };
+  const keep = { ...(options.keepTrust ? { keep_trust: true } : {}), ...(options.labelEdit ? { label_edit: options.labelEdit } : {}),
+    ...(options.keepTrust && options.openFacts ? { open_facts: options.openFacts } : {}) };
   return { intent: { kind: 'managed_maintenance_page', content, expected_revision: options.expectedRevision, ...projection, ...derivation, ...grouped, ...keep },
     requestId: options.requestId ?? maintenanceRequestId({ authority: authority.writer, slug, content, revision: options.expectedRevision, file: options.file ?? true,
       ...projection, ...derivation, ...grouped, ...keep }) };
@@ -676,6 +679,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   if (row.intent?.kind === 'managed_maintenance_agent_session_facts') return (await import('../repair/agent-session-facts.ts')).prepareAgentSessionFactsWrite(engine, row);
   if (row.intent?.kind === 'managed_maintenance_restore_redacted_facts') return (await import('../repair/redacted-facts.ts')).prepareRedactedFactsRestore(engine, row);
   if (row.intent?.kind === 'managed_maintenance_tighten_fact_visibility') return (await import('../repair/visibility.ts')).prepareFactVisibilityTighten(engine, row);
+  if (row.intent?.kind === 'managed_maintenance_open_fact_visibility') return (await import('../repair/open-facts.ts')).prepareOpenFactsIntent(engine, row);
   if (row.intent?.kind === 'managed_maintenance_conversation_label_retire') return (await import('../repair/conversation-labels.ts')).prepareConversationLabelRetirement(engine, row);
   if (row.intent?.kind === 'managed_maintenance_conversation_relink') return (await import('../facts/conversation-relink.ts')).prepareConversationRelink(engine, row);
   if (row.intent?.kind === 'managed_maintenance_conversation_facts') return (await import('../facts/conversation-publication.ts')).prepareConversationFactsPublication(engine, row, config);
@@ -689,11 +693,14 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
     const page = await preparePageMutation(engine, row.intent.expected_revision === null
       ? { ...row, intent: { ...row.intent, expected_revision: undefined } } : row, config, undefined, undefined, { clock });
     // GST-2521: keep_trust is the owner's label door, which also raises the page's label guard.
-    const prepared: PreparedMutation = row.intent.keep_trust === true ? { ...page, apply: (tx, preimage) => withTrustKeep(tx, ['pages'], async () => {
+    const kept: PreparedMutation = row.intent.keep_trust === true ? { ...page, apply: (tx, preimage) => withTrustKeep(tx, ['pages'], async () => {
       const outcome = await page.apply(tx, preimage);
       await raisePageLabelGuard(tx, row.source_id, row.slug);
       return outcome;
     }) } : page;
+    // #8194: only the owner's label door (keep_trust) may name fence rows `gbrain repair open-facts` opens in place.
+    const prepared = row.intent.keep_trust === true && row.intent.open_facts !== undefined
+      ? (await import('../repair/open-facts.ts')).openFactsPublication(row, kept) : kept;
     const projection = row.intent.event_projection as MaintenanceEventProjection | undefined;
     if (!projection) return prepared;
     // #5523: the event page and its depth-page timeline row commit together in
