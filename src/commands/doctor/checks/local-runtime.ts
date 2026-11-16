@@ -8,7 +8,7 @@
  */
 
 import { loadCompletedMigrations } from '../../../core/preferences.ts';
-import { MIGRATION_OPT_OUT_KEYS, declinedMigrations, indexCompletedEntries, isFreshInstallStamp, migrationLedgerSummary, trailingPartialCount } from '../../../core/migration-ledger.ts';
+import { MIGRATION_OPT_OUT_KEYS, declinedMigrations, indexCompletedEntries, isFreshInstallStamp, migrationLedgerSummary, trailingPartialCount, upgradeLedgerApplies } from '../../../core/migration-ledger.ts';
 import { VERSION } from '../../../version.ts';
 import { pendingFreshInstallCheck } from './pending-fresh-install.ts';
 import { autopilotInstallPendingCheck } from './autopilot-install-pending.ts';
@@ -181,13 +181,16 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
     // Registered host migrations get_health lists as `pending` (no ledger
     // entry, or reset by a retry marker) that a NEWER migration already ran
     // past were skipped, not merely not reached yet. Versions above the newest
-    // run are the next apply-migrations' ordinary work and stay quiet here.
+    // run are the next apply-migrations' ordinary work and stay out of this list.
     // #8720: without an engine (--fast) the config that declines an opt-out
     // migration is unreadable, so such a version is unknown, never pending.
     const newestRun = completedVersions.reduce<string | null>((a, v) => (a === null || compareVersions(v, a) > 0 ? v : a), null);
     const pending = completed.length === 0 ? [] : migrationLedgerSummary(VERSION, declined).pending.filter(v =>
       (engine || !(v in MIGRATION_OPT_OUT_KEYS))
       && ((newestRun !== null && compareVersions(v, newestRun) < 0) || history.get(v)?.at(-1)?.status === 'retry'));
+    // GBRA-541 4a: connected to the brain, doctor also reports the upgrade migrations connect's notice names (versions
+    // not reached yet), so an owner whose brain runs only `gbrain serve` sees them here.
+    const notReached = engine && upgradeLedgerApplies(engine) ? migrationLedgerSummary(VERSION, declined).pending : [];
 
     if (declined.size > 0) {
       const keys = [...declined].map(v => `${MIGRATION_OPT_OUT_KEYS[v]}=false`);
@@ -221,6 +224,13 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
         status: 'warn',
         message: `${pending.length} host migration(s) not run yet: ${pending.join(', ')}. Run: gbrain apply-migrations --yes`,
         details: { pending },
+      });
+    } else if (notReached.length > 0) {
+      checks.push({
+        name: 'minions_migration',
+        status: 'warn',
+        message: `${notReached.length} upgrade migration(s) have not run on this brain yet: ${notReached.join(', ')}. Run: gbrain apply-migrations --yes --no-autopilot-install`,
+        details: { pending: notReached },
       });
     } else {
       const setup = pendingFreshInstallCheck();
