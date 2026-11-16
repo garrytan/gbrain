@@ -2824,6 +2824,7 @@
     "purge_blocked_pending_recovery": 1,
     "purge_lookup_timeout": 1,
     "purge_mirror_unwritable": 1,
+    "purge_replay_incomplete": 1,
     "purged_content": 1,
     "push_unconfirmed": 4,
     "question_not_found": 1,
