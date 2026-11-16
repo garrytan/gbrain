@@ -138,13 +138,35 @@ function finish(words: string[]): string | null {
   return name;
 }
 
-/** Split a label's value into its listed names (`,`, `;`, ` / `, ` or `). */
+/** Split a label's listed names (`,`, `;`, ` / `, ` or `), keeping quoted names whole. */
 function labelValues(value: string, multiword: boolean): string[] {
   const out: string[] = [];
-  for (const part of value.split(/\s*[,;]\s*|\s+\/\s+|\s+or\s+/)) {
+  const absentClosers = new Set<string>();
+  const quotedEnd = (start: number): number => {
+    // Match captureName's leading punctuation and quote pairs. An unclosed quote
+    // keeps the existing list parsing; apostrophes within unquoted names are inert.
+    const prefix = /^[\s:,(\-\u2013\u2014]*(["'\u201c\u2018])/.exec(value.slice(start));
+    if (!prefix) return -1;
+    const close = QUOTES[prefix[1]!]!;
+    if (absentClosers.has(close)) return -1;
+    const end = value.indexOf(close, start + prefix[0].length);
+    // Later values start farther right: a missing closer stays missing, so
+    // repeated unmatched curly openers never rescan every remaining suffix.
+    if (end < 0) absentClosers.add(close);
+    return end;
+  };
+  const capture = (part: string) => {
     const name = captureName(part, { multiword });
     if (name) out.push(name);
+  };
+  let start = 0, end = quotedEnd(0);
+  for (const separator of value.matchAll(/\s*[,;]\s*|\s+\/\s+|\s+or\s+/g)) {
+    if (separator.index! < end) continue;
+    capture(value.slice(start, separator.index));
+    start = separator.index! + separator[0].length;
+    end = quotedEnd(start);
   }
+  capture(value.slice(start));
   return out;
 }
 

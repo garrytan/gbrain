@@ -177,6 +177,34 @@ describe('declared-name grammar (alias conventions spec)', () => {
     expect(declarationsIn(text, { multiword: false })).toEqual([{ alias: 'QUCO', line: 2 }]);
   });
 
+  // Protects quoted names in record fields from becoming extra identities. Splitting a label value before
+  // reading its quotes invents "Harbor"; existing quoted-cue tests never put a list delimiter in the name.
+  // Exercises the public parser and stored alias projection directly, with no production-only seam.
+  test.each([
+    ['comma', 'Alias: "Copper, Harbor"', ['Copper, Harbor']],
+    ['semicolon', 'Alias: "Copper; Harbor"', ['Copper; Harbor']],
+    ['table slash', '| Nickname | "Copper / Harbor" |', ['Copper / Harbor']],
+    ['bold or', '- **Aliases:** "Copper or Harbor"', ['Copper or Harbor']],
+    ['curly double quotes', 'Alias: “Copper, Harbor”', ['Copper, Harbor']],
+    ['single quotes', "Alias: 'Copper, Harbor'", ['Copper, Harbor']],
+    ['curly single quotes', 'Alias: ‘Copper, Harbor’', ['Copper, Harbor']],
+    ['later sentence', 'Account: Widget Co. Nickname: "Copper, Harbor".', ['Copper, Harbor']],
+    ['mixed list', 'Aliases: "Copper, Harbor", Blue Fox; “East or West” / North Bay', ['Copper, Harbor', 'Blue Fox', 'East or West', 'North Bay']],
+    ['apostrophes in names', 'Aliases: O\'Neil, Mc\'Donald; "O\'Neil, Harbor"', ["O'Neil", "Mc'Donald", "O'Neil, Harbor"]],
+  ])('quoted alias list values stay whole: %s', (_label, text, want) => {
+    expect(names(text)).toEqual(want);
+    expect(deriveEntityAliases({ title: 'Widget Co', compiled_truth: text }).aliases.map(a => a.alias_text)).toEqual(want);
+  });
+
+  test('quoted alias list values retain deny, word-count and malformed-quote rules', () => {
+    const page = { title: 'Widget Co', compiled_truth: 'Alias: "Copper, Harbor"' };
+    expect(deriveEntityAliases(page, { deny: ['Copper, Harbor'] }).aliases).toEqual([]);
+    expect(deriveEntityAliases(page, { multiword: false }).aliases).toEqual([]);
+    expect(names('Alias: "Copper Blue Silver Golden, Harbor"')).toEqual([]);
+    // An unclosed quote keeps the existing capture rules; it does not consume later list values.
+    expect(names('Alias: "Copper, Harbor; Blue Fox')).toEqual(['Harbor', 'Blue Fox']);
+  });
+
   test('a multi-word alias is case-insensitive; deny lists drop a derived alias', () => {
     const page = { title: 'Account sheet: Widget Co', compiled_truth: 'Internal nickname: Copper Fox\nAccount code: WGCO', frontmatter: { alias_deny: ['WGCO'] } };
     const r = deriveEntityAliases(page);

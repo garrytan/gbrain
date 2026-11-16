@@ -106,13 +106,16 @@ label noun: `nickname`, `alias`, `aka`, `also known as`, `short name`,
 `customer code`, `ticker`. Extra words around the noun are allowed, because
 record systems qualify their fields (`Internal nickname:`, `Team alias:`,
 `Nickname (sales):`, `Former legal name:`). The value is split on `,`, `;`,
-`/` and ` or `, and each part is captured as a quoted name or an unquoted run.
+` / ` and ` or ` outside balanced quoted names, and each part is captured as
+a quoted name or an unquoted run. Separators inside a quoted name remain
+part of that name: `Alias: "Copper, Harbor"` declares only `Copper, Harbor`.
 
 | Form | Positive fixture |
 |---|---|
 | Prose line | `Internal nickname: Copper Fox` → `Copper Fox` |
 | Bold key-value | `- **Aliases:** Copper Fox, CFX` → `Copper Fox`, `CFX` |
 | Plain key-value | `trading name: Northwind Ops` → `Northwind Ops` |
+| Quoted list value | `Aliases: "Copper, Harbor", Blue Fox` → `Copper, Harbor`, `Blue Fox` |
 | Markdown table row | `\| Nickname \| Copper Fox \|` → `Copper Fox` |
 | Markdown table row with qualified label | `\| Former legal name \| Gearbox Labs Inc \|` → `Gearbox Labs Inc` |
 
@@ -185,6 +188,10 @@ as written, as a whole token: "Call with JOF" links, "jof" does not.
   verbatim instead.
 
 ## Changelog
+
+- 2026-11-16: label lists keep separators inside balanced quoted names.
+  The next `gbrain extract --stale` re-derives aliases and reconciles mention
+  links from earlier grammar versions; frontmatter aliases stay as written.
 
 - 2026-10-11: stored aliases and card identity lines need an anchored
   declaration (above). Origin: the alias precision gate of the Cat 40 Hard fix

@@ -27,6 +27,7 @@ import {
 import { mentionCoverageNotice, readMentionCoverage } from '../src/core/mentions/coverage.ts';
 import { mentionIndexUpgradeNotice } from '../src/core/mentions/upgrade-notice.ts';
 import { deriveEntityAliases } from '../src/core/mentions/aliases.ts';
+import { resolveEntitySlugWithSource } from '../src/core/entities/resolve.ts';
 import { CYCLE_STALE_DRAIN_BUDGET_MS } from '../src/core/cycle.ts';
 import { derivedAliases, mentionBrain, mentionLinks, page, resetMentionBrain, sweep } from './helpers/mention-brain.ts';
 
@@ -171,6 +172,40 @@ describe('coverage after a version bump on an unchanged brain', () => {
 });
 
 describe('upgrade from a brain built at the previous versions', () => {
+  // Protects stored identity lookup and old mention-link cleanup after the quoted-list parser repair.
+  // The old grammar invents Harbor from a quoted name; existing upgrade tests only cover missing names.
+  // This uses real page state, aliases, the resolver and the stale sweep, with no added production seam.
+  test('quoted alias lists refresh old identities and remove fragment-only links', async () => {
+    const slug = 'companies/widget-example';
+    const body = '| Alias | "Copper / Harbor" |';
+    await page(engine, slug, 'company', 'Widget Example', body, { frontmatter: { aliases: ['OWNR'] } });
+    await engine.setPageAliases(slug, 'default', ['ownr']);
+    await page(engine, 'notes/whole', 'note', 'Whole name', 'Copper / Harbor signed the agreement.');
+    await page(engine, 'notes/fragment', 'note', 'Fragment', 'Harbor sent a different proposal.');
+    await page(engine, 'notes/owner', 'note', 'Owner name', 'OWNR renewed.');
+    await sweep(engine);
+
+    // Reproduce the rows a v7.4 mention index left. The owner's frontmatter alias is not derived.
+    await engine.executeRaw("DELETE FROM page_aliases WHERE source_id = 'default' AND slug = $1 AND origin IN ('declared', 'subject')", [slug]);
+    await engine.executeRaw(`INSERT INTO page_aliases (source_id, slug, alias_norm, origin, case_sensitive, alias_text)
+      VALUES ('default', $1, 'harbor', 'declared', true, 'Harbor')`, [slug]);
+    await engine.addLinksBatch([{ from_slug: 'notes/fragment', to_slug: slug, from_source_id: 'default', to_source_id: 'default',
+      link_type: 'mentions', link_source: 'mentions', context: 'Harbor' }]);
+    await engine.executeRaw('UPDATE page_mention_state SET mention_version = 7, alias_version = CASE WHEN alias_version IS NOT NULL THEN 4 ELSE NULL END');
+    await engine.executeRaw("UPDATE mention_index_status SET policy_fingerprint = split_part(policy_fingerprint, ';', 1) || ';v7.4'");
+    expect(await resolveEntitySlugWithSource(engine, 'default', 'Harbor')).toEqual({ slug, source: 'alias_exact' });
+    expect(await readMentionCoverage(engine, ['default'])).toMatchObject({ state: 'pending', pending_pages: 4 });
+
+    await sweep(engine);
+    expect(await derivedAliases(engine, slug)).toEqual(['declared:copper / harbor', 'frontmatter:ownr']);
+    expect(await resolveEntitySlugWithSource(engine, 'default', 'Copper / Harbor')).toEqual({ slug, source: 'alias_exact' });
+    expect(await resolveEntitySlugWithSource(engine, 'default', 'Harbor')).toEqual({ slug: 'harbor', source: 'fallback_slugify' });
+    expect(await resolveEntitySlugWithSource(engine, 'default', 'OWNR')).toEqual({ slug, source: 'alias_exact' });
+    expect(await mentionLinks(engine)).toEqual([`notes/owner -> ${slug}`, `notes/whole -> ${slug}`]);
+    expect((await engine.getPage(slug, { sourceId: 'default' }))?.compiled_truth).toBe(body);
+    expect(await readMentionCoverage(engine, ['default'])).toMatchObject({ state: 'complete', pending_pages: 0 });
+  });
+
   test('one cycle-budget sweep (no manual catch-up) derives the new grammar\'s multi-word alias and links it', async () => {
     await account();
     await page(engine, 'notes/n1', 'note', 'n1', 'Copper Fox renewal call next week.');
