@@ -318,9 +318,9 @@ async function writeLedger(engine: BrainEngine, entry: ArchiveLedgerEntry): Prom
  * resolved then (the configured archive source, or its <source>-owner twin on a shared brain whose source is a
  * checkout), so they are read under both ids: a brain that turned shared or personal in between still skips them.
  */
-async function legacyCovered(engine: BrainEngine, sourceIds: string[]): Promise<Set<string>> {
+async function legacyCovered(engine: BrainEngine, configured: string): Promise<Set<string>> {
   const out = new Set<string>();
-  for (const id of new Set(sourceIds)) {
+  for (const id of [configured, configured + '-owner']) {
     const prefix = LEGACY_PREFIX + id + '.';
     const rows = await engine.executeRaw<{ key: string }>('SELECT key FROM config WHERE key LIKE $1', [prefix + '%']);
     for (const r of rows) out.add(r.key.slice(prefix.length));
@@ -693,7 +693,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
   const patterns = loadImportRedactionPatterns();
   const redactionVersion = sha256(ARCHIVE_REDACTION_RULES + '\u0000' + patterns.map(p => p.source).join('\u0000'));
   const ledger = new Map((await readArchiveLedger(engine, sourceId)).map(e => [e.harness + '.' + e.conversation_key_hash + '.' + e.day, e]));
-  const legacy = await legacyCovered(engine, [sourceId, await configuredSource(engine, opts.sourceId)]);
+  const legacy = await legacyCovered(engine, await configuredSource(engine, opts.sourceId));
   const covered = (harness: string, day: string) => legacy.has(harness + '.' + day) || legacy.has('*.' + day);
 
   interface Item { entry: ArchiveScanEntry; hash: string; days: string[] }
@@ -1068,7 +1068,7 @@ export async function archiveStatus(engine: BrainEngine, opts: { sourceId?: stri
     enabled: await archiveEnabled(engine), source_id: sourceId, timezone: pinned, configured_timezone: configured, harnesses: [],
     archived_days: entries.filter(e => e.hash && !e.held).length,
     held: entries.filter(e => e.held).map(e => ({ harness: e.harness, day: e.day, code: e.held!.code })),
-    legacy_days: (await legacyCovered(engine, [sourceId, await configuredSource(engine, opts.sourceId)])).size, errors: [],
+    legacy_days: (await legacyCovered(engine, await configuredSource(engine, opts.sourceId))).size, errors: [],
   };
   const reads = await readArchiveReads(engine, sourceId);
   const zone = pinned ?? configured;

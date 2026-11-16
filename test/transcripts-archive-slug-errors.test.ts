@@ -126,4 +126,23 @@ describe('run errors and retries (pglite)', () => {
     expect(result.skipped_legacy).toBe(1);
     expect(result.written).toBe(0);
   }, 60_000);
+
+  test('days adopt-legacy recorded on a shared brain are still skipped after the brain turned personal again', async () => {
+    const legacy = mkdtempSync(join(tmpdir(), 'archive-legacy-'));
+    const checkout = mkdtempSync(join(tmpdir(), 'archive-checkout-'));
+    dirs.push(legacy, checkout);
+    mkdirSync(join(legacy, 'codex'), { recursive: true });
+    writeFileSync(join(legacy, 'codex', '2026-11-02.md'), '# old archive day\n');
+    await engine.executeRaw("INSERT INTO sources (id, name, local_path) VALUES ('conversations', 'Conversation archive checkout', $1)", [checkout]);
+    await engine.setConfig('brain.audience', 'shared');
+    await addMember(engine, 'alice-example');
+    await setOwner(engine, 'alice-example');
+    const adopted = await adoptLegacyArchive(engine, { dir: legacy, apply: true });
+    expect(adopted.source_id).toBe('conversations-owner');
+    await engine.setConfig('brain.audience', 'personal');
+    const result = await runTranscriptArchive(engine, { ...opts, readers: [staticReader('codex', [conv()])] });
+    expect(result.source_id).toBe('conversations');
+    expect(result.skipped_legacy).toBe(1);
+    expect(result.written).toBe(0);
+  }, 60_000);
 });
