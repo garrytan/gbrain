@@ -18,6 +18,8 @@ export interface SharedMigrationStage {
   stage: 'inventory' | 'ownership' | 'projection' | 'policy' | 'members';
   status: 'complete' | 'action_required' | 'conflict' | 'planned';
   reason?: string;
+  /** A conflict's stable code, for readers that must not parse `reason`. */
+  code?: string;
 }
 export interface SharedSourceMigration {
   source_id: string;
@@ -125,9 +127,9 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
       root: source.local_path || (source.id === 'default' ? fallback : null), inventory: null, publication, stages: [], status: dryRun ? 'planned' : 'complete' };
     report.sources.push(row);
     const persist = async () => { if (!dryRun) await ctx.engine.setConfig(key, JSON.stringify(row)); };
-    const pending = async (stage: SharedMigrationStage['stage'], reason: string, conflict = false) => {
-      row.status = conflict ? 'conflict' : 'action_required';
-      row.stages.push({ stage, status: row.status, reason });
+    const pending = async (stage: SharedMigrationStage['stage'], reason: string, conflictCode?: string) => {
+      row.status = conflictCode ? 'conflict' : 'action_required';
+      row.stages.push({ stage, status: row.status, reason, ...(conflictCode ? { code: conflictCode } : {}) });
       await persist();
     };
     if (sourcePolicy.mode === 'preserve_files') {
@@ -194,7 +196,8 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
         await pending('inventory', parkedReason(source.id, row.parked));
         continue;
       }
-      await pending('inventory', error instanceof OperationError ? error.message : 'The source pack cannot be inventoried safely; inspect its manifest and declared files.', true);
+      await pending('inventory', error instanceof OperationError ? error.message : 'The source pack cannot be inventoried safely; inspect its manifest and declared files.',
+        error instanceof OperationError ? error.code : 'local_conflict');
       continue;
     }
     row.stages.push({ stage: 'inventory', status: 'complete' });
@@ -216,7 +219,7 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
     await persist();
     if (!row.inventory) {
       if (existsSync(join(row.root, 'skills')) && readdirSync(join(row.root, 'skills')).length) {
-        await pending('projection', 'Unmanifested source-local skills require reviewed adoption; no files or private markers were replaced.', true);
+        await pending('projection', 'Unmanifested source-local skills require reviewed adoption; no files or private markers were replaced.', 'shared_skills_unmanifested');
         continue;
       }
       if (!dryRun) {

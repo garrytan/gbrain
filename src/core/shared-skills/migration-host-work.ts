@@ -9,6 +9,8 @@
  * explicit pack). Read-only.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { GBrainConfig } from '../config.ts';
+import type { OwedConflict } from '../migration-ledger.ts';
 import type { SharedMigrationReport } from './migration.ts';
 import { sharedSkillSourcePolicyOrPreserve } from './setup-source-policy.ts';
 
@@ -37,4 +39,22 @@ export async function sharedSkillsHostWork(engine: BrainEngine): Promise<{ sourc
 export async function hostWorkMigrations(engine: BrainEngine): Promise<Set<string>> {
   const work = await sharedSkillsHostWork(engine);
   return new Set(work.sources.length || work.pending_actions ? [SHARED_SKILLS_HOST_WORK_VERSION] : []);
+}
+
+/** Every source stage a migration report marks `conflict`, with its code and reason. */
+export function owedConflicts(report: Pick<SharedMigrationReport, 'sources'> | null | undefined): OwedConflict[] {
+  return (report?.sources ?? []).flatMap(row => row.stages.filter(stage => stage.status === 'conflict')
+    .map(stage => ({ source_id: row.source_id, code: stage.code ?? 'local_conflict', reason: stage.reason ?? '' })));
+}
+
+/**
+ * The sources in conflict now, from the migration's read-only preview on this brain (the per-source inspect, run in
+ * process: it inventories each registered pack and writes nothing). Null when the preview cannot run here.
+ */
+export async function readOwedConflicts(engine: BrainEngine, config: GBrainConfig): Promise<OwedConflict[] | null> {
+  try {
+    const { runSharedSkillsMigration } = await import('./migration.ts');
+    return owedConflicts(await runSharedSkillsMigration({ engine, config, sourceId: 'default', remote: false, dryRun: true,
+      logger: { info() {}, warn() {}, error() {} } }, { dryRun: true }));
+  } catch { return null; }
 }

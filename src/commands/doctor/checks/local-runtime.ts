@@ -13,7 +13,8 @@ import { VERSION } from '../../../version.ts';
 import { pendingFreshInstallCheck } from './pending-fresh-install.ts';
 import { autopilotInstallPendingCheck } from './autopilot-install-pending.ts';
 import { migrationHostWorkCheck } from './migration-host-work.ts';
-import { hostWorkMigrations } from '../../../core/shared-skills/migration-host-work.ts';
+import { hostWorkMigrations, readOwedConflicts } from '../../../core/shared-skills/migration-host-work.ts';
+import { loadConfig } from '../../../core/config.ts';
 import { compareVersions } from '../../migrations/index.ts';
 import { bootstrapDoctorChecks } from '../bootstrap-checks.ts';
 import { buildMemorableRelayCheck } from './integrations-memorable.ts';
@@ -241,8 +242,11 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
     }
     const hostWork = migrationHostWorkCheck(history, declined, engine ? await hostWorkMigrations(engine).catch(() => new Set<string>()) : new Set<string>());
     if (hostWork) checks.push(hostWork);
-    if (owed.length > 0) checks.push({ name: 'minions_migration', status: 'warn', message: hostWorkOwedMessage(owed), fix: hostWorkOwedFix(owed),
-      details: { code: 'migration_host_work_owed', wedged_host_work: owed } });
+    // Connected, doctor reads which sources are in conflict now (the read-only preview); none left means the wedge is history.
+    const config = engine && owed.length > 0 ? loadConfig() : null;
+    const conflicts = engine && config ? await readOwedConflicts(engine, config) : null;
+    if (owed.length > 0 && conflicts?.length !== 0) checks.push({ name: 'minions_migration', status: 'warn', message: hostWorkOwedMessage(owed, conflicts), fix: hostWorkOwedFix(owed, conflicts),
+      details: { code: 'migration_host_work_owed', wedged_host_work: owed, ...(conflicts ? { conflicts } : {}) } });
     const skippedInstall = autopilotInstallPendingCheck();
     if (skippedInstall) checks.push(skippedInstall);
     // Note: the "no preferences.json but schema is v7+" case is detected

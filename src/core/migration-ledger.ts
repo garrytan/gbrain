@@ -136,39 +136,68 @@ export function hostWorkInspectArgv(version: string): string[] {
   return ['gbrain', 'apply-migrations', '--migration', version, '--dry-run', '--json'];
 }
 
-/** The one migration whose wedge can owe host work: v0.53.0, `SHARED_SKILLS_HOST_WORK_VERSION` (not imported: its module pulls in the shared-skills graph). */
-const HOST_WORK_OWED_VERSION = '0.53.0';
+/**
+ * Upgrade migrations whose orchestrator declares `reconcile: true` (a per-source recheck that records host work, today the
+ * shared-skills content migration). Registry-free mirror of that flag, pinned against the registry by
+ * test/migration-ledger.test.ts like MIGRATION_OPT_OUT_KEYS.
+ */
+export const RECONCILE_MIGRATION_VERSIONS: readonly string[] = ['0.53.0'];
 
 /**
- * v0.53.0 wedged with its latest row recording `apply_migrations_pending`: it stopped on a conflict in one or more sources
- * that a person has to settle, and that work is still owed. A newer migration never supersedes it, and apply-migrations
- * never runs it again by itself, so it stays until a person resolves the conflict and clears the wedge. Other migrations
- * (v0.11.0, v0.14.0) set the same flag on ordinary partial runs, so their wedges keep the forward-progress rule.
+ * A reconcile migration wedged with its latest row recording `apply_migrations_pending`: its per-source recheck stopped on
+ * a conflict in one or more sources that a person has to settle. Other migrations (v0.11.0, v0.14.0) set the same flag on
+ * ordinary partial runs, so their wedges keep the forward-progress rule.
  */
 export function hostWorkOwedForVersion(version: string, byVersion: Map<string, CompletedMigrationEntry[]>): boolean {
-  return version === HOST_WORK_OWED_VERSION && statusForVersion(version, byVersion) === 'wedged' && byVersion.get(version)?.at(-1)?.apply_migrations_pending === true;
+  return RECONCILE_MIGRATION_VERSIONS.includes(version) && statusForVersion(version, byVersion) === 'wedged' && byVersion.get(version)?.at(-1)?.apply_migrations_pending === true;
 }
 
-function forceRetryArgv(version: string): string[] { return ['gbrain', 'apply-migrations', '--force-retry', version]; }
+/** One source in conflict, read from the migration's read-only preview: the stage's code and reason. */
+export interface OwedConflict { source_id: string; code: string; reason: string }
 
-/** The one description of a wedged version with host work owed, shared by every surface that reports it. */
-export function hostWorkOwedMessage(versions: readonly string[]): string {
-  const first = versions[0]!;
-  return `Migration ${versions.map(v => `v${v}`).join(', ')} stopped ${MAX_CONSECUTIVE_PARTIALS}+ runs in a row on a conflict in one or more sources that a person has to resolve, and that work is still owed; `
-    + `a newer migration does not replace it, and it does not clear without a person. See each source's conflict (read-only): ${hostWorkInspectArgv(first).join(' ')}. `
-    + `Once the user has reviewed each one, clear the wedge with ${forceRetryArgv(first).join(' ')}, then run the command that output names for each source, or gbrain apply-migrations --yes.`;
+/** The step a person takes for one source's conflict. */
+export function owedConflictNextStep(conflict: OwedConflict): string {
+  if (conflict.code === 'shared_skills_unmanifested') {
+    return 'review the skills in its skills/ folder with the user, then either declare the ones to share in a skillpack.json at the source\'s root, or keep the source out of '
+      + 'shared-skills adoption with ' + ['gbrain', 'sources', 'shared-skills', conflict.source_id, 'off'].join(' ');
+  }
+  return 'settle what its reason names with the user';
 }
 
-/** The fix for a wedged version with host work owed: the read-only per-source inspect first, then ask the user to clear it once the conflict is resolved. */
-export function hostWorkOwedFix(versions: readonly string[]): Action {
+/**
+ * The one description of a wedged migration with host work owed, shared by every surface that reports it. `conflicts` is
+ * the live list from the read-only preview, or null where the surface cannot read it (no database, a remote caller).
+ */
+export function hostWorkOwedMessage(versions: readonly string[], conflicts: readonly OwedConflict[] | null = null): string {
   const first = versions[0]!;
-  const verify = { argv: ['gbrain', 'apply-migrations', '--list', '--json'] };
-  return { argv: hostWorkInspectArgv(first), consent: [], actor: 'agent', requires_exclusive: false, verify,
-    why: `Lists each source's remaining step and its conflict for v${first}, with the command that settles it; changes nothing.`,
-    then: { ask_user: true, argv: forceRetryArgv(first), consent: [], actor: 'agent', requires_exclusive: true, verify,
-      why: `Writes a 'retry' marker so v${first} can run again, including the per-source command the inspect step names; a run that does not settle a conflict stops on it again.`,
-      user_message: `gbrain migration v${first} is stuck on a conflict in one or more sources that needs your decision; the inspect step lists each source and what conflicts there. `
-        + `It will not clear by itself. Once you have reviewed each conflict, clear it with ${forceRetryArgv(first).join(' ')}, then run the command the inspect step names for each source, or gbrain apply-migrations --yes. Clear it now?` } };
+  const named = versions.map(v => `v${v}`).join(', ');
+  if (conflicts === null) {
+    return `Migration ${named} stopped ${MAX_CONSECUTIVE_PARTIALS}+ runs in a row on a conflict in one or more sources that a person has to settle. `
+      + `See each source's conflict and its next step (read-only): ${hostWorkInspectArgv(first).join(' ')}.`;
+  }
+  if (conflicts.length === 0) {
+    return `Migration ${named} stopped ${MAX_CONSECUTIVE_PARTIALS}+ runs in a row on a source conflict, and its preview finds no source in conflict now, so nothing waits on a person. `
+      + `See each source's state (read-only): ${hostWorkInspectArgv(first).join(' ')}.`;
+  }
+  return `Migration ${named} is stopped on a conflict in ${conflicts.length} source(s) that a person has to settle: `
+    + conflicts.map(c => `${c.source_id} (${c.code}): ${c.reason} Next: ${owedConflictNextStep(c)}.`).join(' ')
+    + ` Preview every source (read-only): ${hostWorkInspectArgv(first).join(' ')}.`;
+}
+
+/** The fix for a wedged migration with host work owed: the read-only per-source inspect, then the user's decision for each source in conflict now. */
+export function hostWorkOwedFix(versions: readonly string[], conflicts: readonly OwedConflict[] | null = null): Action {
+  const first = versions[0]!;
+  const inspect: Action = { argv: hostWorkInspectArgv(first), consent: [], actor: 'agent', requires_exclusive: false,
+    verify: { argv: ['gbrain', 'apply-migrations', '--list', '--json'] },
+    why: `Lists each source's state and any conflict for v${first}, with the step that settles it; changes nothing.` };
+  if (conflicts === null || conflicts.length === 0) return inspect;
+  const unmanifested = conflicts.find(c => c.code === 'shared_skills_unmanifested');
+  return { ...inspect, then: { ask_user: true, consent: [], actor: 'agent', requires_exclusive: false,
+    ...(unmanifested ? { argv: ['gbrain', 'sources', 'shared-skills', unmanifested.source_id, 'off'] } : {}),
+    verify: { argv: hostWorkInspectArgv(first) },
+    why: 'Each conflict needs the user\'s decision; nothing changes until they make it.',
+    user_message: `gbrain migration v${first} is stopped on a conflict in ${conflicts.map(c => c.source_id).join(', ')}. `
+      + conflicts.map(c => `For ${c.source_id}: ${owedConflictNextStep(c)}.`).join(' ') + ' Which do you want for each?' } };
 }
 
 export function trailingPartialCount(entries: readonly CompletedMigrationEntry[]): number {

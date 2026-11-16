@@ -538,12 +538,19 @@ before parking existed) resumes with
 `gbrain apply-migrations --migration 0.53.0 --yes`; the oversized source parks
 and the migration completes.
 
-A 0.53.0 migration wedged on a source conflict still owes that work, even after
-a newer migration completes, and it does not clear without a person. Run
+A 0.53.0 migration wedged on a source conflict is reported by `gbrain doctor`,
+`gbrain apply-migrations --dry-run` and `post-upgrade`, each naming the sources
+in conflict, the code and the next step; ordinary commands say nothing about it
+once a newer migration has completed. Run
 `gbrain apply-migrations --migration 0.53.0 --dry-run --json` (it changes
-nothing) to see each source's conflict, resolve it with the user, and only then
-run `gbrain apply-migrations --force-retry 0.53.0` and the command the output
-names for that source, or `gbrain apply-migrations --yes`.
+nothing) to see each source's state, then settle each conflict with the user.
+For `shared_skills_unmanifested` (skills in the source's `skills/` folder that no
+`skillpack.json` declares), declare the ones to share in a `skillpack.json` at
+the source's root, or keep the source out with
+`gbrain sources shared-skills <id> off`. Doctor stops warning once the preview
+finds no source in conflict. Don't clear the wedge with `--force-retry` for this:
+the next `--yes` run would also publish each source's pending shared-skills
+content.
 
 ## Troubleshoot, leave, and recover
 

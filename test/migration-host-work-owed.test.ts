@@ -1,8 +1,9 @@
 /**
  * A wedged migration whose latest row records apply_migrations_pending still owes host work (for v0.53.0, a conflict
- * in one or more sources). A newer migration completing after it does not make it history, and nothing clears it
- * without a person. Every surface says so with the same read-only next step (the per-source inspect), offers the
- * forced retry only after the conflict is resolved, and leaves the migration and every exit status as they were.
+ * in one or more sources). Where an operator looks (doctor, apply-migrations, post-upgrade, upgrade) it is reported with
+ * the read-only per-source inspect and, where the surface can read the preview, each source in conflict with its code
+ * and next step; nothing advises a forced retry. Ordinary commands follow apply-migrations: once a newer migration ran
+ * past the wedge they print nothing about it. A named run of it still refuses, with the read-only inspect as its fix.
  *
  * One throwaway PGLite brain drives the CLI (HOME / GBRAIN_HOME per subprocess; process.env is never mutated); the
  * notice, both doctors and the upgrade message run in-process against a ledger-only home.
@@ -21,11 +22,15 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { getDbUrlSource } from '../src/core/config.ts';
 import { VERSION } from '../src/version.ts';
 import { SHARED_SKILLS_HOST_WORK_VERSION } from '../src/core/shared-skills/migration-host-work.ts';
+import { hostWorkOwedFix, hostWorkOwedMessage } from '../src/core/migration-ledger.ts';
+import { minionsMigrationEntry } from '../src/commands/doctor/checks/local-runtime.ts';
+import type { DoctorContext } from '../src/commands/doctor/context.ts';
+import type { Check } from '../src/commands/doctor.ts';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 const OWED = '0.53.0';
 const INSPECT = ['gbrain', 'apply-migrations', '--migration', OWED, '--dry-run', '--json'];
-const RETRY = ['gbrain', 'apply-migrations', '--force-retry', OWED];
+const FORCE_RETRY = '--force-retry';
 const owedRow = (n: number) => ({ ts: `2026-10-0${n}T00:00:00.000Z`, version: OWED, status: 'partial', apply_migrations_pending: true,
   phases: [{ name: 'content-checkpoints', status: 'complete', detail: 'Mechanical inventory is durable; publication and enrollment are NOT complete.' }] });
 /** v0.11.0 records apply_migrations_pending on every partial run that left host TODOs: an ordinary wedge, never a source conflict. */
@@ -76,15 +81,12 @@ afterAll(async () => {
   try { rmSync(home, { recursive: true, force: true }); } catch { /* best effort */ }
 });
 
-/** The read-only inspect first, then the ask: rendered (`next`) on the wire, stored (`ask_user`) on an in-process doctor check. */
-function expectOwedFix(fix: any): void {
-  if ('next' in fix) expect(fix).toMatchObject({ next: 'run', argv: INSPECT, then: { next: 'ask_user', argv: RETRY } });
-  else {
-    expect(fix).toMatchObject({ argv: INSPECT, then: { ask_user: true, argv: RETRY } });
-    expect(fix.ask_user).toBeUndefined();
-  }
-  expect(fix.then.user_message).toContain('conflict');
-  expect(fix.then.user_message).toContain('will not clear by itself');
+/** The read-only inspect alone, with no ask: the surface could not read which sources are in conflict now. */
+function expectInspectFix(fix: any): void {
+  expect(fix).toMatchObject({ argv: INSPECT });
+  expect(fix.ask_user).toBeUndefined();
+  expect(fix.then).toBeUndefined();
+  expect(JSON.stringify(fix)).not.toContain(FORCE_RETRY);
 }
 
 describe('apply-migrations with a wedged migration that still owes host work', () => {
@@ -97,8 +99,7 @@ describe('apply-migrations with a wedged migration that still owes host work', (
     expect(out).not.toContain('All migrations up to date');
     expect(out).toMatch(new RegExp(`wedged\\s+${OWED.replace(/\./g, '\\.')}`));
     expect(out).toContain(INSPECT.join(' '));
-    expect(out.indexOf(INSPECT.join(' '))).toBeLessThan(out.indexOf(RETRY.join(' ')));
-    expect(out).toContain('does not clear without a person');
+    expect(out).not.toContain(FORCE_RETRY);
   }, 120_000);
 
   test('--list --json lists it with the read-only inspect as its fix, never as superseded', async () => {
@@ -130,6 +131,8 @@ describe('apply-migrations with a wedged migration that still owes host work', (
     expect(doc.status).toBe('up_to_date');
     expect(doc.wedged_host_work).toEqual([OWED]);
     expect(run.stderr).toContain(INSPECT.join(' '));
+    expect(run.stderr).toContain('its preview finds no source in conflict now, so nothing waits on a person');
+    expect(run.stderr).not.toContain(FORCE_RETRY);
     expect(ledger()).toBe(before);
   }, 120_000);
 
@@ -140,7 +143,9 @@ describe('apply-migrations with a wedged migration that still owes host work', (
     expect(run.exitCode).toBe(1);
     const envelope = JSON.parse(run.stdout);
     expect(envelope).toMatchObject({ code: 'migrations_pending', reason: 'wedged' });
-    expectOwedFix(envelope.fix);
+    expect(envelope.fix).toMatchObject({ next: 'run', argv: INSPECT });
+    expect(envelope.fix.then).toBeUndefined();
+    expect(run.stdout + run.stderr).not.toContain(FORCE_RETRY);
     expect(ledger()).toBe(before);
   }, 120_000);
 
@@ -166,23 +171,18 @@ describe('apply-migrations with a wedged migration that still owes host work', (
     expect(ledger()).toBe(stuck);
   }, 240_000);
 
-  test('a named run of it refuses with the steps that clear it, and runs by name once the wedge is cleared', async () => {
+  test('a named run of it refuses with the read-only inspect as its fix, never a forced retry, and changes nothing', async () => {
     owe(true);
     const before = ledger();
-    const named = ['apply-migrations', '--migration', OWED, '--yes', '--no-autopilot-install', '--json'];
-    const refused = await cli(named);
-    expect(refused.exitCode).toBe(2);
-    const envelope = JSON.parse(refused.stdout);
-    expect(envelope.code).toBe('invalid_params');
-    expect(envelope.message).toContain(`v${OWED} is wedged`);
-    expect(envelope.suggestion).toContain(RETRY.join(' '));
-    expectOwedFix(envelope.fix);
+    const run = await cli(['apply-migrations', '--migration', OWED, '--yes', '--no-autopilot-install', '--json']);
+    expect(run.exitCode).toBe(2);
+    const envelope = JSON.parse(run.stdout);
+    expect(envelope).toMatchObject({ code: 'invalid_params' });
+    expect(envelope.suggestion).toContain(INSPECT.join(' '));
+    expectInspectFix(envelope.fix);
+    expect(run.stdout + run.stderr).not.toContain(FORCE_RETRY);
     expect(ledger()).toBe(before);
-    expect((await cli(RETRY.slice(1))).exitCode).toBe(0);
-    const run = await cli(named);
-    expect(run.exitCode).toBe(0);
-    expect(JSON.parse(run.stdout).code).toBeUndefined();
-  }, 240_000);
+  }, 120_000);
 });
 
 describe('the other surfaces say the same thing', () => {
@@ -200,12 +200,25 @@ describe('the other surfaces say the same thing', () => {
       .finally(() => rmSync(dir, { recursive: true, force: true }));
   };
 
-  test('the connect and serve notice leads with the inspect step, not the forced retry', async () => {
-    const notice = await scoped(true, () => pendingUpgradeMigrationsNotice({ getConfig: async () => null } as never, 'serve', VERSION));
+  /** This ledger holds only the wedge and one newer run, so the other migrations still read as not run; the notice may name those, never the wedge. */
+  const quietAboutWedge = (why: string) => {
+    expect(why).not.toContain('wedged');
+    expect(why).not.toContain('conflict');
+    expect(why).not.toContain(FORCE_RETRY);
+  };
+
+  test('the connect and serve notice says nothing about it once a newer migration ran past it, as apply-migrations does', async () => {
+    for (const command of ['serve', 'remember', 'recall', 'config']) {
+      quietAboutWedge((await scoped(true, () => pendingUpgradeMigrationsNotice({ getConfig: async () => null } as never, command, VERSION)))?.why ?? '');
+    }
+  });
+
+  test('with nothing past it the notice names the read-only inspect and asks nothing', async () => {
+    const notice = await scoped(false, () => pendingUpgradeMigrationsNotice({ getConfig: async () => null } as never, 'serve', VERSION));
     expect(notice?.code).toBe('migrations_pending');
-    expect(notice!.fix).toMatchObject({ argv: INSPECT, then: { ask_user: true, argv: RETRY } });
-    expect(notice!.fix!.ask_user).toBeUndefined();
-    expect(notice!.why).toContain('does not clear without a person');
+    expect(notice!.why).toContain(INSPECT.join(' '));
+    expect(notice!.why).not.toContain(FORCE_RETRY);
+    expectInspectFix(notice!.fix);
   });
 
   for (const superseded of [true, false]) {
@@ -215,7 +228,8 @@ describe('the other surfaces say the same thing', () => {
       const row = rows.find(c => (c.details as any)?.code === 'migration_host_work_owed');
       expect(row?.status).toBe('warn');
       expect(row!.message).toContain(INSPECT.join(' '));
-      expectOwedFix(row!.fix);
+      expect(row!.message).not.toContain(FORCE_RETRY);
+      expectInspectFix(row!.fix);
     });
   }
 
@@ -225,6 +239,7 @@ describe('the other surfaces say the same thing', () => {
     const row = rows.find(c => (c.details as any)?.code === 'migration_host_work_owed');
     expect(row?.status).toBe('warn');
     expect(row!.message).toContain(INSPECT.join(' '));
+    expect(row!.message).not.toContain(FORCE_RETRY);
   }, 120_000);
 
   test('a superseded wedge of another migration that recorded host TODOs is not reported as owed host work', async () => {
@@ -234,15 +249,141 @@ describe('the other surfaces say the same thing', () => {
     expect(rows.some(c => (c.details as any)?.code === 'migration_host_work_owed')).toBe(false);
     const remote = await scoped(true, async () => (await doctorReportRemote(engine, { remote: true })).checks.filter(c => c.name === 'minions_migration'), legacy);
     expect(remote.some(c => (c.details as any)?.code === 'migration_host_work_owed')).toBe(false);
-    const notice = await scoped(true, () => pendingUpgradeMigrationsNotice({ getConfig: async () => null } as never, 'serve', VERSION), legacy);
-    expect(notice?.why ?? '').not.toContain('does not clear without a person');
+    quietAboutWedge((await scoped(true, () => pendingUpgradeMigrationsNotice({ getConfig: async () => null } as never, 'serve', VERSION), legacy))?.why ?? '');
     const line = await scoped(true, () => describeMigrationFailure(new Error('exit 1'), VERSION), legacy);
     expect(line).not.toContain(`--migration ${LEGACY}`);
   }, 120_000);
 
-  test('upgrade\'s failure line names the inspect step, never a forced retry first', async () => {
+  test('upgrade\'s failure line names the inspect step and no forced retry', async () => {
     const line = await scoped(true, () => describeMigrationFailure(new Error('exit 1'), VERSION));
     expect(line).toContain(INSPECT.join(' '));
-    expect(line.indexOf(INSPECT.join(' '))).toBeLessThan(line.indexOf(RETRY.join(' ')));
+    expect(line).not.toContain(FORCE_RETRY);
+  });
+});
+
+describe('the box ledger shape: three old partial rows for v0.53.0 and a newer migration completed', () => {
+  const ordinary = [
+    ['config', 'get', 'search.mode'],
+    ['remember', 'Alice Example likes zebracorn tea', '--entity', 'people/alice-example', '--content-origin', 'user_said', '--provenance', 'test'],
+    ['recall', 'zebracorn', '--json'],
+  ];
+  async function expectQuiet(): Promise<void> {
+    for (const args of ordinary) {
+      const run = await cli(args);
+      expect({ args, exitCode: run.exitCode }).toEqual({ args, exitCode: 0 });
+      expect(run.stderr).not.toContain('migrations_pending');
+      expect(run.stderr).not.toContain(FORCE_RETRY);
+    }
+  }
+
+  test('remember, recall and config get print nothing about it, with and without a database-only source', async () => {
+    owe(true);
+    await expectQuiet();
+    expect((await cli(['transcripts', 'archive', 'on', '--json'])).exitCode).toBe(0);
+    expect((await cli(['transcripts', 'archive', 'run', '--json'])).exitCode).toBe(0);
+    const sources = JSON.parse((await cli(['sources', 'list', '--json'])).stdout);
+    const rows: any[] = Array.isArray(sources) ? sources : sources.sources;
+    expect(rows.find(row => row.id === 'conversations')?.local_path ?? null).toBeNull();
+    expect(rows.some(row => row.id === 'conversations')).toBe(true);
+    owe(true);
+    await expectQuiet();
+  }, 240_000);
+
+  test('every command the advice names runs and exits 0', async () => {
+    owe(true);
+    for (const args of [INSPECT.slice(1), ['apply-migrations', '--dry-run', '--json'], ['sources', 'shared-skills', 'default', 'off'], ['sources', 'shared-skills', 'default', 'on']]) {
+      const run = await cli(args);
+      expect({ args, exitCode: run.exitCode }).toEqual({ args, exitCode: 0 });
+    }
+  }, 240_000);
+
+  test('with a source in conflict, --dry-run and --yes name it with its code, never a forced retry, and ordinary commands stay quiet', async () => {
+    const pack = join(home, 'source-b');
+    mkdirSync(pack, { recursive: true });
+    writeFileSync(join(pack, 'skillpack.json'), '[]');
+    writeFileSync(join(pack, 'note.md'), '# Note\n');
+    for (const args of [['init', '-q'], ['add', '-A'], ['-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', 'init']]) {
+      expect(Bun.spawnSync(['git', ...args], { cwd: pack }).exitCode).toBe(0);
+    }
+    expect((await cli(['sources', 'add', 'source-b', '--path', pack])).exitCode).toBe(0);
+    try {
+      owe(true);
+      const dry = await cli(['apply-migrations', '--dry-run', '--json']);
+      expect(dry.exitCode).toBe(0);
+      expect(dry.stderr).toContain('source-b (local_conflict)');
+      expect(dry.stderr).not.toContain(FORCE_RETRY);
+      const before = ledger();
+      const run = await cli(['apply-migrations', '--yes', '--no-autopilot-install']);
+      expect(run.exitCode).toBe(0);
+      expect(run.stderr).toContain('source-b (local_conflict)');
+      expect(run.stdout + run.stderr).not.toContain(FORCE_RETRY);
+      expect(ledger()).toBe(before);
+      const post = await cli(['post-upgrade', '--no-autopilot-install']);
+      expect(post.exitCode).toBe(0);
+      expect(post.stdout + post.stderr).toContain('source-b (local_conflict)');
+      expect(post.stdout + post.stderr).not.toContain(FORCE_RETRY);
+      const quiet = await cli(['config', 'get', 'search.mode']);
+      expect(quiet.stderr).not.toContain('migrations_pending');
+    } finally {
+      await cli(['sources', 'remove', 'source-b', '--confirm-destructive']);
+    }
+  }, 240_000);
+});
+
+describe('doctor, connected, reads which sources are in conflict now', () => {
+  let live: PGLiteEngine;
+  let pack: string;
+  beforeAll(async () => {
+    live = new PGLiteEngine();
+    await live.connect({});
+    await live.initSchema();
+    pack = mkdtempSync(join(tmpdir(), 'gbrain-host-work-owed-pack-'));
+    writeFileSync(join(pack, 'skillpack.json'), '[]');
+  }, 120_000);
+  afterAll(async () => {
+    await live?.disconnect();
+    rmSync(pack, { recursive: true, force: true });
+  });
+
+  async function owedChecks(): Promise<Check[]> {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-host-work-owed-doctor-'));
+    try {
+      mkdirSync(join(dir, '.gbrain', 'migrations'), { recursive: true });
+      writeFileSync(join(dir, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite' }));
+      const rows = [...[1, 2, 3].map(owedRow), { version: '0.60.31', status: 'complete' }];
+      writeFileSync(join(dir, '.gbrain', 'migrations', 'completed.jsonl'), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+      const ctx = { engine: live, progress: { heartbeat() {}, finish() {} }, args: [] } as unknown as DoctorContext;
+      return await withEnv({ HOME: dir, GBRAIN_HOME: dir, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined },
+        async () => (await minionsMigrationEntry.run(ctx) as Check[]).filter(c => (c.details as any)?.code === 'migration_host_work_owed'));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+
+  test('names each source in conflict with its code and the user\'s decision, never a forced retry; quiet once none is left', async () => {
+    await live.executeRaw('INSERT INTO sources (id, name, local_path) VALUES ($1, $1, $2)', ['source-b', realpathSync(pack)]);
+    const [row] = await owedChecks();
+    expect(row?.status).toBe('warn');
+    expect(row!.message).toContain('source-b (local_conflict)');
+    expect(row!.message).toContain(INSPECT.join(' '));
+    expect(row!.message).not.toContain(FORCE_RETRY);
+    expect((row!.details as any).conflicts).toEqual([expect.objectContaining({ source_id: 'source-b', code: 'local_conflict' })]);
+    expect(row!.fix).toMatchObject({ argv: INSPECT, then: { ask_user: true } });
+    expect(row!.fix!.then!.user_message).toContain('source-b');
+    expect(JSON.stringify(row!.fix)).not.toContain(FORCE_RETRY);
+    await live.executeRaw("DELETE FROM sources WHERE id = 'source-b'");
+    expect(await owedChecks()).toEqual([]);
+  }, 120_000);
+});
+
+describe('the advice for each conflict code', () => {
+  test('skills nobody declared: declare them, or take the source out with sources shared-skills <id> off', () => {
+    const conflicts = [{ source_id: 'source-a', code: 'shared_skills_unmanifested', reason: 'Unmanifested source-local skills require reviewed adoption; no files or private markers were replaced.' }];
+    const message = hostWorkOwedMessage([OWED], conflicts);
+    expect(message).toContain('source-a (shared_skills_unmanifested)');
+    expect(message).toContain('skillpack.json');
+    expect(message).toContain('gbrain sources shared-skills source-a off');
+    expect(message).not.toContain(FORCE_RETRY);
+    const fix = hostWorkOwedFix([OWED], conflicts);
+    expect(fix).toMatchObject({ argv: INSPECT, then: { ask_user: true, argv: ['gbrain', 'sources', 'shared-skills', 'source-a', 'off'] } });
+    expect(JSON.stringify(fix)).not.toContain(FORCE_RETRY);
   });
 });

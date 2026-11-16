@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -164,6 +164,22 @@ describe('staged skill migration', () => {
     rmSync(join(root, 'skills/memory-care/secret.md'));
     writeFileSync(join(root, 'skillpack.json'), '[]');
     expect((await runSharedSkillsMigration(f.ctx)).status).toBe('conflict');
+  });
+  test('skills on an owned root with no skillpack.json are a conflict coded shared_skills_unmanifested, and nothing is written', async () => {
+    const root = realpathSync(temp()), f = fixture(root);
+    mkdirSync(join(root, 'skills/local-only'), { recursive: true });
+    writeFileSync(join(root, 'skills/local-only/SKILL.md'), 'Local instructions');
+    const base = f.ctx.engine.executeRaw.bind(f.ctx.engine);
+    (f.ctx.engine as { executeRaw: unknown }).executeRaw = async (sql: string, params?: unknown[]) => {
+      if (sql.includes('FROM persistence_brain')) return [{ brain_id: f.brainId, enabled: true, skill_bundles_enabled: true }];
+      if (sql.includes('FROM persistence_source_bindings')) return [{ source_id: 'default', state: 'active', owner_host_id: 'host-a', local_path: root, relative_path: '' }];
+      return base(sql, params as never);
+    };
+    const report = await withEnv({ GBRAIN_HOME: temp() }, () => runSharedSkillsMigration(f.ctx, { dryRun: true }));
+    expect(report.status).toBe('conflict');
+    expect(report.sources[0].stages.at(-1)).toMatchObject({ stage: 'projection', status: 'conflict', code: 'shared_skills_unmanifested' });
+    expect(f.calls.some(sql => /INSERT|UPDATE|DELETE/.test(sql))).toBe(false);
+    expect(f.config.size).toBe(0);
   });
   test('DB-only migration remains action-required and creates no replacement pages', async () => {
     const f = fixture(); f.pages();

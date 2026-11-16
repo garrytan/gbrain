@@ -2916,6 +2916,7 @@
     "setup_serves_several": 1,
     "setup_serves_unreadable": 1,
     "shared_skills_unavailable": 1,
+    "shared_skills_unmanifested": 1,
     "shared_skills_unsupported": 1,
     "skill_asset_not_found": 1,
     "skill_bundle_required": 1,
