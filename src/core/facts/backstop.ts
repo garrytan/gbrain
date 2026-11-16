@@ -40,6 +40,7 @@
 import { observationDateFrom, resolveObservationDate, type ObservationDate } from '../ai/date-grounding.ts';
 import { factEventTime } from './event-time.ts';
 import type { BrainEngine, FactAttribution, FactInsertStatus, NewFact } from '../engine.ts';
+import { corpusFileSessionId } from '../context/corpus-segments.ts';
 import { withSpeakerNote } from './speaker-context.ts';
 import type { ResolutionSource } from '../entities/resolve.ts';
 import { isFactsBackstopEligible } from './eligibility.ts';
@@ -84,6 +85,13 @@ function annotateUnverifiedResolution(
   if (inferred) return appendContextNote(context, inferenceNote(inferred));
   if (resolutionSource !== 'prefix_expansion') return context;
   return appendContextNote(context, 'entity matched by bare name only (prefix expansion) — unverified, please confirm');
+}
+
+/** #9512: a capture lane's fence context names its session (`session <8 chars>`) when no source slug does. */
+function captureSessionLabel(source: string, sourceSession: string | null | undefined): string | null {
+  if (!sourceSession || !['hook:writeback', 'hook:compact', 'sweep:corpus'].includes(source)) return null;
+  const id = sourceSession.startsWith('sweep:corpus:') ? corpusFileSessionId(sourceSession.slice('sweep:corpus:'.length).split('/').pop() ?? '') : sourceSession;
+  return `session ${id.slice(0, 8)}`;
 }
 
 /** #8064: a claim from an agent session's user side is the agent's ('other'); the assistant's own stays. The speaker note rides the context (withSpeakerNote). */
@@ -1020,7 +1028,7 @@ async function runPipelineBodyInner(
       // DB-only row has no fence to name the page it came from, so the page
       // path's slug fills context when the caller passed no sourceSlug.
       valid_from: factEventTime(f, ctx),
-      context: withSpeakerNote(ctx.speaker, annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? null, resolutionSource, f.entity_inferred)),
+      context: withSpeakerNote(ctx.speaker, annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? captureSessionLabel(ctx.source, f.source_session), resolutionSource, f.entity_inferred)),
     };
     await insertDerivedFact(newFact); // legacy DB-only fallback for unparented / thin-client facts (no entity page to fence onto)
   }
@@ -1044,7 +1052,7 @@ async function runPipelineBodyInner(
       source: f.source,
       // #4206: the caller's source_slug (which page/transcript the turn came
       // from) lands in the fence context cell — visible in recall projections.
-      context: withSpeakerNote(ctx.speaker, annotateUnverifiedResolution(ctx.sourceSlug ?? null, resolutionSource, f.entity_inferred)),
+      context: withSpeakerNote(ctx.speaker, annotateUnverifiedResolution(ctx.sourceSlug ?? captureSessionLabel(ctx.source, f.source_session), resolutionSource, f.entity_inferred)),
       visibility,
       confidence: f.confidence,
       // #4206: extractor-derived date wins; then the caller's event time
@@ -1109,7 +1117,7 @@ async function runPipelineBodyInner(
           embedding_model: f.embedding_model ?? null, attributed_to: f.attributed_to ?? null,
           // #4206: caller event-time fallback + provenance context.
           valid_from: factEventTime(f, ctx),
-          context: withSpeakerNote(ctx.speaker, ctx.sourceSlug ?? input.pageSlug ?? null),
+          context: withSpeakerNote(ctx.speaker, ctx.sourceSlug ?? input.pageSlug ?? captureSessionLabel(ctx.source, f.source_session)),
         };
         await insertDerivedFact(newFact); // stub-guard / unresolvable-target fallback for unprefixed or fallback-resolved entity slugs (no fenceable page or usable tree)
       }
@@ -1138,7 +1146,7 @@ async function runPipelineBodyInner(
           embedding_model: f.embedding_model ?? null, attributed_to: f.attributed_to ?? null,
           // #4206: caller event-time fallback + provenance context.
           valid_from: factEventTime(f, ctx),
-          context: withSpeakerNote(ctx.speaker, result.databaseOnlyReason === 'file_database_drift' ? annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? null, groupResolutionSource, f.entity_inferred) : ctx.sourceSlug ?? input.pageSlug ?? null),
+          context: withSpeakerNote(ctx.speaker, result.databaseOnlyReason === 'file_database_drift' ? annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? captureSessionLabel(ctx.source, f.source_session), groupResolutionSource, f.entity_inferred) : ctx.sourceSlug ?? input.pageSlug ?? captureSessionLabel(ctx.source, f.source_session)),
         };
         await insertDerivedFact(newFact); // DB-only fallback when the fence lane declined the write (write_through opt-out race / localPath echo)
       }
