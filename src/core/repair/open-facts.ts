@@ -23,7 +23,8 @@
  * label-only door with its cell set to world (strikeFenceRow): on a managed brain the publication names the rows
  * (`open_facts`) and its projection runs under withOpenFacts, so fence-guard moves each row to world in place with its id
  * and tier; elsewhere the page import does not re-project the fence, so the row is opened in place in the same
- * transaction. Anything not opened is reported `fact_left_private` with its reason and next step, never as applied.
+ * transaction, before a file in the source's checkout is written, and a row the locked recheck keeps private rolls the
+ * whole page write back (`revision_conflict`). Anything not opened is reported `fact_left_private` with its reason and next step, never as applied.
  *
  * Every write is recorded ahead in the CLI's ledger (an `intent` line, then a `committed` line naming the facts it
  * changed). `--undo <ledger>` previews the facts the ledger opened that are still world and unchanged (skipping one
@@ -189,7 +190,7 @@ function selectionOf(scope: RepairScope, opts?: RepairPlanOptions): { sel: Selec
   if (opts?.remote !== false) throw trustedCliRequired('gbrain repair open-facts widens what remote callers read, so it runs only from the CLI on the brain host; remote callers cannot run it.');
   const request = opts.openFacts;
   if (!request) throw opError('invalid_params', 'gbrain repair open-facts needs its ledger and selection, and this caller passed none.',
-    'Run it from the gbrain CLI on the brain host, naming one source (gbrain sources list --json lists them) and --created-before, e.g. --created-before 2026-06-01T00:00:00Z.');
+    'Run gbrain repair open-facts from the CLI on the brain host, naming one source with --source and the cut with --created-before, e.g. --created-before 2026-06-01T00:00:00Z; gbrain sources list --json lists the sources.');
   if (scope.source_ids.length !== 1) throw opError('invalid_params', 'gbrain repair open-facts opens facts in one named source.', 'Name one source with --source (gbrain sources list --json lists them).',
     { reason: 'source_required' });
   if (!request.undo && !request.createdBefore) throw createdBeforeRequired();
@@ -431,7 +432,8 @@ async function applyDatabase(ctx: OperationContext, item: OpenItem): Promise<Rep
 /**
  * A page's fenced facts: the cells set to world (close: private) by one label-only write. A managed brain publishes it
  * through the maintenance door naming the rows it opens (openFactsPublication); elsewhere the page is imported and the
- * rows changed in place in the same transaction (a file in the source's checkout: its label write, then the rows).
+ * rows changed in place in the same transaction, before a file in the source's checkout is written; an open whose locked
+ * recheck keeps a row private throws `revision_conflict`, so neither the page, the file nor any row changes.
  */
 async function applyFence(ctx: OperationContext, item: OpenItem): Promise<RepairItemOutcome> {
   const { group } = item;
@@ -468,12 +470,16 @@ async function applyFence(ctx: OperationContext, item: OpenItem): Promise<Repair
     const path = (await filesInCheckout(ctx.engine, [Number(snapshot.page.id)])).get(Number(snapshot.page.id));
     recordIntent(item, requestId);
     let changed: number[] = [];
-    const inPlace = async (tx: BrainEngine) => { changed = await changeRows(tx, group.source_id, group.mode, rows); };
+    const inPlace = async (tx: BrainEngine) => {
+      changed = await changeRows(tx, group.source_id, group.mode, rows);
+      if (group.mode === 'open' && changed.length !== rows.length) {
+        throw opError('revision_conflict', `${group.source_id}:${group.slug} was not written: ${CHANGED}.`, 'Preview gbrain repair open-facts again; the facts are listed with their current state.');
+      }
+    };
     if (path) {
-      const written = await writeLabelFile(ctx.engine, group, { revision: snapshot.revision, content, edit, embed: false, preview: 'gbrain repair open-facts', path });
+      const written = await writeLabelFile(ctx.engine, group, { revision: snapshot.revision, content, edit, embed: false, preview: 'gbrain repair open-facts', path, afterImport: inPlace });
       if (written !== null && typeof written === 'object') return settle(item, requestId, [], written.reason ?? written.outcome);
       if (written === null) return settle(item, requestId, [], 'its page changed after it was read');
-      await maintenanceTransaction(ctx.engine, inPlace);
     } else if (await importAtRevision(ctx.engine, group, snapshot.revision, content, false, 'gbrain repair open-facts', inPlace) === null) {
       return settle(item, requestId, [], 'its page changed after it was read');
     }

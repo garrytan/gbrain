@@ -19,7 +19,7 @@
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import postgres from '#postgres';
@@ -41,6 +41,7 @@ import { parseFactsFence, renderFactsTable } from '../src/core/facts-fence.ts';
 import { insertTrustProposal, listTrustProposals } from '../src/core/trust/proposals.ts';
 import { proposeRevision } from '../src/core/access/policy.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
@@ -326,6 +327,21 @@ for (const managed of [false, true]) {
       }
     }), 120_000);
 
+    test('test 5, undo: --undo re-privates an opened unpaged fact', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+      for (const engine of engines) {
+        const b = await brain(engine, managed);
+        const mail = await dbOnly(b, 'Orchardline mail extract opened then undone', null, { source: 'mail:extract', entity: null });
+        const { applied } = await previewAndApply(b, ['--class', 'unpaged:mail:extract']);
+        expect(await visibilityOf(b, mail)).toBe('world');
+        const ledger = applied!.details.ledger as string;
+        const undo = await openFacts(b, ['--undo', ledger]);
+        expect(undo.listing).toEqual([expect.objectContaining({ class: 'unpaged:mail:extract' })]);
+        const undone = await openFacts(b, ['--undo', ledger, '--apply', '--expect', undo.preview_hash]);
+        expect(undone.applied).toBe(1);
+        expect(await visibilityOf(b, mail)).toBe('private');
+      }
+    }), 120_000);
+
     test('test 12: a same-tier and an above-tier fenced row each keep id and tier', async () => withEnv({ GBRAIN_HOME: home }, async () => {
       for (const engine of engines) {
         const b = await brain(engine, managed);
@@ -417,6 +433,78 @@ describe('test 13: a repo-less keyless PGLite brain opens the stored fenced row 
     expect(applied!.applied).toBe(1);
     expect(after!.visibility).toBe('world');
     expect((await fenceCell(b, 'companies/keyless-example', 1))?.visibility).toBe('world');
+  }), 120_000);
+});
+
+/**
+ * Test 16 (review round 1 on PR #9523): a fenced open writes the page, its checkout file and the row in one transaction,
+ * the row first. A fact the locked recheck keeps private (here a pending forget filed after the preview) rolls the page
+ * and the file back, and a file write that fails rolls the row back; either way the apply reports fact_left_private and
+ * never opened while the file, the stored cell or the row is still private. Unmanaged PGLite brain, with and without a
+ * checkout holding the page's file.
+ */
+describe('test 16: the fenced open is one transaction with its page, its checkout file and its row', () => {
+  const slug = 'companies/filed-example';
+  const fileCell = (path: string) => parseFactsFence(readFileSync(path, 'utf8')).facts.find(f => f.rowNum === 1)?.visibility;
+  async function filedBrain(withFile: boolean, claim: string) {
+    const b = await brain(engines[0]!, false);
+    let file: string | null = null;
+    await page(b, slug, '', [[1, claim, 'private']]);
+    if (withFile) {
+      const root = mkdtempSync(join(home, 'checkout-'));
+      mkdirSync(join(root, 'companies'), { recursive: true });
+      await b.engine.executeRaw('UPDATE sources SET local_path=$2 WHERE id=$1', [b.sourceId, root]);
+      const stored = (await b.engine.readPageSnapshot(slug, { sourceId: b.sourceId }))!;
+      file = join(root, slug + '.md');
+      writeFileSync(file, serializePageToMarkdown(stored.page, stored.tags));
+      await coordinated(b, 'UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2', [b.sourceId, slug, slug + '.md']);
+    }
+    const [before] = await facts(b, claim);
+    expect(before!.visibility).toBe('private');
+    return { b, file, before: before!, text: file ? readFileSync(file, 'utf8') : null };
+  }
+  const forgetAfterPreview = (b: Brain, id: number) => b.engine.transaction(tx => withCoordinatedWrite(tx, [b.sourceId], () =>
+    insertTrustProposal(tx, { action: 'forget', sourceId: b.sourceId, target: { table: 'facts', id }, proposer: 'fixture', before: {} }), TEST_WRITE_ATTRIBUTION));
+  const leftPrivate = (applied: Record<string, any>, b: Brain) => {
+    expect(applied.applied).toBe(0);
+    expect(applied.outcome_items).toEqual([expect.objectContaining({ item: `${b.sourceId}:${slug}`, outcome: 'fact_left_private' })]);
+    expect(applied.outcome_items[0].reason).toBeTruthy();
+  };
+
+  test('(a) a page with its file in the checkout: the file cell, the stored cell and the row read world, with the same id', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const { b, file, before } = await filedBrain(true, 'Orchardline filed row');
+    const { applied } = await previewAndApply(b);
+    expect(applied!.applied).toBe(1);
+    expect(applied!.outcome_items).toEqual([expect.objectContaining({ item: `${b.sourceId}:${slug}`, outcome: 'opened' })]);
+    const [after] = await facts(b, 'Orchardline filed row');
+    expect(after).toMatchObject({ id: before.id, visibility: 'world', trust_tier: before.trust_tier });
+    expect((await fenceCell(b, slug, 1))?.visibility).toBe('world');
+    expect(fileCell(file!)).toBe('world');
+  }), 120_000);
+
+  for (const withFile of [true, false]) {
+    test(`(b) ${withFile ? 'with' : 'without'} a checkout file: a fact the locked recheck keeps private leaves the file, the stored cell and the row private`, async () => withEnv({ GBRAIN_HOME: home }, async () => {
+      const { b, file, before, text } = await filedBrain(withFile, 'Orchardline contested row');
+      const planned = await preview(b);
+      expect(planned.preview_hash).toBeTruthy();
+      await forgetAfterPreview(b, before.id);
+      leftPrivate(await openFacts(b, ['--created-before', CUT, '--apply', '--expect', planned.preview_hash]), b);
+      expect(await visibilityOf(b, before.id)).toBe('private');
+      expect((await fenceCell(b, slug, 1))?.visibility).toBe('private');
+      if (file) expect(readFileSync(file, 'utf8')).toBe(text!);
+    }), 120_000);
+  }
+
+  test.skipIf(process.getuid?.() === 0)('(b) a checkout file write that fails after the row update rolls the row back and reports fact_left_private', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const { b, file, before, text } = await filedBrain(true, 'Orchardline unwritable row');
+    const dir = join(file!, '..');
+    chmodSync(dir, 0o555);
+    let applied: Record<string, any> | null;
+    try { ({ applied } = await previewAndApply(b)); } finally { chmodSync(dir, 0o755); }
+    leftPrivate(applied!, b);
+    expect(await visibilityOf(b, before.id)).toBe('private');
+    expect((await fenceCell(b, slug, 1))?.visibility).toBe('private');
+    expect(readFileSync(file!, 'utf8')).toBe(text!);
   }), 120_000);
 });
 
