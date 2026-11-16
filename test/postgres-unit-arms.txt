@@ -620,6 +620,7 @@ test/retrieval-coverage-notices.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts
 test/scripts/test-stress-postgres.test.ts
+test/search-during-upgrade-rebuild-9192.test.ts
 test/search-entity-facts-eligibility.test.ts
 test/search-keyword-evidence-label-gbra449.test.ts
 test/search-read-keyword-bound.test.ts

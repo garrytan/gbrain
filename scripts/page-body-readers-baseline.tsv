@@ -411,6 +411,7 @@ src/core/page-state/import-guard.ts	sameContentAnyKeyOrder	field	META
 src/core/page-state/materialize.ts	materializePageSnapshot	call:contentHash	META	inline pages only
 src/core/page-state/materialize.ts	materializePageSnapshot	field	SEGW	assertInlineBody before the UPDATE
 src/core/page-state/materialize.ts	materializePageSnapshot	sql	SEGW	assertInlineBody before the UPDATE
+src/core/page-state/projection-schema.ts	PAGE_PROJECTION_ACTIVATION_SQL	sql	NONE	not a live reader: v153 runs once at activation, over inline pages only (segmented pages did not exist); the regex scans for fence and private-key markers (#9192)
 src/core/page-state/projection-schema.ts	PAGE_SEARCH_VECTOR_TRIGGER_SQL	sql	STREAM	trigger DDL: the search vector reads timeline for inline rows and timeline_lead for segmented rows (lane 1a)
 src/core/page-state/projections.ts	preparePageProjection	call:prepareMarkdownChunks	STREAM	
 src/core/page-state/projections.ts	readGuardedProjectionSnapshot	field	STREAM	
