@@ -3,7 +3,7 @@ import { assertManagedFilesystemWrite, managedFilesystemRootFor } from '../core/
  * gbrain frontmatter — Frontmatter validation, audit, and auto-repair.
  *
  * Subcommands:
- *   gbrain frontmatter validate <path> [--json] [--importable] [--fix [--include-ambiguous]] [--dry-run]
+ *   gbrain frontmatter validate <path>... [--json] [--importable] [--fix [--include-ambiguous]] [--dry-run]
  *   gbrain frontmatter validate --stdin|- [--path <source-relative path>] [--importable] [--json]
  *   gbrain frontmatter validate --staged [<path>...] [--importable] [--json]
  *     Validate one file, a directory, piped content, or staged git blobs.
@@ -103,7 +103,7 @@ function printHelp() {
   console.log(`gbrain frontmatter — frontmatter validation, audit, auto-repair, and generation
 
 Usage:
-  gbrain frontmatter validate <path> [--json] [--importable] [--fix [--include-ambiguous]] [--dry-run]
+  gbrain frontmatter validate <path>... [--json] [--importable] [--fix [--include-ambiguous]] [--dry-run]
   gbrain frontmatter validate --stdin [--path <source-relative path>] [--importable] [--json]
   gbrain frontmatter validate --staged [<path>...] [--importable] [--json]
   gbrain frontmatter generate <path> [--fix] [--dry-run] [--json] [--include-catch-all]
@@ -375,6 +375,7 @@ async function runValidate(rest: string[], io: FrontmatterIo): Promise<void> {
   const results: FileValidation[] = [];
   let scanned = 0;
   let targetLabel: string;
+  let targetList: string[] | undefined;
   let slugCheckSkipped = false;
   const fixedInGit: string[] = [];
 
@@ -416,27 +417,29 @@ async function runValidate(rest: string[], io: FrontmatterIo): Promise<void> {
       results.push(result);
     }
   } else {
-    const target = targets[targets.length - 1];
-    if (!target) {
+    if (targets.length === 0) {
       usage('gbrain frontmatter validate requires a <path> argument (or --stdin, or --staged)');
       return;
     }
-    const resolved = resolve(target);
-    if (!existsSync(resolved)) {
-      usage(`path not found: ${target}`);
-      return;
+    const roots: Array<{ resolved: string; files: string[] }> = [];
+    const seen = new Set<string>();
+    for (const target of targets) {
+      const resolved = resolve(target);
+      if (!existsSync(resolved)) {
+        usage(`path not found: ${target}`);
+        return;
+      }
+      if (lstatSync(resolved).isFile() && !isMarkdownFilePath(resolved)) {
+        usage(`frontmatter validation supports only .md and .mdx files: ${target}`);
+        return;
+      }
+      roots.push({ resolved, files: collectFiles(resolved).filter(f => !seen.has(f) && !!seen.add(f)) });
     }
-    if (lstatSync(resolved).isFile() && !isMarkdownFilePath(resolved)) {
-      usage(`frontmatter validation supports only .md and .mdx files: ${target}`);
-      return;
-    }
-    targetLabel = resolved;
+    targetLabel = roots[0]!.resolved;
+    if (roots.length > 1) targetList = roots.map(r => r.resolved);
 
-    const brainRoot = findBrainRoot(resolved);
-    const inGit = existsSync(join(brainRoot, '.git'));
-    const files = collectFiles(resolved);
     if (flags.fix && !flags.dryRun) {
-      for (const file of files) {
+      for (const file of roots.flatMap(r => r.files)) {
         try {
           assertManagedFilesystemWrite(file);
         } catch (error) {
@@ -446,36 +449,40 @@ async function runValidate(rest: string[], io: FrontmatterIo): Promise<void> {
       }
     }
     const backupRunId = makeFrontmatterBackupRunId();
-    scanned = files.length;
+    scanned = seen.size;
 
-    for (const file of files) {
-      const content = readFileSync(file, 'utf8');
-      const rel = relative(brainRoot, file);
-      // Files above/outside the brain root fall back to basename rather than
-      // emitting a "../"-prefixed slug for non-brain files.
-      const slugPath = rel && !rel.startsWith('..') ? rel : basename(file);
-      const check = checkContent(content, slugPath, flags.importable);
-      const result = toResult(file, check);
-      const rescuable = flags.includeAmbiguous && check.warnings.some(w => w.code === 'FRONTMATTER_COMMENT_VALUE');
+    for (const { resolved, files } of roots) {
+      const brainRoot = findBrainRoot(resolved);
+      const inGit = existsSync(join(brainRoot, '.git'));
+      for (const file of files) {
+        const content = readFileSync(file, 'utf8');
+        const rel = relative(brainRoot, file);
+        // Files above/outside the brain root fall back to basename rather than
+        // emitting a "../"-prefixed slug for non-brain files.
+        const slugPath = rel && !rel.startsWith('..') ? rel : basename(file);
+        const check = checkContent(content, slugPath, flags.importable);
+        const result = toResult(file, check);
+        const rescuable = flags.includeAmbiguous && check.warnings.some(w => w.code === 'FRONTMATTER_COMMENT_VALUE');
 
-      if (flags.fix && (check.errors.length > 0 || rescuable)) {
-        // #5053: the fixer derives the slug from the same path validate used;
-        // the absolute path re-keyed every declared slug as a mismatch.
-        const auto = autoFixFrontmatter(content, { filePath: slugPath });
-        const repaired = repairRecoverableFrontmatter(auto.content, { includeAmbiguous: flags.includeAmbiguous });
-        result.fixesApplied = [...auto.fixes, ...repaired.fixes];
-        if (result.fixesApplied.length > 0 && !flags.dryRun) {
-          assertManagedFilesystemWrite(file);
-          result.backupPath = createFrontmatterBackup(file, { sourcePath: resolved, runId: backupRunId });
-          writeFileSync(file, repaired.content, 'utf8');
-          if (inGit) fixedInGit.push(relative(brainRoot, file));
+        if (flags.fix && (check.errors.length > 0 || rescuable)) {
+          // #5053: the fixer derives the slug from the same path validate used;
+          // the absolute path re-keyed every declared slug as a mismatch.
+          const auto = autoFixFrontmatter(content, { filePath: slugPath });
+          const repaired = repairRecoverableFrontmatter(auto.content, { includeAmbiguous: flags.includeAmbiguous });
+          result.fixesApplied = [...auto.fixes, ...repaired.fixes];
+          if (result.fixesApplied.length > 0 && !flags.dryRun) {
+            assertManagedFilesystemWrite(file);
+            result.backupPath = createFrontmatterBackup(file, { sourcePath: resolved, runId: backupRunId });
+            writeFileSync(file, repaired.content, 'utf8');
+            if (inGit) fixedInGit.push(relative(brainRoot, file));
+          }
+          const after = result.fixesApplied.length > 0 ? checkContent(repaired.content, slugPath, flags.importable) : check;
+          result.remaining_errors = after.errors;
+          if (flags.importable) result.remaining_hold = after.hold;
+          result.failed = after.failed;
         }
-        const after = result.fixesApplied.length > 0 ? checkContent(repaired.content, slugPath, flags.importable) : check;
-        result.remaining_errors = after.errors;
-        if (flags.importable) result.remaining_hold = after.hold;
-        result.failed = after.failed;
+        results.push(result);
       }
-      results.push(result);
     }
   }
 
@@ -489,6 +496,7 @@ async function runValidate(rest: string[], io: FrontmatterIo): Promise<void> {
       ok: failed.length === 0,
       mode: flags.importable ? 'importable' : 'strict',
       target: targetLabel,
+      ...(targetList ? { targets: targetList } : {}),
       ...(flags.stdin ? { stdin: true, slug_check: slugCheckSkipped ? 'skipped' : 'checked' } : {}),
       ...(flags.staged ? { staged: true } : {}),
       total_files: scanned,
