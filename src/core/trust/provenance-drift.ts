@@ -11,7 +11,9 @@
  * repaired only with `--include-ambiguous`; local changes are the owner's own edits and are reported, never repaired.
  *
  * - stamps_rewritten: a stamp key changed after the first snapshot, or the live stamp differs from the server-written
- *   `pages` column. The restored value is the trusted column when non-null, else the value just before the first
+ *   `pages` column in a history with an unattributed transition. A column-only difference in a fully attributed
+ *   history is not a stamp rewrite: content edits update the columns while retaining the first-origin frontmatter.
+ *   The restored value is the column when non-null, else the value just before the first
  *   remote (or ambiguous) change. A later local change of the same key makes the page `needs_review`.
  * - marker_lost: a transition raised the page's lowest frontmatter cap (`frontmatterTrustCaps`), and the live page
  *   still caps above the lost cap while its stored tier is `unknown` or above it (a re-read would raise it). The repair
@@ -78,6 +80,8 @@ export function analyzePageDrift(input: DriftPageInput, opts: { includeAmbiguous
   const live = chain[chain.length - 1]!.frontmatter;
   const changes: DriftChange[] = [];
   const restoredStamps: Partial<Record<ProvenanceStampKey, unknown>> = {};
+  // The first archived snapshot has no incoming transition. With no archive, the live writer is the only evidence.
+  const hasUnattributedTransition = (chain.length > 1 ? chain.slice(1) : chain).some(snapshot => snapshot.writer === 'unattributed');
   let needsReview: string | undefined;
   for (const key of PROVENANCE_STAMP_KEYS) {
     const events: DriftChange[] = [];
@@ -89,7 +93,7 @@ export function analyzePageDrift(input: DriftPageInput, opts: { includeAmbiguous
     const column = normStamp(key, input.columns[key]);
     const liveValue = normStamp(key, live[key]);
     const firstDamage = events.findIndex(event => event.writer !== 'local');
-    const columnForged = column !== null && liveValue !== null && liveValue !== column;
+    const columnForged = hasUnattributedTransition && column !== null && liveValue !== null && liveValue !== column;
     if (firstDamage < 0 && !columnForged) { changes.push(...events.filter(event => event.writer === 'local')); continue; }
     const before = firstDamage >= 0 ? events[firstDamage]!.from : undefined;
     const target = column !== null ? input.columns[key]! : before ?? null;

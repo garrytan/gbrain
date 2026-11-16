@@ -181,6 +181,33 @@ for (const kind of testBackends()) {
         expect(dry.listing.map((entry: Record<string, string>) => entry.class)).toEqual(['local']);
       }, 120_000);
 
+      test('#8985: attributed content edits preserve first-origin stamps and are never offered as ambiguous repairs', async () => {
+        const slug = 'inbox/attributed-content-edit';
+        await seed(slug, STORED);
+        for (const channel of ['mcp:edit_page', 'mcp:add_timeline_entry', 'mcp:append_page']) {
+          await fixtureWrite({ requestId: randomUUID(), principal: { kind: 'oauth_client', id: 'client-example' } } as WriteAttribution, async tx => {
+            await tx.createVersion(slug, { sourceId: 'default' });
+            await tx.putPage(slug, { type: 'note', title: 'Seeded', compiled_truth: `Edited by ${channel}`, timeline: '',
+              frontmatter: STORED, source_kind: channel, ingested_via: channel } as never);
+          });
+          await writeFile(slug);
+          const before = await page(slug);
+          const [columns] = await engine.executeRaw<{ source_kind: string; ingested_via: string }>(
+            'SELECT source_kind, ingested_via FROM pages WHERE source_id = $1 AND slug = $2', ['default', slug]);
+          expect(columns).toEqual({ source_kind: channel, ingested_via: channel });
+          expect(stampsOf(before.page.frontmatter)).toEqual(STORED);
+          expect((await doctor()).status).toBe('ok');
+          for (const includeAmbiguous of [false, true]) {
+            const dry = await run(false, { includeAmbiguous });
+            expect(dry.affected).toBe(0);
+            expect(dry.listing).toEqual([]);
+            await run(true, { expect: dry.preview_hash, includeAmbiguous });
+          }
+          expect((await page(slug)).revision).toBe(before.revision);
+          expect(await proposals(slug)).toEqual([]);
+        }
+      }, 120_000);
+
       test('an unattributed write is listed ambiguous and planned only with --include-ambiguous', async () => {
         const slug = 'inbox/unattributed-drop';
         await seed(slug, STORED);
@@ -444,6 +471,24 @@ describe('#7891 analyzePageDrift', () => {
   test('a remote write that only lowered a stamp keeps the live cap', () => {
     const verdict = analyzePageDrift({ chain: [snap({ source_kind: 'manual' }), snap({ source_kind: 'webhook' }, 'remote')], stored: 'unknown', columns })!;
     expect(verdict.restore!.frontmatter.trust_tier).toBe('external_untrusted');
+  });
+  test('#8985: channel-only differences do not invent an unattributed transition in a recorded history', () => {
+    for (const writer of ['remote', 'local'] as const) {
+      for (const history of [[snap(STORED, writer)], [snap(STORED), snap(STORED, writer)]]) {
+        expect(analyzePageDrift({ chain: history, stored: 'external_untrusted',
+          columns: { source_kind: 'mcp:edit_page', ingested_via: 'mcp:edit_page', ingested_at: '2026-02-01' } }, { includeAmbiguous: true })).toBeNull();
+      }
+    }
+  });
+  test('#8985: incomplete attribution retains legacy column evidence and marker repair remains independent', () => {
+    const legacy = analyzePageDrift({ chain: [snap(STORED, 'unattributed')], stored: 'unknown',
+      columns: { ...columns, source_kind: 'email' } }, { includeAmbiguous: true })!;
+    expect(legacy.class).toBe('ambiguous');
+    expect(legacy.restore!.stamps).toEqual({ source_kind: 'email' });
+    const restamp = analyzePageDrift({ chain: [snap({ source_kind: 'put_page' }, 'remote')], stored: 'external_untrusted',
+      columns: { ...columns, source_kind: 'mcp:edit_page' } })!;
+    expect(restamp.class).toBe('restamp');
+    expect(restamp.restore!.stamps).toEqual({});
   });
   test('an unchanged history reports nothing', () => {
     expect(analyzePageDrift({ chain: [snap({ ingested_via: 'webhook' }), snap({ ingested_via: 'webhook' }, 'remote')], stored: 'unknown', columns })).toBeNull();
