@@ -9,7 +9,9 @@
  *
  * Protects:
  * - a flagged or quarantined row whose file differs only by the marker is not behind, and the repair lists nothing;
- * - a flagged or quarantined row that really is behind is re-imported with the marker a sync of those bytes sets.
+ * - a flagged or quarantined row that really is behind is re-imported with the marker a sync of those bytes sets;
+ * - the repair passes the file's path to the gate as sync does, so an owner allow rule scoped to that path keeps the
+ *   repair from quarantining the page (external_mode quarantine) or refusing it (external_mode reject).
  *
  * PGLite always; Postgres too when DATABASE_URL is set (test/e2e wrapper).
  */
@@ -26,6 +28,7 @@ import { repairRunner } from '../src/core/repair/registry.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { enableTrustProtections } from './helpers/trust-protections.ts';
+import { addTrustAllowRule } from '../src/core/trust/allow-rules.ts';
 
 const KIND = 'rows-behind' as RepairKind;
 const logger = { info() {}, warn() {}, error() {} };
@@ -93,4 +96,20 @@ for (const backend of testBackends()) describe(`[${backend}] #9511: the write ga
     expect(await markers(engine, 'notes/held')).toEqual({ flag: null, quarantine: 'instruction_like' });
     expect((await scanRowsBehind(engine, 'default')).behind).toEqual([]);
   }, { databaseUrl, setup }), 240_000);
+
+  for (const mode of ['quarantine', 'reject'] as const) {
+    test(`an owner allow rule scoped to the file's path holds for the repair (external_mode ${mode})`, () => managedBrain(async ({ engine, root }) => {
+      await enableTrustProtections(engine);
+      await engine.setConfig('write_gate.external_mode', mode);
+      await addTrustAllowRule(engine, { sourceId: 'default', uriPrefix: 'notes/held', reason: 'owner reviewed' }, null);
+      expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+      expect(await markers(engine, 'notes/held')).toEqual({ flag: null, quarantine: null });
+      await seedBehind(engine, root, { 'notes/held': `${ATTACK} A later paragraph.` });
+      const preview = await repair(engine);
+      expect(listing(preview)).toEqual([['default:notes/held', 'reimport']]);
+      const applied = await repair(engine, { apply: true, expect: preview.preview_hash });
+      expect(applied.outcome_items?.map(item => [item.item, item.outcome])).toEqual([['default:notes/held', 'reimported']]);
+      expect(await markers(engine, 'notes/held')).toEqual({ flag: null, quarantine: null });
+    }, { databaseUrl, setup }), 240_000);
+  }
 });

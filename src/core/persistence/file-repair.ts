@@ -47,7 +47,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ParsedPage } from '../import-file.ts';
 import { importFromContent } from '../import-file.ts';
-import { ownerImportTrust, ownerSourceGateInput } from '../trust/channel.ts';
+import { ownerGateInput, ownerImportTrust, ownerSourceGateInput } from '../trust/channel.ts';
 import { withoutSafetyAssessments } from './reconcile-safety.ts';
 import { ContentSanityBlockError } from '../content-sanity.ts';
 import { loadImportSanityConfig, type ContentRefusal, type ImportSanityConfig } from '../import-screen.ts';
@@ -239,7 +239,7 @@ export async function prepareRepairPublication(engine: BrainEngine, input: Repai
   let result;
   try {
     result = await importFromContent(engine, renamed ? input.base!.page.slug : input.slug, content, { sourceId: input.sourceId, noEmbed: true, remote: false, preserveGateMarkers: true,
-      writeGate: await ownerSourceGateInput(engine, input.sourceId, parsedInput.frontmatter),
+      writeGate: await ownerSourceGateInput(engine, input.sourceId, parsedInput.frontmatter, input.sourcePath),
       activePack: input.activePack, filename: basename(input.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: input.sourcePath, allowEmptyOverwrite: true,
       prepare: async value => { prepared = value; return value.result; } });
   } catch (error) {
@@ -382,7 +382,7 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
   const ready = publication.ready;
   const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, base, 'file');
   const importContent = p.content.replace(/^\uFEFF/, '');
-  const writeGate = await ownerSourceGateInput(engine, row.source_id, parseMarkdown(importContent, `${row.slug}.md`, { activePack: screenConfig.activePack }).frontmatter);
+  const writeGate = await ownerGateInput(engine, row, parseMarkdown(importContent, `${row.slug}.md`, { activePack: screenConfig.activePack }).frontmatter, p.sourcePath);
   const importOptions = { ...source, noEmbed: true, remote: false, preserveGateMarkers: true, writeGate, activePack: screenConfig.activePack, filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true };
   // afterCommit follows the import that published (a page stored in segments chunks what its publication left unsealed).
   let published = ready;
