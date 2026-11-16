@@ -232,6 +232,24 @@ export class PostgresEngine implements BrainEngine {
     return () => { this._beforeDisconnect.delete(stop); };
   }
 
+  /**
+   * #7082: a serving process lets the keyword timeout cache re-run a timed-out statement in the background
+   * (postgres-engine/keyword-timeout-cache.ts), only while this engine is open and its pool has an idle connection
+   * and no waiting query. Disconnecting, or disableKeywordTimeoutReruns at shutdown, turns them off again.
+   */
+  enableKeywordTimeoutReruns(): void {
+    this.keywordTimeouts.enableReruns({ canRerun: () => {
+      if (!this._sql || this._disconnectPromise) return false;
+      const pool = driverPoolStats(this._sql);
+      return pool !== null && pool.checked_out < pool.max && pool.waiters === 0;
+    } });
+    this.registerBeforeDisconnect(async () => this.keywordTimeouts.disableReruns());
+  }
+
+  disableKeywordTimeoutReruns(): void {
+    this.keywordTimeouts.disableReruns();
+  }
+
   private _sql: ReturnType<typeof postgres> | null = null;
   /** Saved config for reconnection. */
   private _savedConfig: (EngineConfig & { poolSize?: number; parentConnectionManager?: ConnectionManager }) | null = null;

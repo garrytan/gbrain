@@ -21,7 +21,24 @@
  * a user or admin cancel (`canceling statement due to user request`), a lock
  * timeout or a connection failure never does. Entries expire at the TTL, so a
  * transient contention spike recovers by itself, and the map is bounded
- * (MAX_ENTRIES, oldest dropped first). A caller that passes `useCache: false`
+ * (MAX_ENTRIES, oldest dropped first).
+ *
+ * Background re-runs (#7082): a timeout on a cold cache is often gone a
+ * minute later, while the TTL kept every search keyword-less for its whole
+ * length. A serving process turns re-runs on (`enableReruns`, from
+ * `gbrain serve` through PostgresEngine#enableKeywordTimeoutReruns); each
+ * recorded timeout then re-runs the same statement, scope, settings and bound
+ * in the background KEYWORD_TIMEOUT_RERUN_FIRST_MS after the timeout, doubling
+ * the wait after every failed or skipped re-run and never scheduling one past
+ * the entry's expiry, so the TTL stays the longest skip. The first re-run that
+ * answers deletes the entry. Foreground searches skip exactly as before while
+ * the entry stands. A re-run starts only when the gate reports an open engine
+ * with an idle pooled connection and no waiting query (otherwise it waits for
+ * the next step instead of queueing), at most one runs per engine, its rows
+ * are thrown away, it writes no counter row, and it runs in the serve's
+ * start-up async context, never in the request that recorded the timeout, so
+ * no request signal, connection budget or capture rides along. Shutdown
+ * (`disableReruns`) cancels every scheduled re-run. A caller that passes `useCache: false`
  * to hybrid search does not consult the cache.
  *
  * Cost: a search that never times out does nothing extra (no statement, no
@@ -34,6 +51,7 @@
  *
  * Postgres only: PGLite runs keyword search with no statement timeout.
  */
+import { AsyncResource } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 
 export const KEYWORD_TIMEOUT_NEGATIVE_CACHE_KEY = 'search.keyword_timeout_negative_cache_seconds';
@@ -42,6 +60,8 @@ export const KEYWORD_TIMEOUT_NEGATIVE_CACHE_MAX_S = 86_400;
 /** The bounded counter row a timeout writes and doctor `keyword_plan` reads (not a `config set` key). */
 export const KEYWORD_TIMEOUT_STATS_KEY = 'search.keyword_timeout_stats';
 export const KEYWORD_TIMEOUT_NEGATIVE_CACHE_MAX_ENTRIES = 256;
+/** A serve's first background re-run of a timed-out statement starts this long after the timeout; each failed or skipped one doubles it. */
+export const KEYWORD_TIMEOUT_RERUN_FIRST_MS = 30_000;
 const COUNTER_CAP = 1_000_000_000;
 
 /** The configured seconds when `raw` is an integer in 0..86400, else undefined. */
@@ -104,13 +124,45 @@ export const KEYWORD_TIMEOUT_STATS_UPSERT_SQL = `INSERT INTO config (key, value)
 
 export interface KeywordTimeoutDb { executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> }
 
+/** When a serve has turned re-runs on: whether a background re-run may start now (open engine, an idle pooled connection). */
+export interface KeywordRerunGate { canRerun(): boolean }
+
+/** Starts `fn` after `ms` and returns its cancel; the default never keeps the process alive. */
+export type KeywordRerunScheduler = (fn: () => void, ms: number) => () => void;
+
+const unrefTimer: KeywordRerunScheduler = (fn, ms) => {
+  const timer = setTimeout(fn, ms);
+  timer.unref?.();
+  return () => clearTimeout(timer);
+};
+
+interface Entry { expiresAt: number; rerunAfterMs: number; exec: () => Promise<unknown>; cancel?: () => void }
+
 /** One engine's negative cache (see the module comment). */
 export class KeywordTimeoutNegativeCache {
-  private entries = new Map<string, number>();
+  private entries = new Map<string, Entry>();
   private ttlMs?: Promise<number>;
   private pendingSkips = 0;
+  private gate: KeywordRerunGate | null = null;
+  private detached: (fn: () => void) => void = fn => fn();
+  private rerunning = false;
 
-  constructor(private readonly now: () => number = Date.now) {}
+  constructor(private readonly now: () => number = Date.now, private readonly schedule: KeywordRerunScheduler = unrefTimer) {}
+
+  /**
+   * A serving process turns background re-runs on once, at start-up: re-runs then start in the context this call
+   * runs in, never in the search that recorded the timeout, so no request's signal, budget or caller rides along.
+   */
+  enableReruns(gate: KeywordRerunGate): void {
+    this.gate = gate;
+    this.detached = AsyncResource.bind((fn: () => void) => fn());
+  }
+
+  /** Shutdown: no re-run starts again, and every scheduled one is cancelled. */
+  disableReruns(): void {
+    this.gate = null;
+    for (const entry of this.entries.values()) entry.cancel?.();
+  }
 
   /**
    * Run one keyword statement. With `enabled` false (no hybrid opt-in, or a
@@ -121,38 +173,76 @@ export class KeywordTimeoutNegativeCache {
   async run<T>(enabled: boolean, db: KeywordTimeoutDb, keyParts: unknown[], exec: () => Promise<T>): Promise<T> {
     if (!enabled) return exec();
     const key = createHash('sha256').update(JSON.stringify(keyParts)).digest('hex');
-    const expiresAt = this.entries.get(key);
-    if (expiresAt !== undefined) {
-      const remaining = expiresAt - this.now();
+    const entry = this.entries.get(key);
+    if (entry !== undefined) {
+      const remaining = entry.expiresAt - this.now();
       if (remaining > 0) {
         this.pendingSkips++;
         throw new KeywordSkippedAfterTimeoutError(Math.ceil(remaining / 1000));
       }
-      this.entries.delete(key);
+      this.drop(key);
     }
     try {
       return await exec();
     } catch (error) {
-      if (isGenuineStatementTimeout(error)) await this.recordTimeout(key, db);
+      if (isGenuineStatementTimeout(error)) await this.recordTimeout(key, db, exec);
       throw error;
     }
   }
 
-  private async recordTimeout(key: string, db: KeywordTimeoutDb): Promise<void> {
+  private drop(key: string): void {
+    this.entries.get(key)?.cancel?.();
+    this.entries.delete(key);
+  }
+
+  private async recordTimeout(key: string, db: KeywordTimeoutDb, exec: () => Promise<unknown>): Promise<void> {
     const ttlMs = await (this.ttlMs ??= db.executeRaw<{ value: string }>(KEYWORD_TIMEOUT_TTL_CONFIG_SQL)
       .then(rows => (keywordTimeoutNegativeCacheSeconds(rows[0]?.value) ?? KEYWORD_TIMEOUT_NEGATIVE_CACHE_DEFAULT_S) * 1000)
       .catch(() => KEYWORD_TIMEOUT_NEGATIVE_CACHE_DEFAULT_S * 1000));
     if (ttlMs > 0) {
-      this.entries.delete(key);
-      this.entries.set(key, this.now() + ttlMs);
+      this.drop(key);
+      this.entries.set(key, { expiresAt: this.now() + ttlMs, rerunAfterMs: KEYWORD_TIMEOUT_RERUN_FIRST_MS, exec });
       for (const oldest of this.entries.keys()) {
         if (this.entries.size <= KEYWORD_TIMEOUT_NEGATIVE_CACHE_MAX_ENTRIES) break;
-        this.entries.delete(oldest);
+        this.drop(oldest);
       }
+      this.scheduleRerun(key);
     }
     const skips = this.pendingSkips;
     this.pendingSkips = 0;
     await db.executeRaw(KEYWORD_TIMEOUT_STATS_UPSERT_SQL, [skips, new Date(this.now()).toISOString()])
       .catch(() => { this.pendingSkips += skips; });
+  }
+
+  /** The next re-run of `key`, unless re-runs are off or it would start after the entry expires anyway. */
+  private scheduleRerun(key: string): void {
+    const entry = this.entries.get(key);
+    if (!entry || !this.gate || this.now() + entry.rerunAfterMs >= entry.expiresAt) return;
+    entry.cancel = this.schedule(() => this.detached(() => void this.rerun(key, entry)), entry.rerunAfterMs);
+  }
+
+  /**
+   * One background re-run: the same statement, scope, settings and bound, its rows thrown away. Success ends the
+   * skip; a failure, or a moment with no idle connection or another re-run in flight, doubles the wait instead.
+   */
+  private async rerun(key: string, entry: Entry): Promise<void> {
+    entry.cancel = undefined;
+    if (this.entries.get(key) !== entry || !this.gate) return;
+    if (this.rerunning || !this.gate.canRerun()) return this.backOff(key, entry);
+    this.rerunning = true;
+    try {
+      await entry.exec();
+      if (this.entries.get(key) === entry) this.entries.delete(key);
+    } catch {
+      this.backOff(key, entry);
+    } finally {
+      this.rerunning = false;
+    }
+  }
+
+  private backOff(key: string, entry: Entry): void {
+    if (this.entries.get(key) !== entry) return;
+    entry.rerunAfterMs *= 2;
+    this.scheduleRerun(key);
   }
 }

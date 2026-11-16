@@ -287,6 +287,8 @@ async function serveBrain(
   const isHttp = args.includes('--http');
   // Wakeshift (docs/guides/wakeshift.md): the 5 s wake drainer for stdio and HTTP alike; a no-op tick while reporting back is off.
   (await import('../core/wakeshift/drain.ts')).startWakeDrain(engine);
+  // #7082: a keyword statement that timed out is re-run in the background so its skip ends once the cache is warm.
+  (engine as { enableKeywordTimeoutReruns?: () => void }).enableKeywordTimeoutReruns?.();
 
   // MEMORY_VERBS v1: tool-surface mode. stdio: GBRAIN_SURFACE > --surface >
   // config `mcp_surface` > 'full'; --http ignores GBRAIN_SURFACE (an HTTP
@@ -695,6 +697,7 @@ function installStdioLifecycle(
   const beginShutdown = (reason: string): void => {
     if (shuttingDown) return;
     shuttingDown = true;
+    (engine as { disableKeywordTimeoutReruns?: () => void }).disableKeywordTimeoutReruns?.();
 
     // Stop the parent-watchdog interval as soon as a shutdown begins so
     // it cannot fire a redundant 'parent-died' shutdown while the first

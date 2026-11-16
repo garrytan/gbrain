@@ -580,25 +580,33 @@ strict count still read every match of a term that matches most of the corpus,
 so prefer narrowing with `--source-id` (MCP `source_id`), `--types` or
 `--since`.
 
-**A timed-out keyword search is skipped for 10 minutes.** After hybrid search's
-keyword statement hits the bound, a serving process (`gbrain serve`, an MCP
-session) skips that exact statement for
+**A timed-out keyword search is skipped for up to 10 minutes.** After hybrid
+search's keyword statement hits the bound, a serving process (`gbrain serve`,
+an MCP session) skips that exact statement for at most
 `search.keyword_timeout_negative_cache_seconds` (integer seconds, default 600,
 range 0 to 86400, 0 turns it off) instead of holding a backend for the whole
-bound again. The skipped search answers from the vector arm at once and its
+bound again. A timeout on a cold cache (the first searches after a restart or
+an eviction) is often gone a minute later, so the serve re-runs the timed-out
+statement once in the background 30 seconds after the timeout, then after 60,
+120 and so on seconds while it keeps failing, never past that limit. The first
+re-run that answers ends the skip, and the next search runs keyword search
+again. A re-run uses the same statement, scope and bound, starts only when the
+pool has an idle connection (otherwise it waits for the next step), runs one at
+a time per brain, throws its rows away and is not recorded as a search. The skipped search answers from the vector arm at once and its
 metadata carries `keyword_arm_failed` with reason `skipped_after_timeout`
 (error code `keyword_skipped_after_timeout` in `gbrain errors`). The skip
 covers the same statement only: the same terms with the same source scope,
 types, dates, slug filters, visibility and trust floor of the caller, and the
 same keyword bound. A narrower query (another `--source-id`, `--types`,
 `--since`) still runs keyword search, another brain is never affected, and
-the skip ends by itself when the entry expires, so a brief contention spike
-recovers without anyone acting. A call with `use_cache: false` runs the
+the skip ends by itself when a re-run answers or the entry expires, so a brief
+contention spike recovers without anyone acting. A call with `use_cache: false` runs the
 statement anyway.
 
 Limits: the cache lives in the serving process's memory, so a one-shot CLI
-command (`gbrain search …`) starts with an empty cache and gains nothing from
-it, and a restart clears it. The TTL is read on the first timeout after the
+command (`gbrain search …`) starts with an empty cache, runs no re-runs and
+gains nothing from it, and a restart clears it. A CLI search that the serve
+answers through its warm CLI socket uses the serve's cache. The TTL is read on the first timeout after the
 process starts; a changed value takes effect after a restart. Each timeout
 writes one counter row (`search.keyword_timeout_stats`: timeouts, skips counted
 since the previous timeout, last timeout time), never one per search, and

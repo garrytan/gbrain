@@ -1402,7 +1402,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.hnsw_iterative_scan',
   'search.cjk_keyword_deadline_ms',
   'search.keyword_statement_timeout_ms',
-  'search.keyword_timeout_negative_cache_seconds', // #6495: seconds, default 600, 0 = off (postgres-engine/keyword-timeout-cache.ts)
+  'search.keyword_timeout_negative_cache_seconds', // #6495: the longest skip in seconds, default 600, 0 = off; #7082: a serve's background re-run ends it sooner (postgres-engine/keyword-timeout-cache.ts)
   'search.adaptive_return',
   'search.adaptive_return_entity_max',
   'search.adaptive_return_other_max',
