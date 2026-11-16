@@ -41,7 +41,14 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 3
+        continue-on-error: true
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 3
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 24.18.0
@@ -81,7 +88,14 @@ jobs:
       - name: Record the job deadline
         shell: bash
         run: echo "GBRAIN_JOB_DEADLINE=$(( $(date +%s) + 15 * 60 ))" >> "$GITHUB_ENV"
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 3
+        continue-on-error: true
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 3
       # A wedged darwin-x64 runner uploads no log at all (#7457's cell, #7419, #7303, #7238), so a background loop posts
       # the current step or suite, free memory, swap, load and the busiest process names as the commit status
       # diag/native-heartbeat/<cell>; GitHub keeps every status, so the last one before a wedge survives it. Nothing on a
@@ -221,7 +235,18 @@ jobs:
       contents: read
       statuses: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/native/heartbeat-finalize.ts
+          sparse-checkout-cone-mode: false
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 3
         with:
           persist-credentials: false
           sparse-checkout: scripts/native/heartbeat-finalize.ts
@@ -320,7 +345,14 @@ jobs:
         bun: ['1.4.4']
         target: [linux-x64-musl, linux-arm64-musl]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 3
+        continue-on-error: true
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 3
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}

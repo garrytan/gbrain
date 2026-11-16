@@ -265,13 +265,15 @@ describeE2E('a temp table or view named like a ledger hides nothing from the gua
       await engine.connect({ database_url: asMigrator.toString() });
       const { value, stderr } = await capturingStderr(() => runMigrations(engine));
       expect(value.current).toBe(LATEST_VERSION);
-      expect(stderr).toContain('1 function(s) left without pg_temp on their search_path (gbrain_refuse_purged_fact())');
+      expect(stderr.split('1 function(s) left without pg_temp on their search_path (gbrain_refuse_purged_fact())').length - 1).toBe(1);
       expect((await catalog(brain.conn)).withoutTemp).toEqual(['gbrain_refuse_purged_fact()']);
       const { functions, fix } = await functionSearchPathProblems(engine);
       expect({ functions, fix }).toEqual({
         functions: ['gbrain_refuse_purged_fact()'],
-        fix: ['ALTER FUNCTION gbrain_refuse_purged_fact() SET search_path = pg_catalog, public, pg_temp;'],
+        fix: ['ALTER FUNCTION public.gbrain_refuse_purged_fact() SET search_path = pg_catalog, public, pg_temp;'],
       });
+      const atHead = await capturingStderr(() => runMigrations(engine));
+      expect(atHead.stderr).not.toContain('left without pg_temp');
       await brain.conn.unsafe(`SET ROLE ${other}; ${fix.join('\n')} RESET ROLE;`);
       expect(await functionSearchPathProblems(engine)).toEqual({ functions: [], fix: [] });
       await engine.initSchema();
@@ -308,7 +310,8 @@ describeE2E('a temp table or view named like a ledger hides nothing from the gua
       try {
         await session.unsafe(`BEGIN; ALTER FUNCTION gbrain_try_jsonb(text) SET statement_timeout = '1min'`);
         const error = await withEnv({ GBRAIN_SCHEMA_LOCK_TIMEOUT_SECONDS: '1' }, () => v277.handler!(engine).then(() => null, (e: unknown) => e));
-        expect(error).toMatchObject({ code: 'schema_lock_blocked', detail: 'v277 search_path' });
+        expect(error).toMatchObject({ code: 'schema_lock_blocked', detail: 'search_path hardening' });
+        expect((error as Error).message).toContain('for a gbrain function row lock (pg_proc) another session holds');
         expect((await catalog(conn)).withoutTemp).toEqual(['gbrain_try_jsonb(text)']);
       } finally {
         await session.unsafe('ROLLBACK');

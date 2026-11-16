@@ -48,7 +48,7 @@ import { isMissingSchemaObject } from '../core/utils.ts';
 import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
 import { resolveCandidateSources, resolveLinkFallbackDefault, loadLinkPageMetadata, capturedLinkEndpoints, fileLinkOwnership, replaceFileLinks, replacePageFileLinks, type LinkPageMetadata } from '../core/link-reconciliation.ts';
-import { collectWantedLinks, isWantedPagesEnabled } from '../core/wanted-links.ts';
+import { collectWantedLinks, isWantedPagesEnabled, wantedReadAt } from '../core/wanted-links.ts';
 import { readLineGrammarSettings, statedRelationTypes } from '../core/line-grammar.ts';
 import { effectiveLinkExtractorWatermark, linkExtractorWatermarkFor } from '../core/link-extraction-watermark.ts';
 import { concurrentWriteSkipLine, replaceDerivedLinksBatchOrReplay, replaceDerivedLinksDeferringConflicts, settingsChangedSkipLine, unknownSourceSkipLine, type DerivedLinkBatchItem, type UnknownSourceSkip } from '../core/derived-links.ts';
@@ -109,6 +109,7 @@ import { isSegmentedPage, withoutBody } from '../core/page-body/page-shape.ts';
 import { extractSegmentedPageLinks } from '../core/page-body/segment-links.ts';
 import { STALE_TIME_BUDGET_MS, formatStaleCounts, staleExtractionCounts } from '../core/extraction-lag.ts';
 import { assertStaleSourceModeUnambiguous } from './extract-stale-options.ts';
+import { withoutGuestSources } from '../core/guests/derived.ts';
 
 // Batch size for addLinksBatch / addTimelineEntriesBatch.
 // Postgres bind-parameter limit is 65535. Links use 4 cols/row → 16K hard ceiling;
@@ -1895,12 +1896,10 @@ async function extractLinksFromDB(
   // cross-source wikilinks (qualified like `[[other-src:slug]]`) can
   // resolve — the filter is on WHICH pages we extract FROM, not what
   // we can resolve TO.
-  const allRefs = sourceIdFilter
-    ? (await engine.listAllPageRefs()).filter(r => r.source_id === sourceIdFilter)
-    : await engine.listAllPageRefs();
-  const fullRefsForResolver = sourceIdFilter
-    ? await engine.listAllPageRefs()
-    : allRefs;
+  const readAt = await wantedReadAt(engine);
+  const listedRefs = await engine.listAllPageRefs();
+  const allRefs = await withoutGuestSources(engine, 'extract', sourceIdFilter ? listedRefs.filter(r => r.source_id === sourceIdFilter) : listedRefs, ref => ref.source_id);
+  const fullRefsForResolver = listedRefs;
   // For backward-compat checks (`allSlugs.has(...)` calls below), we still
   // need a flat slug set. ALSO a per-slug → [sources] map for F10 resolution.
   //
@@ -2057,7 +2056,7 @@ async function extractLinksFromDB(
         pendingWrites.push({ slug, source_id, item: { origin: { slug, sourceId: source_id, expectedRevision: snapshot.revision,
           sourceIncarnation: snapshot.sourceIncarnation }, links: batch, opts: { includeFrontmatter, lineGrammar: grammar,
           ...(extracted.temporalBody ? { temporalBody: extracted.temporalBody } : {}),
-          wanted: { producers: includeFrontmatter ? ['body', 'frontmatter'] : ['body'], rows: wanted },
+          wanted: { producers: includeFrontmatter ? ['body', 'frontmatter'] : ['body'], rows: wanted, readAt },
           expectedEndpoints: capturedLinkEndpoints(batch, targetMetadata, { slug, sourceId: source_id }) } } });
       } catch (error) {
         if (jsonMode) process.stderr.write(JSON.stringify({ event: 'batch_error', size: batch.length, code: 'graph_write_failed' }) + '\n');
@@ -2140,6 +2139,7 @@ export async function extractStaleFromDB(
      */
     timeBudgetMs?: number;
     /** GBRA-130 A-1 (managed brains): clear held link-extraction failures first. */ retryHeld?: boolean;
+    /** GBRA-438: an abort (idle upkeep's budget, or a tool call) stops the sweep between batches, like timeBudgetMs. */ signal?: AbortSignal;
   },
 ): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number; skippedChanged?: number; skippedConcurrentWrite?: number; skippedUnknownSource?: number; mentions?: MentionPassResult;
   linkFailed?: number; linkFailures?: LinkExtractionFailure[]; linkSystemic?: LinkExtractionSystemic[] }> {
@@ -2151,7 +2151,8 @@ export async function extractStaleFromDB(
   const versionTs = linkExtractorWatermarkFor(grammar.generation);
 
   // Pre-flight count — cheap indexed COUNT. dry-run reports and returns.
-  const totalStale = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs });
+  const managed = await managedPersistenceEnabled(engine), wantedProducers = managed || includeFrontmatter ? undefined : ['body']; // #9295
+  const totalStale = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs, wantedProducers });
   if (dryRun) {
     const m = await previewMentionPass(engine, sourceIdFilter), counts = opts.quiet ? null : await staleExtractionCounts(engine, sourceIdFilter);
     if (jsonMode && !opts.quiet) {
@@ -2164,13 +2165,13 @@ export async function extractStaleFromDB(
   // Managed brains: the writer guard owns canonical rows, so links, missing
   // canonical timeline rows and the watermark publish on the one managed path
   // (the mention pass runs inside it).
-  if (await managedPersistenceEnabled(engine)) {
+  if (managed) {
     const { runManagedStaleExtraction, formatManagedStaleExtraction } = await import('../core/persistence/links-maintenance.ts');
-    const r = await runManagedStaleExtraction(engine, { sourceId: sourceIdFilter, catchUp, timeBudgetMs, counts: !opts.quiet, retryHeld: opts.retryHeld });
+    const r = await runManagedStaleExtraction(engine, { sourceId: sourceIdFilter, catchUp, timeBudgetMs, counts: !opts.quiet, retryHeld: opts.retryHeld, signal: opts.signal });
     if (!jsonMode) log(formatManagedStaleExtraction(r, false, false));
     else if (!opts.quiet) process.stdout.write(formatManagedStaleExtraction(r, false, true) + '\n');
     return { linksCreated: r.created, timelineCreated: r.timeline, pagesProcessed: r.pages, staleRemaining: r.remaining + (r.mentions?.remaining ?? 0),
-      ...(r.skipped ? { skippedChanged: r.skipped } : {}), ...(r.mentions ? { mentions: r.mentions } : {}),
+      ...(r.skipped > (r.attendance_skipped ?? 0) ? { skippedChanged: r.skipped - (r.attendance_skipped ?? 0) } : {}), ...(r.attendance_skipped ? { skippedAttendanceIncomplete: r.attendance_skipped } : {}), ...(r.mentions ? { mentions: r.mentions } : {}),
       ...(r.failed ? { linkFailed: r.failed, linkFailures: r.failures } : {}), ...(r.systemic?.length ? { linkSystemic: r.systemic } : {}) };
   }
 
@@ -2196,7 +2197,7 @@ export async function extractStaleFromDB(
   // #4611: mirrors extractLinksFromDB — configured default, resolved once.
   const linkDefaultSourceId = await resolveLinkFallbackDefault(engine);
   // Nothing link-stale: skip the whole-brain resolver reads; the mention pass still runs.
-  const allRefs = totalStale ? await engine.listAllPageRefs() : [];
+  const [readAt, allRefs] = [await wantedReadAt(engine), totalStale ? await engine.listAllPageRefs() : []];
   const allSlugs = new Set<string>();
   const slugToSources = new Map<string, string[]>();
   for (const ref of allRefs) {
@@ -2239,7 +2240,7 @@ export async function extractStaleFromDB(
   for (;;) {
     await plannerTick(pagesProcessed);
     const rows = await engine.listStalePagesForExtraction({
-      batchSize: STALE_BATCH_SIZE, afterPageId, sourceId: sourceIdFilter, versionTs,
+      batchSize: STALE_BATCH_SIZE, afterPageId, sourceId: sourceIdFilter, versionTs, wantedProducers,
     });
     if (rows.length === 0) break;
     await loadSourceLinkPacks(engine, rows.map(page => page.source_id), packs);
@@ -2311,7 +2312,7 @@ export async function extractStaleFromDB(
           crossSourceAllowed: federatedSourceIds.has(page.source_id) || crossSource, resolve: c => resolveCandidateSources(c, page.slug,
             page.source_id, allSlugs, slugToSources, federatedSourceIds.has(page.source_id), { crossSource, defaultSourceId: linkDefaultSourceId }) }) : [];
         const linkOpts = { includeFrontmatter, lineGrammar: grammar, expectedEndpoints: capturedLinkEndpoints(linkRows, targetMetadata, origin),
-          wanted: { producers: includeFrontmatter ? ['body', 'frontmatter'] as const : ['body'] as const, rows: wanted },
+          wanted: { producers: includeFrontmatter ? ['body', 'frontmatter'] as const : ['body'] as const, rows: wanted, readAt },
           ...(extracted.temporalBody ? { temporalBody: extracted.temporalBody } : {}) };
         const stampIso = page.updated_at.getTime() >= Date.parse(versionTs) ? page.updated_at_iso : versionTs;
         const written = await replaceDerivedLinksDeferringConflicts(engine, origin, linkRows, linkOpts);
@@ -2362,13 +2363,13 @@ export async function extractStaleFromDB(
     progress.tick(processedRefs.length);
     afterPageId = rows[rows.length - 1]!.id;
 
-    if (Date.now() > linkDeadline) { budgetHit = true; break; }
+    if (Date.now() > linkDeadline || opts.signal?.aborted) { budgetHit = true; break; }
   }
 
   progress.finish();
   if (packUnavailable) throw new Error('Cannot extract links: active schema pack is unavailable.');
-  const mentions = await runMentionPass(engine, { sourceId: sourceIdFilter, ...(catchUp ? {} : { deadline: startMs + timeBudgetMs }) });
-  const staleRemaining = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs }) + mentions.remaining;
+  const mentions = await runMentionPass(engine, { sourceId: sourceIdFilter, ...(catchUp ? {} : { deadline: opts.signal?.aborted ? 0 : startMs + timeBudgetMs }) });
+  const staleRemaining = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs, wantedProducers }) + mentions.remaining;
   const counts = opts.quiet ? null : await staleExtractionCounts(engine, sourceIdFilter);
 
   if (!jsonMode) {

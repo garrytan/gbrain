@@ -333,7 +333,7 @@ describe('connector pages keep a private label', () => {
         const deps = { engine, sourceId: s.sourceId, cfg: { account: 'me@example.com', dir }, opts: {}, log() {}, tick() {} } as never;
         const summary = { pagesAffected: [], chunksCreated: 0, added: 0, modified: 0 } as never;
         const rendered = renderCalendarEventPage(event)!;
-        const slug = await importRendered(deps, rendered.relPath, rendered.markdown, undefined as never, summary, new Set());
+        const slug = (await importRendered(deps, rendered.relPath, rendered.markdown, undefined as never, summary, new Set()))!;
         const page = (await engine.readPageSnapshot(slug, { sourceId: s.sourceId }))!.page;
         expect(page.frontmatter.visibility).toBeUndefined();
         await engine.transaction(tx => withCoordinatedWrite(tx, [s.sourceId], () => tx.putPage(slug, { ...page, frontmatter: { ...page.frontmatter, visibility: 'private' } },

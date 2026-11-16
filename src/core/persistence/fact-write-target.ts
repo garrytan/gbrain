@@ -1,4 +1,4 @@
-import { isAbsolute } from 'node:path';
+import { isHostAbsolutePath } from '../path-confine.ts';
 import type { BrainEngine } from '../engine.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { decideUnboundWrite } from './unbound-source.ts';
@@ -12,7 +12,8 @@ import type { WriteAuthority } from './model.ts';
  * automatically while maintenance writers (relink) refuse rather than claim;
  * an unbound Postgres source writes a page without a canonical file
  * database-only under `persistence.unbound_write=database_only` and refuses
- * otherwise. `fileBacked` is whether the target page records a canonical file;
+ * otherwise. A stored root that is not absolute on this host (#7646) publishes
+ * database-only with `relative_root`. `fileBacked` is whether the target page records a canonical file;
  * the refusal names the checkout only to trusted local (`remote: false`) callers.
  */
 export type FactWriteTarget =
@@ -28,7 +29,8 @@ export async function resolveFactWriteTarget(engine: BrainEngine, sourceId: stri
   if (!writeThrough) return { kind: 'publish', binding: null, databaseOnlyReason: reason };
   const binding = await getWorktreeBinding(engine, sourceId);
   const root = source.local_path || (sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
-  if (!root || !isAbsolute(root) || binding) return { kind: 'publish', binding };
+  if (!root || binding) return { kind: 'publish', binding };
+  if (!isHostAbsolutePath(root)) return { kind: 'publish', binding: null, databaseOnlyReason: 'relative_root' };
   const decision = await decideUnboundWrite(engine, { sourceId, sourceKind: source.kind, fileBacked: opts.fileBacked, path: opts.remote ? null : root });
   return decision.kind === 'claim' ? { kind: 'unbound', root } : { kind: 'publish', binding: null, databaseOnlyReason: decision.reason };
 }

@@ -471,8 +471,10 @@ export function buildScopeCheck(grantedScope: string, probe: ScopeProbeResult): 
   // status doesn't flap on probe noise.
   //
   //   - read.missing_scope  → 'fail' (broken setup; nothing works)
-  //   - admin.missing_scope → 'warn' (the load-bearing case for v0.29.2 thin
-  //     clients that registered with read+write only; pinpoint hint follows)
+  //   - admin.missing_scope → 'ok' when the grant never claimed admin (a
+  //     read or read+write client is narrow by design; #8543 — doctor never
+  //     recommends adding a scope), 'warn' only when the grant lists admin
+  //     and the host still refuses it
   //   - both succeed        → 'ok'
   //   - other probe errors  → 'ok' with inconclusive=true
   const readMissing = !probe.read_ok && probe.read_error === 'missing_scope';
@@ -487,6 +489,19 @@ export function buildScopeCheck(grantedScope: string, probe: ScopeProbeResult): 
         granted: grantedScope || null,
         read_ok: false,
         admin_ok: probe.admin_ok,
+      },
+    };
+  }
+  if (adminMissing && !grantedScope.split(/[\s,]+/).includes('admin')) {
+    return {
+      name: 'oauth_client_scopes_probe',
+      status: 'ok',
+      message: `read works; this client was granted "${grantedScope || 'unspecified'}" without admin, so admin-only operations are refused by design. Nothing to fix.`,
+      detail: {
+        granted: grantedScope || null,
+        read_ok: true,
+        admin_ok: false,
+        admin_granted: false,
       },
     };
   }

@@ -143,7 +143,7 @@ async function mayBeConnectorSource(engine: BrainEngine, opts: SyncOpts): Promis
  */
 async function performManagedBranch(engine: BrainEngine, outer: SyncOpts): Promise<SyncResult> {
   const sourceId = outer.sourceId ?? 'default';
-  const { withDrainLease } = await import('../../core/persistence/sync-lease.ts');
+  const { currentDrainLease, withDrainLease } = await import('../../core/persistence/sync-lease.ts');
   const lockKey = syncLockId(sourceId);
   // GBRA-133: the settles an idle-clear tick leaves nothing to do (persistence/sync-idle-skips.ts), read inside the lease.
   let skips: ReadonlySet<IdleSkip> = new Set();
@@ -205,6 +205,14 @@ async function performManagedBranch(engine: BrainEngine, outer: SyncOpts): Promi
           : `[sync] following ${who}: ${done}.`);
       },
     }, work);
+    // GST-2492 (B2): a rule this sync applied moves the held facts it narrows now. It runs once the lease is released only so
+    // a follower sync does not wait on the move: the lease is re-entrant and the move's maintenance writes are not sync rows
+    // (no claim waits on the lease), so running it inside would not deadlock either.
+    const moves = await import('../../core/facts/held-fact-move.ts');
+    const held = currentDrainLease(sourceId) ? null : await moves.moveRuledSharedHeld(engine, sourceId)
+      .catch((error: unknown) => { serr(`[sync] held facts under a new folder rule wait for the next maintenance cycle: ${error instanceof Error ? error.message : String(error)}`); return null; });
+    for (const w of held ? moves.heldMoveIncomplete(held) : []) serr(`[sync] held facts moved under a new folder rule, incomplete: ${w.text}`);
+    if (held?.unmovable.length) serr(`[sync] ${held.unmovable.length} group(s) of held facts could not move yet; the next gbrain dream retries (gbrain repair facts-home --source ${sourceId} lists them).`);
     const tailed = skips.has('sync_tail') ? drained : await withSyncTail(engine, sourceId, drained, { signal: outer.signal, deadlineAtMs: outer.deadlineAtMs });
     const healed = skips.has('slug_heal') ? tailed : await healAfterManagedSync(engine, outer, tailed);
     return skips.has('origin_heal') ? healed : await healOriginTwinsAfterManagedSync(engine, outer, healed);

@@ -15,12 +15,13 @@
  * whatever directory gbrain runs from.
  */
 import { existsSync, realpathSync } from 'node:fs';
-import { isAbsolute, join, posix, relative, resolve, win32 } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import type { BrainEngine } from './engine.ts';
 import { gbrainPath, loadConfig } from './config.ts';
 import { opError, type OperationError } from './ops/contract.ts';
 import { readSyncAnchor } from './sync-anchor.ts';
 import { contentSetupKey } from './shared-skills/setup.ts';
+import { isForeignAbsolutePath, isHostAbsolutePath } from './path-confine.ts';
 
 /** A source whose sync root is a gbrain-owned content directory with no Git checkout. */
 export interface SyncContentDirectory {
@@ -93,7 +94,7 @@ export function syncNotApplicableError(dir: SyncContentDirectory): OperationErro
  * everything in it, an import of its markdown). Refused before any Git probe, cost estimate or import.
  */
 export function syncAnchorRelativeError(sourceId: string | undefined, anchor: string): OperationError {
-  const foreign = posix.isAbsolute(anchor) || win32.isAbsolute(anchor);
+  const foreign = isForeignAbsolutePath(anchor);
   const why = foreign
     ? `The path is absolute only on another operating system (another host sharing this brain may have set it); on this host it would name a folder inside whatever directory gbrain runs from, so sync cannot use it here. Nothing was changed.`
     : `A relative path names whatever directory gbrain runs from, not a fixed folder, so it cannot prove which folder is the brain; syncing it from an unrelated folder would Git-initialize that folder, commit everything in it and import its markdown. Nothing was changed.`;
@@ -124,11 +125,15 @@ export function syncAnchorRelativeError(sourceId: string | undefined, anchor: st
       verify: { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] } } });
 }
 
-/** #7630: refuse a sync whose root would be a relative stored anchor (an explicit absolute or different `repoPath` passes). */
+/**
+ * #7630: refuse a sync whose root would be a relative stored anchor. An explicit absolute `repoPath` passes, and so does a
+ * relative one naming another directory; #7646: a relative `repoPath` is compared with the anchor after resolving both, so
+ * `--repo ./` is refused like `--repo .`.
+ */
 export async function assertSyncAnchorAbsolute(engine: BrainEngine, opts: { sourceId?: string; repoPath?: string }): Promise<void> {
-  if (opts.repoPath && isAbsolute(opts.repoPath)) return;
+  if (opts.repoPath && isHostAbsolutePath(opts.repoPath)) return;
   const anchor = await readSyncAnchor(engine, opts.sourceId, 'repo_path');
-  if (!anchor || isAbsolute(anchor) || (opts.repoPath && opts.repoPath !== anchor)) return;
+  if (!anchor || isHostAbsolutePath(anchor) || (opts.repoPath && resolve(opts.repoPath) !== resolve(anchor))) return;
   throw syncAnchorRelativeError(opts.sourceId, anchor);
 }
 

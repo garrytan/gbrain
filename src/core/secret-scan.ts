@@ -35,7 +35,9 @@ import {
   LABELED_CREDENTIAL_PATTERNS,
   ECHO_MIN_CHARS_LABELED,
   LABELED_PRECHECK_RE,
-  danglingLabel,
+  danglingFor,
+  netrcStanzaOpen,
+  type DanglingForm,
   labeledEchoEligible,
   labeledValueIsCredential,
   neutralizeRedactionMarkers,
@@ -88,6 +90,13 @@ export interface ScanOpts {
    * transcript audit only. Default false.
    */
   labeledCredentials?: boolean;
+  /**
+   * Opt-in transcript-lane rules (GST-2768): `cookie_header` (secret-scan-cookie.ts), the `.netrc` password (one line or a
+   * multi-line stanza) and the key-label next-line value (secret-scan-labeled.ts). Only via `TRANSCRIPT_LANE_SCAN_OPTS`. Default false.
+   */
+  transcriptRules?: boolean;
+  /** Label form the previous message left dangling (`trailingDanglingLabel`): line 1 here is read as its value. Default none. */
+  leadingDangling?: DanglingForm | null;
   /** Work counters the scan fills in (secret-scan-work.ts); absent means no counting. */
   work?: ScanWork;
 }
@@ -103,6 +112,9 @@ import {
 } from './secret-scan-assignment.ts';
 import type { ScanWork } from './secret-scan-work.ts';
 export { createScanWork, type ScanWork } from './secret-scan-work.ts';
+import { COOKIE_PRECHECK_RE, ECHO_MAX_UNIQUE_COOKIE, cookieHeaderValues, curlContinues } from './secret-scan-cookie.ts';
+import { compileTranscriptPatterns } from './secret-scan-transcript.ts';
+export { TRANSCRIPT_LANE_SCAN_OPTS, trailingDanglingLabel } from './secret-scan-labeled.ts';
 
 // ── Patterns ────────────────────────────────────────────────────────────────
 //
@@ -134,7 +146,7 @@ interface CompiledPattern {
   /** See CorePattern.validate; `head` is the match text before the value. */
   validate?: (value: string, head: string) => boolean;
   /** Runs only on the line after one that ends in a dangling credential label of this form. */
-  continuation?: 'single' | 'pair';
+  continuation?: DanglingForm;
   /** The text the regex reads instead of the line, the same length (offsets and reported values come from the line). */
   subject?: (line: string) => string;
   /** An ESCAPE_BOUNDARY twin: runs only on a line ESCAPE_IN_LINE_RE matches. */
@@ -661,7 +673,7 @@ export function privateKeySpans(text: string): Array<{ start: number; end: numbe
 const compiledPatterns = new Map<string, CompiledPattern[]>();
 
 function compilePatterns(opts: ScanOpts): CompiledPattern[] {
-  const key = `${opts.highEntropy === true}|${opts.labeledCredentials === true}`;
+  const key = `${opts.highEntropy === true}|${opts.labeledCredentials === true}|${opts.transcriptRules === true}`;
   let compiled = compiledPatterns.get(key);
   if (!compiled) compiledPatterns.set(key, compiled = buildPatterns(opts));
   return compiled;
@@ -706,6 +718,7 @@ function buildPatterns(opts: ScanOpts): CompiledPattern[] {
       });
     }
   }
+  if (opts.transcriptRules) out.push(...compileTranscriptPatterns());
   return out;
 }
 
@@ -869,11 +882,17 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
   let offset = 0;
   // W4.1: Markdown table state for the labeled lane (credential columns of the table being scanned).
   const table = opts.labeledCredentials === true ? newTableScanState() : null;
+  let leadingLine = 0;
+  // GST-2768 follow-up: a multi-line .netrc stanza and a curl command continued with `\` carry to later lines.
+  let netrc = false, inCurl = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
     const lineStart = offset;
     offset += line.length + 1;
-    const dangling = opts.labeledCredentials === true && i > 0 ? danglingLabel(lines[i - 1] ?? '') : null;
+    if (opts.transcriptRules === true && i > 0) { netrc = netrcStanzaOpen(lines[i - 1] ?? '', netrc); inCurl = curlContinues(lines[i - 1] ?? '', inCurl); }
+    // The previous message's dangling label reads the first non-blank line here.
+    if (i === leadingLine && opts.leadingDangling && line.trim() === '') leadingLine = i + 1;
+    const dangling = (i === leadingLine ? (opts.leadingDangling ?? null) : i > 0 ? danglingFor(lines[i - 1] ?? '', opts) : null) ?? (netrc ? 'netrc' : null);
     const cells = table ? tableCredentialCells(line, lines[i + 1], table) : [];
     if (line.length < 8 && !dangling && cells.length === 0) continue;
     // ENG-12: a line wholly inside a private-key claim is already redacted by
@@ -915,14 +934,20 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
         if (m[0].length === 0) p.re.lastIndex++;
         // The entropy gate judges the WHOLE matched value (the rule fired on
         // the assignment's value), before any overlap split.
-        if (p.entropyGated && (!HIGH_ENTROPY_REQUIRES_DIGIT_RE.test(value) || !HIGH_ENTROPY_REQUIRES_NON_DIGIT_RE.test(value))) continue;
+        // A rejected assignment value resumes the scan at the value's start: an
+        // encoded URL value (`token%3Dhttps%3A%2F%2F…`) can span a later
+        // `password=` on the same line, which must still be found (#8265).
+        if (p.entropyGated && (!HIGH_ENTROPY_REQUIRES_DIGIT_RE.test(value) || !HIGH_ENTROPY_REQUIRES_NON_DIGIT_RE.test(value))) { p.re.lastIndex = start; continue; }
         if (p.entropyGated) {
-          if (correctedEntropy(value, work) < HIGH_ENTROPY_MIN_BITS_PER_CHAR) continue;
+          if (correctedEntropy(value, work) < HIGH_ENTROPY_MIN_BITS_PER_CHAR) { p.re.lastIndex = start; continue; }
           if (work) work.gatePassed++;
         }
         if (p.validate) {
           if (work) work.validateCalls++;
-          if (!p.validate(value, subject === line ? m[1] : line.slice(m.index, start))) continue;
+          if (!p.validate(value, subject === line ? m[1] : line.slice(m.index, start))) {
+            if (p.entropyGated) p.re.lastIndex = start;
+            continue;
+          }
         }
         if (!taken) {
           taken = new Uint8Array(line.length);
@@ -948,6 +973,17 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
       }
     }
     for (const c of cells) if (!taken || !anyTaken(taken, c.start, c.start + c.value.length)) { taken ??= new Uint8Array(line.length); claim('labeled_credential', c.value, c.start, c.start); }
+    // GST-2768: cookie values (transcript lane), union coverage around anything already claimed.
+    if (opts.transcriptRules === true && COOKIE_PRECHECK_RE.test(line)) {
+      for (const c of cookieHeaderValues(line, inCurl)) {
+        taken ??= new Uint8Array(line.length);
+        for (let a = c.start, k = c.start, end = c.start + c.value.length; k <= end; k++) {
+          if (k < end && !taken[k]) continue;
+          if (a < k) claim('cookie_header', line.slice(a, k), a, c.from);
+          a = k + 1;
+        }
+      }
+    }
   }
   return hits;
 }
@@ -1199,9 +1235,9 @@ export function scanFiles(paths: string[], opts: ScanOpts = {}): SecretFinding[]
 // `pwd: 1234` never scrubs every later "1234"), must be at most
 // ECHO_MAX_VALUE_CHARS long,
 // and only the first ECHO_MAX_UNIQUE unique bearer, assignment and labeled
-// values plus the first ECHO_MAX_UNIQUE_VENDOR unique vendor or jwt values, in
-// claim order, join (two caps, so planted vendor strings never crowd out a
-// bearer token's echo). A value past a cap is still redacted at its claimed
+// values, the first ECHO_MAX_UNIQUE_VENDOR vendor or jwt values and the first
+// ECHO_MAX_UNIQUE_COOKIE cookie values, in claim order, join (three caps, so
+// planted vendor strings or a cookie jar never crowd out a bearer's echo). A value past a cap is still redacted at its claimed
 // span; only its echoes are the accepted miss.
 //
 // The pass is a streaming merge over the ORIGINAL text: per value, the
@@ -1315,12 +1351,14 @@ function addEchoValue(into: EchoDictionary, pattern: string, value: string): voi
         ? ECHO_MIN_CHARS_ENTROPY
         : pattern === 'labeled_credential'
           ? ECHO_MIN_CHARS_LABELED
+          : pattern === 'cookie_header'
+            ? ECHO_MIN_CHARS_ENTROPY
           : VENDOR_ECHO_PATTERNS.has(pattern) ? ECHO_MIN_CHARS_VENDOR : Infinity;
   if (value.length < floor || value.length > ECHO_MAX_VALUE_CHARS || into.has(value)) return;
-  const vendor = VENDOR_ECHO_PATTERNS.has(pattern);
+  const bucket = (p: string): 'cookie' | 'vendor' | 'shared' => (p === 'cookie_header' ? 'cookie' : VENDOR_ECHO_PATTERNS.has(p) ? 'vendor' : 'shared');
   let used = 0;
-  for (const claimedBy of into.values()) if (VENDOR_ECHO_PATTERNS.has(claimedBy) === vendor) used++;
-  if (used >= (vendor ? ECHO_MAX_UNIQUE_VENDOR : ECHO_MAX_UNIQUE)) return;
+  for (const claimedBy of into.values()) if (bucket(claimedBy) === bucket(pattern)) used++;
+  if (used >= { cookie: ECHO_MAX_UNIQUE_COOKIE, vendor: ECHO_MAX_UNIQUE_VENDOR, shared: ECHO_MAX_UNIQUE }[bucket(pattern)]) return;
   into.set(value, pattern);
   const unescaped = value.replaceAll('\\/', '/');
   if (unescaped !== value) addEchoValue(into, pattern, unescaped);

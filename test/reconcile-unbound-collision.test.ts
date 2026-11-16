@@ -80,15 +80,22 @@ test('preview accepts a database-only page colliding with a canonical file, chan
         expect(readFileSync(f.file, 'utf8')).toBe(fileSide);
         expect((await engine.readPageSnapshot(f.slug, { sourceId: f.id }))!.revision).toBe(before.revision);
 
+        // GST-2579: sync never imported the file, so taking the database copy over its body is refused and writes nothing.
+        await expect(runReconcilePreview(engine, { source_id: f.id, slug: f.slug, from: preview.preview,
+          decisions: (preview.conflict_paths as string[]).map(path => ({ path, action: 'take_database' })) }))
+          .rejects.toMatchObject({ code: 'source_changed', detail: 'unimported_file_edit' });
+        expect(readFileSync(f.file, 'utf8')).toBe(fileSide);
+        expect((await engine.readPageSnapshot(f.slug, { sourceId: f.id }))!.revision).toBe(before.revision);
         const resolved = await runReconcilePreview(engine, { source_id: f.id, slug: f.slug, from: preview.preview,
-          decisions: (preview.conflict_paths as string[]).map(path => ({ path, action: 'take_database' })) });
+          decisions: (preview.conflict_paths as string[]).map(path => ({ path, action: 'take_file' })) });
         expect(resolved.status).toBe('ready');
         const receipt = await runReconcileApply(engine, { source_id: f.id, slug: f.slug, preview: resolved.preview, request_id: randomUUID() });
         expect(receipt.state).toBe('committed');
         const current = (await engine.readPageSnapshot(f.slug, { sourceId: f.id }))!;
-        expect(current.page.compiled_truth).toContain('no canonical owner');
+        expect(current.page.compiled_truth).toContain('on another host');
         expect(current.page.frontmatter).toMatchObject({ db_only_field: 'kept', file_field: 'kept' });
-        expect(parseMarkdown(readFileSync(f.file, 'utf8'), f.slug).compiled_truth).toContain('no canonical owner');
+        expect(parseMarkdown(readFileSync(f.file, 'utf8'), f.slug).compiled_truth).toContain('on another host');
+        expect(parseMarkdown(readFileSync(f.file, 'utf8'), f.slug).frontmatter).toMatchObject({ db_only_field: 'kept' });
         const [page] = await engine.executeRaw<{ source_path: string | null; database_only_reason: string | null }>(
           'SELECT source_path,database_only_reason FROM pages WHERE source_id=$1 AND slug=$2', [f.id, f.slug]);
         // The page now has a canonical origin, so the unbound_source doctor count no longer reports it.
@@ -233,12 +240,12 @@ test('a marked page adopts a file whose name differs from its slug only by case,
         const preview = await runReconcilePreview(engine, { source_id: f.id, slug: f.slug });
         expect(preview.relative_path).toBe('notes/Example.md');
         const resolved = await runReconcilePreview(engine, { source_id: f.id, slug: f.slug, from: preview.preview,
-          decisions: (preview.conflict_paths as string[]).map(path => ({ path, action: 'take_database' })) });
+          decisions: (preview.conflict_paths as string[]).map(path => ({ path, action: 'take_file' })) });
         const receipt = await runReconcileApply(engine, { source_id: f.id, slug: f.slug, preview: resolved.preview, request_id: randomUUID() });
         expect(receipt.state).toBe('committed');
         const [page] = await engine.executeRaw<{ source_path: string | null }>('SELECT source_path FROM pages WHERE source_id=$1 AND slug=$2', [f.id, f.slug]);
         expect(page!.source_path).toBe('notes/Example.md');
-        expect(readFileSync(cased, 'utf8')).toContain('no canonical owner');
+        expect(readFileSync(cased, 'utf8')).toContain('db_only_field: kept');
       });
     }
   });

@@ -75,6 +75,9 @@ export const EDGE_EXTRACTOR_VERSION_TS = '2026-05-14T01:00:00Z';
 
 export const BATCH_SIZE = 200;
 
+/** #7119: the resolver walks, and edge readiness waits on, only chunks that own a code_edges_symbol row of their page's source. */
+export const OWNS_EDGE = 'EXISTS (SELECT 1 FROM code_edges_symbol e WHERE e.from_chunk_id = cc.id AND e.source_id = p.source_id)';
+
 export interface ResolverStats {
   chunks_walked: number;
   edges_examined: number;
@@ -127,13 +130,22 @@ export async function resolveSymbolEdgesIncremental(
     ms: 0,
   };
 
+  const [owned] = await engine.executeRaw<{ e: boolean }>(
+    'SELECT EXISTS(SELECT 1 FROM code_edges_symbol WHERE source_id = $1) AS e', [opts.sourceId]);
+  if (!owned?.e) {
+    stats.ms = Date.now() - start;
+    return stats;
+  }
+
   let processed = 0;
   while (processed < maxChunks) {
     const remaining = maxChunks - processed;
     const batchSize = Math.min(BATCH_SIZE, remaining);
 
-    // Find chunks that need walking: edges_backfilled_at is NULL OR older
-    // than the extractor version timestamp. Scoped to source.
+    // Find chunks that need walking: they own a code_edges_symbol row of the
+    // source and edges_backfilled_at is NULL OR older than the extractor
+    // version timestamp. A chunk that owns no edge is never selected or
+    // stamped (#7119): each stamp is a non-HOT content_chunks update.
     const walked = await engine.transaction(async tx => {
       const chunks = await tx.executeRaw<{ id: number; page_id: number; slug: string }>(
       `SELECT cc.id, cc.page_id, p.slug
@@ -144,6 +156,7 @@ export async function resolveSymbolEdgesIncremental(
           AND ${chunkVisibleFilter('p', 'cc')}
           AND (cc.edges_backfilled_at IS NULL
                OR cc.edges_backfilled_at < $2::timestamptz)
+          AND ${OWNS_EDGE}
         ORDER BY cc.id
         LIMIT $3`,
       [opts.sourceId, EDGE_EXTRACTOR_VERSION_TS, batchSize],
@@ -157,6 +170,7 @@ export async function resolveSymbolEdgesIncremental(
          WHERE cc.id=ANY($1::int[]) AND p.source_id=$2 AND p.deleted_at IS NULL AND NOT s.archived
            AND ${chunkVisibleFilter('p', 'cc')}
            AND (cc.edges_backfilled_at IS NULL OR cc.edges_backfilled_at < $3::timestamptz)
+           AND ${OWNS_EDGE}
          ORDER BY cc.id`, [chunks.map(chunk => chunk.id), opts.sourceId, EDGE_EXTRACTOR_VERSION_TS],
       );
       const valid = current.filter(chunk => selected.get(chunk.id)?.page_id === chunk.page_id

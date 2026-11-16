@@ -65,6 +65,7 @@ export const ALL_PAGE_TYPES: readonly string[] = [
   // never mined into the facts table). Pack entries in gbrain-base.yaml.
   'event', 'diary',
   'question', // C4 pinned-question page (question + owner notes; owner-private, never evidence; src/core/questions/pages.ts)
+  'facts', // GST-2731 quotable facts page (me/facts, company/facts): one dated line per fact; doctor facts_undated_lines
 ] as const;
 
 /**
@@ -867,6 +868,8 @@ export interface SearchResult {
   /** #5575 A6: the page's trust tier and short write origin (eligibility/stamp.ts), stamped after ranking. */
   trust_tier?: import('./trust/tier.ts').TrustTier;
   origin?: string;
+  /** GBRA-504: an outside guest's note (origin `guest`); its mark from guest_marks (guests/marker.ts). */
+  guest?: import('./guests/marker.ts').GuestStamp;
   /** #5575 CEO-20: unconfirmed agent-written content with an instruction-family gate flag (explicit reads only). */
   unconfirmed?: true;
   /**
@@ -885,6 +888,8 @@ export interface SearchResult {
    * strict-match rows.
    */
   keyword_relaxed?: boolean;
+  /** GST-2762: a keyword_relaxed row the keyless any-word fill added (SearchOpts.orFill); it only adds pages, after the rest. */
+  keyword_fill?: true;
   /** Set on rows search's alias fan-out spliced in: the entity's other name that found this page (search/alias-fanout.ts). */
   matched_alias?: string;
   /** `search` `match: "keyword"`: an enumerated page whose text did not fit the evidence budget keeps its row, without text. */
@@ -1089,6 +1094,8 @@ export interface SearchResult {
    * keys off base_score / evidence, not the boosted score).
    */
   title_match_boost?: number;
+  /** Multiplier from the opt-in qualified title boost (`search.title_qualified`); evidence never reads it as an exact title match. */
+  title_mention_boost?: number;
   /**
    * T3 (retrieval-maxpool incident) — set when this result was surfaced or
    * boosted by the free-text alias hop (the query exactly matched a page's
@@ -1098,6 +1105,8 @@ export interface SearchResult {
    * decision keys off (T4).
    */
   alias_hit?: boolean;
+  /** Opt-in qualified alias hop (`search.qualified_aliases`) led this page; autocut and the remote page cap keep it, evidence ignores it. */
+  qualified_alias_hit?: boolean;
   /**
    * #3783 — set when this result was surfaced by a LEXICAL arm (chunk-grain
    * keyword FTS or the page-grain title arm). Stamped pre-fusion by
@@ -1347,18 +1356,15 @@ export interface SearchOpts extends PageReadPolicy {
    */
   sourceIds?: string[];
   /**
-   * fix/title-retrieval-arm (D2, Reviewer F1): opt-in AND→OR keyword-recall
-   * fallback. When true, `searchKeyword` retries ONCE with OR-of-terms after
-   * the strict websearch AND query returns zero rows (strict results always
-   * win when non-empty). Default false/undefined = strict-AND only — the
-   * pre-fix contract. hybridSearch opts in for its keyword arm; precision
-   * consumers (enrichment countMentions, link-extraction resolution, eval
-   * paths) MUST NOT set this: OR-matches would inflate mention counts and
-   * relax link-candidate resolution ("John Smith" matching every John and
-   * every Smith). `searchTitles` has its own page-grain fallback and
-   * ignores this flag.
+   * fix/title-retrieval-arm (D2, Reviewer F1): opt-in AND→OR keyword-recall fallback. When true, `searchKeyword`
+   * retries ONCE with OR-of-terms after the strict websearch AND query returns zero rows (strict rows win when
+   * non-empty); unset = strict-AND only. hybridSearch opts in for its keyword arm; precision consumers
+   * (countMentions, link-extraction resolution, eval paths) MUST NOT: OR-matches inflate mention counts and relax
+   * link resolution ("John Smith" matching every John and every Smith). `searchTitles` ignores this flag.
    */
   orFallback?: boolean;
+  /** GST-2762: with orFallback, run only the OR retry, on the first page, and tag its rows `keyword_relaxed` and `keyword_fill`; the keyless any-word fill's own call, which already holds the strict rows. */
+  orFill?: boolean;
   /** #6495: hybrid's keyword arm opts in to the Postgres keyword timeout negative cache (postgres-engine/keyword-timeout-cache.ts); PGLite ignores it. */
   keywordTimeoutCache?: boolean;
   /** Keyword `score` query (websearch syntax) while `query` decides the matches (alias fan-out); ignored on the CJK path. */

@@ -390,3 +390,50 @@ describe('hybridSearch wiring — title arm reaches the fused result set', () =>
     expect(results.map(r => r.slug)).toContain('projects/chronomancer');
   });
 });
+
+describe('hybridSearch wiring — search.qualified_aliases and search.title_qualified (keyless, repo-less)', () => {
+  async function seed(): Promise<void> {
+    await engine.putPage('projects/codename-falcon', { type: 'project', title: 'Codename Falcon', compiled_truth: 'Quarterly figures.' });
+    await engine.setPageAliases('projects/codename-falcon', 'default', ['acme widget project']);
+    await engine.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: 'Leads the widget team at acme. Owns the roadmap and the budget.' });
+    await engine.putPage('notes/status', { type: 'note', title: 'Status', compiled_truth: 'Widget team status at acme with alice example mentioned, roadmap budget roadmap.' });
+    for (const slug of ['projects/codename-falcon', 'people/alice-example', 'notes/status']) {
+      const page = await engine.getPage(slug);
+      await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_text: page!.compiled_truth, chunk_source: 'compiled_truth' }]);
+    }
+  }
+  const off = async () => {
+    await engine.setConfig('search.qualified_aliases', 'false');
+    await engine.setConfig('search.title_qualified', 'false');
+  };
+
+  test('qualified_aliases: off leaves the alias page out; on injects it first, with evidence short of exists', async () => {
+    await seed();
+    const q = 'status of the acme widget project today';
+    try {
+      expect((await hybridSearch(engine, q, { limit: 5 })).map(r => r.slug)).not.toContain('projects/codename-falcon');
+      await engine.setConfig('search.qualified_aliases', 'true');
+      const on = await hybridSearch(engine, q, { limit: 5 });
+      expect(on[0].slug).toBe('projects/codename-falcon');
+      expect(on[0].qualified_alias_hit).toBe(true);
+      expect(on[0].alias_hit).toBeUndefined();
+      expect(on[0].evidence).not.toBe('alias_hit');
+      expect(on[0].create_safety).not.toBe('exists');
+    } finally { await off(); }
+  });
+
+  test('title_qualified: a person title inside the query gets title_mention_boost only when on, never an exact-title evidence', async () => {
+    await seed();
+    const q = 'acme widget team lead alice example roadmap budget';
+    try {
+      const before = (await hybridSearch(engine, q, { limit: 5 })).find(r => r.slug === 'people/alice-example');
+      expect(before?.title_mention_boost).toBeUndefined();
+      await engine.setConfig('search.title_qualified', 'true');
+      const after = (await hybridSearch(engine, q, { limit: 5 })).find(r => r.slug === 'people/alice-example');
+      expect(after?.title_mention_boost).toBe(1.25);
+      expect(after?.title_match_boost).toBeUndefined();
+      expect(after?.evidence).not.toBe('exact_title_match');
+      expect(after?.create_safety).not.toBe('exists');
+    } finally { await off(); }
+  });
+});

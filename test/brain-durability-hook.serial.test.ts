@@ -184,9 +184,12 @@ describe('durability push remote confirmation (#5138)', () => {
     const bin = join(root, 'intercept-bin');
     mkdirSync(bin);
     // #6530: the CLI runs `git -C <root> -c k=v <sub> ...`, so match on the
-    // subcommand after the global options instead of on "$1".
+    // subcommand after the global options instead of on "$1". GST-2456: a scanned
+    // push never sends a doomed non-fast-forward, so the retry is the first push
+    // whose commit is a merge (pushes_merge).
     writeFileSync(join(bin, 'git'), `#!/usr/bin/env bash
 set -eu
+pushes_merge() { local _spec="\${@: -1}"; "$GBRAIN_TEST_REAL_GIT" rev-parse -q --verify "\${_spec%%:*}^2" >/dev/null 2>&1; }
 GIT_SUB=""; _i=1
 while [ "$_i" -le "$#" ]; do
   _a="\${!_i}"
@@ -308,7 +311,7 @@ fi`);
   test.each(['initial', 'retry'])('pushes the captured SHA when HEAD moves during the %s push', (attempt) => {
     if (attempt === 'retry') advanceRemote();
     const env = interceptGit(`if [ "$1" = push ]; then
-  if [ "$GBRAIN_TEST_PUSH_ATTEMPT" = initial ] || [ -e "$GBRAIN_TEST_PUSH_MARKER" ]; then
+  if [ "$GBRAIN_TEST_PUSH_ATTEMPT" = initial ] || pushes_merge "$@"; then
     "$GBRAIN_TEST_REAL_GIT" rev-parse HEAD >"$GBRAIN_TEST_PUSH_MARKER"
     "$GBRAIN_TEST_REAL_GIT" reset --hard HEAD^ >/dev/null
     "$GBRAIN_TEST_REAL_GIT" "$@"
@@ -337,7 +340,7 @@ fi`);
     if (attempt === 'retry') advanceRemote();
     const remoteHead = originHead(bare);
     const env = interceptGit(`if [ "$1" = push ]; then
-  if [ "$GBRAIN_TEST_PUSH_ATTEMPT" = initial ] || [ -e "$GBRAIN_TEST_PUSH_MARKER" ]; then
+  if [ "$GBRAIN_TEST_PUSH_ATTEMPT" = initial ] || pushes_merge "$@"; then
     "$GBRAIN_TEST_REAL_GIT" rev-parse HEAD >"$GBRAIN_TEST_PUSH_MARKER"
     "$GBRAIN_TEST_REAL_GIT" reset --hard "$GBRAIN_TEST_REMOTE_HEAD" >/dev/null
     exit 1
@@ -401,7 +404,7 @@ fi`);
   test('confirms the merged commit when the retry push lands but reports failure', () => {
     const remoteHead = advanceRemote();
     const env = interceptGit(`if [ "$1" = push ]; then
-  if [ ! -e "$GBRAIN_TEST_PUSH_MARKER" ]; then
+  if ! pushes_merge "$@"; then
     : >"$GBRAIN_TEST_PUSH_MARKER"
   else
     "$GBRAIN_TEST_REAL_GIT" "$@"

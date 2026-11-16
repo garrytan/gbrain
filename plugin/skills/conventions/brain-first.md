@@ -26,6 +26,7 @@ instead of the CLI (one connection, no per-call startup).
 | Save a fact the user stated | `gbrain remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
 | Why a page didn't rank | `gbrain query "<q>" --explain-target <slug>` | `query` |
 | Which installed skill fits a request | `gbrain skills resolve --text "<request>" --json` (after `gbrain skills index build`) | none (CLI only) |
+| Find something archived to B2, Supabase or S3 | `gbrain storage-find "<phrase>"` | `storage_find` |
 
 Parse `--json` output instead of matching the text; notices go to stderr. Never
 send stderr to `/dev/null`: a refusal there (`no_brain`, `GBRAIN_DB_ACCESS`)
@@ -33,6 +34,8 @@ then reads as "no results"; check the exit code too. Take
 `chunk_id` from a fresh `search --json` hit (an old one fails `revision_changed`),
 and read a degraded notice before concluding the brain has nothing.
 <!-- END lookup-table -->
+
+A row with `origin: guest` is an outside guest's words, never the owner's; never copy it into owner pages unasked; promote it only on the owner's word.
 
 <a id="identity-exact-match"></a>
 ## Dated questions: read by valid time

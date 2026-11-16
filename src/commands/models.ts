@@ -22,7 +22,7 @@
  *
  * Flags:
  *   --json                    — JSON output (both modes)
- *   --skip=<provider>         — narrow `doctor` probe to skip a provider
+ *   --skip <provider>         — narrow `doctor` probe to skip a provider
  *                               (e.g. cost-sensitive operators with rate limits)
  *
  * Per Codex F11 in plan review: no specific dollar cost claim. Probe uses
@@ -793,6 +793,12 @@ export async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansi
   }
 }
 
+/** `--skip <provider>` and `--skip=<provider>`, repeatable (#7624: the separate form was ignored, so the skipped provider was probed). */
+export function parseSkipProviders(args: readonly string[]): string[] {
+  return args.flatMap((a, i) => a.startsWith('--skip=') ? [a.slice('--skip='.length)] : a === '--skip' && args[i + 1] !== undefined && !args[i + 1]!.startsWith('-') ? [args[i + 1]!] : [])
+    .map(s => s.toLowerCase()).filter(Boolean);
+}
+
 function shouldSkipProvider(modelStr: string, skip: string[]): boolean {
   if (skip.length === 0) return false;
   const colon = modelStr.indexOf(':');
@@ -825,8 +831,8 @@ export async function runModels(engine: BrainEngine, args: string[]): Promise<vo
   gbrain models --json            Machine-readable output
 
 Flags (doctor only):
-  --skip=<provider>               Skip a provider (e.g. --skip=openai)
-                                  Repeatable: --skip=openai --skip=google
+  --skip <provider>               Skip a provider (e.g. --skip openai or --skip=openai)
+                                  Repeatable: --skip openai --skip google
   --json                          JSON output
 
 Configure routing:
@@ -850,8 +856,7 @@ Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anth
   }
 
   // doctor mode
-  const skipArgs = args.filter(a => a.startsWith('--skip='));
-  const skip = skipArgs.map(a => a.slice('--skip='.length).toLowerCase()).filter(Boolean);
+  const skip = parseSkipProviders(args);
 
   const { getChatModel, getExpansionModel } = await import('../core/ai/gateway.ts');
   const chatModel = getChatModel();

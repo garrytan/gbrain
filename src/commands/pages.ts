@@ -10,7 +10,7 @@
  * page_links, chunk_relations via existing FKs.
  */
 import type { BrainEngine } from '../core/engine.ts';
-import { purgeConsentRequest, purgeDeletedPagesCoordinated, selectPurgeCandidates } from '../core/persistence/purge-deleted.ts';
+import { notHeld, purgeConsentRequest, purgeDeletedPagesCoordinated, selectPurgeCandidates } from '../core/persistence/purge-deleted.ts';
 import { PURGE_PARK_LIMIT } from '../core/persistence/purge-parks.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { consentGate } from '../core/consent-cli.ts';
@@ -47,9 +47,13 @@ async function runPurgeDeleted(engine: BrainEngine, args: string[]): Promise<voi
   const { olderThanHours, dryRun, json, retryParked } = parsePurgeArgs(args);
   // #6741: one selector for the preview, the consent and the run (selectPurgeCandidates): the same cutoff, rename
   // holds, writer state and parks; --retry-parked puts the parked pages the cutoff selects back among the candidates.
-  const selection = await selectPurgeCandidates(engine, olderThanHours, { retryParked });
+  // GST-2689: the preview reads ahead what the run's carry does (forecastCarry, read-only), so it lists the parked origins
+  // the run releases and leaves out the ones it parks; nothing is labelled before the consent.
+  const forecast = await (await import('../core/repair/origin-carry.ts')).forecastCarry(engine, olderThanHours);
+  const selection = await selectPurgeCandidates(engine, olderThanHours, { retryParked, forecast });
   const retried = selection.parked.filter(park => park.retried).length;
-  const notes = { ...(selection.parked.length ? { parked: selection.parked, retry_parked: retryParked } : {}), ...(selection.blocked.length ? { blocked: selection.blocked } : {}) };
+  const notes = { ...(selection.parked.length ? { parked: selection.parked, retry_parked: retryParked } : {}), ...(selection.blocked.length ? { blocked: selection.blocked } : {}),
+    ...(selection.released_origins.length ? { released_origins: selection.released_origins } : {}) };
 
   if (dryRun) {
     // Read-only: the same predicate and DB now() clock as the real purge; only the verb differs.
@@ -64,6 +68,7 @@ async function runPurgeDeleted(engine: BrainEngine, args: string[]): Promise<voi
     for (const c of selection.candidates) console.log(`  ${c.source_id}/${c.slug}${c.park ? ' (parked; retried once more)' : ''}${c.sync_unreviewed ? ' (deleted by a managed sync; no live twin)' : ''}`);
     for (const p of selection.parked.filter(park => !park.retried)) console.log(`  parked: ${p.source_id}/${p.slug} after ${p.failures} failures (${p.code ?? 'error'}); skipped unless --retry-parked`);
     for (const b of selection.blocked.filter(entry => entry.code === 'writer_not_active')) console.log(`  waiting: ${b.source_id}/${b.slug}: ${b.reason}`);
+    for (const o of selection.released_origins) console.log(`  released: ${o.source_id}/${o.slug} is parked (gbrain doctor: derived_origin_parked); the run labels the pages derived from it private first and keeps it parked if that fails`);
     return;
   }
 
@@ -81,7 +86,7 @@ async function runPurgeDeleted(engine: BrainEngine, args: string[]): Promise<voi
   const authorized = await consentGate(purgeConsentRequest(selection.count, olderThanHours, json, args, retryParked, retried, selection.sync_unreviewed), { json });
   if (!authorized) return;
 
-  const result = await purgeDeletedPagesCoordinated(engine, olderThanHours, { retryParked });
+  const result = await purgeDeletedPagesCoordinated(engine, olderThanHours, { retryParked, release: forecast.release.map(origin => origin.id), only: notHeld(forecast) });
   if (json) {
     console.log(JSON.stringify({ older_than_hours: olderThanHours, count: result.count, slugs: result.slugs,
       ...(result.capacity_deferred ? { capacity_deferred: result.capacity_deferred } : {}), ...(result.blocked.length ? { blocked: result.blocked } : {}) }, null, 2));
@@ -99,7 +104,7 @@ async function runPurgeDeleted(engine: BrainEngine, args: string[]): Promise<voi
 }
 
 export function printUsage(): void {
-  console.log(`gbrain pages — page-level operator commands (v0.26.5)
+  console.log(`gbrain pages — page-level operator commands
 
 Subcommands:
   ghosts [--source <id>] [--json]   List live pages whose canonical file is missing on the

@@ -197,6 +197,7 @@ const HELP = `Usage:
   gbrain transcripts status              # found vs imported gap table
   gbrain transcripts recover codex       # restore user turns lost to #5163 (preview; --apply)
   gbrain transcripts audit-secrets       # list imported pages that still carry a credential (read-only)
+  gbrain transcripts archive run|backfill|status|adopt-legacy|on|off   # day-sliced conversation archive (off unless turned on)
   gbrain transcripts recent [options]
 
 ingest — import dead session logs and chat exports as conversation pages
@@ -398,6 +399,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
   // No paths: discovery. Without the all flag, show what WOULD be imported
   // and stop (a safe default for a command that can touch five harness
   // histories); with it, import the discovered set.
+  let discoveredFormats: Map<string, TranscriptFormat> | undefined;
   if (parsed.paths.length === 0) {
     const { discoverTranscriptFiles } = await import('../core/transcripts/discover.ts');
     // #4472: discovery excludes gbrain's own claude-cli subprocess sessions
@@ -423,6 +425,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
       return;
     }
     parsed.paths = discovered.map((d) => d.path);
+    discoveredFormats = new Map(discovered.map((d) => [d.path, d.format]));
   }
 
   // Source: the canonical 6-tier chain (capture.ts pattern) — one resolved
@@ -502,6 +505,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
     result = await runTranscriptsIngest(engine, {
       paths,
       format: parsed.format,
+      discoveredFormats,
       dryRun: parsed.dryRun,
       limit: parsed.limit,
       sinceIso,
@@ -537,7 +541,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
 
   // --facts: ONE extractor invocation over every touched slug (including
   // hash-skipped pages — the extractor's version-token gate dedupes work).
-  let factsSummary: { pages: number; pagesFailed: number; spentUsd?: number } | undefined;
+  let factsSummary: import('../core/transcripts/ingest-facts.ts').IngestFactsResult | undefined;
   if (parsed.facts && !parsed.dryRun && result.slugsTouched.length > 0) {
     const { runIngestFacts } = await import('../core/transcripts/ingest-facts.ts');
     factsSummary = await runIngestFacts(engine, {
@@ -558,6 +562,11 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
           (factsSummary.spentUsd !== undefined ? `, ~$${factsSummary.spentUsd.toFixed(2)} spent` : '') +
           (factsSummary.pagesFailed > 0 ? ' (failed pages stay unfinished; stderr names each retry command)' : ''),
       );
+      if (factsSummary.budgetExhausted) console.log(factsSummary.budgetReason === 'no_pricing'
+        ? 'facts: stopped because a model has no pricing; pages after the stop have no facts yet (raising --max-cost-usd cannot fix this)'
+        : `facts: stopped at the ${factsSummary.budgetReason ?? 'cost'} budget; pages after the stop have no facts yet (re-run with a higher --max-cost-usd to continue)`);
+      if (factsSummary.pagesSkippedTooLarge) console.log(`facts: ${factsSummary.pagesSkippedTooLarge} page(s) skipped as too large to extract`);
+      if (factsSummary.pagesLockSkipped) console.log(`facts: ${factsSummary.pagesLockSkipped} page(s) skipped while another run held them (re-run to finish them)`);
     }
     const firstImported = result.files.flatMap((f) => f.sessions).find((s) => !s.error && s.baseSlug);
     if (firstImported && !parsed.dryRun) {
@@ -619,6 +628,11 @@ export async function runTranscripts(engine: BrainEngine, args: string[], dispat
     await runTranscriptsAuditSecrets(engine, args.slice(1));
     return;
   }
+  if (sub === 'archive') {
+    const { runTranscriptsArchive } = await import('./transcripts-archive.ts');
+    await runTranscriptsArchive(engine, args.slice(1), dispatch);
+    return;
+  }
   if (sub === 'recover') {
     const { runTranscriptsRecover } = await import('./transcripts-recover.ts');
     await runTranscriptsRecover(engine, args.slice(1), dispatch);
@@ -627,7 +641,7 @@ export async function runTranscripts(engine: BrainEngine, args: string[], dispat
   if (sub !== 'recent') {
     if (sub !== '--help' && sub !== '-h' && args.includes('--json')) {
       const { exitCliError, usageError } = await import('../cli/cli-error.ts');
-      exitCliError(usageError(sub && !sub.startsWith('-') ? `Unknown transcripts subcommand: ${sub}` : 'gbrain transcripts needs a subcommand: ingest, status, recover, audit-secrets or recent.',
+      exitCliError(usageError(sub && !sub.startsWith('-') ? `Unknown transcripts subcommand: ${sub}` : 'gbrain transcripts needs a subcommand: ingest, status, recover, audit-secrets, archive or recent.',
         'Run `gbrain transcripts recent --json` to list recent transcripts, or `gbrain transcripts --help`.'), 'transcripts', { json: true });
     }
     console.log(HELP);

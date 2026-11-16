@@ -270,6 +270,9 @@ export interface MinionWorkerOpts {
   longJobNames?: readonly string[];
   /** #7242: slots kept free of long jobs when concurrency >= 2 (at least one slot still takes long jobs). Default 1; 0 disables. */
   shortJobReservedSlots?: number;
+  /** GST-2529: how long a watchdog-marked job waits before this worker stops claiming to drain and run it alone. Default 60000.
+   *  The worker looks for such a job at most every 5 s and otherwise claims in plain priority order. */
+  watchdogSuspectWaitMs?: number;
 }
 
 // --- Job Context (passed to handlers) ---

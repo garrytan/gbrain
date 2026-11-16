@@ -89,7 +89,7 @@ import { utcDate } from './cycle-date.ts';
 import { atomSourceDate, transcriptAtomSourceDate } from './atom-source-date.ts';
 import { normalizeForGrounding, isGroundingQuoteMark } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
-import { atomOriginPin, atomWriteFailure, type AtomWriteFailure, managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, publishManagedAtomGeneration, resumeManagedGenerationMembers,
+import { atomOriginPin, atomWriteFailure, type AtomWriteFailure, concurrentAtomBatch, managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, publishManagedAtomGeneration, resumeManagedGenerationMembers,
   MANAGED_ATOM_DISCOVERY_SQL, managedAtomDiscoverySql, type AtomOrigin } from '../persistence/atom-maintenance.ts';
 import { effectiveVisibility, folderRestricted } from '../search/private-visibility.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -709,8 +709,11 @@ export async function runPhaseExtractAtoms(
   opts: ExtractAtomsOpts = {},
 ): Promise<PhaseResult> {
   const sourceId = opts.sourceId ?? 'default';
+  const guestSkip = await (await import('../guests/derived.ts')).guestSourceSkip(engine, 'extract_atoms', sourceId);
+  if (guestSkip) return { phase: 'extract_atoms', status: 'skipped', duration_ms: 0, summary: `extract_atoms: ${guestSkip.summary}`, details: guestSkip.details };
+  if (await (await import('../storage-manifest/door.ts')).isStorageManifestSource(engine, sourceId)) return { phase: 'extract_atoms', status: 'skipped', duration_ms: 0, summary: `extract_atoms: source ${sourceId} is the storage shelf, which holds archive records, not pages to extract atoms from`, details: { reason: 'storage_manifest_source' } };
   const chat = opts._chat ?? gatewayChat;
-  const managed = await managedAtomSession(engine, sourceId, opts._managedRetry, opts.attempt?.writeWait);
+  const managed = await managedAtomSession(engine, sourceId, opts._managedRetry, opts.attempt?.writeWait, opts.signal);
   // v0.41.2.1: loadConfigWithEngine() so the dream.* DB-plane merge from Phase 1 reaches this phase.
   let transcriptDirs: { session_corpus_dir?: string; meeting_transcripts_dir?: string } | undefined;
   try {
@@ -1352,6 +1355,8 @@ export async function runPhaseExtractAtoms(
         else pagesSkipped++;
         continue;
       }
+      const concurrent = managed && origin ? await concurrentAtomBatch(engine, managed, origin, err) : null; // #7923
+      if (concurrent) { if (concurrent === 'done') duplicatesSkipped++; else if (concurrent === 'held') heldFailed++; else writesPending++; continue; }
       const written = managed && origin ? await atomWriteFailure(engine, managed, origin, err) : null; // #7514: never a provider error
       if (written) { hardFailureCount++; failures.push({ source: originLabel, ...written }); continue; }
       // gbrain#4148: classify. Transient provider/infra errors (timeouts,

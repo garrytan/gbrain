@@ -22,7 +22,7 @@
  *   Deliberate refusals (an `OperationError`) keep their own route; a run where most freezes fault is systemic and
  *   stops instead of holding every file.
  */
-import { lstatSync } from 'node:fs';
+import { lstatSync, readlinkSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { OperationError, opError } from '../ops/contract.ts';
 import { classifyItemFailure, ITEM_BREAKER_MIN_ITEMS } from '../item-failure.ts';
@@ -34,11 +34,46 @@ import { isWriteCapacityWait } from './admission-retry.ts';
 import { PAGE_BODY_FAULT_CODES } from './sync-fault-class.ts';
 import { gitBlobOid } from './digest.ts';
 import { readBlobBytes, type MissingAttributes, type TreeBlob } from './sync-blobs.ts';
-import { readSyncFile, syncPartialClone, type SyncEntry } from './sync-discovery.ts';
+import { readSyncFile, syncGit, syncPartialClone, type SyncEntry } from './sync-discovery.ts';
+import { literalPathspecs } from '../git-env.ts';
 import type { GitHoldRecord } from './sync-holds.ts';
 
 type HoldEntry = Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld' | 'action'>;
 type HeldFault = Pick<GitHoldRecord, 'path' | 'source_path' | 'slug' | 'page_id' | 'code' | 'message' | 'upstream_version' | 'meta'>;
+
+/**
+ * GBRA-542: whether `path` (relative to `root`) is a symlink whose target does not exist (a dangling link). With
+ * `levelOid` (committed mode) the link must also be the committed blob itself, so an uncommitted link never stands in
+ * for a committed file.
+ */
+export function danglingLink(root: string, path: string, levelOid?: string | null): boolean {
+  try {
+    if (!lstatSync(join(root, path)).isSymbolicLink()) return false;
+    if (levelOid !== undefined && gitBlobOid(readlinkSync(join(root, path), 'buffer'), levelOid?.length === 64 ? 'sha256' : 'sha1') !== levelOid) return false;
+  } catch { return false; }
+  try { realpathSync(join(root, path)); return false; } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT'; }
+}
+
+/**
+ * GBRA-542: of these Git-root paths, the ones `head`'s tree records as symlinks (mode 120000). A link's target text and a file's
+ * bytes hash alike, so only the tree mode says the committed entry is a link; a failed listing names none, so nothing is skipped.
+ */
+export function committedSymlinks(gitRoot: string, head: string, paths: readonly string[]): Set<string> {
+  const links = new Set<string>();
+  try {
+    for (let start = 0; start < paths.length; start += 500) {
+      for (const line of syncGit(gitRoot, ['ls-tree', '-r', '-z', head, '--', ...literalPathspecs(paths.slice(start, start + 500))]).split('\0')) {
+        if (line.startsWith('120000 ')) links.add(line.slice(line.indexOf('\t') + 1));
+      }
+    }
+  } catch { return new Set(); }
+  return links;
+}
+
+/** GBRA-542: the dangling links whose path `head` records as a symlink. */
+export function keepCommittedLinks<T extends { entry: { path: string } }>(links: T[], committed: ReadonlySet<string>): T[] {
+  return links.filter(link => committed.has(link.entry.path));
+}
 
 /** S-39: the `content_null_bytes` refusal of a Markdown text holding U+0000 (the first one's 1-based line), or null. */
 export function nullBytesRefusal(path: string, content: string): { code: 'content_null_bytes'; line: number; message: string } | null {

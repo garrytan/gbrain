@@ -20,12 +20,26 @@ import { checkVolunteerChannels } from './core-health.ts';
 import { buildRetrievalReflexCheck, buildMemoryVerbsCheck } from './verbs-reflex.ts';
 import type { Check } from '../../doctor.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
-import { checkError } from '../check-fix.ts';
+import { checkError, infoCheck } from '../check-fix.ts';
+import { isGbrainManagedSkillsDir } from '../../../core/skill-manifest.ts';
+
+/**
+ * W4: a skills folder found only by walking up from the cwd that gbrain did not install (an agent's own skills, no
+ * gbrain manifest or skillpack block) is not graded against gbrain's conventions: resolver_health and skill_currency
+ * report it as info. --skills-dir, $GBRAIN_SKILLS_DIR and $OPENCLAW_WORKSPACE still grade whatever they name.
+ */
+function foreignSkillsCheck(ctx: DoctorContext, name: string): Check | null {
+  const { dir, source } = ctx.skillsDirResolution;
+  if (!dir || (source !== 'cwd_walk_up' && source !== 'cwd_skills') || isGbrainManagedSkillsDir(dir)) return null;
+  return infoCheck(name, `not a gbrain skills folder (${dir}); pass --skills-dir to grade it`, 'not_applicable');
+}
 
 async function runResolverHealth(ctx: DoctorContext): Promise<Check[]> {
   const { skillsDirResolution: detected, doFix, dryRun, jsonOutput, scope } = ctx;
   const skillsDir = detected.dir;
   const checks: Check[] = [];
+  const foreign = scope === 'all' ? foreignSkillsCheck(ctx, 'resolver_health') : null;
+  if (foreign) return [foreign];
 
   if (scope === 'all' && skillsDir) {
 
@@ -166,7 +180,7 @@ async function runSkillConformance(ctx: DoctorContext): Promise<Check[]> {
   // `requires:`. Currency is filesystem-only; preconditions need the engine
   // and skip cleanly without one.
   if (scope === 'all' && skillsDir) {
-    checks.push(skillCurrencyCheck(skillsDir));
+    checks.push(foreignSkillsCheck(ctx, 'skill_currency') ?? skillCurrencyCheck(skillsDir));
     checks.push(await skillPreconditionsCheck(skillsDir, engine));
   }
   return checks;

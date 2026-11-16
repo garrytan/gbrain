@@ -50,7 +50,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { SyncOpts } from '../../commands/sync.ts';
 import { spawn } from '../spawn.ts';
-import { gitChildEnv } from '../git-env.ts';
+import { gitChildEnv, literalPathspecs } from '../git-env.ts';
 import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from '../hardened-git.ts';
 import { isSyncMetafile, matchesAnyGlob, metafileIsPage, resolveSlugForPath } from '../sync.ts';
 import { screenImportContent } from '../import-screen.ts';
@@ -59,6 +59,7 @@ import { loadSyncEligibility, resolveManagedSyncContext, syncExcludePatterns, sy
 import { heldGitPaths, readGitHoldRetryPaths, requestGitHoldRetry } from './sync-holds.ts';
 import { readBlobContents, type TreeBlob } from './sync-blobs.ts';
 import { isWindowsColonTarget } from './native-file-target.ts';
+import { danglingLink } from './sync-entry-fault.ts';
 import { createHash } from 'node:crypto';
 
 export const UNINDEXED_FILES_OP = 'unindexed-files';
@@ -161,7 +162,7 @@ function visitBlobSlices<T extends TreeBlob>(gitRoot: string, entries: T[], visi
 
 /** The blobs of `target` under `scope` in tree order, after `after`, in batches; the child stops when the consumer does. */
 async function* treeBatches(gitRoot: string, target: string, scope: string, after: string | null, size: number, revisit?: ReadonlySet<string>): AsyncGenerator<TreeEntry[]> {
-  const child = spawn('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '--literal-pathspecs', '-C', gitRoot, 'ls-tree', '-r', '-l', '-z', target, ...(scope ? ['--', scope] : [])],
+  const child = spawn('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', gitRoot, 'ls-tree', '-r', '-l', '-z', target, ...(scope ? ['--', ...literalPathspecs([scope])] : [])],
     { env: gitChildEnv(NO_LAZY_FETCH_ENV), stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = '';
   child.stderr!.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString('utf8')).slice(0, 2000); });
@@ -235,7 +236,9 @@ export async function findUnindexedFiles(engine: BrainEngine, sourceId: string, 
         'SELECT source_path, slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path = ANY($2::text[])', [sourceId, origins]);
       const byOrigin = new Map(pages.map(page => [page.source_path, page.slug]));
       const held = await heldGitPaths(engine, sourceId, incarnation, rows.map(row => row.root));
-      const missing = rows.filter(row => !byOrigin.has(row.origin) && !(row.legacy && byOrigin.get(row.legacy) === resolveSlugForPath(row.root)) && !held.has(row.root));
+      // GBRA-542: a committed symlink whose target does not exist is skipped by sync on every pass, so it is not unindexed either.
+      const missing = rows.filter(row => !byOrigin.has(row.origin) && !(row.legacy && byOrigin.get(row.legacy) === resolveSlugForPath(row.root)) && !held.has(row.root)
+        && !(row.mode === SYMLINK_MODE && danglingLink(gitRoot, row.path)));
       const fresh = missing.filter(row => {
         if (!retry.has(row.root)) return true;
         scan.scheduled++;
@@ -289,7 +292,7 @@ export function unindexedBudgetForPages(pages: number): number {
 /** Git paths at or before `cursor` that differ between `from` and `to`; null when Git cannot list them or they number more than `UNINDEXED_REVISIT_CAP`. */
 function changedBefore(gitRoot: string, from: string, to: string, scope: string, cursor: string): Set<string> | null {
   let listed: string;
-  try { listed = syncGit(gitRoot, ['--literal-pathspecs', 'diff-tree', '-r', '-z', '--no-renames', '--name-only', from, to, ...(scope ? ['--', scope] : [])]); } catch { return null; }
+  try { listed = syncGit(gitRoot, ['diff-tree', '-r', '-z', '--no-renames', '--name-only', from, to, ...(scope ? ['--', ...literalPathspecs([scope])] : [])]); } catch { return null; }
   const floor = Buffer.from(cursor, 'utf8');
   const paths = new Set(listed.split('\0').filter(path => path && Buffer.compare(Buffer.from(path, 'utf8'), floor) <= 0));
   return paths.size > UNINDEXED_REVISIT_CAP ? null : paths;

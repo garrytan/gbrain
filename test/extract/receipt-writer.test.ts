@@ -2,8 +2,9 @@
 //
 // Pins:
 //   - D-EXTRACT-17 slug shape: extracts/{date}/{kind}/{source_id}/{run_id_short}/round-{N}.md
-//   - D-EXTRACT-19 belt+suspenders: type:extract_receipt + dream_generated:true
-//     are BOTH stamped in frontmatter regardless of caller input
+//   - D-EXTRACT-19 belt+suspenders: page type extract_receipt + frontmatter
+//     dream_generated:true are BOTH stamped regardless of caller input; the
+//     parser-reserved `type` never lands in frontmatter (#7058)
 //   - Stable run_id_short (8 chars) so resumed runs land under same dir
 //   - Optional eval_pass / eval_score / model_id frontmatter only on
 //     LLM-backed extractors that supplied them
@@ -138,8 +139,8 @@ describe('writeReceipt — frontmatter D-EXTRACT-19 belt+suspenders', () => {
     const { slug, page } = await writeReceipt(engine, BASE_INPUT);
     expect(slug).toBe('extracts/2026-05-27/facts.conversation/default/a1b2c3d4/round-full');
     expect(page.type).toBe('extract_receipt');
-    // belt + suspenders: both anti-loop flags are present
-    expect(page.frontmatter?.type).toBe('extract_receipt');
+    // belt + suspenders: both anti-loop flags are present; type is the page column, not a reserved frontmatter key (#7058)
+    expect(page.frontmatter?.type).toBeUndefined();
     expect(page.frontmatter?.dream_generated).toBe(true);
     // #1978: receipts are operation records, not derived documents —
     // explicit raw-trace exemption so the doctor raw_provenance check
@@ -172,7 +173,8 @@ describe('writeReceipt — frontmatter D-EXTRACT-19 belt+suspenders', () => {
     expect(page.frontmatter?.eval_pass).toBeUndefined();
     expect(page.frontmatter?.eval_score).toBeUndefined();
     // Anti-loop flags STILL present even on deterministic extractors
-    expect(page.frontmatter?.type).toBe('extract_receipt');
+    expect(page.type).toBe('extract_receipt');
+    expect(page.frontmatter?.type).toBeUndefined();
     expect(page.frontmatter?.dream_generated).toBe(true);
   });
 

@@ -15,7 +15,7 @@ import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { submitAutoDrains, AUTO_DRAIN_NEXT_KIND_KEY } from '../src/commands/autopilot-dispatch.ts';
-import { resolveAutopilotAutoDrainBounds } from '../src/commands/autopilot-timeout.ts';
+import { autoDrainWindowClampReason, resolveAutopilotAutoDrainBounds } from '../src/commands/autopilot-timeout.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 let engine: BrainEngine;
@@ -203,3 +203,31 @@ for (const row of [
     expect(Number(jobs[0].timeout_ms)).toBeGreaterThan(row.window * 1000);
   });
 }
+
+test('#7076: a drain whose configured window is clamped says so; a window that fits says nothing', async () => {
+  await engine.setConfig('autopilot.auto_drain.window_seconds', '86400');
+  await gitSource('git-a');
+  const events = (await tick(DAY1)).split('\n').filter(Boolean).map(line => JSON.parse(line));
+  const clamped = events.filter(e => e.event === 'auto_drain_window_clamped');
+  expect(clamped).toHaveLength(1);
+  expect(clamped[0]).toMatchObject({ source_id: 'git-a', requested_window_seconds: 86400, window_seconds: 1140, timeout_ms: 1_800_000 });
+  expect(clamped[0].reason).toContain('set the window to 1140 s or less');
+
+  await reset();
+  await engine.setConfig('autopilot.auto_drain.threshold', '1');
+  await engine.setConfig('autopilot.auto_drain.window_seconds', '900');
+  await gitSource('git-b');
+  const quiet = (await tick(DAY1)).split('\n').filter(Boolean).map(line => JSON.parse(line));
+  expect(quiet.some(e => e.event === 'dispatched')).toBe(true);
+  expect(quiet.some(e => e.event === 'auto_drain_window_clamped')).toBe(false);
+});
+
+test('#7076: the clamp line names the chat timeout when it leaves no room for a window under 30 minutes', () => {
+  expect(autoDrainWindowClampReason(120, resolveAutopilotAutoDrainBounds(600_000, 120, 300_000), 300_000)).toBeNull();
+  expect(autoDrainWindowClampReason(1140, resolveAutopilotAutoDrainBounds(600_000, 1140, 300_000), 300_000)).toBeNull();
+  const tight = resolveAutopilotAutoDrainBounds(600_000, 900, 900_000);
+  expect(tight).toEqual({ windowSeconds: 1, timeoutMs: 1_861_000 });
+  const reason = autoDrainWindowClampReason(900, tight, 900_000)!;
+  expect(reason).toContain('GBRAIN_AI_CHAT_TIMEOUT_MS');
+  expect(reason).toContain('1861 s');
+});

@@ -30,7 +30,7 @@ import { slugConflictHoldMessage } from '../import-file.ts';
 import { isImageFilePath, isMultimodalEnabled, resolveSlugForPath } from '../sync.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { VERSION } from '../../version.ts';
-import { sha256 } from './digest.ts';
+import { digest, sha256 } from './digest.ts';
 import { readPageBodyPolicy, type PageBodyPolicy } from '../page-body/limits.ts';
 import { materializedSnapshot } from './segmented-apply.ts';
 import { readPagePurgeTombstones } from './page-purge.ts';
@@ -121,6 +121,18 @@ export function pinnedFilterDriver(cursor: Pick<SyncDiscovery, 'root' | 'gitRoot
 export function driftBaselineContent(gitRoot: string, entry: Pick<SyncEntry, 'drift' | 'driftBaseline'>): string | null {
   if ((entry.drift !== 'both' && entry.drift !== 'unknown') || !entry.driftBaseline) return null;
   try { return readBlobContents(gitRoot, [{ oid: entry.driftBaseline, size: SYNC_READ_BOUND }]).get(entry.driftBaseline) ?? null; } catch { return null; }
+}
+
+/**
+ * GST-2568: whether the stored frontmatter differs from a file's only by keys gbrain itself wrote to the database: a copy of
+ * the reserved `type` key (older imports) and the grandfather's `validate: false` (#6429), each absent from the file. A
+ * page with any other difference (a protected key, a label) is not treated as unchanged since that file.
+ */
+export function onlyDerivedKeysAdded(content: string, stored: Record<string, unknown> | null | undefined): boolean {
+  const file = parseMarkdown(content, 'derived-keys.md').frontmatter;
+  const page = stored ?? {};
+  return [...new Set([...Object.keys(file), ...Object.keys(page)])].every(key => digest(file[key] ?? null) === digest(page[key] ?? null)
+    || !Object.hasOwn(file, key) && (key === 'type' || key === 'validate' && page[key] === false));
 }
 
 /** #7199: whether the page still holds what the entry's baseline or one of its earlier committed versions (`driftHistory`) imports, tried in order. */

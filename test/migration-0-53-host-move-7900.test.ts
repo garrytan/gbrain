@@ -163,6 +163,51 @@ describe('#7900 branches the host-move walk-through does not reach (pglite)', ()
       });
     } finally { await close(); rmSync(base, { recursive: true, force: true }); }
   }, 120_000);
+
+  // Value: protects=a resumed setup for a moved source that no host has claimed names the claim as its first step, since the repair lists only bound sources; fails_when=the refusal points only at gbrain repair content-receipt-root, whose preview is empty for an unclaimed source, so apply-migrations stops with a fix that does nothing; why_new=#7915; seam=none; no_claim=Postgres arm, the claim's own preview output
+  test('#7915: an unclaimed moved source refuses naming the claim, then the activation; once both ran, the repair lists it', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'gbrain-7915-'));
+    const oldRoot = join(base, 'old-host', 'content'), newRoot = join(base, 'new-host', 'content');
+    mkdirSync(join(base, 'old-host')); mkdirSync(join(base, 'new-host'));
+    const { engine, close } = await withEnv({ GBRAIN_HOME: join(base, 'old-home'), DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, () => isolatedSharedSkillsEngine(undefined));
+    try {
+      await withEnv({ GBRAIN_HOME: join(base, 'old-home') }, async () => {
+        await setupSharedBrainContent(ctxOf(engine), { sourceId: 'default', root: oldRoot });
+        writeFileSync(join(oldRoot, 'notes.md'), '# notes\n');
+      });
+      cpSync(oldRoot, newRoot, { recursive: true });
+      await withEnv({ GBRAIN_HOME: join(base, 'new-home'), DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+        try {
+          await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'", [newRoot]);
+          expect(await getWorktreeBinding(engine, 'default')).toBeNull();
+          expect((await repairPreview(engine)).listing).toEqual([]);
+          for (const run of [() => runSharedSkillsMigration(ctxOf(engine)), () => setupSharedBrainContent(ctxOf(engine), { sourceId: 'default' })]) {
+            const refused = await refusal(run);
+            expect(refused.message).toBe('The canonical root changed after setup began.');
+            expect(refused.suggestion).toContain('has no canonical owner, so the repair has nothing to list yet');
+            expect(refused.suggestion).toContain(`gbrain sources writer claim default --path ${newRoot} --dry-run --json`);
+            expect(refused.suggestion).toContain(`gbrain sources writer claim default --path ${newRoot} --admin-intent writer_claim --expected-state <admin_state>`);
+            expect(refused.suggestion).toContain('gbrain sources writer activate --confirm-quiesced --shared-skills --dry-run --json');
+            expect(refused.suggestion).toContain('Then preview gbrain repair content-receipt-root --source default');
+            expect((refused as { fix?: { argv?: string[] } }).fix?.argv).toEqual(['gbrain', 'sources', 'writer', 'claim', 'default', '--path', newRoot, '--dry-run', '--json']);
+          }
+          expect(await checkpoint(engine)).toMatchObject({ root: oldRoot, stage: 'owner' });
+
+          await claimWorktree(engine, 'default', newRoot);
+          expect((await repairPreview(engine)).listing).toEqual([]);
+          const claimed = await refusal(() => setupSharedBrainContent(ctxOf(engine), { sourceId: 'default' }));
+          expect(claimed.suggestion).toContain('is claimed but persistence is not activated');
+          expect(claimed.suggestion).not.toContain('gbrain sources writer claim');
+          expect((claimed as { fix?: { argv?: string[] } }).fix?.argv).toEqual(['gbrain', 'sources', 'writer', 'activate', '--confirm-quiesced', '--shared-skills', '--dry-run', '--json']);
+
+          await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
+          const refused = await refusal(() => setupSharedBrainContent(ctxOf(engine), { sourceId: 'default' }));
+          expect((refused as { fix?: { argv?: string[] } }).fix?.argv).toEqual(['gbrain', 'repair', 'content-receipt-root', '--source', 'default']);
+          expect((await repairPreview(engine)).listing).toEqual([expect.objectContaining({ item: 'default', class: 'tree_mismatch' })]);
+        } finally { await disposePersistenceConsumer(engine); }
+      });
+    } finally { await close(); rmSync(base, { recursive: true, force: true }); }
+  }, 120_000);
 });
 
 /*

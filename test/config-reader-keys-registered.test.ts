@@ -18,6 +18,7 @@ import { ENTRY_BUDGET_KEY } from '../src/commands/doctor/budget.ts';
 import { ORPHAN_FULL_SCAN_KEY } from '../src/commands/doctor/checks/orphan-estimate.ts';
 import { PAGE_EMBED_CAP_KEY } from '../src/core/page-embedding-budget.ts';
 import { ENTITY_IDENTITY_UNION_CONFIG_KEY } from '../src/core/entity-identity.ts';
+import { THINK_REMOTE_MODELS_KEY } from '../src/core/ops/takes.ts';
 import { scanConfigReads, type ConfigRead } from './helpers/config-reader-scan.ts';
 import {
   ENUMERATED_TEMPLATE_PREFIXES,
@@ -39,6 +40,7 @@ describe('#6780 runtime config keys are registered', () => {
     ['doctor.orphan_ratio.full_scan_max_pages', ORPHAN_FULL_SCAN_KEY],
     ['embed.max_usd_per_page', PAGE_EMBED_CAP_KEY],
     ['entity_identity.union', ENTITY_IDENTITY_UNION_CONFIG_KEY],
+    ['think.remote_models', THINK_REMOTE_MODELS_KEY],
   ])('%s (the reader constant) is in KNOWN_CONFIG_KEYS', (name, constant) => {
     expect(constant).toBe(name);
     expect(KNOWN_CONFIG_KEYS).toContain(constant);

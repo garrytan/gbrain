@@ -36,7 +36,7 @@ import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { stableJson } from '../persistence/digest.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
-import { clearApprovedSet, loadApprovedSet, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { loadApprovedSet, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { materializedSnapshot, segmentedOverCeiling } from '../persistence/segmented-apply.ts';
 import { locateOutsideCode } from '../fence-scan.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence, renderTakesFence, type ParsedTake } from '../takes-fence.ts';
@@ -142,11 +142,7 @@ export const acceptedTakesRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { take, hash, last } = entry as AcceptedTakeItem;
-    try {
-      return await restoreTake(ctx.engine, ctx, entry, take);
-    } finally {
-      if (last) await clearApprovedSet(ctx.engine, { command: 'accepted-takes', hash });
-    }
+    return retireAfterLastItem(ctx.engine, 'accepted-takes', hash, last, () => restoreTake(ctx.engine, ctx, entry, take));
   },
   render(details) {
     return [`  each restored take: republished from the page version its removal archived; guide: ${details.docs}`];

@@ -78,6 +78,9 @@ const ALLOWLIST: Record<string, Record<string, string>> = {
   'docs/architecture/key-files/files-and-sync-1.md': {
     'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
   },
+  'docs/architecture/key-files/workspace-push-and-backup.md': {
+    'scripts/brain-commit-push.sh': 'installed into the brain repo by `gbrain sources harden`',
+  },
   'docs/UPGRADING_DOWNSTREAM_AGENTS.md': {
     'scripts/validate-frontmatter.mjs': 'downstream agent repo script the upgrade guide tells agents to replace',
   },

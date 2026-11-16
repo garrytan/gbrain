@@ -31,6 +31,7 @@ export function printHoldNotes(result: SyncResult, write: (line: string) => void
   // #7199: the source synced, and files held this run wait on a person; the hold fix's verify step names the source.
   const source = result.holds_fix?.verify?.argv?.[3];
   if (result.reason === 'held_needs_human' && source) write(`Synced; ${result.held_needs_human} file(s) held for a person (gbrain sync status --source ${source}).`);
+  if (result.holds_released) write(`  Released ${result.holds_released} held file(s) that no longer need a decision.`);
   for (const item of (result.held ?? []).slice(0, HOLD_LINES)) write(holdLine(item, 'Held'));
   const shown = Math.min(result.held?.length ?? 0, HOLD_LINES);
   if ((result.held_count ?? 0) > shown) write(`  ... and ${(result.held_count ?? 0) - shown} more held this run (--json lists ${result.holds_truncated ? 'the first ones' : 'them all'}).`);

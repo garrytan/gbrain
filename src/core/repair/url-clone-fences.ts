@@ -150,7 +150,7 @@ async function survey(engine: BrainEngine, sourceIds: string[]): Promise<{ files
       files.push({ source_id: source.id, incarnation: source.incarnation, root, path, slug, page_id, head_sha256: sha256(head!), work_sha256: sha256(work!),
         rows: proof.added.map(row => row.rowNum), selection: sourceIds });
       listing.push(hold
-        ? { item, class: hold.code, detail: `${proof.added.length} fence row(s) gbrain appended to ${slug}: kept database-only, then the file is restored from HEAD so the clone can pull again, but HEAD's bytes are not imported as the page: ${hold.message} The page keeps its last imported version and sync holds the file until it is fixed upstream.` }
+        ? { item, class: hold.code, detail: `${proof.added.length} fence row(s) gbrain appended to ${slug}: kept database-only, then the file is restored from HEAD so the clone can pull again, but HEAD's bytes are not imported as the page: ${hold.message} The page keeps its last imported version: the restored file equals HEAD, so sync does not screen it again and records no hold; the page changes once a commit that fixes the file upstream is pulled and synced.` }
         : { item, class: 'fence_rows_only', detail: `${proof.added.length} fence row(s) gbrain appended to ${slug}: kept database-only, then the file is restored from HEAD` });
     }
   }
@@ -228,7 +228,8 @@ export const urlCloneFencesRepair: RepairHandler = {
     }
     const { files, listing } = await survey(engine, scope.source_ids);
     const residuals: Record<string, number> = {};
-    for (const entry of listing) if (entry.class !== 'fence_rows_only') residuals[entry.class] = (residuals[entry.class] ?? 0) + 1;
+    const planned = new Set(files.map(file => `${file.source_id}:${file.path}`));
+    for (const entry of listing) if (!planned.has(entry.item)) residuals[entry.class] = (residuals[entry.class] ?? 0) + 1;
     const hash = previewHash({ kind: 'url-clone-fences-v2', brain_id: scope.brain_id, selection: scope.source_ids,
       files: files.map(f => [f.source_id, f.incarnation, f.root, f.path, f.slug, f.page_id, f.head_sha256, f.work_sha256, f.rows]) });
     if (files.length) await saveApprovedSet<ClonedFile>(engine, { ...APPROVAL, hash }, files);

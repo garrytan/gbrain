@@ -49,6 +49,11 @@ describe('capVectorOnlyPages', () => {
     expect(out.meta).toEqual({ cap: 3, kept_pages: 3, dropped_pages: 3 });
   });
 
+  test('a qualified alias hit is lexical evidence and is kept past the cap', () => {
+    const rows = [row('v1'), row('v2'), row('q1', { qualified_alias_hit: true })];
+    expect(capVectorOnlyPages(rows, 2).rows.map(r => r.slug)).toEqual(['v1', 'q1']);
+  });
+
   test('more lexical pages than the cap are all kept and no vector-only page is added', () => {
     const rows = [row('k1', { keyword_hit: true }), row('v1'), row('k2', { exact_lookup: 'slug' }), row('k3', { relational_pinned: true }), row('k4', { keyword_hit: true, keyword_relaxed: true })];
     expect(capVectorOnlyPages(rows, 2).rows.map(r => r.slug)).toEqual(['k1', 'k2', 'k3', 'k4']);

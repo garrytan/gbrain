@@ -158,6 +158,13 @@ export async function commitMessage(root: string, commit: string): Promise<strin
   return gitRead(root, ['log', '-1', '--format=%B', commit]).catch(() => null);
 }
 
+/** GST-2579: the newest commit (from HEAD) that touched `path`, with its author and author date; null when none did or Git cannot read it. */
+export async function lastCommitOf(root: string, path: string): Promise<{ sha: string; author: string; date: string } | null> {
+  const out = await quiet(gitRead(root, ['log', '-1', '--no-show-signature', '--format=%H%x00%an%x00%aI', 'HEAD', '--', `:(literal)${relative(root, path).split(sep).join('/')}`]));
+  const [sha = '', author = '', date = ''] = (out ?? '').split('\0');
+  return /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(sha) ? { sha, author, date } : null;
+}
+
 /** #8824: the first parent of `commit` in `root`'s repository, or null when it has none or Git cannot read it. */
 export async function commitParent(root: string, commit: string): Promise<string | null> {
   return quiet(gitRead(root, ['rev-parse', '--verify', '--quiet', `${commit}^`]));

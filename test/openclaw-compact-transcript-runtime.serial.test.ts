@@ -16,6 +16,7 @@ import {
   createGBrainContextEngine,
 } from '../src/core/context-engine.ts';
 import { OPENCLAW_COMPACT_EVENT, readHeartbeatTail } from '../src/core/context/hook-heartbeat.ts';
+import { readSpeakerSidecar } from '../src/core/context/session-speaker.ts';
 
 const event = (type: string, extra: Record<string, unknown> = {}) => ({ type, timestamp: '2026-10-01T10:00:00Z', ...extra });
 const message = (text: string) => event('message', { id: crypto.randomUUID(), message: { role: 'user', content: [{ type: 'text', text }] } });
@@ -107,5 +108,14 @@ describe('compact() through the host session-transcript-runtime (#6316)', () => 
     __setTranscriptRuntimeLoaderForTests(async () => ({ readSessionTranscriptEvents: async () => [{ type: 'custom' }, 'x', null] }));
     const engine = createGBrainContextEngine({ workspaceDir: workspace });
     expect(checkpoint(await engine.compact({ sessionId: 'oc-e', sessionTarget: target } as never))).toEqual({ status: 'skipped', reason: 'unparseable' });
+  });
+
+  it('#8080: a sub-agent session is marked as the agent\'s before its segment is banked; a main session is not', async () => {
+    __setTranscriptRuntimeLoaderForTests(async () => ({ readSessionTranscriptEvents: async () => [event('session', { id: 'oc-sub' }), message('Parent brief for the worker')] }));
+    const engine = createGBrainContextEngine({ workspaceDir: workspace });
+    expect(checkpoint(await engine.compact({ sessionId: 'oc-sub', sessionTarget: { ...target, sessionId: 'oc-sub', sessionKey: 'agent:main:subagent:1f2e3d4c' } } as never))).toMatchObject({ status: 'banked' });
+    expect(checkpoint(await engine.compact({ sessionId: 'oc-main', sessionTarget: { ...target, sessionId: 'oc-main' } } as never))).toMatchObject({ status: 'banked' });
+    expect(readSpeakerSidecar(spool(), 'oc-sub')).toMatchObject({ principal: 'agent-launched', source: 'detected', harness: 'openclaw' });
+    expect(readSpeakerSidecar(spool(), 'oc-main')).toBeNull();
   });
 });

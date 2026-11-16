@@ -40,7 +40,7 @@ import { managedPersistenceEnabled } from './persistence/ownership.ts';
 
 import { existsSync, mkdirSync, renameSync, rmSync, lstatSync, realpathSync } from 'fs';
 import { join, dirname, basename, isAbsolute, resolve as resolvePath } from 'path';
-import { isPathContained, msysToNativePath } from './path-confine.ts';
+import { isHostAbsolutePath, isPathContained, msysToNativePath } from './path-confine.ts';
 import { mkdirPrivate } from './atomic-write.ts';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
@@ -48,7 +48,7 @@ import {
   parseRemoteUrl,
   cloneRepo,
   validateRepoState,
-  isInsideGitRepo,
+  inGitCheckout,
   hasTrackedContent,
   RemoteUrlError,
   GitOperationError,
@@ -461,7 +461,7 @@ export async function addSource(
   engine: BrainEngine,
   opts: AddSourceOpts,
 ): Promise<SourceRow> {
-  if(await managedPersistenceEnabled(engine))return (await import('./persistence/managed-sources.ts')).addManagedSource(engine,opts);
+  opts = await (await import('./source-default-search.ts')).withDefaultSearchChoice(engine, opts); if(await managedPersistenceEnabled(engine))return (await import('./persistence/managed-sources.ts')).addManagedSource(engine,opts);
   await assertUnmanagedCanonicalWriter(engine, 'sources add');
   validateSourceId(opts.id);
 
@@ -707,8 +707,9 @@ export async function addSource(
     // report ("plain directory accepted, sync fails later") rather than a
     // broader "does this path exist" check nobody asked for.
     //
-    // Both isInsideGitRepo AND hasTrackedContent must hold. isInsideGitRepo
-    // alone lets through a `git init`ed-but-never-committed directory (fails
+    // GST-2732: a plain folder outside any git repository registers as a plain
+    // directory (sync imports its files without Git, #7973). Inside a
+    // repository, hasTrackedContent must hold: isInsideGitRepo alone lets through a `git init`ed-but-never-committed directory (fails
     // sync's "No commits in repo ..."), AND an empty-commit-then-untracked-
     // files directory (git resolves HEAD fine but the tree is empty — the
     // exact silent-staleness footgun #2707(c) describes: sync "succeeds"
@@ -718,7 +719,8 @@ export async function addSource(
       opts.localPath &&
       !opts.force &&
       existsSync(opts.localPath) &&
-      (!isInsideGitRepo(opts.localPath) || !hasTrackedContent(opts.localPath))
+      inGitCheckout(opts.localPath) &&
+      !hasTrackedContent(opts.localPath)
     ) {
       const q = shellQuote(opts.localPath);
       throw new SourceOpError(
@@ -926,6 +928,8 @@ export interface RemoveResult {
   pages_deleted: number;
   clone_removed: boolean;
   clone_path: string | null;
+  /** #7646: why a gbrain-managed clone was left on disk (`relative_path`: its stored path names no fixed directory). */
+  clone_skipped_reason?: 'relative_path';
   dryRun: boolean;
 }
 
@@ -1001,9 +1005,13 @@ export async function removeSource(
   const gManaged = ghCfg.kind === 'google' && ghCfg.g_managed === true;
   const cloneRoot = gbrainPath('clones');
   let cloneRemoved = false;
-  if (!opts.keepStorage && src.local_path && (remoteUrl || ghManaged || gManaged) && !isAbsolute(src.local_path)) {
+  let cloneSkippedReason: RemoveResult['clone_skipped_reason'];
+  if (!opts.keepStorage && src.local_path && (remoteUrl || ghManaged || gManaged) && !isHostAbsolutePath(src.local_path)) {
+    cloneSkippedReason = 'relative_path';
+    const cloneDir = defaultCloneDir(opts.id);
     console.error(
-      `[gbrain] WARN: clone cleanup skipped for "${opts.id}": its stored local_path "${src.local_path}" is relative, so it would name the current directory. Delete the clone by hand if you still want it gone.`,
+      `[gbrain] WARN: clone cleanup skipped for "${opts.id}": its stored local_path "${src.local_path}" is not absolute on this host, so it would name the current directory. ` +
+      (existsSync(cloneDir) ? `gbrain's clone directory for this source is ${cloneDir}; delete it by hand if you still want it gone (a later sources add ${opts.id} --url refuses while it holds files).` : 'Delete the clone by hand if you still want it gone.'),
     );
   } else if (
     !opts.keepStorage &&
@@ -1041,6 +1049,7 @@ export async function removeSource(
     pages_deleted: pageCount,
     clone_removed: cloneRemoved,
     clone_path: src.local_path,
+    ...(cloneSkippedReason ? { clone_skipped_reason: cloneSkippedReason } : {}),
     dryRun: false,
   };
 }
@@ -1129,7 +1138,7 @@ export async function recloneIfMissing(
   }
   const remoteUrl = getRemoteUrl(src.config);
   if (!remoteUrl || !src.local_path) return false;
-  if (!isAbsolute(src.local_path)) {
+  if (!isHostAbsolutePath(src.local_path)) {
     throw new SourceOpError('unmanaged_path',
       `Refusing to re-clone "${id}": its stored local_path "${src.local_path}" is relative, so it would name the current directory. Run gbrain sources set-path ${id} <absolute-directory>, then retry.`);
   }

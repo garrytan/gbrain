@@ -424,6 +424,9 @@ describe('open_loops group_by none (flat)', () => {
     };
     expect(res.loops).toHaveLength(2);
     expect(res.count).toBe(5);
+    // #7291: a list cut by the limit says so.
+    expect((res as { truncated?: boolean }).truncated).toBe(true);
+    expect(((await openLoopsOp.handler(ctx(), { group_by: 'none', limit: 5 })) as { truncated: boolean }).truncated).toBe(false);
     // Ordered by last_activity_at DESC → the two newest.
     expect(res.loops.map((l) => l.counterparty_email)).toEqual([
       'p1@example.com',

@@ -25,6 +25,7 @@ import {
 } from './write-gate.ts';
 import { clearStalePageGateReceipts, recordPageGateReceipt } from './write-gate-store.ts';
 import { loadOperatorLiterals } from './content-sanity-literals.ts';
+import { TAG_MAX_BYTES } from './tag-limit.ts';
 import { classifyImportHold, contentSizeHold, parseMarkdown, type ContentHold, type ParseOpts, type ParsedMarkdown } from './markdown.ts';
 import { isCodeFilePath } from './sync.ts';
 import { contentHash } from './utils.ts';
@@ -468,6 +469,9 @@ export function screenImportContent(input: ImportScreenInput): ImportScreenResul
   return { status: 'importable', parsed, ...(fences ? { fences } : {}) };
 }
 
+/** #7052: the next step of a write carrying a tag over `TAG_MAX_BYTES`. */
+export const TAG_TOO_LONG_SUGGESTION = `A tag is over the ${TAG_MAX_BYTES}-byte tag limit, so the write refuses on every retry. Shorten that tag or split it into shorter tags, then submit with a new request_id.`;
+
 /** The next step of a page write over the page limit; a page under it never needs splitting. */
 export const PAGE_OVER_LIMIT_SUGGESTION = `The content is over the ${MAX_FILE_SIZE}-byte page limit, so it refuses on every retry. Every page under the limit is stored and searchable; only content over it must become several pages, each submitted with its own request_id.`;
 
@@ -503,6 +507,7 @@ export function contentRefusalFromReceipt(code: string | null | undefined, messa
   const typed = CONTENT_REFUSAL_CODES.has(code!) ? code as ContentRefusal['code']
     : /^Invalid YAML frontmatter/.test(text) ? 'invalid_frontmatter'
     : /slug/.test(text) ? 'frontmatter_slug_conflict'
+    : TAG_TOO_LONG_MESSAGE.test(text) ? 'tag_too_long'
     : /PAGE_JUNK_PATTERN/.test(text) ? 'content_rejected' : /which the owner purged/.test(text) ? 'purged_content' : 'file_too_large';
   const reason = typed !== 'invalid_frontmatter' ? undefined
     : /ambiguous protected key/.test(text) ? 'ambiguous_protected_key' as const
@@ -514,12 +519,14 @@ export function contentRefusalFromReceipt(code: string | null | undefined, messa
     : typed === 'content_rejected' ? 'The content-sanity gate rejects this content under the operator\'s junk_disposition=reject setting. Remove the matched junk, then submit with a new request_id.'
     : typed === 'purged_content' ? 'This content was purged by the owner and stays out of the brain. Do not resubmit it; write new content, or ask the user to clear the tombstone on the brain host (gbrain pages unpurge).'
     : typed === 'write_gate_rejected' ? 'The write gate refuses this external instruction-like content under the operator\'s write_gate.external_mode=reject setting, so it refuses on every retry. Tell the user; changing that setting is their decision.'
+    : typed === 'tag_too_long' ? TAG_TOO_LONG_SUGGESTION
     : typed === 'visibility_noncanonical' ? 'The content asks for visibility: private in a spelling page privacy does not read, so it refuses on every retry. Write visibility: private on its own frontmatter line (lowercase key and value), then submit with a new request_id.'
     : PAGE_OVER_LIMIT_SUGGESTION;
   return { code: typed, ...(reason ? { reason } : {}), ...(key ? { key } : {}), ...(line !== undefined ? { line } : {}), suggestion };
 }
 
-const CONTENT_REFUSAL_CODES = new Set(['invalid_frontmatter', 'frontmatter_slug_conflict', 'file_too_large', 'content_rejected', 'purged_content', 'write_gate_rejected', 'visibility_noncanonical']);
+const CONTENT_REFUSAL_CODES = new Set(['invalid_frontmatter', 'frontmatter_slug_conflict', 'file_too_large', 'content_rejected', 'purged_content', 'write_gate_rejected', 'visibility_noncanonical', 'tag_too_long']);
+const TAG_TOO_LONG_MESSAGE = /^Tag \d+ of \d+ is \d+ bytes; a tag can be at most \d+ bytes, so the page was not written\./;
 const LEGACY_CONTENT_MESSAGES: Array<[code: string, pattern: RegExp]> = [
   ['invalid_params', /^Invalid YAML frontmatter(?::| at line \d| in )/],
   ['invalid_params', /^The frontmatter slug "[^"\n]*" in [^\n]+ conflicts with its path, which expects slug "[^"\n]*"\./],
@@ -528,6 +535,7 @@ const LEGACY_CONTENT_MESSAGES: Array<[code: string, pattern: RegExp]> = [
   ['invalid_params', /^File too large \(/],
   ['invalid_params', /^[^\n]+ carries the content of page [^\n]+, which the owner purged; it was not imported\.$/],
   ['invalid_params', /^Code file too large \(\d+ bytes\)/],
+  ['invalid_params', TAG_TOO_LONG_MESSAGE],
   ['request_too_large', /^Sync file exceeds the bounded import size\.$/],
   ['storage_error', /^Publication failed \(PAGE_JUNK_PATTERN\)\. Inspect owner diagnostics\.$/],
 ];

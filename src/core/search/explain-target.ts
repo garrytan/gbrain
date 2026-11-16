@@ -38,6 +38,8 @@ export interface TargetObservation {
   present: boolean;
   /** 1-based rank within that stage's list when present. */
   rank?: number;
+  /** The row matched only some of the query's words (`keyword_relaxed`, the any-word retry). */
+  relaxed?: true;
 }
 
 export class TargetTrace {
@@ -52,7 +54,7 @@ export class TargetTrace {
   /** Record presence (page-level: the first matching row's rank) in one stage's list. */
   observe(stage: string, rows: readonly SearchResult[]): void {
     const i = rows.findIndex(r => this.matches(r));
-    this.observations.push(i >= 0 ? { stage, present: true, rank: i + 1 } : { stage, present: false });
+    this.observations.push(i >= 0 ? { stage, present: true, rank: i + 1, ...(rows[i].keyword_relaxed === true ? { relaxed: true as const } : {}) } : { stage, present: false });
   }
 
   arms(): TargetObservation[] {
@@ -85,7 +87,7 @@ export interface ExplainTargetDiagnosis {
   /** 1-based rank in the returned rows, when returned. */
   rank?: number;
   /** Arm instances that retrieved the page, with their 1-based list rank. */
-  arms: Array<{ arm: string; rank: number }>;
+  arms: Array<{ arm: string; rank: number; relaxed?: true }>;
   /** The stage that last held the page, and the first that lost it. */
   last_seen?: TargetObservation;
   lost_at?: string;
@@ -96,7 +98,7 @@ export interface ExplainTargetDiagnosis {
 }
 
 function armsOf(trace: TargetTrace): ExplainTargetDiagnosis['arms'] {
-  return trace.arms().filter(o => o.present).map(o => ({ arm: o.stage.slice(4), rank: o.rank! }));
+  return trace.arms().filter(o => o.present).map(o => ({ arm: o.stage.slice(4), rank: o.rank!, ...(o.relaxed ? { relaxed: o.relaxed } : {}) }));
 }
 
 type Retry = { tool: 'search' | 'query'; arguments: Record<string, unknown> };
@@ -150,7 +152,7 @@ export function diagnoseTrace(
       ? { target, state: 'reinjected', code: 'target_reinjected', rank: idx + 1, arms, stages,
           why: 'The page was cut earlier and put back on page 1 by the relational evidence slot or an identity tier (exact slug/title, declared alias).' }
       : { target, state: 'retrieved', code: 'target_returned', rank: idx + 1, arms, stages,
-          why: `The page is result #${idx + 1}; score_details on that row shows how its score was formed.` };
+          why: `The page is result #${idx + 1}; score_details on that row shows how its score was formed.${returned[idx].keyword_fill === true ? ' It matched only some of the query\'s words, so it was added after the other results (keyword_fill: the keyless any-word fill).' : returned[idx].keyword_relaxed === true ? ' It matched only some of the query\'s words (keyword_relaxed: the any-word fallback).' : ''}` };
   }
   const into = returned.findIndex(r => r.collapsed?.some(c => c.slug === trace.target.slug && (trace.target.sourceId === undefined || (c.source_id ?? 'default') === trace.target.sourceId)));
   if (into >= 0) {

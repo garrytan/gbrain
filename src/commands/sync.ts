@@ -147,8 +147,8 @@ export interface SyncResult {
    * `holds_fix` (a host-operator relay) only.
    */
   held?: import('../core/persistence/sync-holds.ts').GitHoldItem[];
-  held_count?: number; held_needs_human?: number;
-  holds_outstanding?: number;
+  held_count?: number; held_needs_human?: number; carried?: import('../core/persistence/sync-holds.ts').CarriedHolds[]; skipped?: { symlink_dangling: { count: number; sample: string[] } };
+  holds_outstanding?: number; holds_released?: number;
   holds_escalated?: boolean;
   holds_truncated?: boolean;
   /** A sliced run (`writer_yield`) has not screened every entry yet. */
@@ -449,7 +449,7 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   // `sync status|unblock --json` (sync/operator.ts) write through
   // writeJsonDocument, the guard's only stdout path.
   const stopTrace = startMemoryTrace('sync');
-  try { return await (args.includes('--json') ? withHumanLogsToStderr(() => runSyncInner(engine, args)) : runSyncInner(engine, args)); } finally { stopTrace(); }
+  try { const out = await (args.includes('--json') ? withHumanLogsToStderr(() => runSyncInner(engine, args)) : runSyncInner(engine, args)); await (await import('./sources-add-next.ts')).noteSyncOutOfSearch(engine, args); return out; } finally { stopTrace(); }
 }
 
 /**

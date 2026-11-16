@@ -57,7 +57,8 @@ src/core/ai/probes.ts	process_env	3	W3: AI settings arrive on the engine
 src/core/ai/provider-env.ts	process_env	2	W3: AI settings arrive on the engine
 src/core/ai/providers/claude-cli-continuation.ts	module_collection	1	W3: per-engine gateway state
 src/core/ai/providers/claude-cli-language-model.ts	fs_import	1	W7: filesystem boundary moves to the local app
-src/core/ai/providers/claude-cli-language-model.ts	process_env	3	W3: AI settings arrive on the engine
+src/core/ai/providers/claude-cli-language-model.ts	module_collection	1	W3: per-engine gateway state (the per-binary claude --version probe cache, #8350; it caches a property of the installed binary, not of a brain, so it carries no brain's state into another)
+src/core/ai/providers/claude-cli-language-model.ts	process_env	4	W3: AI settings arrive on the engine (adds the GBRAIN_CLAUDE_CLI_USER_SETTINGS opt-in, #8350; a process setting only the shell or ~/.gbrain/.env can set, not a brain setting, so it carries no brain's state into another)
 src/core/ai/providers/claude-cli-language-model.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/ai/providers/claude-cli-scratch.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/ai/query-embed-cache.ts	module_collection	1	W3: per-engine gateway state
@@ -164,6 +165,7 @@ src/core/brain-resolver.ts	process_env	1	W6: settings plane out of the core
 src/core/brain-score-recommendations.ts	process_env	1	W6: settings plane out of the core
 src/core/brain-writer.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/brainstorm/checkpoint.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/brainstorm/domain-bank.ts	module_collection	1	#7838: the slug-prefix cache is a WeakMap keyed by engine, so mounts never share an entry; W6: per-engine state
 src/core/brainstorm/orchestrator.ts	process_global	1	W7: process-wide effects move to src/cli
 src/core/budget/budget-tracker.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/budget/budget-tracker.ts	module_collection	1	W6: per-engine state, or mark as a constant table
@@ -302,6 +304,7 @@ src/core/cycle/budget-meter.ts	module_collection	1	W6: per-engine state, or mark
 src/core/cycle/calibration-profile.ts	load_config	1	W6: settings plane out of the core
 src/core/cycle/decide-datasets.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/cycle/derived-write-through.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/cycle/derived-write-through.ts	process_env	1	W7: the commit-lock marker a parent git commit-push exports to its child (COMMIT_LOCK_ENV) is process state; it moves with the filesystem boundary
 src/core/cycle/derived-write-through.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/cycle/edge-contradictions.ts	process_env	1	W6: settings plane out of the core
 src/core/cycle/extract-atoms-generation.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -376,6 +379,7 @@ src/core/extract-takes-from-pages.ts	fs_import	1	W7: filesystem boundary moves t
 src/core/extract-takes-from-pages.ts	load_config	1	W6: settings plane out of the core
 src/core/extract/rollup-writer.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/extraction-lag.ts	process_env	2	W6: settings plane out of the core
+src/core/facts-fence.ts	module_collection	1	stays (GST-2497): a bounded memo of fence-table parses keyed by the table text and parse options, returning copies; it holds no setting or brain state
 src/core/facts/backstop.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/facts/backstop.ts	load_config	1	W6: settings plane out of the core
 src/core/facts/backstop.ts	module_collection	1	W6: per-engine state, or mark as a constant table
@@ -411,6 +415,7 @@ src/core/fence-scan.ts	process_env	1	W6: settings plane out of the core
 src/core/file-resolver.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/filing-audit.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/fix-routing.ts	module_collection	1	W6: per-engine state, or mark as a constant table
+src/core/foreground-activity.ts	module_collection	1	GBRA-438: the process-wide foreground-request listeners idle upkeep aborts on, alongside the module's process-wide in-flight counter; moves with per-engine serve state in W6
 src/core/forward-progress.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/friction.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/friction.ts	process_env	1	W6: settings plane out of the core
@@ -444,10 +449,11 @@ src/core/git/commit-ledger.ts	spawn_import	1	W7: process-wide effects move to sr
 src/core/git/commit-push.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/git/commit-push.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/git/commit-push.ts	process_env	6	W6: settings plane out of the core
-src/core/git/commit-push.ts	spawn_import	1	W7: process-wide effects move to src/cli
+src/core/git/git-run.ts	spawn_import	1	W7: process-wide effects move to src/cli; GST-2767 moved commit-push's git runner here unchanged
 src/core/git/range-secret-scan.ts	fs_import	1	W7: filesystem boundary moves to the local app (the publish scan streams git output through a private temp file)
 src/core/git/range-secret-scan.ts	spawn_import	1	W7: process-wide effects move to src/cli (the publish scan runs git plumbing)
 src/core/git/reconcile.ts	process_env	2	W6: settings plane out of the core; the commit-push child inherits this process environment (GBRAIN_HOME, Git credentials) and resolves its CLI from it, like refresh's publish child
+src/core/git/skipped-paths.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-2767 moved commit-push's skipped-path checks here unchanged
 src/core/git/upstream-history.ts	fs_import	1	W7: filesystem boundary moves to the local app; reads the tail of the checkout reflog to tell a rewritten upstream from a fast-forward (lifted out of worktree-refresh.ts)
 src/core/github-app-token.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/github-source.ts	fs_import	2	W7: filesystem boundary moves to the local app
@@ -498,6 +504,7 @@ src/core/interaction.ts	process_env	3	W6: settings plane out of the core
 src/core/last-retrieved.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/link-extraction.ts	process_env	2	W6: settings plane out of the core
 src/core/link-validity.ts	module_collection	1	W6: per-engine state, or mark as a constant table
+src/core/maintenance/run.ts	fs_import	1	GBRA-438: unattended upkeep checks that a source checkout still exists before running filesystem phases there (a vanished checkout runs the database-only phases instead of failing each run); moves with the W7 filesystem boundary
 src/core/markdown-chunks.ts	process_env	1	W6: settings plane out of the core
 src/core/markdown.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/mcp-client.ts	module_collection	1	W6: per-engine state, or mark as a constant table
@@ -871,6 +878,7 @@ src/core/remote-token-cache.ts	fs_import	1	W7: filesystem boundary moves to the 
 src/core/repair/agent-session-facts.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/captured-facts.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/fences.ts	process_env	2	W6: settings plane out of the core
+src/core/repair/file-drift-compare.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/repair/file-drift.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/frontmatter.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/frontmatter.ts	spawn_import	1	W7: process-wide effects move to src/cli
@@ -1013,6 +1021,7 @@ src/core/shared-skills/setup.ts	spawn_import	1	W7: process-wide effects move to 
 src/core/skill-catalog.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skill-catalog.ts	process_env	1	W6: settings plane out of the core
 src/core/skill-fix-gates.ts	spawn_import	1	W7: process-wide effects move to src/cli
+src/core/skill-health.ts	fs_import	1	W7: filesystem boundary moves to the local app (train K, GBRA-225: skillpack files on disk)
 src/core/skill-manifest.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skill-trigger-index.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skill-trigger-index.ts	module_collection	1	W6: per-engine state, or mark as a constant table
@@ -1047,6 +1056,7 @@ src/core/skillpack/copy.ts	fs_import	1	W7: filesystem boundary moves to the loca
 src/core/skillpack/doctor.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skillpack/endorse.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skillpack/endorse.ts	spawn_import	1	W7: process-wide effects move to src/cli
+src/core/skillpack/file-lock.ts	fs_import	1	W7: filesystem boundary moves to the local app (train K, GBRA-225: skillpack files on disk)
 src/core/skillpack/harness-bridge.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skillpack/harvest-lint.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skillpack/harvest.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -1065,12 +1075,14 @@ src/core/skillpack/remote-source.ts	fs_import	1	W7: filesystem boundary moves to
 src/core/skillpack/remote-source.ts	process_env	1	W6: settings plane out of the core
 src/core/skillpack/remote-source.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/skillpack/rubric.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/skillpack/safe-update.ts	fs_import	1	W7: filesystem boundary moves to the local app (train K, GBRA-225: skillpack files on disk)
 src/core/skillpack/scrub-legacy.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skillpack/shared-brain-bridge.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skillpack/state.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skillpack/tarball.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skillpack/tarball.ts	process_env	1	W6: settings plane out of the core
 src/core/skillpack/tarball.ts	spawn_import	1	W7: process-wide effects move to src/cli
+src/core/skillpack/update-journal.ts	fs_import	1	W7: filesystem boundary moves to the local app (train K, GBRA-225: skillpack files on disk)
 src/core/skillpack/writer-guard.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skills-integrity.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skills/resolver/build.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
@@ -1158,6 +1170,9 @@ src/core/transcription.ts	fs_import	2	W7: filesystem boundary moves to the local
 src/core/transcription.ts	process_env	5	W6: settings plane out of the core
 src/core/transcription.ts	spawn_import	2	W7: process-wide effects move to src/cli
 src/core/transcripts.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/transcripts/archive-readers.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/transcripts/archive-readers.ts	process_env	1	W6: settings plane out of the core (GBRAIN_OPENCLAW_GATEWAY_URL picks the Gateway reader)
+src/core/transcripts/archive.ts	fs_import	1	W7: filesystem boundary moves to the local app (repo-source archive files, legacy folder scan)
 src/core/transcripts/claude-code-jsonl.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/transcripts/claude-code.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/transcripts/codex-hook-lane.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -1169,8 +1184,10 @@ src/core/transcripts/export-json.ts	fs_import	1	W7: filesystem boundary moves to
 src/core/transcripts/grok.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/transcripts/hermes.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/transcripts/openclaw.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/transcripts/openclaw-gateway.ts	process_env	2	W6: settings plane out of the core (Gateway URL and token env, passed to the openclaw child)
 src/core/transcripts/recover.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/trust/marker-repair.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/trust/page-handlers.ts	fs_import	1	W7: filesystem boundary moves to the local app (#7960 restores the page file a failed owner repair wrote)
 src/core/trust/proposals.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/uncommitted-deletions.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/url-clone.ts	spawn_import	1	W7: process-wide effects move to src/cli
@@ -1181,6 +1198,7 @@ src/core/verbs/usage-log.ts	fs_import	1	W7: filesystem boundary moves to the loc
 src/core/wakeshift/config.ts	fs_import	1	stays: the Wakeshift key and HMAC secret are host files (0600) by design, never engine settings (docs/guides/wakeshift.md#the-key)
 src/core/wakeshift/config.ts	load_config	1	stays: wakeshift.enabled is read from the host file plane only, so no DB-plane or remote writer can turn reporting back on
 src/core/wakeshift/config.ts	process_env	2	stays: an explicit env argument is compared with process.env to decide whether the key moves into env-key.ts
+src/core/wakeshift/spool.ts	fs_import	1	stays: the cron-run spool is a 0600 host file under the brain's own gbrain home that emit writes while the PGLite brain is held, read by the drainer (docs/guides/wakeshift.md)
 src/core/wakeshift-env-key.ts	process_env	2	stays: WAKESHIFT_API_KEY is taken out of the process environment whenever config loads, so child processes do not inherit the signing key
 src/core/workspace-push.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/workspace-push.ts	process_env	2	W6: settings plane out of the core
@@ -1201,3 +1219,10 @@ src/core/setup/openclaw-skill-plugin.ts	fs_import	1	GBRA-435 OpenClaw skill-reso
 src/core/setup/openclaw-skill-plugin.ts	process_env	3	GBRA-435 OpenClaw skill-resolver plugin: PATH to find openclaw and node, and the env handed to the openclaw child and the self-test; stays
 src/core/setup/openclaw-skill-plugin.ts	spawn_import	1	GBRA-435 OpenClaw skill-resolver plugin: setup runs the openclaw CLI (install, enable, allow, inspect) and the Node self-test; stays
 src/core/setup/skill-pins.ts	fs_import	1	GBRA-435 skill pins: reads a catalog's receipt under GBRAIN_HOME/skill-index to check pin names (no brain or engine is opened); stays
+src/core/setup/hermes-skill-pins.ts	fs_import	1	GBRA-435 Hermes skill pins: reads SOUL.md under HERMES_HOME to place or remove the pinned-skills block (no brain or engine is opened); stays
+src/core/setup/pi-skill-extension.ts	fs_import	1	GBRA-435 Pi skill-resolver extension: setup writes the extension files under the Pi agent dir and its state under GBRAIN_HOME (no brain or engine is opened); stays
+src/core/setup/pi-skill-extension.ts	process_env	4	GBRA-435 Pi skill-resolver extension: HOME and PI_CODING_AGENT_DIR locate Pi's skills and extensions, PATH finds pi and node, and the env is handed to the pi child and the self-test; stays
+src/core/setup/pi-skill-extension.ts	spawn_import	1	GBRA-435 Pi skill-resolver extension: setup runs the Node self-test and pi --help to confirm Pi loaded the extension; stays
+src/core/setup/cursor-skill-pins.ts	fs_import	1	GBRA-435 Cursor pinned skills: setup writes the project's pinned-skills rule, its git exclude line and the project record under GBRAIN_HOME (no brain or engine is opened); stays
+src/core/setup/cursor-skill-pins.ts	process_env	1	GBRA-435 Cursor pinned skills: HOME locates the user-level skill directories Cursor loads; stays
+src/core/setup/cursor-skill-pins.ts	spawn_import	1	GBRA-435 Cursor pinned skills: setup runs git rev-parse to find the repository's info/exclude; stays

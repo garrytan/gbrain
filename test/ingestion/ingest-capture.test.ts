@@ -295,12 +295,12 @@ describe('ingest_capture handler — write-source attribution', () => {
     expect(result.source_fallback).toBeUndefined();
   });
 
-  test('job.data.sourceId naming a missing source falls back to default', async () => {
+  test('job.data.sourceId naming a missing source falls back to default for a non-webhook capture', async () => {
     const handler = makeIngestCaptureHandler(engine);
     const ev = makeEvent({
       content: '# missing scoped source',
       source_id: 'webhook-client-x',
-      untrusted_payload: true,
+      source_kind: 'url-fetch', untrusted_payload: true,
     });
 
     const result = await handler(makeJob({
@@ -317,7 +317,7 @@ describe('ingest_capture handler — write-source attribution', () => {
     });
   });
 
-  test('job.data.sourceId naming an archived source falls back to default', async () => {
+  test('job.data.sourceId naming an archived source falls back to default for a non-webhook capture', async () => {
     await engine.executeRaw(
       `INSERT INTO sources (id, name, archived) VALUES ('archived-source', 'archived-source', true)`,
     );
@@ -325,7 +325,7 @@ describe('ingest_capture handler — write-source attribution', () => {
     const ev = makeEvent({
       content: '# archived scoped source',
       source_id: 'webhook-client-x',
-      untrusted_payload: true,
+      source_kind: 'url-fetch', untrusted_payload: true,
     });
 
     const result = await handler(makeJob({
@@ -342,7 +342,7 @@ describe('ingest_capture handler — write-source attribution', () => {
     });
   });
 
-  test('foreign-key violation retries once under default', async () => {
+  test('foreign-key violation retries a non-webhook capture once under default', async () => {
     await engine.executeRaw(
       `INSERT INTO sources (id, name) VALUES ('racing-source', 'racing-source')`,
     );
@@ -366,7 +366,7 @@ describe('ingest_capture handler — write-source attribution', () => {
     const ev = makeEvent({
       content: '# source deleted during write',
       source_id: 'webhook-client-x',
-      untrusted_payload: true,
+      source_kind: 'url-fetch', untrusted_payload: true,
     });
 
     const result = await handler(makeJob({
@@ -451,7 +451,7 @@ describe('ingest_capture handler — write-source attribution', () => {
       content: '# provenance across retry',
       source_id: 'webhook-client-x',
       source_uri: 'https://example.com/retry-provenance',
-      untrusted_payload: true,
+      source_kind: 'url-fetch', untrusted_payload: true,
     });
 
     const result = await handler(makeJob({
@@ -602,7 +602,7 @@ describe('ingest_capture handler — write-source attribution', () => {
     const ev = makeEvent({
       content: '# structured fk fields',
       source_id: 'webhook-client-x',
-      untrusted_payload: true,
+      source_kind: 'url-fetch', untrusted_payload: true,
     });
 
     const result = await handler(makeJob({
@@ -658,7 +658,7 @@ describe('ingest_capture handler — write-source attribution', () => {
     const sharedContent = '# same content two sources';
 
     await handler(makeJob({
-      event: makeEvent({ content: sharedContent, untrusted_payload: true }),
+      event: makeEvent({ content: sharedContent, source_kind: 'url-fetch', untrusted_payload: true }),
       slug,
       sourceId: 'shadow-source',
     }));
@@ -666,7 +666,7 @@ describe('ingest_capture handler — write-source attribution', () => {
 
     // Same slug + same content, but this client falls back to default.
     const result = await handler(makeJob({
-      event: makeEvent({ content: sharedContent, untrusted_payload: true }),
+      event: makeEvent({ content: sharedContent, source_kind: 'url-fetch', untrusted_payload: true }),
       slug,
       sourceId: 'never-registered-source',
     }));
@@ -680,7 +680,7 @@ describe('ingest_capture handler — write-source attribution', () => {
 
     // And the differing-content variant must not throw out of createVersion.
     const updated = await handler(makeJob({
-      event: makeEvent({ content: '# different content entirely', untrusted_payload: true }),
+      event: makeEvent({ content: '# different content entirely', source_kind: 'url-fetch', untrusted_payload: true }),
       slug,
       sourceId: 'never-registered-source',
     }));

@@ -19,7 +19,7 @@ import { isConfigTruthy } from '../config.ts';
 import { HALFLIFE_DAYS } from '../facts/decay.ts';
 import { listOpenLoops, type OpenLoopRow } from '../loops/loops-store.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
-import { privateFactFilterForCaller, privatePagesFilterForCaller, privatePagesFilterFragment, privateTimelineEventFilterForCaller, privateTimelineEventFilterFragment } from '../search/private-visibility.ts';
+import { privateFactFilterForCaller, privatePagesFilterForCaller, privateTimelineEventFilterForCaller, privateTimelineEventFilterFragment, remoteReadFloorSql } from '../search/private-visibility.ts';
 import { pageEligibleSql, projectionEligibleSql } from '../eligibility/sql.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import { renderTrustedInline, trustFields } from '../eligibility/labels.ts';
@@ -203,7 +203,7 @@ async function entityPages(
   const rows = await engine.executeRaw<{ slug: string; title: string | null; type: string | null }>(
     `SELECT p.slug, p.title, p.type FROM pages p
       WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND p.deleted_at IS NULL
-        ${opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : privatePagesFilterFragment('p')}` : ''}
+        ${opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}` : ''}
         AND ${pageEligibleSql('p', opts.eligibility)}`,
     [sourceId, slugs],
   );
@@ -281,7 +281,7 @@ export async function upcomingMeetings(engine: BrainEngine, clock: BriefClock, e
        FROM pages p
       WHERE p.deleted_at IS NULL AND p.type = 'meeting' AND p.source_id = ANY($1::text[])
         AND p.frontmatter->>'start' >= $2 AND p.frontmatter->>'start' <= $3
-        AND ${privatePagesFilterFragment('p')} AND ${pageEligibleSql('p', eligibility)}`,
+        AND ${remoteReadFloorSql('p')} AND ${pageEligibleSql('p', eligibility)}`,
     [fresh, lo, `${hi}~`],
   );
   const out: UpcomingMeeting[] = [];
@@ -342,7 +342,7 @@ export async function meetingCounterparties(
     `SELECT a.alias_norm, p.slug, p.title, p.type FROM page_aliases a
        JOIN pages p ON p.source_id = a.source_id AND p.slug = a.slug AND p.deleted_at IS NULL
       WHERE a.source_id = $1 AND a.alias_norm = ANY($2::text[])
-        AND ${privatePagesFilterFragment('p')} AND ${pageEligibleSql('p', eligibility)}`,
+        AND ${remoteReadFloorSql('p')} AND ${pageEligibleSql('p', eligibility)}`,
     [sourceId, emails],
   );
   const byEmail = new Map<string, Array<{ slug: string; title: string | null; type: string | null }>>();
@@ -484,7 +484,7 @@ async function editItem(engine: BrainEngine, cp: BriefCounterparty, clock: Brief
             p.timeline, p.trust_tier, p.write_origin
        FROM pages p
       WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL
-        AND ${opts.includePrivate ? 'TRUE' : opts.forCaller ? privatePagesFilterForCaller('p') : privatePagesFilterFragment('p')}
+        AND ${opts.includePrivate ? 'TRUE' : opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}
         AND ${pageEligibleSql('p', opts.eligibility)}`,
     [cp.source_id, cp.slug, EDIT_MAX_PAGE_BYTES],
   );

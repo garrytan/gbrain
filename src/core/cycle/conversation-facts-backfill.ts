@@ -207,7 +207,8 @@ export async function runPhaseConversationFactsBackfill(
   const maxTotalWalltimeMs = cfg.maxTotalWalltimeMin * 60_000;
   const maxWalltimeMs = cfg.maxWalltimeMin * 60_000;
 
-  const listed = await listSources(engine);
+  const { withoutGuestSources } = await import('../guests/derived.ts');
+  const listed = await withoutGuestSources(engine, 'conversation_facts_backfill', await listSources(engine), src => src.id);
   const excluded = listed.filter(src => cfg.excludeSources.includes(src.id)).map(src => src.id);
   const sources = listed.filter(src => !excluded.includes(src.id));
   if (sources.length === 0) {
@@ -285,6 +286,8 @@ export async function runPhaseConversationFactsBackfill(
       const onOuterAbort = () => controller.abort();
       opts.signal?.addEventListener('abort', onOuterAbort, { once: true });
 
+      let interrupted: ExtractConversationFactsResult | null = null;
+      const committed = () => interrupted ?? zeroResult();
       try {
         const result = await withBudgetTracker(tracker, () =>
           runExtractConversationFactsCore(engine, {
@@ -297,6 +300,7 @@ export async function runPhaseConversationFactsBackfill(
             // per-source worker count. Default 1 — opt-in concurrency
             // for cycle paths.
             workers: cfg.workers,
+            onInterrupted: partial => { interrupted = partial; },
           }, controller.signal),
         );
         perSourceResults[src.id] = result;
@@ -311,7 +315,7 @@ export async function runPhaseConversationFactsBackfill(
           // continue with the next source.
           sourcesWalltimeExhausted++;
           perSourceResults[src.id] = {
-            ...zeroResult(),
+            ...committed(),
             walltime_exhausted: true,
             error: 'walltime_exhausted',
           };
@@ -319,7 +323,7 @@ export async function runPhaseConversationFactsBackfill(
           // Escaped the core's own catch — same per-source posture.
           sourcesBudgetExhausted++;
           perSourceResults[src.id] = {
-            ...zeroResult(),
+            ...committed(),
             budget_exhausted: true,
             budget_reason: err.reason,
             budget_model: err.modelId,
@@ -338,8 +342,8 @@ export async function runPhaseConversationFactsBackfill(
         } else {
           // Per-source failure: record + continue with next source.
           perSourceResults[src.id] = {
-            ...zeroResult(),
-            pages_failed: 1,
+            ...committed(),
+            pages_failed: committed().pages_failed + 1,
             error: (err as Error).message,
           };
         }
@@ -380,6 +384,7 @@ export async function runPhaseConversationFactsBackfill(
     pages_skipped_unrecognized_speaker: 0,
     pages_failed: 0,
     facts_inserted: 0,
+    pages_pending: 0,
     fallback_slugify_count: 0,
     resolution_errors: 0,
     sources_processed: 0,
@@ -398,6 +403,7 @@ export async function runPhaseConversationFactsBackfill(
     totals.pages_skipped_unrecognized_speaker += r.pages_skipped_unrecognized_speaker;
     totals.pages_failed += r.pages_failed;
     totals.facts_inserted += r.facts_inserted;
+    totals.pages_pending += r.pages_pending ?? 0;
     totals.fallback_slugify_count += r.fallback_slugify_count;
     totals.resolution_errors += r.resolution_errors;
   }
@@ -409,6 +415,7 @@ export async function runPhaseConversationFactsBackfill(
   const noPricing = [...new Map(Object.values(perSourceResults)
     .flatMap((r) => r.budget_pricing ? [[r.budget_pricing.model, r.budget_pricing] as const] : [])).values()];
   const summary = `${totals.facts_inserted} facts inserted across ${totals.sources_processed}/${sources.length} sources, ~$${totalSpent.toFixed(4)} spent` +
+    (totals.pages_pending ? `. ${totals.pages_pending} page(s) accepted and still publishing; their facts commit after this run and are not counted here` : '') +
     noPricing.map((g) => `. ${noPricingMessage(g)}`).join('') + notOwnedNote(sourcesNotOwned)
     + (excluded.length ? `. Skipped ${excluded.length} source(s) listed in ${CFG_PREFIX}.exclude_sources (${excluded.join(', ')})` : '');
 
@@ -432,6 +439,7 @@ export async function runPhaseConversationFactsBackfill(
       pages_skipped_unrecognized_speaker: totals.pages_skipped_unrecognized_speaker,
       pages_failed: totals.pages_failed,
       facts_inserted: totals.facts_inserted,
+      pages_pending: totals.pages_pending,
       fallback_slugify_count: totals.fallback_slugify_count,
       resolution_errors: totals.resolution_errors,
       spent_usd: totalSpent,

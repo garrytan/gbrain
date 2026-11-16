@@ -19,7 +19,7 @@
 import type { BrainEngine, TimelineBatchInput } from '../core/engine.ts';
 import type { Page, PageType } from '../core/types.ts';
 import { parseTimelineEntries, deriveTimelineAnchor } from '../core/link-extraction.ts';
-import { eachStoredTimelineRow, retractRemovedTimelineEntries, segmentedTimelineText, storedTimelineKey, TimelineKeySet, unkeptTimelineRows } from '../core/timeline-extract.ts';
+import { eachStoredTimelineRow, retractRemovedTimelineEntries, segmentedTimelineText, storedTimelineKey, TimelineKeySet, unkeptTimelineRows, versionTimelineScan, type VersionTimelineScan } from '../core/timeline-extract.ts';
 import { timelineKey } from '../core/timeline-marker.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
 import { maintenanceTransaction } from '../core/persistence/attribution.ts';
@@ -97,9 +97,9 @@ function anchorFor(page: Page, slug: string) {
 }
 
 async function walkRefs(engine: BrainEngine, opts: TimelineDbOptions) {
-  const all = opts.sourceIdFilter
+  const all = await (await import('../core/guests/derived.ts')).withoutGuestSources(engine, 'extract', opts.sourceIdFilter
     ? (await engine.listAllPageRefs()).filter(r => r.source_id === opts.sourceIdFilter)
-    : await engine.listAllPageRefs();
+    : await engine.listAllPageRefs(), ref => ref.source_id);
   const wanted = opts.slugs ? new Set(opts.slugs) : null;
   return filterRefsSince(wanted ? all.filter(r => wanted.has(r.slug)) : all, opts.since);
 }
@@ -280,8 +280,8 @@ async function readTimelineBatch(engine: BrainEngine, refs: ReadonlyArray<{ slug
  * deletes the removed rows; `stop` is asked before each segment read.
  */
 async function plannedTimeline(engine: BrainEngine, page: Page, slug: string, sourceId: string, inferDates: boolean, stored?: StoredTimelineRows[],
-  opts: { retract?: boolean; stop?: () => boolean } = {}) {
-  const retraction = { dryRun: opts.retract !== true, ...(opts.stop ? { stop: opts.stop } : {}) };
+  opts: { retract?: boolean; stop?: () => boolean; versions?: VersionTimelineScan } = {}) {
+  const retraction = { dryRun: opts.retract !== true, ...(opts.stop ? { stop: opts.stop } : {}), ...(opts.versions ? { versions: opts.versions } : {}) };
   const strip = (rows: StoredTimelineRows[]) => rows.map(({ date_text: _text, ...row }) => row);
   let entries: Array<{ date: string; source?: string; summary: string; detail?: string }>;
   let removed: unknown[];
@@ -321,9 +321,9 @@ async function plannedTimeline(engine: BrainEngine, page: Page, slug: string, so
   return { removed: removed.length, entries };
 }
 
-/** Under the coordinator's page lock: retract removed rows, insert the planned tuples. */
-async function writePageTimeline(tx: BrainEngine, page: Page, slug: string, sourceId: string, inferDates: boolean): Promise<number> {
-  const plan = await plannedTimeline(tx, page, slug, sourceId, inferDates, undefined, { retract: true });
+/** Under the coordinator's page lock: retract removed rows (checked against `versions`, read before the lock), insert the planned tuples. */
+async function writePageTimeline(tx: BrainEngine, page: Page, slug: string, sourceId: string, inferDates: boolean, versions: VersionTimelineScan): Promise<number> {
+  const plan = await plannedTimeline(tx, page, slug, sourceId, inferDates, undefined, { retract: true, versions });
   if (!plan.entries.length) return 0;
   return tx.addTimelineEntriesBatch(plan.entries.map(entry => ({ slug, date: entry.date, source: entry.source,
     summary: entry.summary, detail: entry.detail || '', source_id: sourceId })), { auditSite: 'extract.timeline_db' });
@@ -386,11 +386,17 @@ export async function prepareTimelineExtract(engine: BrainEngine, row: WriteRequ
   if (!snapshot || snapshot.page.id !== Number(row.page_id)) throw timelinePageChanged(row, 'The page was deleted or replaced before its timeline was extracted.');
   await authorizeWrite(engine, row.authority, 'submit_job', row.slug);
   const inferDates = (row.intent as { infer_dates?: unknown } | null)?.infer_dates === true;
+  // #9362: the page's stored versions are read here, one body per statement, not inside the publication transaction.
+  // A segmented page's own snapshots are capped (pruneSegmentedVersions) and read segment by segment there, so its
+  // body is planned here only when it also keeps inline snapshots, whose number nothing caps.
+  const versions = versionTimelineScan();
+  if (!isSegmentedPage(snapshot.page) || (await engine.executeRaw(`SELECT 1 FROM page_versions WHERE page_id = $1 AND body_storage = 'inline' LIMIT 1`,
+    [snapshot.page.id])).length) await plannedTimeline(engine, snapshot.page, row.slug, row.source_id, inferDates, undefined, { versions });
   return { observedRevision: snapshot.revision, noop: true,
     validate: async tx => { await authorizeWrite(tx, row.authority, 'submit_job', row.slug); },
     apply: async tx => {
       const current = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id });
       if (!current) throw timelinePageChanged(row, 'The page disappeared before its timeline was extracted.');
-      return { status: 'completed', added: await writePageTimeline(tx, current.page, row.slug, row.source_id, inferDates) };
+      return { status: 'completed', added: await writePageTimeline(tx, current.page, row.slug, row.source_id, inferDates, versions) };
     } };
 }

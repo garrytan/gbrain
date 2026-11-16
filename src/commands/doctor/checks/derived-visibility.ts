@@ -20,6 +20,7 @@ import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { derivationPrivateSql, folderRestrictedSql, privateSnapshotFilterFragment, readHonorAliases } from '../../../core/search/private-visibility.ts';
 import { aliasOnlyPagesSql, PLAN_STATEMENT_MS, worldFactsFromPrivateSources } from '../../../core/repair/visibility.ts';
+import { atomMovedOriginPrivateSql, atomOriginSlugSql, atomOriginSlugsSql } from '../../../core/persistence/atom-origin.ts';
 
 const FACT_SAMPLE = 50;
 
@@ -27,7 +28,7 @@ export async function derivedVisibilityCheck(engine: BrainEngine, sourceId?: str
   const name = 'derived_visibility';
   try {
     const aliasesHonored = await readHonorAliases(engine);
-    const sources = sourceId ? [sourceId] : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources')).map(s => s.id);
+    const sources = (await engine.executeRaw<{ id: string }>(`SELECT id FROM sources WHERE archived IS NOT TRUE${sourceId ? ' AND id=$1' : ''}`, sourceId ? [sourceId] : [])).map(s => s.id);
     const facts = await worldFactsFromPrivateSources(engine, sources);
     const readable = facts.filter(f => f.readable);
     const factDetails = { world_facts_from_private_sources: facts.length, world_facts_remotely_readable: readable.length,
@@ -38,24 +39,24 @@ export async function derivedVisibilityCheck(engine: BrainEngine, sourceId?: str
     try {
       counts = await engine.executeRaw<{ unstamped_atoms: number; unstamped_concepts: number; looser_atoms: number; looser_concepts: number; looser_events: number; alias_pages_without_visibility: number }>(
       `WITH derived AS (
-         SELECT p.* FROM pages p WHERE p.deleted_at IS NULL ${sourceId ? 'AND p.source_id=$1' : ''}
+         SELECT p.* FROM pages p WHERE p.deleted_at IS NULL AND p.source_id=ANY($1::text[])
            AND (p.type='atom' OR (p.type='concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)
              OR (p.type='event' AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%')))
        SELECT
          COUNT(*) FILTER (WHERE d.type='atom' AND d.frontmatter->>'visibility' IS NULL)::int AS unstamped_atoms,
          COUNT(*) FILTER (WHERE d.type='concept' AND d.frontmatter->>'visibility' IS NULL)::int AS unstamped_concepts,
-         COUNT(*) FILTER (WHERE d.type='atom' AND d.frontmatter->>'visibility'='world' AND NOT EXISTS (SELECT 1 FROM pages o
-           WHERE o.source_id=d.source_id AND o.slug=d.frontmatter->>'source_slug' AND o.deleted_at IS NULL
-             AND ${privateSnapshotFilterFragment('o')} AND NOT ${folderRestrictedSql('o')}))::int AS looser_atoms,
+         COUNT(*) FILTER (WHERE d.type='atom' AND d.frontmatter->>'visibility'='world' AND (NOT EXISTS (SELECT 1 FROM pages o
+           WHERE o.source_id=d.source_id AND o.slug=${atomOriginSlugSql('d')} AND o.deleted_at IS NULL
+             AND ${privateSnapshotFilterFragment('o')} AND NOT ${folderRestrictedSql('o')}) OR ${atomMovedOriginPrivateSql('d')}))::int AS looser_atoms,
          COUNT(*) FILTER (WHERE d.type='concept' AND d.frontmatter->>'visibility'='world' AND EXISTS (SELECT 1 FROM links l
            JOIN pages a ON a.id=l.to_page_id WHERE l.from_page_id=d.id AND l.link_source='concept-provenance' AND l.link_type='synthesized_from'
              AND (COALESCE(a.frontmatter->>'visibility','private')='private' OR EXISTS (SELECT 1 FROM pages ao WHERE ao.source_id=a.source_id
-               AND ao.slug=a.frontmatter->>'source_slug' AND (ao.frontmatter->>'visibility'='private' OR ${folderRestrictedSql('ao')})))))::int AS looser_concepts,
+               AND ao.slug=ANY(${atomOriginSlugsSql('a')}) AND (ao.frontmatter->>'visibility'='private' OR ${folderRestrictedSql('ao')})) OR ${atomMovedOriginPrivateSql('a')})))::int AS looser_concepts,
          COUNT(*) FILTER (WHERE d.type='event' AND COALESCE(d.frontmatter->>'visibility','world')<>'private' AND EXISTS (SELECT 1 FROM pages o
            WHERE o.source_id=d.source_id AND o.slug=d.frontmatter->'event'->>'depth' AND o.deleted_at IS NULL
              AND ${derivationPrivateSql('o')}))::int AS looser_events,
-         (SELECT COUNT(*)::int FROM pages ap WHERE ${aliasOnlyPagesSql('ap')} ${sourceId ? 'AND ap.source_id=$1' : ''}) AS alias_pages_without_visibility
-       FROM derived d`, sourceId ? [sourceId] : [], { timeoutMs: PLAN_STATEMENT_MS });
+         (SELECT COUNT(*)::int FROM pages ap WHERE ${aliasOnlyPagesSql('ap')} AND ap.source_id=ANY($1::text[])) AS alias_pages_without_visibility
+       FROM derived d`, [sources], { timeoutMs: PLAN_STATEMENT_MS });
     } catch (e) {
       if ((e as { code?: string } | null)?.code !== '57014') throw e;
       return { name, status: 'warn', details: { ...factDetails, derived_counts: 'unknown', count: 'lower_bound', truncated: true, repair: 'visibility' },

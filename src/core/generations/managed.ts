@@ -130,7 +130,7 @@ export async function recordActivation(tx: BrainEngine, intent: ActivationPlanIn
   await tx.executeRaw(`INSERT INTO derived_generation_activations (id, source_id, kind, owner_key, expected_generation, input_pin, item_set_hash, state, members)
     VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8::text::jsonb) ON CONFLICT (id) DO NOTHING`,
   [intent.activationId, intent.key.sourceId, intent.key.kind, intent.key.ownerKey, intent.expectedGeneration, intent.input?.pin ?? null, intent.setHash,
-    JSON.stringify(intent.members.map(member => ({ slug: member.slug, action: member.action, identity: member.identity })))]);
+    JSON.stringify(intent.members.map(member => ({ slug: member.slug, action: member.action, identity: member.identity, before: member.before })))]);
 }
 
 const memberFix = (sourceId: string, kind: string) => readFix('Lists pending generation members and orphan candidates, read-only.',

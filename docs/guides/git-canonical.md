@@ -16,7 +16,7 @@ operator's view.
 
 | | A mixed source (the default) | A strict source (`canonical: git`) |
 |---|---|---|
-| A page write | The file and the database row are published first; a background Git effect commits and pushes the file later, once Git durability is on. | The file is written and committed under the checkout's writer lock, then the row commits. The receipt names the commit (`persistence.git_commit`, `git_state: committed`). The Git effect only pushes. |
+| A page write | The file and the database row are published first; a background Git effect commits and pushes the file later, once Git durability is on. The write's reply says `git_state: queued`; a receipt read later (`gbrain write-request <id>`, `get_write_request`) reads the Git effect: `committed` with the commit in `persistence.git_commit`, or `superseded`, `skipped`, `failed` or `retrying` with `persistence.git_reason`. An effect recorded by a build before this one, or one whose commit landed but whose push had to be retried, reads `committed` with no commit. | The file is written and committed under the checkout's writer lock, then the row commits. The receipt names the commit (`persistence.git_commit`, `git_state: committed`). The Git effect only pushes. |
 | A crash between the two | Recovery restores the file's previous bytes. | The committed file is kept, and the write's replay finishes the row against it. |
 | What sync reads | The working tree and the database; disagreements become holds such as `file_drift` or `worktree_dirty`. | Committed blobs at HEAD only. Each committed version is imported over what the database holds, and a committed removal deletes the page. |
 | An uncommitted edit in the checkout | Held as `worktree_dirty`. | Left on disk and not indexed until someone commits it. |
@@ -185,7 +185,39 @@ Every write goes through the same door, whoever sends it:
   a row for an entity names it in the `entity` column and moves into the
   entity's page once that page exists, including a name saved without a
   folder (`kofi-example`) once exactly one page such as
-  `people/kofi-example` carries it.
+  `people/kofi-example` carries it. An entity under a folder access rule is
+  held on its own folder's holding page instead (`partners/memory/unattributed`
+  for `partners/acme-example`), which every rule covering the entity covers by
+  path, so the row has exactly the readers the entity's page would have and is
+  stored like it (in Git, or database-only under `storage.db_only` or a path
+  Git ignores). A rule added later moves the held rows it covers there as part
+  of its own apply (`gbrain access rule add` previews them as
+  `held_facts_moving`; `gbrain access apply` and `gbrain access resume` move
+  them too). A rule that arrives through a sync of the policy file moves them
+  as soon as that sync releases its lease (an exact page rule on an entity
+  held on its folder's page moves that row into the entity's page the same
+  way), so for the seconds the sync pass takes the row is still in the holding
+  page's body (its fact already reads only for the rule's readers); if the
+  process stops in between, the next maintenance cycle moves them. The move
+  also removes those rows, and the struck (withdrawn) rows of the same
+  entities, from the holding page it leaves and from that page's saved
+  versions in the database (the rule's preview counts them per page, and the
+  move's write receipt records which rows, how many versions and where they
+  went). A saved version stored in segments (a holding page over 1 MiB with
+  `pages.segmented_storage` on) is not edited: the preview names how many
+  there are (`segmented_versions_not_edited`), the apply's result says it is
+  incomplete (`complete: false`), and readers of that page's saved versions
+  can still read the moved rows in up to that many versions. A move still
+  pending when the apply stops waiting is reported incomplete the same way,
+  with its request id, and is not counted as moved. The preview lists every
+  held fact the apply moves, with its destination as the move resolves it, so
+  a row saved under a bare name shows the page that name resolves to, and a
+  row that moves only because its entity's page now exists says so
+  (`because`). Git history is never rewritten: the holding page's earlier
+  commits keep the row as it was before the rule. An entity under an exact page rule (a rule on the
+  entity's own slug) has no holding page with its readers: the fact is refused
+  with [`git_home_required`](write-refusals.md#git_home_required) (reason
+  `facts_lane`) until the page exists.
 - **Remote MCP callers and thin clients** send a write request that the
   checkout owner's door commits. The reply carries the revision once it is
   committed and indexed, or `write_pending` with a request id (exit 10 on the
@@ -217,7 +249,7 @@ file is refused with [`git_home_required`](write-refusals.md#git_home_required).
 | Detached pages and origin twins | Kept database-only. |
 | Derived data: chunks, embeddings, links and rows parsed from pages | Rebuilt from Git, never content of record. |
 | Write receipts and other operational records | Kept in the database as metadata; Git commits don't carry them. |
-| Facts for an entity under a folder access rule that has no page yet | Kept database-only: such an entity is never named on the world-readable `memory/unattributed` page. Doctor's `strict_facts_outside_git` counts them and `gbrain repair facts-home` lists them as `folder_restricted`. |
+| Facts held for an entity under a folder that is database-only | Held on that folder's holding page, which is database-only like the entity's own page would be. |
 
 A file under a Git LFS rule is refused with `git_lfs_not_enabled` unless
 `storage.git_lfs` is on and the checkout configures the LFS filter; the door
@@ -260,17 +292,18 @@ gbrain sources reindex <source-id> --from-git               # preview the re-der
 gbrain sources reindex <source-id> --from-git --apply --expect <hash>
 ```
 
-Facts that were held on `memory/unattributed` come back from its file with the
-entity they were saved for. Back up the database as well: Git does not hold the
+Facts that were held on `memory/unattributed` or on a folder's holding page
+(`<folder>/memory/unattributed`) come back from its file with the entity they
+were saved for. Back up the database as well: Git does not hold the
 database-only classes, the write receipts or the other operational records.
 
 ## What doctor and status show
 
 | Where | What it tells you |
 |---|---|
-| `gbrain doctor` → `git_index_lag` | Per strict source, how many commits and seconds the index trails HEAD. It warns once the oldest unindexed commit is older than 900 s (`GBRAIN_DOCTOR_GIT_INDEX_LAG_WARN_SECONDS`), and its fix is `gbrain sync --source <id> --no-pull`. Until then, search and reads show the older version. |
-| `gbrain doctor` → `strict_facts_outside_git` | Per strict source, the facts with no Git home, the facts held on `memory/unattributed` for more than 30 days, and held facts that cannot move (with the reason, or the candidate pages of a bare name). It warns when any is non-zero, and its fix is the read-only preview of [`gbrain repair facts-home`](repair.md#facts-home). A source that is not strict is not judged. |
-| `gbrain doctor` → `db_ahead_of_git` | The git-gap totals for every source with a checkout, strict or not, with each source's live pages (a scan the budget stopped reads `PARTIAL, <read> of <live> live page(s) read`). Informational: always ok. Bounded by `GBRAIN_DOCTOR_GIT_GAP_TIMEOUT_MS` (10 s by default). |
+| `gbrain doctor` → `git_index_lag` | Per strict source, how many commits and seconds the index trails HEAD. It warns once the oldest unindexed commit is older than 900 s (`GBRAIN_DOCTOR_GIT_INDEX_LAG_WARN_SECONDS`), and its fix is `gbrain sync --source <id> --no-pull`. Until then, search and reads show the older version. A lag it cannot read is a warning with health unknown, never ok. |
+| `gbrain doctor` → `strict_facts_outside_git` | Per strict source, the facts with no Git home, the facts held on a holding page for more than 30 days, and held facts that cannot move (with the reason, or the candidate pages of a bare name). It warns when any is non-zero, and its fix is the read-only preview of [`gbrain repair facts-home`](repair.md#facts-home). Its page walk covers the same 800 most recently changed pages as `db_ahead_of_git` and names that window; a census the budget stopped or could not run, or a fenced fact on a page older than the window, is a warning with health unknown, never ok. A source that is not strict is not judged. |
+| `gbrain doctor` → `db_ahead_of_git` | The git-gap totals for every source with a checkout, strict or not, over the 800 most recently changed pages of each source, with how far back that reached (`checked the 800 most recently changed of <live> live page(s), back to <time>`); `gbrain sources git-gap <id>` reads every page. The gap is informational and never warns; a scan the budget stopped (`PARTIAL, <read> of <live> live page(s) read`) or a source that could not be compared is a warning with health unknown, never ok. Bounded by `GBRAIN_DOCTOR_GIT_GAP_TIMEOUT_MS` (10 s by default). |
 | `gbrain sources git-gap <id> [--sample n] [--json]` | Each page's state against HEAD: `equal`, `database_ahead`, `git_ahead`, declared or undeclared database-only, `worktree_only`, `unparseable`, `unsafe_path`, with a sample of paths, the source's `live_pages`, and `direction_evidence` for differing pages with no import record. Read-only. |
 | `gbrain sources reindex <id> --from-git` | A preview of every database version Git would replace, bound to HEAD by a hash; `--apply --expect <hash>` runs that pass. Use it to re-derive a strict source's index on purpose. |
 | `gbrain sync status --source <id> --json` | The sync pass that indexes commits: state, reason and the last error. |

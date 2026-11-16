@@ -97,10 +97,13 @@ export type PriceLookupResult =
  * so `azure-openai:<model>` falls back to the `openai:<model>` row. An alias
  * (not duplicated rows) so new openai entries never drift from their Azure
  * twins. A model with no twin in the alias target stays `unknown` — fail
- * closed rather than fabricate a rate.
+ * closed rather than fabricate a rate. OpenRouter names Voyage's models
+ * `voyageai/<model>` and bills Voyage's rates (#7034), so the nested
+ * `voyageai` vendor falls back to the `voyage:<model>` row.
  */
 const EMBEDDING_PROVIDER_ALIASES: Record<string, string> = {
   'azure-openai': 'openai',
+  voyageai: 'voyage',
 };
 
 /**

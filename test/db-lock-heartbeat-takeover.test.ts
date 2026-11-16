@@ -143,10 +143,13 @@ describe('event-loop yield keeps timers alive (commit 8 mechanism)', () => {
       // Mirror the import loop's maybeYield: setTimeout(0) enters the timers
       // phase, so the setInterval heartbeat can fire mid-loop. (A setImmediate
       // loop starves the timers phase in Bun — the reason maybeYield uses
-      // setTimeout, not setImmediate.) Bound by wall-clock so the 2ms interval
-      // has real time to fire.
+      // setTimeout, not setImmediate.) The loop runs until the heartbeat fires,
+      // not for a fixed window: on a loaded runner one pause can outlast any
+      // window, and on waking the pending setTimeout(0), due before the
+      // interval, runs first, so a timed loop could end and clear the interval
+      // before it ever ran. The 5 s cap only bounds a real failure.
       const start = Date.now();
-      while (Date.now() - start < 40) {
+      while (ticks === 0 && Date.now() - start < 5000) {
         await new Promise<void>((r) => setTimeout(r, 0));
       }
     } finally {

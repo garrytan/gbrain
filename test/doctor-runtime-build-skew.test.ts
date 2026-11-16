@@ -17,6 +17,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { VERSION } from '../src/version.ts';
+import { consumerIdentity } from '../src/core/persistence/consumer-heartbeat.ts';
 
 const OLD = '0.60.1.0';
 const OLDER = '0.60.0.9';
@@ -26,10 +27,10 @@ const home = mkdtempSync(join(tmpdir(), 'gbrain-runtime-skew-'));
 const service = { platform: 'linux', home, uid: 501 };
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
-const heartbeat = (over: { kind?: string; pid?: number; version?: string } = {}) => ({
-  host_id: HOST, pid: over.pid ?? 4242, nonce: `n-${over.pid ?? 4242}`, pid_ns: null, kind: over.kind ?? 'serve', mode: 'full',
+const heartbeat = (over: { kind?: string; pid?: number; version?: string; pid_ns?: string | null; boot_id?: string | null; process_start?: string | null } = {}) => ({
+  host_id: HOST, pid: over.pid ?? 4242, nonce: `n-${over.pid ?? 4242}`, pid_ns: over.pid_ns ?? null, kind: over.kind ?? 'serve', mode: 'full',
   started_at: '2026-10-14 05:00:00+00', renewed_at: '2026-10-14 12:00:00+00', restart_required: false, root_barrier_age_ms: null, pool: null,
-  host_json_path: `${INSTALL}/host.json`, persistence_home: INSTALL, minted_under: null, version: over.version ?? VERSION, boot_id: null, process_start: null,
+  host_json_path: `${INSTALL}/host.json`, persistence_home: INSTALL, minted_under: null, version: over.version ?? VERSION, boot_id: over.boot_id ?? null, process_start: over.process_start ?? null,
   renewed_age_ms: '2000', age_ms: '25200000' });
 const childLine = (workerPid: number, workerVersion: string) => jobChildBuildVerdict(JSON.stringify({ version: workerVersion, protocol_version: CHILD_READINESS_PROTOCOL_VERSION,
   features: ['local-configuration-outcome-v1', 'postgres-cancellation-v1'] }), workerPid)!.note;
@@ -99,6 +100,22 @@ describe('doctor runtime_build_skew', () => {
     expect(check.status).toBe('fail');
     expect(check.message).toContain('By hand: restart with `gbrain jobs supervisor stop`');
     expect(check.message).toContain('gbrain jobs supervisor start --detach');
+  });
+
+  // GST-2688: a serve stopped on SIGTERM whose old build never deletes its heartbeat row still reads as renewed for
+  // up to 30 s. A row this process can prove dead (same boot and pid namespace, pid gone) is not a running build;
+  // a row it cannot prove dead still counts, so the check never goes quiet on a live second build.
+  const self = consumerIdentity();
+  test.skipIf(!self.boot_id || !self.pid_ns || !self.start)('a freshly renewed row whose process has exited is not a running build', async () => {
+    const exited = Bun.spawnSync(['true']).pid;
+    const markers = { pid_ns: self.pid_ns, boot_id: self.boot_id, process_start: '1' };
+    const check = await runtimeBuildSkewCheck(stub([heartbeat({ pid: exited, version: OLD, ...markers }), heartbeat()]).engine, HOST, sources(), service);
+    expect(check.status).toBe('ok');
+    expect(check.details).toMatchObject({ count: 0, builds: [VERSION], processes: [{ role: 'serve', pid: 4242, version: VERSION }] });
+    const alive = await runtimeBuildSkewCheck(stub([heartbeat({ pid: process.pid, version: OLD, pid_ns: self.pid_ns, boot_id: self.boot_id, process_start: self.start }), heartbeat()]).engine,
+      HOST, sources(), service);
+    expect(alive.status).toBe('fail');
+    expect(alive.message).toContain(`serve pid ${process.pid} v${OLD}`);
   });
 
   test('job children of a worker that is gone are history, not a warning; an unrecorded build is named', async () => {

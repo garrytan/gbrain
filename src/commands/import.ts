@@ -15,7 +15,7 @@ import type { TwinCheck } from '../core/sync-twins.ts';
 import { importFile, importImageFile, isImageFilePath, type ImportResult } from '../core/import-file.ts';
 import { gitFirstCommitDates } from '../core/git-first-commit.ts';
 import { gitLsFiles } from '../core/git-visible-files.ts';
-import { currentCompanyBrainSync, getCompanyBrainProfile, importCompanyBrainFile } from '../core/company-brain/profile.ts';
+import { currentCompanyBrainSync, importCompanyBrainFile } from '../core/company-brain/profile.ts';
 import { loadConfig, gbrainPath } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -45,13 +45,14 @@ import { realpathOrResolve } from '../core/path-confine.ts';
 import { slog } from '../core/console-prefix.ts';
 import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 import { importAnalyzeEveryPages, maybeRefreshPlannerStats, PLANNER_STATS_REPAIR_COMMAND } from '../core/planner-stats.ts';
-import { importManagedFile, nextImportBatch, settleManagedImportBatch } from '../core/persistence/import-mutations.ts';
+import { importManagedFile, managedImportWriteThroughRefusal, nextImportBatch, settleManagedImportBatch } from '../core/persistence/import-mutations.ts';
 import { acceptedPendingReceipt } from '../core/persistence/accepted-pending.ts';
 import { estimateCostFromChars, lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
 import { getEmbeddingModel } from '../core/ai/gateway.ts';
 import { managedRootMarkerFor } from '../core/persistence/root-registry.ts';
 import { readManagedMode } from '../core/persistence/ownership.ts';
 import { readPageBodyPolicy } from '../core/page-body/limits.ts';
+import { importSourceRefusal } from './import-source-refusal.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
 export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
@@ -312,7 +313,7 @@ export async function runImport(
   const inheritedSignal = currentSourceFilesystemSignal();
   const signal = opts.signal && inheritedSignal ? AbortSignal.any([opts.signal, inheritedSignal]) : opts.signal ?? inheritedSignal;
   signal?.throwIfAborted();
-  const noEmbed = args.includes('--no-embed');
+  const noEmbed = args.includes('--no-embed') || args.includes('--calls');
   const allowNoncanonicalRoot = args.includes('--allow-noncanonical-root');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
@@ -470,10 +471,8 @@ export async function runImport(
       }
     }
   }
-  if (!currentCompanyBrainSync(sourceId) && await getCompanyBrainProfile(engine, sourceId ?? 'default')) {
-    console.error('This source accepts only its approved committed company-brain manifest. Use sources resume or sync; ordinary import cannot write back to this read-only repository.');
-    throw new ImportAbortError('company-brain sources require approved committed ingestion');
-  }
+  const refusedSource = await importSourceRefusal(engine, sourceId);
+  if (refusedSource) throw new ImportAbortError(refusedSource);
   let importActivePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> } | undefined;
   try {
     const { loadActivePackForEngine } = await import('../core/schema-pack/engine-resolution.ts');
@@ -489,11 +488,7 @@ export async function runImport(
   // v0.22.13 (PR #490 Q2): shared parseWorkers helper rejects bad input
   // (--workers 0, -3, "foo") with a loud error instead of silently falling
   // through to 1. Mirrors sync.ts's flag handling.
-  const {
-    clampWorkersForConnectionBudget,
-    parseWorkers,
-    resolveMaxConnections,
-  } = await import('../core/sync-concurrency.ts');
+  const { clampWorkersForConnectionBudget, parseWorkers, resolveMaxConnections } = await import('../core/sync-concurrency.ts');
   let workerCount: number;
   try {
     workerCount = parseWorkers(workersArg ?? undefined) ?? 1;
@@ -506,10 +501,10 @@ export async function runImport(
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
   if (sourceIdIdx !== -1) flagValues.add(sourceIdIdx + 1);
   if (sourceIdx !== -1) flagValues.add(sourceIdx + 1);
-  const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i) && args[i - 1] !== '--access-policy');
+  const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i) && args[i - 1] !== '--access-policy' && args[i - 1] !== '--prefix');
 
   if (!dirArg) {
-    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source <id> | --source-id <id>] [--access-policy <exported-source>|none] [--include-gitignored] [--allow-noncanonical-root] [--json]');
+    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source <id> | --source-id <id>] [--access-policy <exported-source>|none] [--include-gitignored] [--allow-noncanonical-root] [--calls [--prefix <slug prefix>]] [--json]');
     throw new ImportAbortError('no import directory given');
   }
   // #1728: capture the import target ONCE as an absolute real path. Every
@@ -521,13 +516,18 @@ export async function runImport(
   try {
     dir = resolveImportTargetDir(dirArg);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error(`Import target is not readable: ${dirArg} (${msg})`);
+    console.error(`Import target is not readable: ${dirArg} (${e instanceof Error ? e.message : String(e)})`);
     throw new ImportAbortError(`import target not readable: ${dirArg}`);
   }
+  if (args.includes('--calls')) return (await import('./import-calls.ts')).runCallImport(engine, dir, args, { sourceId, json: jsonOutput });
 
   const managedImport = await readManagedMode(engine);
   if (managedImport && dir !== resolve(dirArg)) throw symlinkedRootAbort(dirArg, dir);
+  const preAdmission = managedImport && !opts.managedBookmark && !currentCompanyBrainSync(sourceId) ? await managedImportWriteThroughRefusal(engine, sourceId ?? 'default') : null;
+  if (preAdmission) {
+    console.error(`Error [${preAdmission.code}]: ${preAdmission.message}\nFix: ${preAdmission.suggestion}`);
+    throw new ImportAbortError(preAdmission.message, 1, undefined, preAdmission);
+  }
   const singleFile = managedImport && lstatSync(dir).isFile();
   const importRoot = singleFile ? dirname(dir) : dir;
 

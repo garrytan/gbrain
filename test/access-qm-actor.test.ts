@@ -124,7 +124,8 @@ for (const kind of testBackends()) {
         clients[name] = { id: c.clientId, secret: c.clientSecret ?? '', token: '' };
         return c.clientId;
       };
-      await bindCredential(engine, { kind: 'client', id: await register('qm') }, { attestActor: 'qm', attestOps: ATTEST_OPS });
+      // GST-363: these attest credentials' calls without x-qm-actor read unscoped on purpose on this several-member brain.
+      await bindCredential(engine, { kind: 'client', id: await register('qm') }, { attestActor: 'qm', attestOps: ATTEST_OPS, readsUnscoped: true });
       await register('plain');
       await bindCredential(engine, { kind: 'client', id: await register('defaults') }, { attestActor: 'qm' });
       await register('code', ['authorization_code']);
@@ -137,7 +138,7 @@ for (const kind of testBackends()) {
       await engine.executeRaw("UPDATE oauth_clients SET private_pages = 'granted_sources' WHERE client_id = $1", [clients.qm!.id]);
       const minted = await mintLegacyToken(engine, { name: 'qm-legacy', scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [SRC] });
       tokens.legacy = { id: minted.id, token: minted.token };
-      await bindCredential(engine, { kind: 'token', id: minted.id }, { attestActor: 'qm', attestOps: ATTEST_OPS });
+      await bindCredential(engine, { kind: 'token', id: minted.id }, { attestActor: 'qm', attestOps: ATTEST_OPS, readsUnscoped: true });
       await rescopeLegacyToken(engine, parseRescopeTokenArgs(['qm-legacy', '--private-pages', 'granted-sources']));
       await linkMember(engine, 'alice-example', 'qm', ALICE_ID);
       await linkMember(engine, 'alice-example', 'qm', OIDC_ID);
@@ -513,7 +514,7 @@ for (const kind of testBackends()) {
         ['commit_page_upload', { upload_id: 'x' }], ['abort_page_upload', { upload_id: 'x' }],
         ['put_raw_data', { slug: PAGES.alice.slug, source: 'crm-example', data: {} }],
         ['extract_entities', { text: 'Alice met Bob.' }], ['ontology_propose', { subject: PAGES.alice.slug, fact: 'x' }],
-        ['confirm_memory', { ref: 'p:' + SRC + '/' + PAGES.alice.slug }], ['loops_close', { id: 1 }],
+        ['confirm_memory', { ref: 'p:' + SRC + '/' + PAGES.alice.slug }], ['promote_guest_note', { slug: PAGES.alice.slug }], ['loops_close', { id: 1 }],
         ['questions_pin', { question: 'x?' }], ['questions_refresh', { id: 1 }], ['questions_unpin', { id: 1 }],
         // Shared rows with no page: answer feedback, the ingest log and loop suppression.
         ['rate_answer', { answer_id: 'x', rating: 'up' }], ['log_ingest', { source_type: 'note', source_ref: 'x', pages_updated: [], summary: 'x' }],

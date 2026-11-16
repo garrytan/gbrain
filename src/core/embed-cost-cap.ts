@@ -17,6 +17,8 @@ export interface EmbedCostCap {
   readonly signal: AbortSignal;
   /** The cap's refusal once the run reached it; null while under it. */
   hit(): BudgetExhausted | null;
+  /** Dollars the run has spent under the cap so far. */
+  spent(): number;
   metered<T>(fn: () => Promise<T>): Promise<T>;
 }
 
@@ -50,6 +52,7 @@ export function embedCostCap(capUsd: number | null | undefined, capSource: CapSo
     hit: () => refusal ?? (controller.signal.aborted
       ? new BudgetExhausted(`embed reached its $${capUsd.toFixed(2)} cost cap`, { reason: 'cost', spent: tracker.totalSpent, cap: capUsd })
       : null),
+    spent: () => tracker.totalSpent,
     metered: fn => withBudgetTracker(tracker, fn),
   };
 }

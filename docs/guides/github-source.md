@@ -156,7 +156,11 @@ pull requests, issue comments, PR reviews, PR review comments, labels,
 milestones, assignees, check runs, check suites, workflow runs. Each event
 submits a targeted `sync` job that refreshes exactly the item that changed
 (check events resolve the linked PR from the payload; events without an
-item reference are acknowledged and skipped). Push events follow the
+item reference are acknowledged and skipped). When 50 item refreshes are
+already waiting for the source, the event is refused with 429
+`webhook_backlog_full`; redeliver it from the webhook's Recent Deliveries
+once the queue drains, or let the next sweep catch it. A refresh that finds
+another sync of the source running is retried after it. Push events follow the
 git-source behavior.
 
 Without a public URL, use a tunnel (Tailscale Funnel, ngrok, or any HTTPS

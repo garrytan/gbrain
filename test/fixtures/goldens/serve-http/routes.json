@@ -34,6 +34,14 @@
     },
     {
       "handlers": [
+        "mcpForegroundMiddleware"
+      ],
+      "method": "use",
+      "path": "/mcp",
+      "when": []
+    },
+    {
+      "handlers": [
         "cors(corsOAuthOptions)"
       ],
       "method": "use",

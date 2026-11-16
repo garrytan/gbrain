@@ -32,7 +32,8 @@
 
 import type { QueryIntent } from './query-intent.ts';
 import type { SearchResult } from '../types.ts';
-import { containsTokenRun, isTitleMentionedInQuery, titleAsQuerySubject, tokenizeTitle } from './title-match.ts';
+import { containsTokenRun, contentTokenCount, isTitleMentionedInQuery, isTitlePhraseMatch, titleAsQuerySubject, titleNameVariants, tokenizeTitle } from './title-match.ts';
+import { isIdentityEntity } from '../entities/resolve.ts';
 
 /**
  * Weight adjustments to apply for a classified intent. All factors are
@@ -189,6 +190,28 @@ export function applyTitleMentionBoost(results: SearchResult[], query: string): 
     if (all.some((other) => other.length > tokens.length && containsTokenRun(other, tokens))) continue;
     r.score *= TITLE_MENTION_BOOST;
     r.exact_match_boost = TITLE_MENTION_BOOST;
+  }
+}
+
+/**
+ * Opt-in qualified title boost (`search.title_qualified`): a person or company
+ * page whose title (2+ content tokens) is mentioned inside the query, or
+ * inside a given-name variant of it, gets `factor` (the title boost) and the
+ * `title_mention_boost` stamp. Rows the title-phrase boost would match keep
+ * that stage's floor, and a row an identity boost already raised
+ * (`exact_match_boost`) is skipped, so boosts never stack. No floor: the row
+ * is in the caller's pool already. Caller re-sorts.
+ */
+export function applyQualifiedTitleBoost(results: SearchResult[], query: string, factor: number): void {
+  if (!query || !Number.isFinite(factor) || factor <= 1.0) return;
+  const queries = [query, ...titleNameVariants(query)];
+  for (const r of results) {
+    const title = r.title ?? '';
+    if (!title || r.exact_match_boost !== undefined || !Number.isFinite(r.score)) continue;
+    if (!isIdentityEntity(r.slug, r.type) || contentTokenCount(title) < 2) continue;
+    if (queries.some(q => isTitlePhraseMatch(q, title)) || !queries.some(q => isTitleMentionedInQuery(q, title))) continue;
+    r.score *= factor;
+    r.title_mention_boost = factor;
   }
 }
 

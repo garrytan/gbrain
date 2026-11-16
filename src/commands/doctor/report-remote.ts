@@ -66,6 +66,7 @@ import {
   multiSourceDriftNotVerified,
 } from './schema-pack-checks.ts';
 import { managedPersistenceEnabled } from '../../core/persistence/ownership.ts';
+import { checkSynopsisTierCoverage } from './checks/synopsis-coverage.ts';
 import { brainScorePlanFix, checkError } from './check-fix.ts';
 import type { RenderContext } from '../../core/agent-output.ts';
 
@@ -436,6 +437,7 @@ export async function doctorReportRemote(
   //   - contextual_retrieval_mode IS NULL (mode never evaluated)
   //   - synopsis-failures audit JSONL entries from the last 7 days
   checks.push(await checkContextualRetrievalCoverage(engine, { sourceIds: opts.sourceIds }));
+  checks.push(await checkSynopsisTierCoverage(engine, { sourceIds: opts.sourceIds }));
   checks.push(await checkProjectionReadiness(engine, {
     sourceIds: opts.sourceIds,
     excludePrivate: await resolveExcludePrivatePages(engine, opts.remote),

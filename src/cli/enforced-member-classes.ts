@@ -44,17 +44,17 @@ const REFUSED_OPS = [
   'questions_status', 'rank_entities', 'recall', 'request_tools', 'resolve_slugs', 'schema_explain_type', 'schema_graph',
   'schema_lint', 'schema_review_orphans', 'schema_stats', 'search_by_image', 'search_modes', 'sync_brain_skills',
   'synthesize', 'takes_calibration', 'takes_list', 'takes_scorecard', 'takes_search', 'volunteer_chronicle',
-  'volunteer_context', 'wanted_pages',
+  'volunteer_context', 'wanted_pages', 'storage_find', 'storage_get', 'storage_list',
   // hidden operations: no CLI path reaches them (their CLI names are CLI-only commands or gbrain call)
   'advisor', 'code_blast', 'code_callees', 'code_callers', 'code_def', 'code_flow', 'code_refs', 'find_anomalies',
   'find_experts', 'find_orphans', 'get_recent_salience', 'sources_list', 'sources_resolve_path', 'sources_status', 'think',
-  'capture', 'list_page_purges', 'list_watches', 'purge_fact', 'unpurge_page', 'unwatch', 'watch_job', 'connectors_status',
+  'capture', 'list_page_purges', 'list_watches', 'purge_fact', 'unpurge_page', 'unwatch', 'watch_job', 'watch_write_request', 'watch_cron', 'accept_wakeshift_terms', 'connectors_status',
   'get_recent_transcripts', 'sources_inspect', 'sources_add', 'sources_remove', 'connector_sync',
   'code_traversal_cache_clear', 'migrate_embeddings', 'purge_deleted_pages', 'sync_brain',
   // writes outside the checked set: batch, upload, label, history, fact and queue writes
   'abort_page_upload', 'begin_page_upload', 'commit_page_upload', 'get_page_upload', 'upload_page_part', 'put_pages',
   'put_raw_data', 'put_skill', 'delete_skill', 'delete_page', 'restore_page', 'revert_version', 'cancel_write_request',
-  'list_write_requests', 'confirm_memory', 'extract_entities', 'extract_facts', 'forget',
+  'list_write_requests', 'confirm_memory', 'promote_guest_note', 'extract_entities', 'extract_facts', 'forget',
   'forget_fact', 'log_ingest', 'loops_close', 'loops_mute', 'loops_unmute', 'memory_conversation_mode', 'memory_propose',
   'memory_write', 'mute_notice', 'ontology_propose', 'questions_pin', 'questions_refresh', 'questions_unpin', 'rate_answer',
   'takes_add', 'takes_resolve', 'takes_supersede', 'takes_update', 'entity_identity_link', 'entity_identity_unlink',
@@ -66,7 +66,7 @@ const REFUSED_OPS = [
   'schema_apply_mutations', 'search_stats', 'search_tune', 'send_job_message', 'set_memory_writeback', 'set_skill_policy',
   'submit_job', 'wait_job', 'chronicle_backfill', 'file_list', 'file_register', 'file_upload', 'file_url', 'file_verify',
   'get_skill_retention', 'import_skill_proposal', 'prune_skill_revisions', 'retain_skill_revision', 'get_agent_job',
-  'submit_agent',
+  'submit_agent', 'storage_register', 'storage_update',
 ] as const;
 
 export const OPERATION_CLASSES: Readonly<Record<string, EnforcedClass>> = Object.freeze(Object.fromEntries([
@@ -115,7 +115,7 @@ export const CLI_COMMAND_CLASSES: Readonly<Record<string, EnforcedClass | Enforc
     'advisor', 'conversation-parser', 'edges-backfill', 'whoknows', 'brainstorm', 'lsd', 'skillopt', 'calibration',
     'transcripts', 'models', 'takes', 'onboard', 'founder', 'think', 'notability-eval', 'waiting', 'loops',
     'questions', 'edge-proposals', 'memory-proposals', 'core', 'connectors', 'wakeshift', 'pages', 'quarantine', 'beliefs',
-    'trust', 'watch', 'storage', 'code-def', 'code-refs', 'reindex-code', 'reindex-search-vector', 'reindex-frontmatter',
+    'trust', 'guests', 'watch', 'storage', 'code-def', 'code-refs', 'reindex-code', 'reindex-search-vector', 'reindex-frontmatter',
     'backfill', 'code-callers', 'code-callees', 'repos',
   ].map(n => [n, 'refused' as const])),
 };

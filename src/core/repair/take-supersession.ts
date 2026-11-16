@@ -46,6 +46,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { TAKES_FENCE_BEGIN, parseTakesFence, type ParsedTake } from '../takes-fence.ts';
+import { countOutsideCode } from '../fence-scan.ts';
 import { takesPreparation } from '../takes-write.ts';
 import { afterCursor, repairRequestId, type RepairCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairScope } from './core.ts';
 
@@ -162,7 +163,7 @@ async function readPage(engine: BrainEngine, page: TakePage): Promise<PageState>
   const snapshot = await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
   if (!snapshot) return null;
   const content = serializePageToMarkdown(snapshot.page, snapshot.tags);
-  if (content.split(TAKES_FENCE_BEGIN).length !== 2) return { skipped: 'unparsed' };
+  if (countOutsideCode(content, TAKES_FENCE_BEGIN) !== 1) return { skipped: 'unparsed' };
   const parsed = parseTakesFence(content);
   if (parsed.warnings.length || !parsed.takes.length) return { skipped: 'unparsed' };
   const stored = await engine.executeRaw<{ row_num: number; superseded_by: number | null }>(

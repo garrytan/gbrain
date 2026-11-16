@@ -14,7 +14,7 @@
  *     member, one bound key per member in a 0600 file) and proves the labels with one bound read per member
  *     per other member (`gbrain find people/<other>/ --as <member> --json`): none returns a page.
  */
-import { existsSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { openclawStateDir } from '../core/setup/brain-first.ts';
@@ -22,17 +22,29 @@ import { opError, OperationError } from '../core/ops/contract.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
 import { readRoster, rosterEmpty, type ServesReceipt, type ServesStatus, receiptLines, receiptOk } from './access-serves.ts';
 
-export interface ServesFlags { serves?: 'one' | 'several'; members?: string; membersFile?: string; source?: string; stdioMember?: string; dryRun: boolean }
+export interface ServesFlags { serves?: 'one' | 'several'; members?: string; membersFile?: string; source?: string; stdioMember?: string; labelledOnly?: boolean; dryRun: boolean }
 
 /** GST-363: the --stdio-member this harness entry will carry (member) and the one it carries now (previous). */
 export interface EntryBinding { member: string | null; previous: string | null }
 
-/** A harness installed on this host whose stdio sessions serve several conversations (OpenClaw, Hermes), or null. */
+/**
+ * A harness installed on this host whose stdio sessions serve several conversations (OpenClaw, Hermes), or null.
+ * A `hermes` on PATH counts only as a script (the Hermes agent's launcher): React Native ships a compiled JavaScript
+ * engine under the same name.
+ */
 export function sharedStdioHarness(): string | null {
-  const onPath = (bin: string) => { try { return !!Bun.which(bin, { PATH: process.env.PATH ?? '' }); } catch { return false; } };
-  if (onPath('openclaw') || existsSync(openclawStateDir())) return 'OpenClaw';
-  if (onPath('hermes') || existsSync(process.env.HERMES_HOME?.trim() || join(homedir(), '.hermes'))) return 'Hermes';
+  const which = (bin: string) => { try { return Bun.which(bin, { PATH: process.env.PATH ?? '' }); } catch { return null; } };
+  if (which('openclaw') || existsSync(openclawStateDir())) return 'OpenClaw';
+  if (isScript(which('hermes')) || existsSync(process.env.HERMES_HOME?.trim() || join(homedir(), '.hermes'))) return 'Hermes';
   return null;
+}
+
+function isScript(path: string | null): boolean {
+  if (!path) return false;
+  try {
+    const fd = openSync(path, 'r');
+    try { const head = Buffer.alloc(2); return readSync(fd, head, 0, 2, 0) === 2 && head.toString('latin1') === '#!'; } finally { closeSync(fd); }
+  } catch { return false; }
 }
 
 export interface ProofLine { member: string; own: number; leaked: string[] }
@@ -70,7 +82,7 @@ export function servesRoster(flags: ServesFlags, harness: string): string[] | Op
 
 /** The brain's serves view through a child, or the child's error when it cannot read the brain. */
 export function readServesStatus(launcher: string): { status: ServesStatus } | { error: string } {
-  const r = child(launcher, ['access', 'serves', '--json']);
+  const r = child(launcher, ['access', 'serves', '--json', '--no-open-pages']);
   const status = r.ok ? parsed<ServesStatus>(r.stdout) : null;
   return status && 'serves' in status ? { status } : { error: (r.stderr || r.stdout).trim() || 'gbrain access serves --json printed nothing' };
 }
@@ -97,7 +109,7 @@ export function servesOneRefusal(status: ServesStatus | null, harness: string, e
 
 /** --serves several: the labelling child (preview on a dry run) and, when applied, one bound read per member. */
 function runServesSeveral(launcher: string, roster: string[], flags: ServesFlags): Omit<ServesOutcome, 'brain_serves'> {
-  const r = child(launcher, ['access', 'serves', 'several', '--members', roster.join(','), ...(flags.source ? ['--source', flags.source] : []), ...(flags.dryRun ? [] : ['--yes']), '--json']);
+  const r = child(launcher, ['access', 'serves', 'several', '--members', roster.join(','), ...(flags.source ? ['--source', flags.source] : []), ...(flags.labelledOnly ? ['--labelled-only'] : []), ...(flags.dryRun ? [] : ['--yes']), '--json']);
   const receipt = parsed<ServesReceipt>(r.stdout);
   if (!receipt || !('members' in receipt)) return { mode: 'several', error: (r.stderr || r.stdout).trim() || 'gbrain access serves several failed' };
   if (flags.dryRun || receipt.error || !receipt.applied) return { mode: 'several', receipt };
@@ -158,7 +170,7 @@ export function servesApply(flags: ServesFlags, launcher: string, harness: strin
   const reread = several && !flags.dryRun ? readServesStatus(launcher) : null;
   const status = reread ? ('status' in reread ? reread.status : null) : plan.status;
   const preview = several && flags.dryRun && status?.serves !== 'several';
-  const view: ServesStatus | null = preview ? { serves: 'several', from: 'config', enabled_members: plan.roster, owner: null, stdio_member: status?.stdio_member ?? null } : status;
+  const view: ServesStatus | null = preview ? { serves: 'several', from: 'config', enabled_members: plan.roster, since: null, owner: null, stdio_member: status?.stdio_member ?? null } : status;
   const stdio = bindStdio(harness, view, entry, flags.dryRun);
   if (!labelled && !stdio) return null;
   const outcome: ServesOutcome = { ...(labelled ?? { mode: 'one' as const }), brain_serves: 'one', ...(stdio ? { stdio } : {}),
@@ -191,12 +203,21 @@ export function servesOk(o: ServesOutcome | null): boolean {
   return !o || (!o.error && (!o.receipt || receiptOk(o.receipt)) && (o.proof ?? []).every(p => p.leaked.length === 0));
 }
 
+/** GST-2670 (F9): the proof covers the people/ folders only, so it names the open pages that member's key still reads. */
+function openTail(r: ServesReceipt | undefined, member: string): string {
+  const open = r?.open_pages;
+  if (!r || r.open_pages === undefined) return '';
+  if (!open) return '; open pages unknown';
+  if (!open.total || r.members.find(m => m.id === member)?.labelled_only || member === open.owner) return '';
+  return `; its keys can also read open pages listed above (${open.total} across the members' sources)`;
+}
+
 export function servesLines(o: ServesOutcome, dryRun: boolean): string[] {
   return [
     ...(o.receipt ? receiptLines(o.receipt).filter(l => !(dryRun && l.startsWith('Nothing written'))) : []),
     ...(o.proof ?? []).map(p => p.leaked.length
       ? `  proof      ${p.member} reads pages of another member's folder: ${p.leaked.join(', ')}`
-      : `  proof      a read bound to ${p.member} sees its own folder (${p.own} page(s)) and no page of another member's folder`),
+      : `  proof      a read bound to ${p.member} sees its own folder (${p.own} page(s)) and no page of another member's folder${openTail(o.receipt, p.member)}`),
     ...(o.stdio ? [`  stdio      ${o.stdio.detail}`] : []),
     ...(o.note ? [`  labels     ${o.note}`] : []),
     ...(o.error ? [`  error      ${o.error}`] : []),

@@ -223,9 +223,13 @@ async function runTypesafe(req: DecideRequest, ctx: DecideContext, cfg: DecideCo
         Object.assign(answers, parsed.answers);
       } catch (err) {
         if (!charged) {
-          inputTokens += batch.estimatedInputTokens;
+          // #7272: a 4xx refusal (402 billing, 401/403 auth, 400/404 model) never ran, so it costs
+          // nothing; 408 and 429 are not refusals of the request itself and 429 is charged above.
+          const refused = err instanceof DecideError && err.status !== undefined && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429;
+          const tokens = refused ? 0 : batch.estimatedInputTokens;
+          inputTokens += tokens;
           const reason = err instanceof DecideError ? err.reason : signal.aborted ? 'timeout' : 'failed';
-          spendRow(batch.estimatedInputTokens, reason === 'timeout' ? 'timeout' : reason === 'malformed_response' ? 'malformed' : 'failed');
+          spendRow(tokens, reason === 'timeout' ? 'timeout' : reason === 'malformed_response' ? 'malformed' : 'failed');
         }
         if (err instanceof RateLimitedError) throw err;
         throw asDecideError(err, signal, req.signal);

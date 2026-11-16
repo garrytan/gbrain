@@ -3,7 +3,7 @@
  * The handler runs under that member's identity with the remote read policy
  * (readers and privacy; GST-2059: the brain owner reads with privacy relaxed, and GST-2490: with access.owner_reads_restricted
  * on, past readers lists and rules too; GBRA-108: a read previews the lineage the member's own credential gets, owner
- * or access.members_read_lineage, and the owner's audience members), while ctx.remote stays false, so upload confinement
+ * or access.members_read_lineage, and the owner's audience members; GBRA-108 design 1: a labelled-only member's grant), while ctx.remote stays false, so upload confinement
  * and write trust are unchanged. An unknown or ill-formed member is refused
  * before any work.
  */
@@ -39,6 +39,7 @@ export async function openAsPreview(engine: BrainEngine, member: string | undefi
   let ownerReadsRestricted: boolean;
   let lineage: boolean;
   let audienceKindMembers: string[];
+  let labelledOnly: boolean;
   try {
     const membersModule = await import('../core/access/members.ts');
     const resolved = await membersModule.memberIdentity(engine, member);
@@ -48,13 +49,14 @@ export async function openAsPreview(engine: BrainEngine, member: string | undefi
     ownerReadsRestricted = owner && await ownerModule.ownerReadsRestrictedOn(engine);
     lineage = readOnly && (owner || await (await import('../core/access/lineage.ts')).membersReadLineageOn(engine));
     audienceKindMembers = owner && lineage ? await membersModule.audienceMemberIds(engine) : [];
+    labelledOnly = !owner && await (await import('../core/access/labelled-only.ts')).labelledOnlyFor(engine, [identity]);
   } catch (e: unknown) {
     await finishCliTeardown({ engine });
     exitCliError(e, command);
   }
   const { withCallerAccess } = await import('../core/search/private-visibility.ts');
   const folder = await (await import('../core/access/caller.ts')).folderAccessFor(engine, identity);
-  const access = { identity, ...folder, applyRemoteReadPolicy: true, hidePrivate: !owner, owner, lineage, ownerReadsRestricted: ownerReadsRestricted && lineage, audienceKindMembers, privateReadableSources: [] };
+  const access = { identity, ...folder, applyRemoteReadPolicy: true, hidePrivate: !owner, owner, lineage, ownerReadsRestricted: ownerReadsRestricted && lineage, audienceKindMembers, labelledOnly, privateReadableSources: [] };
   return {
     run: fn => withCallerAccess(access, fn),
     context: ctx => ({ ...ctx, accessIdentity: identity, applyRemoteReadPolicy: true }),

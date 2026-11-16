@@ -111,7 +111,7 @@ const usd = (c: number) => Math.round(c) / 100;
 
 /** A group's amounts in USD, for envelopes, `jobs get` and `jobs list --group`. */
 export function groupAmounts(record: SpendAuthorization, spend: GroupSpend) {
-  const spent = spend.committedCents + spend.overdueCents;
+  const held = spend.committedCents + spend.overdueCents + spend.liveCents;
   return {
     group_id: record.group_id,
     cap_usd: record.cap_usd,
@@ -119,7 +119,7 @@ export function groupAmounts(record: SpendAuthorization, spend: GroupSpend) {
     spent_usd: usd(spend.committedCents),
     overdue_usd: usd(spend.overdueCents),
     reserved_usd: usd(spend.liveCents + spend.overdueCents),
-    remaining_usd: record.cap_usd === null ? null : usd(Math.max(0, cents(record.cap_usd) - spent)),
+    remaining_usd: record.cap_usd === null ? null : usd(Math.max(0, cents(record.cap_usd) - held)),
   };
 }
 

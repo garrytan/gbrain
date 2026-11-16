@@ -493,9 +493,14 @@ export const failedWritesRepair: RepairHandler = {
           if (write.producer) {
             residuals[`producer_owned:${write.producer}`] = (residuals[`producer_owned:${write.producer}`] ?? 0) + 1;
             const facts = write.operation === 'extract_facts';
-            const run = facts ? await factsRecovery(engine, write, extractions) : producerCommand(write.producer, write.source_id);
-            producers.set(`${write.producer} in ${write.source_id}`, facts ? 'each listed request names the command that recovers its facts' : run);
-            listing.push({ item: label, class: 'producer_owned', detail: facts ? run : `re-run: ${run}` });
+            // GST-2517: only a caller submits a forget, so no gbrain process produces it again.
+            const forget = write.operation === 'forget' || write.operation === 'forget_fact';
+            const run = facts ? await factsRecovery(engine, write, extractions)
+              : forget ? `a caller made this ${write.operation} and nothing produces it again; read the fact, then submit the ${write.operation} again with a new request_id if it is still wanted`
+                : producerCommand(write.producer, write.source_id);
+            producers.set(`${write.producer} in ${write.source_id}`, facts ? 'produced by gbrain itself, not replayed here; each listed request names the command that recovers its facts'
+              : `${forget ? 'made by a caller' : 'produced by gbrain itself'}, not replayed here; ${run}`);
+            listing.push({ item: label, class: 'producer_owned', detail: facts ? run : `${forget ? 'resubmit' : 're-run'}: ${run}` });
             continue;
           }
           const verdict = verdicts.get(write.id)!;
@@ -509,7 +514,7 @@ export const failedWritesRepair: RepairHandler = {
           replay: replay.map(write => ({ id: write.id, digest: write.digest, revision: write.revision })) });
         if (replay.length) await saveApprovedSet<ApprovedWrite>(engine, { command: 'failed-writes', hash }, replay);
         return { items: replay.map((write, index) => item(write, hash, index === replay.length - 1)), preview_hash: hash, residuals, listing,
-          warnings: [...[...producers].map(([what, run]) => `${what}: produced by gbrain itself, not replayed here; ${run}`),
+          warnings: [...[...producers].map(([what, note]) => `${what}: ${note}`),
             ...(replay.length ? [`This preview recorded an approval checkpoint for its replay set (preview ${hash.slice(0, 12)}), which --apply --expect reads; no page content changed.`] : [])] };
       } catch (error) {
         throw await previewTimeoutRefusal(engine, error, scope);

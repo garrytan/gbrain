@@ -13,6 +13,7 @@
  *      + salience ×1.05 (mattering)             ← when salience_boost > 1
  *      + recency  ×1.00 (no decay applied)      ← when recency_boost > 1
  *      + exact-match ×1.50                      ← when exact_match_boost > 1
+ *      + title-mention ×1.25                    ← when title_mention_boost > 1
  *      + adjacency ×1.05 (hits=3)               ← when graph_adjacency_boost set
  *      + cross_source ×1.10 (other_sources=2)   ← when graph_cross_source_boost set
  *      - session_demote ×0.95 (prefix=chat/x)   ← when session_demote_factor set
@@ -80,6 +81,10 @@ export function formatResultExplain(
   if (result.exact_match_boost !== undefined && result.exact_match_boost !== 1.0) {
     anyBoost = true;
     lines.push(`   + exact-match ×${fmt(result.exact_match_boost)}`);
+  }
+  if (result.title_mention_boost !== undefined && result.title_mention_boost !== 1.0) {
+    anyBoost = true;
+    lines.push(`   + title-mention ×${fmt(result.title_mention_boost)}`);
   }
   if (result.graph_adjacency_boost !== undefined) {
     anyBoost = true;
@@ -258,6 +263,7 @@ export function buildScoreDetails(result: SearchResult): ScoreDetails {
   add('recency', result.recency_boost);
   add('chronicle', result.chronicle_boost);
   add('title', result.title_match_boost);
+  add('title_mention', result.title_mention_boost);
   add('adjacency', result.graph_adjacency_boost, { hits: result.graph_adjacency_hits });
   add('cross_source', result.graph_cross_source_boost, { other_sources: result.graph_cross_source_hits });
   add('session_demote', result.session_demote_factor, { prefix: result.graph_session_prefix });

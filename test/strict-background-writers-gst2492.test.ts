@@ -149,20 +149,21 @@ for (const backend of testBackends()) describe(`[${backend}] background fact wri
     expect(await outsideGit(engine)).toBe(0);
   }));
 
-  test('an entity under a folder access rule is never named on the holding page: its fact stays database-only, or is refused as before', () => brain(true, async ({ engine, ctx, root }) => {
+  test('an entity under a folder access rule is never named on the shared holding page: its fact is held on its folder\'s', () => brain(true, async ({ engine, ctx, root }) => {
     await engine.executeRaw(`INSERT INTO access_policy_state(source_id) VALUES('default') ON CONFLICT DO NOTHING`);
     await engine.executeRaw(`INSERT INTO access_rules(source_id,rule_id,prefix,readable_by,revision) VALUES('default','r1','secret/',ARRAY['member:alice-example'],1)`);
     __resetPrivateVisibilityCacheForTests();
     const before = 'The acquisition target is acme-example.';
     await writeSingleFact(engine, 'default', { fact: before, entity: 'secret/project-x', provenance: 'probe', remote: false } as never);
-    expect(await factRows(engine, before)).toMatchObject([{ entity_slug: 'secret/project-x', row_num: null, active: true }]);
+    expect(await factRows(engine, before)).toMatchObject([{ entity_slug: 'secret/project-x', source_markdown_slug: 'secret/memory/unattributed', row_num: 1, active: true }]);
     await seedHoldingPage(ctx);
     await settleManagedGitEffects(engine);
     const after = 'The acquisition closes in the third quarter.';
-    const refused = await writeSingleFact(engine, 'default', { fact: after, entity: 'secret/project-x', provenance: 'probe', remote: false } as never).then(() => null, (error: { code?: string }) => error.code);
-    expect(refused).toBe('git_home_required');
-    expect(await factRows(engine, after)).toEqual([]);
+    await writeSingleFact(engine, 'default', { fact: after, entity: 'secret/project-x', provenance: 'probe', remote: false } as never);
+    expect(await factRows(engine, after)).toMatchObject([{ entity_slug: 'secret/project-x', source_markdown_slug: 'secret/memory/unattributed', active: true }]);
+    await settleManagedGitEffects(engine);
     for (const text of [before, after, 'secret/project-x']) expect(head(root, HOLD_FILE)).not.toContain(text);
+    for (const text of [before, after]) expect(head(root, 'secret/memory/unattributed.md')).toContain(text);
   }));
 
   test('a source that is not strict keeps these facts database-only, as before', () => brain(false, async ({ engine, ctx, root }) => {

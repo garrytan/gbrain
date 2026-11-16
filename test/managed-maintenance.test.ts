@@ -274,7 +274,7 @@ for (const change of ['derived', 'semantic'] as const) {
       const lock = (await acquireWorktree((await getWorktreeBinding(engine, sourceId))!, 5000))!;
       expect(lock).not.toBeNull();
       try {
-        await expect(pendingWait(() => runPhaseConsolidate(engine, { sourceId, minOldestAgeMs: 0 }))).rejects.toMatchObject({ code: 'write_pending' });
+        expect((await pendingWait(() => runPhaseConsolidate(engine, { sourceId, minOldestAgeMs: 0 }))).details).toMatchObject({ buckets_deferred: 1, facts_consolidated: 0 });
         await disposePersistenceConsumer(engine);
       } finally { await lock.release(); }
       const row = (await claimNextWrite(engine, localHostId()))!;
@@ -332,7 +332,7 @@ test('paused owner retains an admitted consolidation and a fresh process publish
     const lock = (await acquireWorktree(binding, 5000))!;
     expect(lock).not.toBeNull();
     try {
-      await expect(pendingWait(() => runPhaseConsolidate(engine, { sourceId, minOldestAgeMs: 0 }))).rejects.toMatchObject({ code: 'write_pending' });
+      expect((await pendingWait(() => runPhaseConsolidate(engine, { sourceId, minOldestAgeMs: 0 }))).details).toMatchObject({ buckets_deferred: 1, facts_consolidated: 0 });
       await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [binding.worktree_id]);
       await disposePersistenceConsumer(engine);
       expect(await engine.executeRaw('SELECT id FROM facts WHERE source_id=$1 AND consolidated_at IS NOT NULL', [sourceId])).toHaveLength(0);
@@ -413,7 +413,7 @@ for (const failure of ['commit', 'withdrawal'] as const) {
       const lock = (await acquireWorktree(binding, 5000))!;
       expect(lock).not.toBeNull();
       try {
-        await expect(pendingWait(() => runPhaseConsolidate(engine, { sourceId, minOldestAgeMs: 0 }))).rejects.toMatchObject({ code: 'write_pending' });
+        expect((await pendingWait(() => runPhaseConsolidate(engine, { sourceId, minOldestAgeMs: 0 }))).details).toMatchObject({ buckets_deferred: 1, facts_consolidated: 0 });
         await disposePersistenceConsumer(engine);
       } finally { await lock.release(); }
       const row = (await claimNextWrite(engine, localHostId()))!;

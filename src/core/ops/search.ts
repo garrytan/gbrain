@@ -50,7 +50,7 @@ import { SAFE_FENCE_CHUNKER_VERSION, chunkManifestReads } from '../search/safe-c
 import { expandEngineTypeFilters } from '../schema-pack/query-types.ts';
 import { reconcileTypeFilter } from './search-type-filter.ts';
 import { probeProjectionReadiness } from '../search/projection-readiness.ts';
-import { countEmbeddingHeld, countPendingProjections, coverageRelevance, type RetrievalCoverage } from '../search/retrieval-coverage.ts';
+import { countEmbeddingHeld, countPendingProjections, countProjectionRebuild, coverageRelevance, type RetrievalCoverage } from '../search/retrieval-coverage.ts';
 import { resolveBoostMap, resolveHardExcludes } from '../search/source-boost.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
 import { QUERY_DESCRIPTION, SEARCH_DESCRIPTION, SEARCH_MATCH_DESCRIPTION } from '../operations-descriptions.ts';
@@ -70,6 +70,7 @@ import type { TrustTier } from '../trust/tier.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import { invalidParam, paramUse, readFix } from './op-fix.ts';
 import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
+import { chooseFill, queryFillPage, withoutFill } from './search-fill.ts';
 import { capVectorOnlyPages, remotePageCap } from '../search/remote-page-cap.ts';
 import {
   parseSourceIdParam,
@@ -210,12 +211,12 @@ async function withEvidence(ctx: OperationContext, p: Record<string, unknown>, r
 
 /** withEvidence + the response meta for the rows actually returned + searchOutput. */
 async function evidenceOutput(ctx: OperationContext, p: Record<string, unknown>, results: SearchResult[], plan: EvidencePlan | null, scope: DeliveryScope,
-  meta: HybridSearchMeta | null, snippetCap: number, timings: SearchTimings, buildMeta: (rows: SearchResult[]) => Promise<Record<string, unknown>>, keepEnumerated = false): Promise<SearchResult[]> {
+  meta: HybridSearchMeta | null, snippetCap: number, timings: SearchTimings, buildMeta: (rows: SearchResult[]) => Promise<Record<string, unknown>>, keepEnumerated = false, delivered?: Awaited<ReturnType<typeof withEvidence>>): Promise<SearchResult[]> {
   return timings.stage('response', async () => {
     // Every returned row is a copy of one of `results`, so their page trust is read alongside evidence delivery.
     const pageTrust = loadPageTrust(ctx.engine, results.filter(r => typeof r.fact_row?.id !== 'number'));
     pageTrust.catch(() => {});
-    const ev = await timings.part('response', 'evidence', () => withEvidence(ctx, p, results, plan, scope, meta));
+    const ev = delivered ?? await timings.part('response', 'evidence', () => withEvidence(ctx, p, results, plan, scope, meta));
     const rows = await timings.part('response', 'trust', () => stampPageTrust(ctx.engine, keepEnumerated ? keepEnumeratedRows(results, ev.rows) : ev.rows, scope.minTrust, pageTrust));
     const responseMeta = await timings.part('response', 'meta', () => buildMeta(rows));
     return searchOutput(ctx, p, rows, responseMeta, snippetCap, timings, ev.evidence);
@@ -420,10 +421,11 @@ async function buildRetrievalResponseMeta(
   const readinessScope = { ...scope, excludePrivate, types: opts.types, excludeSlugPrefixes };
   // #6721: these reads depend on nothing but the inputs above, so they run at once: on a pooled Postgres
   // the wall time is the slowest read's round trips, not their sum. The answer-feedback write still runs last.
-  const [safeIndexPending, [readiness, pendingCount], entityFacts, matchedFacts, held, sourceFreshness, embeddingHeld, filterNotice] = await Promise.all([
+  const [safeIndexPending, [readiness, pendingCount, rebuild], entityFacts, matched, held, sourceFreshness, embeddingHeld, filterNotice] = await Promise.all([
     timed('safe_index', ctx.remote !== false && hasUnsealedPagesInScope(ctx, scope, excludePrivate, { types: opts.types, excludeSlugPrefixes })),
-    timed('readiness', probeProjectionReadiness(ctx.engine, readinessScope).then(async r =>
-      [r, r.status === 'projection_pending' ? await countPendingProjections(ctx.engine, readinessScope, relevance) : null] as const)),
+    timed('readiness', probeProjectionReadiness(ctx.engine, readinessScope).then(async r => r.status === 'projection_pending'
+      ? [r, ...await Promise.all([countPendingProjections(ctx.engine, readinessScope, relevance), countProjectionRebuild(ctx.engine, readinessScope)])] as const
+      : [r, null, null] as const)),
     // Facts saved about the entity the query names come first (newest first, one hop through entities they name).
     timed('entity_facts', opts.entity && ctx.emitResponseMeta ? entitySavedFacts(ctx.engine, opts.entity, { remote: ctx.remote !== false, excludePrivate, minTrust: scope.minTrust }) : []),
     timed('saved_facts', matchingSavedFacts(ctx, scope, queryText, aliases.flatMap(a => [a.name, a.alias]))),
@@ -442,18 +444,39 @@ async function buildRetrievalResponseMeta(
   // A fact the facts arm already returned as a row is not repeated beside the blocks.
   const factRowIds = new Set((results as SearchResult[]).flatMap(r => r.fact_row ? [r.fact_row.id] : []));
   // #7043: a matched fact may copy an entity fact; the merged list collapses again before the response.
-  // An entity fact keeps the corrected_by its matched copy carries, and a label follows its corrector into the collapse.
-  const correctedBy = new Map(matchedFacts.flatMap(m => m.corrected_by ? [[m.id, m.corrected_by] as const] : []));
-  const merged = await collapseFactReads(ctx.engine, [...entityFacts.map(e => ({ ...e, corrected_by: correctedBy.get(e.id) })),
-    ...matchedFacts.filter(m => !entityFacts.some(e => e.id === m.id))].filter(f => !factRowIds.has(f.id)));
+  const merged = await collapseFactReads(ctx.engine, [...entityFacts,
+    ...matched.facts.filter(m => !entityFacts.some(e => e.id === m.id)).map(({ corrected_by: _, ...m }) => m)].filter(f => !factRowIds.has(f.id)));
   const shownAs = new Map([...factRowIds].map(id => [id, id]));
   for (const f of merged) for (const id of f.collapsed_ids ?? [f.id]) shownAs.set(id, f.id);
+  // #7938: the matcher's correction decisions cover facts its cap cut, which the entity facts can bring back. A
+  // corrected fact shows only labelled beside a returned corrector; dropping one can strand a fact it corrected,
+  // so the drop repeats until every remaining label names a returned fact.
+  const correctors = (f: { id: number; collapsed_ids?: number[] }) => (f.collapsed_ids ?? [f.id]).flatMap(id => matched.correctedBy.get(id) ?? []);
+  let visible = merged;
+  for (;;) {
+    const kept = visible.filter(f => { const by = correctors(f); return !by.length || by.some(id => shownAs.has(id) && shownAs.get(id) !== f.id); });
+    if (kept.length === visible.length) break;
+    const keptIds = new Set(kept.map(f => f.id));
+    for (const [id, rep] of shownAs) if (!factRowIds.has(rep) && !keptIds.has(rep)) shownAs.delete(id);
+    visible = kept;
+  }
   // #8042: a lookup failure withholds saved_facts (degraded stage below) rather than return third-party text unquoted.
-  const quotedFacts = await quoteFacts(ctx.engine, merged, ctx.remote !== false).catch(() => null);
-  const savedFacts = (quotedFacts ?? []).map(({ corrected_by, ...f }) => {
-    const by = corrected_by === undefined ? undefined : shownAs.get(corrected_by);
-    return stripCollapseColumns(by === undefined || by === f.id ? f : { ...f, corrected_by: by });
+  const quotedFacts = await quoteFacts(ctx.engine, visible, ctx.remote !== false).catch(() => null);
+  const labelled = (quotedFacts ?? []).map(f => {
+    const by = correctors(f).map(id => shownAs.get(id)).find(id => id !== undefined && id !== f.id);
+    return stripCollapseColumns(by === undefined ? f : { ...f, corrected_by: by });
   });
+  // A corrected fact follows its corrector, as the matcher orders them: the reply's "corrected by a newer saved fact
+  // above" stays true, and its budget, which cuts from the end, never keeps a corrected fact without its corrector.
+  const savedFacts: typeof labelled = [];
+  const placed = new Set(factRowIds);
+  const correctorOf = (f: object) => (f as { corrected_by?: number }).corrected_by;
+  for (let rest = labelled; rest.length;) {
+    const ready = rest.filter(f => correctorOf(f) === undefined || placed.has(correctorOf(f)!));
+    const batch = ready.length ? ready : rest;
+    for (const f of batch) { savedFacts.push(f); placed.add(f.id); }
+    rest = rest.filter(f => !batch.includes(f));
+  }
   const heldTotal = [...heldBySource.values()].reduce((sum, n) => sum + n, 0);
   const embedding = embeddingHeld?.total ? embeddingHeld : null;
   const coverage: RetrievalCoverage | undefined = pending || heldTotal || embedding ? {
@@ -465,13 +488,14 @@ async function buildRetrievalResponseMeta(
       ...(embedding ? { embedding_held: embedding.could_affect } : {}) },
     ...(pending?.capped || embedding?.capped ? { capped: true as const } : {}),
     ...(topHitExact ? { top_hit_exact: true as const } : {}),
+    ...(pending && rebuild ? { rebuild } : {}),
   } : undefined;
   const heldNotice = heldFilesNotice(held.couldAffect === 0 ? [] : heldFiles, ctx.remote !== false, held.couldAffect ?? undefined,
     embedding?.could_affect ? embedding : undefined);
   if (heldNotice) ctx.emitNotice?.(heldNotice);
   const degraded = [...(m?.degraded ?? [])];
   if (safeIndexPending) degraded.push({ stage: 'safe_index_pending' });
-  if (quotedFacts === null && merged.length) degraded.push({ stage: 'saved_facts_withheld' });
+  if (quotedFacts === null && visible.length) degraded.push({ stage: 'saved_facts_withheld' });
   if (readiness.status === 'by_design') degraded.push({ stage: 'projection_by_design' });
   else if (readiness.status !== 'ready') {
     degraded.push({ stage: readiness.status === 'projection_pending' ? 'projection_pending' : 'projection_status_unknown' });
@@ -806,30 +830,52 @@ const search: Operation = {
       ...(plan?.rankCut ? { pageRankCut: plan.rankCut } : {}),
       _timings: timings,
     };
-    const capped = capVectorOnlyPages(await hybridSearchCached(ctx.engine, queryText, {
-      ...searchOpts, onMeta: (m) => { capturedMeta = m; }, explain: p.explain === true, explainTarget: explainPrep?.trace,
-    }).finally(searchDone.resolve), pageCap);
-    const primary = capped.rows;
-    const declarations = new DeclarationMemo();
-    const fanned = offset === 0
-      ? await timings.stage('alias_fanout', () => withAliasFanOut(ctx.engine, primary, queryText, { ...scope, excludePrivate },
-        { excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...scope }, () => declarations.scan(primary, queryText), resolving))
-      : { results: primary };
-    let results = fanned.results.map(r => ({ ...r }));
-    await emitFanoutNotices(ctx, fanned.fanout, scope);
-    results = await keepFrontmatterMatches(ctx.engine, await timings.stage('anchoring', () => anchorOpResults(ctx.engine, p, queryText, results, { ...scope, excludePrivate, requireSafeChunks: ctx.remote !== false, filtered: !!types || !!where, evidencePlan: !!plan })), where);
-    stampDeepResearchIds(results);
+    const found = await hybridSearchCached(ctx.engine, queryText, {
+      ...searchOpts, anyWordFill: true, onMeta: (m) => { capturedMeta = m; }, explain: p.explain === true, explainTarget: explainPrep?.trace,
+    }).finally(searchDone.resolve);
+    // GST-2762: the stages run over the pipeline's rows less the keyless fill (first, with its notices), then over all of them (chooseFill).
+    const opStages = async (hits: SearchResult[], first: boolean) => {
+      const capped = capVectorOnlyPages(hits, pageCap);
+      const primary = capped.rows;
+      const declarations = new DeclarationMemo();
+      const fanned = offset === 0
+        ? await timings.stage('alias_fanout', () => withAliasFanOut(ctx.engine, primary, queryText, { ...scope, excludePrivate },
+          { excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...scope }, () => declarations.scan(primary, queryText), resolving))
+        : { results: primary };
+      let results = fanned.results.map(r => ({ ...r }));
+      if (first) await emitFanoutNotices(ctx, fanned.fanout, scope);
+      results = await keepFrontmatterMatches(ctx.engine, await timings.stage('anchoring', () => anchorOpResults(ctx.engine, p, queryText, results, { ...scope, excludePrivate, requireSafeChunks: ctx.remote !== false, filtered: !!types || !!where, evidencePlan: !!plan })), where);
+      stampDeepResearchIds(results);
+      return { capped, declarations, fanned, results };
+    };
+    const page = await chooseFill(found, await opStages(withoutFill(found), true), limit, hits => opStages(hits, false),
+      t => [t.results, t.fanned.fanout, t.fanned.entity, t.capped.meta], rows => withEvidence(ctx, p, rows, plan, { ...scope, excludePrivate }, capturedMeta));
+    const { capped, declarations, fanned, results } = page;
     const latency_ms = Date.now() - startedAt;
     bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
     maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
     // #3800: cap AFTER capture/meta so eval + cache see the real payload.
     return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, capturedMeta, snippetCap, timings,
       async rows => withCountMeta(withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'search', entity: fanned.entity, filterHintFor: { op: 'search', p }, timings })), ...(fanned.fanout ? { fanout: fanned.fanout } : {}), ...(capped.meta ? { page_cap: capped.meta } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'search', capturedMeta?.degraded)),
-        keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount), offset + limit)));
+        keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount), offset + limit)), false, page.delivered);
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'search', positional: ['query'] },
 };
+
+/** GST-2762: the query op's stages after retrieval, run over the rows without the keyless fill (first, with its notices) and again with them (queryFillPage). */
+function queryOpStages(ctx: OperationContext, p: Record<string, unknown>, queryText: string, { pageCap, timings, querySourceScope, excludePrivate, types, where, plan, queryEmbedding, resolving }: { pageCap: Parameters<typeof capVectorOnlyPages>[1];
+  timings: SearchTimings; querySourceScope: SourceScope; excludePrivate: boolean; types?: string[]; where?: ReturnType<typeof whereOpParam>; plan: EvidencePlan | null; queryEmbedding: Float32Array | null; resolving: ReturnType<typeof startEntityResolution> }) {
+  return async (hits: SearchResult[], first: boolean) => {
+    const { rows: primaryRows, meta: pageCapMeta } = capVectorOnlyPages(hits, pageCap);
+    const declarations = new DeclarationMemo();
+    const fanned = await timings.stage('alias_fanout', () => withAliasFanOut(ctx.engine, primaryRows, queryText, { ...querySourceScope, excludePrivate },
+      { excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...querySourceScope }, () => declarations.scan(primaryRows, queryText), resolving));
+    if (first) await emitFanoutNotices(ctx, fanned.fanout, querySourceScope);
+    const results = await applyQueryArms(ctx.engine, p, queryText, fanned.results, { ...querySourceScope, excludePrivate, requireSafeChunks: ctx.remote !== false, filtered: !!types || !!where, evidencePlan: !!plan, evidenceBudget: plan?.budgetTokens, remote: ctx.remote !== false, queryEmbedding, rowCap: () => resolveEffectiveLimit(ctx, p), timer: timings });
+    return { pageCapMeta, declarations, fanned, results, grade: gradeRetrievalConfidence(results, { query: queryText }) };
+  };
+}
 
 const query: Operation = {
   name: 'query',
@@ -1013,7 +1059,7 @@ const query: Operation = {
     // token budget and intent weighting apply at the operation boundary.
     // Semantic cache reuse is suspended in the wrapper.
     // (#1663: `let` — the CRAG gate below may swap in an escalated run.)
-    let { rows: results, meta: pageCapMeta } = capVectorOnlyPages(await hybridSearchCached(ctx.engine, queryText, {
+    const found = await hybridSearchCached(ctx.engine, queryText, {
       // #4356 — was a hard `|| 20`, independent of the mode-resolution
       // hybridSearchCached applies when `limit` is falsy (undefined OR 0):
       // `opts?.limit || resolvedMode.searchLimit` (hybrid.ts). Passing
@@ -1051,7 +1097,7 @@ const query: Operation = {
       intentWeighting: typeof p.intent_weighting === 'boolean' ? (p.intent_weighting as boolean) : undefined,
       // v0.36 cross-modal routing param.
       crossModal: p.cross_modal as 'text' | 'image' | 'both' | 'auto' | undefined,
-      onMeta: (m) => { capturedMeta = m; }, onQueryEmbedding: (e) => { queryEmbedding = e; },
+      anyWordFill: true, onMeta: (m) => { capturedMeta = m; }, onQueryEmbedding: (e) => { queryEmbedding = e; },
       // v0.36 (D15): per-call embedding column override. Resolver rejects
       // unknown names at hybrid entry with EmbeddingColumnNotRegisteredError;
       // the error surfaces back to the agent as the op error envelope.
@@ -1068,13 +1114,10 @@ const query: Operation = {
       // v0.43 — relational recall override. Omitted = smart default (mode bundle).
       relationalRetrieval: typeof p.relational === 'boolean' ? (p.relational as boolean) : undefined,
       explain: p.explain === true, explainTarget: explainPrep?.trace, _timings: timings,
-    }), pageCap);
-    const declarations = new DeclarationMemo();
-    const primaryRows = results;
-    const fanned = await timings.stage('alias_fanout', () => withAliasFanOut(ctx.engine, primaryRows, queryText, { ...querySourceScope, excludePrivate },
-      { excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...querySourceScope }, () => declarations.scan(primaryRows, queryText), resolving));
-    await emitFanoutNotices(ctx, fanned.fanout, querySourceScope);
-    results = await applyQueryArms(ctx.engine, p, queryText, fanned.results, { ...querySourceScope, excludePrivate, requireSafeChunks: ctx.remote !== false, filtered: !!types || !!where, evidencePlan: !!plan, evidenceBudget: plan?.budgetTokens, remote: ctx.remote !== false, queryEmbedding, rowCap: () => resolveEffectiveLimit(ctx, p), timer: timings });
+    });
+    const opStages = queryOpStages(ctx, p, queryText, { pageCap, timings, querySourceScope, excludePrivate, types, where, plan, queryEmbedding, resolving });
+    const reference = await opStages(withoutFill(found), true);
+    let { results, pageCapMeta } = reference;
     // #1663 — CRAG confidence gate. Grade what retrieval returned (zero-LLM;
     // reads the stamped honesty signals: evidence, exact_lookup, rerank
     // score), attach grade + query shape to the retrieval meta on EVERY call,
@@ -1085,7 +1128,7 @@ const query: Operation = {
     //   search.crag_think=true → still weak + LOCAL caller → run think and
     //     attach its synthesis to the meta (spend-gated by config + trust).
     const queryShape = classifyQueryShape(queryText);
-    let grade = gradeRetrievalConfidence(results, { query: queryText });
+    let grade = reference.grade;
     const crag: CragMetaBlock = {
       confidence: grade.level,
       reason: grade.reason,
@@ -1197,8 +1240,11 @@ const query: Operation = {
     }
     const latency_ms = Date.now() - startedAt;
 
-    results = (await keepFrontmatterMatches(ctx.engine, results, where)).map(r => ({ ...r }));
-    stampDeepResearchIds(results);
+    const queryScope = { ...querySourceScope, excludePrivate, detail };
+    const page = await queryFillPage(ctx.engine, where, found, reference, results, crag.escalated, () => resolveEffectiveLimit(ctx, p), hits => opStages(hits, false),
+      t => [t.results, t.fanned.fanout, t.fanned.entity, t.pageCapMeta, t.grade], rows => withEvidence(ctx, p, rows, plan, queryScope, capturedMeta));
+    results = page.results;
+    const { declarations, fanned } = page;
 
     // v0.37.0 (D11): op-layer last_retrieved_at write-back. Same shape as the
     // search handler — fire-and-forget, internal callers bypass this path.
@@ -1234,8 +1280,8 @@ const query: Operation = {
     // #1663: the CRAG grade rides the same retrieval meta channel.
     // #3800: cap AFTER capture/meta/CRAG so every internal consumer graded
     // and recorded the real payload; only the returned envelope is snipped.
-    return evidenceOutput(ctx, p, results, plan, { ...querySourceScope, excludePrivate, detail }, capturedMeta, snippetCap, timings,
-      async rows => withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query', entity: fanned.entity, filterHintFor: { op: 'query', p }, timings })), crag, ...(fanned.fanout ? { fanout: fanned.fanout } : {}), ...(pageCapMeta ? { page_cap: pageCapMeta } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'query', capturedMeta?.degraded)));
+    return evidenceOutput(ctx, p, results, plan, queryScope, capturedMeta, snippetCap, timings,
+      async rows => withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query', entity: fanned.entity, filterHintFor: { op: 'query', p }, timings })), crag, ...(fanned.fanout ? { fanout: fanned.fanout } : {}), ...(pageCapMeta ? { page_cap: pageCapMeta } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'query', capturedMeta?.degraded)), false, 'delivered' in page ? page.delivered : undefined);
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'query', positional: ['query'] },

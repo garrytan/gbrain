@@ -43,10 +43,12 @@ export const AGENT_WRITE_OPERATIONS: readonly string[] = [
  */
 const OWNER_SOURCE_KINDS = ['canonical_reconcile', 'managed_file_import', 'managed_file_repair', 'managed_grandfather', 'managed_quarantine_clear'];
 
+/** The `captured_via` stamp of a Life Chronicle event page (chronicle/publish.ts): model-extracted from its depth page. */
+export const CHRONICLE_CAPTURED_VIA = 'life-chronicle:auto';
 /** Page frontmatter `source_kind` / `ingested_via` / `captured_via` values written by an ingestion capture (external). */
 export const EXTERNAL_CAPTURE_KINDS: readonly string[] = ['webhook', 'file-watcher', 'inbox-folder', 'cron-scheduler', 'ingest_capture'];
-/** ...and by an agent through a gbrain verb (agent_written). */
-const AGENT_CAPTURE_KINDS = ['put_page', 'capture-cli', 'capture-mcp', 'capture'];
+/** ...and by an agent through a gbrain verb, or by the Life Chronicle extractor (agent_written). */
+const AGENT_CAPTURE_KINDS = ['put_page', 'capture-cli', 'capture-mcp', 'capture', CHRONICLE_CAPTURED_VIA];
 /**
  * Harnesses whose `transcript_import` pages are the user's own sessions with
  * their agent (or their own chat exports): relayed user turns count as

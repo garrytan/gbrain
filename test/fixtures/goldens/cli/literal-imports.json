@@ -65,6 +65,7 @@
         "./commands/edges-backfill.ts"
       ],
       "embed": [
+        "./commands/embed-slug-args.ts",
         "./commands/embed.ts",
         "./core/held-embedding.ts"
       ],
@@ -98,6 +99,9 @@
       ],
       "graph-query": [
         "./commands/graph-query.ts"
+      ],
+      "guests": [
+        "./commands/guests.ts"
       ],
       "import": [
         "./commands/import.ts",
@@ -163,6 +167,7 @@
         "./commands/reindex.ts",
         "./commands/reindex-multimodal.ts",
         "./core/sync-concurrency.ts",
+        "./commands/reindex-synopsis.ts",
         "./core/oversized-backfill.ts",
         "./commands/reindex-vectors.ts",
         "./commands/reindex-aliases.ts",

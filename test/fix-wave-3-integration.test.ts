@@ -404,14 +404,19 @@ test('check 8 (S1, Postgres): an unbound write, binding between admission and pu
     const registration = await registerLocalWriter(engine, 'cli');
     await withVerifiedLocalRegistration(engine, registration, async () => {
       const preview = await runReconcilePreview(engine, { source_id: f.id, slug: 'notes/kept' });
+      // GST-2579: sync never imported the checkout's file, so taking the database copy over it is refused and writes nothing.
+      await expect(runReconcilePreview(engine, { source_id: f.id, slug: 'notes/kept', from: preview.preview,
+        decisions: ((preview.conflict_paths ?? []) as string[]).map(path => ({ path, action: 'take_database' })) }))
+        .rejects.toMatchObject({ code: 'source_changed', detail: 'unimported_file_edit' });
+      expect(readFileSync(join(f.dir, 'notes/kept.md'), 'utf8')).toContain('Written into the checkout.');
       const resolved = await runReconcilePreview(engine, { source_id: f.id, slug: 'notes/kept', from: preview.preview,
-        decisions: ((preview.conflict_paths ?? []) as string[]).map(path => ({ path, action: 'take_database' })) });
+        decisions: ((preview.conflict_paths ?? []) as string[]).map(path => ({ path, action: 'take_file' })) });
       expect((await runReconcileApply(engine, { source_id: f.id, slug: 'notes/kept', preview: resolved.preview, request_id: randomUUID() })).state).toBe('committed');
     });
     expect((await engine.executeRaw<{ reason: string | null; path: string | null }>('SELECT database_only_reason AS reason,source_path AS path FROM pages WHERE source_id=$1 AND slug=$2',
       [f.id, 'notes/kept']))[0]).toEqual({ reason: null, path: 'notes/kept.md' });
     expect((await checkUnboundSource(engine)).status).toBe('ok');
-    expect(readFileSync(join(f.dir, 'notes/kept.md'), 'utf8')).toContain('Written while unbound.');
+    expect(readFileSync(join(f.dir, 'notes/kept.md'), 'utf8')).toContain('Written into the checkout.');
     await engine.setConfig('persistence.unbound_write', 'refuse');
     await disposePersistenceConsumer(engine);
   }

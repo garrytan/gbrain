@@ -30,6 +30,7 @@ import { moonshot } from './moonshot.ts';
 import { mistral } from './mistral.ts';
 import { nvidia } from './nvidia.ts';
 import { perplexity } from './perplexity.ts';
+import { particle } from './particle.ts';
 import { typesafe } from './typesafe.ts';
 
 const ALL: Recipe[] = [
@@ -57,6 +58,7 @@ const ALL: Recipe[] = [
   mistral,
   nvidia,
   perplexity,
+  particle,
   typesafe,
 ];
 

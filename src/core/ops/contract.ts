@@ -20,6 +20,7 @@ import type { RegistryCode } from '../error-registry.ts';
 import type { WriteAuthority } from '../persistence/model.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import type { StdioSurfaceState } from '../../mcp/surface.ts';
+import type { GuestChannels } from '../guests/admission.ts';
 
 /** Agent contract v1: the wire renderer for `fix`/`notices` in toJSON(), registered by agent-output.ts on load. */
 interface OperationErrorWireRenderer { fix(a: Action): unknown; notice(n: Notice): unknown }
@@ -305,6 +306,13 @@ export interface AuthInfo {
   /** GBRA-218: the stored `may_act_for` audience list (shared agents, PR B); stored and reported only. */
   mayActFor?: string[] | null;
   /**
+   * GST-363: the brain operator let this credential read unscoped on purpose (`reads_unscoped` is set, gbrain auth
+   * rescope --reads-unscoped --yes). Undefined when no verifier read it; access/requester-scope.ts then looks it up.
+   */
+  readsUnscoped?: boolean;
+  /** GST-363: when the credential was created, epoch seconds (access_tokens.created_at, oauth_clients.client_id_issued_at); null = unknown, which counts as old. */
+  createdAt?: number | null;
+  /**
    * GST-359 C1: the live right to name the person a call serves (x-qm-actor), joined by the verifier: the system and
    * the operations an attested call may run, and (GST-1158 F3) how it reads named sources. Null when the credential holds none, is bound to a member, or (an OAuth
    * client) its token did not come from the client-credentials grant. Undefined when no verifier joined it.
@@ -565,6 +573,12 @@ export interface OperationContext {
    * config mcp.stdio_member, and a named member that is not enabled reads as nobody.
    */
   stdioMember?: string;
+  /**
+   * GBRA-504: the guest attribution channels a remote call carried (the X-Gbrain-Guest header, request-level
+   * _meta.guest), set by dispatch from the transport; never from tool arguments. Read only for a write to a guest
+   * source (guests/admission.ts), and stored nowhere for any other write.
+   */
+  guestChannels?: GuestChannels;
   /**
    * Set by transports that can widen a session's listed tools (stdio): when
    * `request_tools` returns schemas, the named tools join this session's

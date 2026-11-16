@@ -16,34 +16,47 @@
  *    Codex sends SessionStart with source "compact" after it compacts),
  *    each trusted by its hash in config.toml beside it, like the turn-rule
  *    lane.
+ *  - Hermes: its own `pre_llm_call` entry (`hook user-prompt --harness
+ *    hermes`) in gbrain's marked `hooks:` block in $HERMES_HOME/config.yaml,
+ *    beside the turn rule's (hermes-turn-hook.ts), approved in Hermes's
+ *    shell-hooks-allowlist.json. Hermes splits the command like shlex with no
+ *    shell and needs its first word to be a file, so it starts with
+ *    /usr/bin/env. Hermes has no SessionStart: the lane resets a session's
+ *    dedupe state itself when the history shrinks (in-place compaction).
  *
- * Both run gbrain through the existing hook launcher (hook-launcher.ts); this
+ * All three run gbrain through the existing hook launcher (hook-launcher.ts); this
  * module writes nothing else into the launcher's directory. Ownership: the
  * marker, else the lane token in the command (Claude Code), the lane token
  * (Codex). Nothing else in either file is touched.
  */
 import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { ownedEntryFingerprint } from '../bootstrap/adopted-connections.ts';
 import { codexHookCensus, codexHookGroupRuns, codexSetupHookGroup, codexSetupTrustEntry, writeCodexSetupHooks, type CodexHookGroup } from '../bootstrap/codex-hooks.ts';
 import { appendCodexTomlTable, readCodexTomlTable, removeCodexTomlTable } from '../bootstrap/codex-toml.ts';
 import { buildClaudeHookCommand, hookEntryHash, removeClaudeHooksAt, writeClaudeHooksAt } from '../bootstrap/hooks.ts';
+import { shellQuote } from '../shell-quote.ts';
 import { CLAUDE_HOOK_DEFAULT_TIMEOUT_SECS, claudeUserSettingsPath, codexConfigPath, codexHooksPath, type ClaudeHookEvent } from '../bootstrap/host-specs.ts';
+import { brainFirstTarget } from './brain-first.ts';
+import { inspectHermesResolverHook, removeHermesHook, syncHermesHook } from './hermes-turn-hook.ts';
 import { readJsonObjectSafe } from './skill-resolver-config.ts';
 import { ensureHookLauncher, hookLauncherPath, hookLauncherState } from './hook-launcher.ts';
 import { isSkillResolverCommand, isSkillResolverEntry, SKILL_RESOLVER_LANE, SKILL_RESOLVER_MARKER } from './skill-resolver-lane.ts';
 
-export type ResolverHarness = 'claude-code' | 'codex';
+export type ResolverHarness = 'claude-code' | 'codex' | 'hermes';
 const CLAUDE_EVENTS: ClaudeHookEvent[] = ['UserPromptSubmit', 'SessionStart'];
 const CODEX_EVENTS = ['UserPromptSubmit', 'SessionStart'] as const;
 type CodexEvent = (typeof CODEX_EVENTS)[number];
 const CODEX_TIMEOUT_SECS = 15;
 
-export interface ResolverHookPaths { claudeSettings?: string; codexHooks?: string; codexConfig?: string; hookLauncher?: string }
+export interface ResolverHookPaths { claudeSettings?: string; codexHooks?: string; codexConfig?: string; hookLauncher?: string; hermesHome?: string }
 export interface ResolverHookOutcome { action: 'write' | 'keep' | 'remove' | 'skip' | 'refuse'; path: string; detail: string }
 
 const claudePath = (p: ResolverHookPaths) => p.claudeSettings ?? claudeUserSettingsPath();
 const codexPaths = (p: ResolverHookPaths) => ({ hooks: p.codexHooks ?? codexHooksPath(), config: p.codexConfig ?? codexConfigPath() });
+/** $HERMES_HOME (else ~/.hermes): where SOUL.md, config.yaml and skills/ live. */
+export const hermesHomeDir = (): string => dirname((brainFirstTarget('hermes') as { path: string }).path);
+const hermesHome = (p: ResolverHookPaths) => p.hermesHome ?? hermesHomeDir();
 const laneEnv = (home: string | undefined) => ({ ...(home ? { GBRAIN_HOME: home } : {}), GBRAIN_HOOK_LANE: SKILL_RESOLVER_LANE });
 
 /** Every entry of this lane in a Claude Code settings file, by event. */
@@ -65,8 +78,14 @@ export function codexResolverGroup(bin: string, home: string | undefined, launch
 
 const codexTrusted = (p: { hooks: string; config: string }, g: { event: CodexEvent; index: number }) => codexHookGroupRuns(p.hooks, p.config, g);
 
+/** The Hermes entry's command: no shell, so the environment goes through /usr/bin/env and every word is shlex-quoted. */
+export function hermesResolverCommand(bin: string, home: string | undefined, launcher: string): string {
+  return ['/usr/bin/env', `GBRAIN_HOOK_LANE=${SKILL_RESOLVER_LANE}`, ...(home ? [`GBRAIN_HOME=${home}`] : []), launcher, bin, 'hook', 'user-prompt', '--harness', 'hermes'].map((w) => (/^[\w.:/@=-]+$/.test(w) ? w : shellQuote(w))).join(' ');
+}
+
 /** The commands this install's lane runs (what the hook entries would hold). */
 export function skillResolverCommands(harness: ResolverHarness, bin: string, home: string | undefined, launcher: string): string[] {
+  if (harness === 'hermes') return [hermesResolverCommand(bin, home, launcher)];
   if (harness === 'codex') return CODEX_EVENTS.flatMap((e) => codexResolverGroup(bin, home, launcher, e).hooks.map((h) => h.command));
   return CLAUDE_EVENTS.map((e) => buildClaudeHookCommand(bin, e, laneEnv(home), launcher));
 }
@@ -79,6 +98,10 @@ export function skillResolverCommands(harness: ResolverHarness, bin: string, hom
 export type ResolverHookState = 'absent' | 'wired' | 'untrusted' | 'outdated';
 export function inspectSkillResolverHook(harness: ResolverHarness, paths: ResolverHookPaths = {}): { state: ResolverHookState; path: string; commands: string[] } {
   try {
+    if (harness === 'hermes') {
+      const h = inspectHermesResolverHook(hermesHome(paths));
+      return { state: h.state === 'absent' ? 'absent' : h.state === 'approved' ? 'wired' : 'untrusted', path: h.path, commands: h.command ? [h.command] : [] };
+    }
     if (harness === 'codex') {
       const p = codexPaths(paths);
       const ours = codexOurs(p);
@@ -92,7 +115,7 @@ export function inspectSkillResolverHook(harness: ResolverHarness, paths: Resolv
     const has = (event: string) => ours.some((o) => o.event === event);
     return { state: !has('UserPromptSubmit') ? 'absent' : has('SessionStart') ? 'wired' : 'outdated', path, commands: ours.map((o) => String(o.entry.command)) };
   } catch {
-    return { state: 'absent', path: harness === 'codex' ? codexPaths(paths).hooks : claudePath(paths), commands: [] };
+    return { state: 'absent', path: harness === 'hermes' ? join(hermesHome(paths), 'config.yaml') : harness === 'codex' ? codexPaths(paths).hooks : claudePath(paths), commands: [] };
   }
 }
 
@@ -102,7 +125,8 @@ export function syncSkillResolverHook(opts: { harness: ResolverHarness; gbrainBi
   const launcher = paths.hookLauncher ?? hookLauncherPath();
   const launcherFresh = hookLauncherState(launcher).state === 'current';
   if (!opts.dryRun) ensureHookLauncher(launcher);
-  const out = opts.harness === 'codex' ? syncCodex(opts.gbrainBin, opts.gbrainHome, launcher, codexPaths(paths), !!opts.dryRun)
+  const out = opts.harness === 'hermes' ? syncHermes(opts.gbrainBin, opts.gbrainHome, launcher, hermesHome(paths), !!opts.dryRun)
+    : opts.harness === 'codex' ? syncCodex(opts.gbrainBin, opts.gbrainHome, launcher, codexPaths(paths), !!opts.dryRun)
     : syncClaude(opts.gbrainBin, opts.gbrainHome, launcher, claudePath(paths), !!opts.dryRun);
   return out.action === 'keep' && !launcherFresh ? { ...out, action: 'write', detail: `${out.detail}; hook launcher ${launcher}` } : out;
 }
@@ -118,6 +142,12 @@ function syncClaude(bin: string, home: string | undefined, launcher: string, pat
   writeClaudeHooksAt(path, { gbrainBin: bin, hookLauncher: launcher, env: { ...laneEnv(home), GBRAIN_SEAT: '' }, events: CLAUDE_EVENTS, marker: SKILL_RESOLVER_MARKER,
     ownedEntryHashes: new Set([...want, ...have.filter((h): h is string => !!h)]), freshMode: 0o600 });
   return { action: 'write', path, detail };
+}
+
+function syncHermes(bin: string, home: string | undefined, launcher: string, hermes: string, dryRun: boolean): ResolverHookOutcome {
+  const o = syncHermesHook({ hermesHome: hermes, lane: 'skill-resolver', command: hermesResolverCommand(bin, home, launcher), dryRun });
+  if (o.action === 'print') return { action: 'refuse', path: o.path, detail: `${o.detail}:\n${o.snippet}` };
+  return { action: o.action === 'keep' ? 'keep' : 'write', path: o.path, detail: o.detail };
 }
 
 const trustPath = (key: string) => ['hooks', 'state', key];
@@ -156,6 +186,10 @@ function syncCodex(bin: string, home: string | undefined, launcher: string, p: {
 /** Remove the lane's hook (and, on Codex, its trust entry). Throws on a file it cannot write safely. */
 export function removeSkillResolverHook(opts: { harness: ResolverHarness; paths?: ResolverHookPaths; dryRun?: boolean }): ResolverHookOutcome {
   const paths = opts.paths ?? {};
+  if (opts.harness === 'hermes') {
+    const o = removeHermesHook({ hermesHome: hermesHome(paths), lane: 'skill-resolver', dryRun: !!opts.dryRun });
+    return { action: o.action === 'remove' ? 'remove' : 'skip', path: o.path, detail: o.detail };
+  }
   if (opts.harness === 'codex') {
     const p = codexPaths(paths);
     const ours = codexOurs(p);

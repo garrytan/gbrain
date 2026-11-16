@@ -63,6 +63,7 @@ import { ProposeTakesFailures, PROPOSE_TAKES_HOLD_RUNS, type FailedPage } from '
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
+import { guestSourceExclusionSql } from '../guests/derived.ts';
 
 /**
  * Bump when the extractor prompt or the JSON output shape changes. Old
@@ -248,8 +249,10 @@ export interface ProposeTakesResult {
   cache_hits: number;
   cache_misses: number;
   proposals_inserted: number;
-  /** Idempotency rows written for pages that extracted zero claims. */
+  /** Idempotency rows written for pages that extracted zero claims (or only claims rejected before, #7299). */
   tombstones_written: number;
+  /** #7299: extracted claims dropped because an operator rejected the same claim text on the same page. */
+  rejected_claims_skipped: number;
   budget_exhausted: boolean;
   /** True when the phase deadline fired before the page loop completed (partial result). */
   deadline_hit?: boolean;
@@ -314,6 +317,7 @@ async function listCandidatePages(
     "COALESCE(frontmatter->>'dream_generated', '') <> 'true'",
     "COALESCE(frontmatter->>'extracted_by', '') NOT LIKE 'extract_atoms%'",
     "COALESCE(frontmatter->>'synthesized_by', '') NOT LIKE 'synthesize_concepts%'",
+    guestSourceExclusionSql('propose_takes', 'pages'),
   ];
   const params: unknown[] = [];
   if (scope.sourceIds && scope.sourceIds.length > 0) {
@@ -914,6 +918,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       cache_misses: 0,
       proposals_inserted: 0,
       tombstones_written: 0,
+      rejected_claims_skipped: 0,
       budget_exhausted: false,
       llm_calls_succeeded: 0,
       llm_calls_failed: 0,
@@ -1071,6 +1076,15 @@ class ProposeTakesPhase extends BaseCyclePhase {
       const fold = (text: string) => text.replace(/\s+/g, ' ').trim().toLowerCase();
       const heldTakes = existingTakes.filter(take => take.holder !== 'world').map(take => fold(take.claim)).filter(claim => claim.length >= 12);
       proposals = proposals.filter(p => !heldTakes.some(claim => fold(p.claim_text).includes(claim)));
+      // #7299: a new content hash extracts the page again; a claim the operator already rejected on it stays rejected.
+      const rejected = new Set((await engine.executeRaw<{ claim_text: string }>(
+        `SELECT claim_text FROM take_proposals
+          WHERE source_id = $1 AND page_slug = $2 AND status = 'rejected' AND acted_at IS NOT NULL`,
+        [sourceId, page.slug],
+      )).map(row => row.claim_text));
+      const fresh = proposals.filter(p => !rejected.has(p.claim_text));
+      result.rejected_claims_skipped += proposals.length - fresh.length;
+      proposals = fresh;
 
       // Write proposals to take_proposals. #2138: the idempotency key is
       // per-CLAIM — take_proposals_idempotency_idx folds md5(claim_text) into
@@ -1171,6 +1185,9 @@ class ProposeTakesPhase extends BaseCyclePhase {
     return {
       summary:
         `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals, ${result.tombstones_written} empty (run ${proposalRunId})` +
+        (result.rejected_claims_skipped > 0
+          ? `; ${result.rejected_claims_skipped} claim(s) rejected before on the same page not proposed again`
+          : '') +
         (result.failure_tombstones_written > 0
           ? `; ${result.failure_tombstones_written} page(s) held after ${PROPOSE_TAKES_HOLD_RUNS} failed runs (gbrain takes propose --failed)`
           : '') +

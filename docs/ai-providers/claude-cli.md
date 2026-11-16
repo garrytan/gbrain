@@ -125,9 +125,20 @@ stdin:
 
 `--bare` (which would skip loading the user-level `~/.claude/CLAUDE.md`
 entirely) is not among the flags passed, because it also forces
-`ANTHROPIC_API_KEY` auth (per the recipe's source comment). One effect of
-not passing it: the user-level `~/.claude/CLAUDE.md` still loads and gets
-cached tokens on every call.
+`ANTHROPIC_API_KEY` auth (per the recipe's source comment). On Claude Code
+2.1.314 or newer the child gets `--setting-sources ""` instead, so your
+user-level `~/.claude/CLAUDE.md`, memory and `settings.json` stay out of
+every call and the login is kept (gbrain reads `claude --version` once per
+binary per process). An older CLI still loads them on every call.
+
+Trade-off: `--setting-sources ""` loads no settings source at all, so the
+`env` block, `apiKeyHelper` and permission rules in your `settings.json` don't
+reach the child either. The subscription (OAuth) login is kept, but a claude
+login or proxy that depends on `settings.json` doesn't apply to gbrain's
+claude-cli calls on these versions. To load them again, set
+`GBRAIN_CLAUDE_CLI_USER_SETTINGS=1` in the environment gbrain runs in (your
+shell or `~/.gbrain/.env`; a project `.env` can't set it): the child then gets
+no `--setting-sources` flag and gbrain skips the version probe.
 
 The adapter does not use `claude`'s own agentic tool-calling — it injects a
 fenced instruction block into the system prompt teaching the model a
@@ -155,7 +166,7 @@ above.
 | Prompt caching | The recipe declares `supports_prompt_cache: true`: Claude Code caches prompt prefixes itself on every `--print` run (Anthropic's Claude Code docs put `-p` runs in the main-conversation TTL bucket — one hour on a subscription, five minutes on an API key). gbrain cannot place `cache_control` breakpoints on this path — the adapter renders messages to stdin text and ignores `providerOptions` — so caching is automatic rather than gateway-driven, and `doctor`'s `subagent_capability` does not grade a claude-cli subagent tier `degraded:no_caching`. `cache_read_input_tokens` is surfaced as `usage.cachedInputTokens` (next row). |
 | Usage / token counts | Reported `usage.input_tokens` / `usage.output_tokens` are read straight from the CLI's `--output-format json` envelope (`result.usage?.input_tokens` / `output_tokens`); gbrain does not independently count tokens for this path. The envelope's `cache_read_input_tokens` is surfaced as `usage.cachedInputTokens`, so cache reads are counted in gbrain's usage accounting; `cache_creation_input_tokens` is not surfaced (the AI SDK's usage shape has no corresponding field). |
 | Cost figures | The recipe declares `cost_per_1m_input_usd: 3.0` / `cost_per_1m_output_usd: 15.0` — the same Sonnet-class figures the `anthropic` recipe declares (`price_last_verified: 2026-06-17`) — purely so gbrain's budget ledger has a number to attribute per call. Neither the recipe nor the adapter code checks what you're actually billed; treat these as the ledger's nominal per-call number, not a verified charge. The `--max-usd` / `--max-cost` budget gate does not read them either: it prices `claude-cli:<model>` at the nominal Anthropic rate for that model, and a short alias (`claude-cli:haiku`) prices identically to the dated id it resolves to; `pricing.overrides` forces $0 or a real rate for any `claude-cli:*` string, and on a subscription one line prices every claude-cli model: `gbrain pricing set 'claude-cli:*' --rate 0` (an exact model entry still wins; at $0 no cap limits claude-cli calls). |
-| User-level CLAUDE.md | `~/.claude/CLAUDE.md` still loads on every call (see above) — only the working directory changes (see "What actually happens on a call" for exactly what that directory is and isn't). |
+| User-level CLAUDE.md | Kept out on Claude Code 2.1.314 or newer (`--setting-sources ""`); an older CLI loads `~/.claude/CLAUDE.md` on every call (see above). Otherwise only the working directory changes (see "What actually happens on a call" for exactly what that directory is and isn't). |
 
 ## Doctor probe timeout: per-recipe, 30s for claude-cli
 

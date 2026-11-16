@@ -270,10 +270,27 @@ stdout (`--json`):
   },
   "notices": [
     {
+      "code": "harness_wiring",
+      "kind": "info",
+      "why": "gbrain is not connected to an agent here, and this step is not a command the agent runs by itself; say so in the reply that reports the install, without waiting on it. Which agent app should get gbrain memory? The install guide has a one-line command for each. For Claude Code or Codex, run `gbrain setup claude-code` or `gbrain setup codex` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).",
+      "fix": {
+        "consent": [
+          "persistent_install"
+        ],
+        "actor": "user",
+        "next": "report",
+        "why": "For Claude Code or Codex, run `gbrain setup claude-code` or `gbrain setup codex` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).",
+        "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
+        "docs": "https://github.com/garrytan/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
+        "requires_exclusive": false
+      },
+      "contract_version": 1
+    },
+    {
       "code": "first_run_decisions",
       "kind": "ask",
-      "why": "The brain is ready. These settings were applied with defaults or need the user's choice; none blocks using the brain.",
-      "user_message": "gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; writeback: salient; harness_wiring: skip), or tell me what to change.",
+      "why": "The brain is ready and these first-run settings are in effect as listed; none blocks memory. Relay them once, in the reply that reports the install, as the current settings and how to change them; do not hold the install open or end it waiting on an answer. When the user picks an option, run its command. Nothing paid turns on from these settings without a key the user supplied.",
+      "user_message": "gbrain is installed. In effect: search mode conservative; agents save only what you ask them to remember, until you turn on automatic saving (salient is recommended: durable facts you state, saved with provenance). Upkeep: free upkeep runs on its own while your agent's gbrain session is open. Nothing is deleted or paid for without you. Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule. Conversation archive: on. gbrain keeps one redacted page per conversation per day from your agent sessions (Claude Code, Codex, OpenClaw, Hermes, Grok) in the conversations source, written by the maintenance pass. Without an embedding key nothing leaves this machine. Turn off: gbrain transcripts archive off. Estimated downstream input cost of the retrieved payload at 10K queries/month (Haiku 5.5 / Sonnet 5.5 / Opus 5.5): conservative $4 / $80 / $160, balanced $10 / $200 / $400, tokenmax $20 / $400 / $800 per month. Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.",
       "decisions": [
         {
           "id": "search_mode",
@@ -354,24 +371,53 @@ stdout (`--json`):
               ]
             }
           ],
-          "default": "salient",
-          "default_reason": "Recommended for a personal brain: the brain learns what the user tells their agents. It is opt-in, so it applies only when the user accepts the defaults or picks it."
+          "default": "off",
+          "default_reason": "In effect now: agents save only what the user asks them to remember. salient is recommended for a personal brain; it is opt-in, so it turns on only when the user picks it."
         },
         {
-          "id": "harness_wiring",
-          "question": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
+          "id": "upkeep",
+          "question": "Upkeep: free upkeep runs on its own while your agent's gbrain session is open. Nothing is deleted or paid for without you. Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule.",
           "options": [
             {
-              "id": "wire",
-              "label": "For Claude Code or Codex, run `gbrain setup claude-code` or `gbrain setup codex` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+              "id": "on",
+              "label": "Keep free upkeep on (in effect now)"
             },
             {
-              "id": "skip",
-              "label": "Do not register gbrain with an agent harness now."
+              "id": "off",
+              "label": "Turn free upkeep off",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "maintenance.auto",
+                "false"
+              ]
             }
           ],
-          "default": "skip",
-          "default_reason": "No agent harness was detected."
+          "default": "on",
+          "default_reason": "In effect now: the agent's gbrain serve runs the free upkeep tier while idle; nothing needs an answer."
+        },
+        {
+          "id": "conversation_archive",
+          "question": "Conversation archive: on. gbrain keeps one redacted page per conversation per day from your agent sessions (Claude Code, Codex, OpenClaw, Hermes, Grok) in the conversations source, written by the maintenance pass. Without an embedding key nothing leaves this machine. Turn off: gbrain transcripts archive off.",
+          "options": [
+            {
+              "id": "on",
+              "label": "Keep the conversation archive on (in effect now)"
+            },
+            {
+              "id": "off",
+              "label": "Turn the conversation archive off",
+              "argv": [
+                "gbrain",
+                "transcripts",
+                "archive",
+                "off"
+              ]
+            }
+          ],
+          "default": "on",
+          "default_reason": "In effect now: on by default on a personal brain; nothing needs an answer."
         }
       ],
       "contract_version": 1
@@ -381,7 +427,7 @@ stdout (`--json`):
 }
 ```
 
-stdout is one document; the brain is ready and nothing blocks using it. The `first_run_decisions` notice is `kind: ask`, so the agent relays its `user_message` ("gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; writeback: salient; harness_wiring: skip), or tell me what to change.") once and stops. The decisions are `search_mode` (default `conservative`), `writeback` (default `salient`), `harness_wiring` (default `skip`); each option carries the exact argv to apply it, so a reply of "defaults" needs no command at all.
+stdout is one document; the brain is ready and nothing blocks using it. The agent first does the `harness_wiring` step: connecting gbrain to itself is part of the install, not a setting. It then reports the install and relays the `first_run_decisions` `user_message` ("gbrain is installed. In effect: search mode conservative; agents save only what you ask them to remember, until you turn on automatic saving (salient is recommended: durable facts you state, saved with provenance). Upkeep: free upkeep runs on its own while your agent's gbrain session is open. Nothing is deleted or paid for without you. Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule. Conversation archive: on. gbrain keeps one redacted page per conversation per day from your agent sessions (Claude Code, Codex, OpenClaw, Hermes, Grok) in the conversations source, written by the maintenance pass. Without an embedding key nothing leaves this machine. Turn off: gbrain transcripts archive off. Estimated downstream input cost of the retrieved payload at 10K queries/month (Haiku 5.5 / Sonnet 5.5 / Opus 5.5): conservative $4 / $80 / $160, balanced $10 / $200 / $400, tokenmax $20 / $400 / $800 per month. Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.") once in that reply, without waiting for an answer. The settings in effect are `search_mode` (default `conservative`), `writeback` (default `off`), `upkeep` (default `on`), `conversation_archive` (default `on`); each option carries the exact argv to apply it when the user picks one.
 
 ### 5. A caller mistake over stdio MCP, recorded: `run` (journey)
 
@@ -755,7 +801,8 @@ except the notices that describe one call's result. HTTP is stateless, so
 dedupe is per authenticated client and session, and `degraded` and `safety`
 notices ride every affected call. At most 2 `coaching` notices per session.
 Notices that describe one call's result (`degraded_recall`, `empty_retrieval`,
-`listing_truncated`, `delta_incomplete`, `facts_unembedded`)
+`listing_truncated`, `delta_incomplete`, `facts_unembedded`, and the room
+notices `room_above_level`, `room_hints_unavailable` and `room_conflict`)
 are never deduped on any transport, with one exception: a `degraded_recall`
 whose only stages come from the brain's configuration (`embed_unavailable` on
 a keyless brain, which degrades every search the same way) shows once per
@@ -867,6 +914,19 @@ nothing; it returns in the next session until the decision is answered
 `first_run_decisions`. `gbrain doctor` (the `memory_writeback` check) and
 `gbrain onboard --check` list decisions that are open but muted, with the
 `gbrain notices unmute first_run_decisions` command.
+
+### Room notices
+
+A harness that declares the shared chat an answer goes into (`X-Gbrain-Room`,
+`_meta.room` or a `room` argument) gets the caller's full answer with each
+item marked `room_access` ([rooms](https://github.com/garrytan/gbrain/blob/master/docs/guides/rooms.md)). Three notices ride it,
+and none of them ever refuses the work:
+
+| Code | Kind | What you do |
+|---|---|---|
+| `room_above_level` | `safety` | some items are `readable: false` or `unknown` for the room: use them to do the work, keep them out of the reply unless the ask needs them, offer the rest in a direct message |
+| `room_hints_unavailable` | `degraded` | the room could not be judged (`_meta.room.unavailable` names why): the answer is complete, treat every item as above the room, and follow `fix` when one is given |
+| `room_conflict` | `safety` | the `room` argument named a different room than the harness did: the answer was marked for everyone either names; trust the harness's room |
 
 ## Degraded stamp
 
@@ -1045,6 +1105,8 @@ that work in this conversation.
 | 14 | `bootstrap_cleanup_pending`: a harness is wired; old shared-skills enrollments or token ids still await cleanup | follow `fix.next` (re-run, or relay the owner's revoke step), then re-run |
 | 15 | `get --as-of`: no edition in force | read `valid_time`; quote nothing |
 | 16 | `host_upgrade_required` | relay `gbrain upgrade` on the host |
+| 17 | `doctor_alert_act`: `gbrain doctor --alert` found a page-class check that needs someone now | follow each `alert.items[].fix` in the `--json` document |
+| 18 | `doctor_alert_unknown`: `gbrain doctor --alert` found nothing to act on, but a page-class check did not run fresh | run each `alert.unknown[].fix`; page only when `alert.consecutive_unknown` is 2 or more |
 | 75 | another runner holds the migration lock | wait, then retry |
 | 124 | the command's deadline elapsed | inspect what is still running |
 | 130 | interrupted | ask the user whether to re-run |
@@ -1235,19 +1297,23 @@ stays up on its port in status-only mode instead of exiting:
 
 ## First run
 
-`gbrain init` emits one decision bundle instead of scattered prompts: an
-`[AGENT]` block in human output, and a notice of kind `ask` in `init --json`.
-Init does not wait for the answers; it exits 0 with defaults applied.
+`gbrain init` applies its defaults and exits 0. It emits a `harness_wiring`
+notice when no agent is connected yet, and one bundle of the settings in
+effect: an `[AGENT]` block in human output, and a notice of kind `ask` in
+`init --json`. Nothing in the bundle waits for an answer.
 
-| Decision | Options | Default |
+| Setting | Options | In effect |
 |---|---|---|
 | `search_mode` | `conservative`, `balanced`, `tokenmax`, with the cost matrix | applied at init, with the reason |
-| `writeback` | `off`, `salient`, `all` | recommended `salient` (the user opts in) |
-| `harness_wiring` | the registration command for the detected harness | the readiness `harness_wiring` fix |
+| `writeback` | `off`, `salient`, `all` | `off`; gbrain recommends `salient` (the user opts in) |
 | `skills_scaffold` | optional | skip |
+| `upkeep` | `on`, `off` | `on` (free tier only without a key) |
 
-Relay the bundle's one `user_message` ("Reply 'defaults' to accept …"); apply
-each answer with the decision's `argv`. Then:
+Connect first, then report the install and relay the bundle's `user_message`
+in that reply: the settings in effect, the cost matrix and how to change each.
+Don't end the install on a question. Apply an answer with the option's `argv`
+whenever the user gives one. Nothing paid turns on from these settings without
+a key the user supplied. The steps:
 
 1. Register gbrain with the harness using the `harness_wiring` fix. The
    registration always uses the absolute gbrain path and `--surface starter`,
@@ -1281,8 +1347,10 @@ each with a `fix`.
   embeddings needs a provider key and costs money (`credentials`, `paid`):
   ask first, then use the exact command the readiness fix names. It keeps
   pages and facts.
-- **Maintenance.** Without a worker, queued jobs wait. `gbrain autopilot
-  --install` installs a background service (`persistent_install`): ask first.
+- **Maintenance.** An open `gbrain serve` runs free upkeep while idle
+  (`gbrain maintain --status`). Without a worker, queued jobs wait.
+  `gbrain maintain --schedule` and `gbrain autopilot --install` install a
+  background service (`persistent_install`): ask first.
 - **Backup.** Repo backups exclude database-only pages and facts. When the
   `backup_coverage` notice fires, tell the user what is unprotected.
 - **Surface.** `--surface verbs` (memory verbs), `starter` or `full` decides

@@ -41,6 +41,8 @@ import { isGenericEntityToken } from './entity-name-quality.ts';
 import { ALWAYS_LINKABLE_TYPES, linkableTypesFor, loadSourcePack, readMentionPolicy, type MentionPolicy, type PackTypes } from './mentions/policy.ts';
 import { siblingVerdict, type SiblingCandidate } from './mentions/siblings.ts';
 import { isShortCode } from './mentions/short-codes.ts';
+import { bodyBlocks } from './page-body/segment-blocks.ts';
+import { OperationError } from './ops/contract.ts';
 
 /**
  * The four types that are always linkable, whatever the schema pack says. The
@@ -910,6 +912,22 @@ export interface StaleMention {
   link_type: string;
 }
 
+/**
+ * Mentions of a segmented page: the title, then each stored block, as the mention pass reads a body it cannot reuse
+ * runs for. Reads only. Null when a block is too long for any block reader (the page is left out of the scan).
+ */
+async function segmentedBodyMentions(engine: BrainEngine, page: { id: number; slug: string; source_id: string; title: string | null },
+  gazetteer: Gazetteer, opts: FindMentionsOpts): Promise<Mention[] | null> {
+  const found = findMentionedEntities(page.title ?? '', gazetteer, opts);
+  try {
+    for await (const block of bodyBlocks(engine, page, { separator: '\n\n' })) found.push(...findMentionedEntities(block.text, gazetteer, opts));
+  } catch (error) {
+    if (error instanceof OperationError && error.canonicalCode === 'page_body_segmented') return null;
+    throw error;
+  }
+  return found;
+}
+
 export interface StaleMentionsScan {
   /** Live pages carrying at least one `link_source='mentions'` row. */
   totalPagesWithMentions: number;
@@ -1000,10 +1018,10 @@ export async function scanStaleMentions(
      )`;
 
   const bodies = await engine.executeRaw<{
-    id: number; slug: string; source_id: string | null; body: string;
+    id: number; slug: string; source_id: string | null; body: string; title: string | null; body_storage: string | null;
   }>(
     `${scannedCte}
-     SELECT p.id, p.slug, p.source_id,
+     SELECT p.id, p.slug, p.source_id, p.title, p.body_storage,
             COALESCE(p.title, '') || E'\n\n' || COALESCE(p.compiled_truth, '') || E'\n\n' || COALESCE(p.timeline, '') AS body
        FROM pages p
        JOIN scanned s ON s.id = p.id
@@ -1043,13 +1061,13 @@ export async function scanStaleMentions(
     if (!stored || stored.length === 0) continue;
 
     const fromSourceId = page.source_id ?? 'default';
-    const produced = new Set(
-      findMentionedEntities(page.body, gazetteer, {
-        fromSlug: page.slug,
-        fromSourceId,
-        allowCrossSource,
-      }).map(m => `${m.source_id}::${m.slug}`),
-    );
+    const opts = { fromSlug: page.slug, fromSourceId, allowCrossSource };
+    // #9121: a segmented page's body columns are empty; scan its stored blocks (read-only) or skip a page no block reader can read.
+    const mentions = page.body_storage === 'segmented'
+      ? await segmentedBodyMentions(engine, { id: page.id, slug: page.slug, source_id: fromSourceId, title: page.title }, gazetteer, opts)
+      : findMentionedEntities(page.body, gazetteer, opts);
+    if (!mentions) continue;
+    const produced = new Set(mentions.map(m => `${m.source_id}::${m.slug}`));
 
     for (const row of stored) {
       const key = `${row.to_source_id ?? 'default'}::${row.to_slug}`;

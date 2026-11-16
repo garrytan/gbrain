@@ -81,6 +81,8 @@ gbrain transcripts ingest --max-bytes 4gb <store>          # oversized store; om
 gbrain transcripts status                    # found vs imported, per harness
 ```
 
+For one redacted page per conversation per local day plus a daily index (off until `gbrain transcripts archive on`), see the [conversation archive](conversation-archive.md).
+
 **Say to your agent:** *"Import my conversations from my chatgpt export at ~/Downloads/conversations.json"* — *"Archive my session transcripts"* — and later, *"When did I first discuss agent memory?"* (the archive answers origin questions with dated quotes).
 
 Codex sessions imported before gbrain read codex 0.153+ rollouts lost their
@@ -121,7 +123,23 @@ forms are recognized, with bare, quoted or backticked values:
 - Markdown table cells: every cell under a column headed `Password`, `pwd`,
   `DB password` and the like, and the value in a `| password | … |` row,
   including rows without outer pipes, escaped `\|` pipes and tables with
-  several credential columns.
+  several credential columns;
+- a `.netrc` entry, on one line (`machine host login alice password …`) or
+  over several (`machine`, `login` and `password` each on its own line);
+- a key or token label that ends its line (`here is my API key:`,
+  `ACCESS_TOKEN=`), with one value of 12+ characters holding a letter and a
+  digit alone on the next line;
+- a label that ends one message, with the value alone on the first line of
+  the next message (`password:`, then the password as its own message).
+
+Cookie values are redacted too (`cookie_header`): after a `Cookie:` or
+`Set-Cookie:` header (raw headers, `curl -H`, a copy-as-fetch JSON blob) and
+after `-b`/`--cookie` in a `curl` command, including on a continued line
+of a multi-line command (what Chrome's "Copy as cURL" produces), every
+value of 8+ characters is replaced, quoted values inside escaped JSON
+(`sid=\"…\"`) too, and the cookie names and `Set-Cookie` attributes
+stay. These transcript-only rules never run in the `sources push` gate or
+the compiled-context scan.
 
 To keep prose and code intact, a value is never redacted when it is a
 placeholder (`<…>`, `${…}`, `$VAR`), a mask (`****`), a URL, a path, a
@@ -138,7 +156,9 @@ value of 8+ characters that is not a stoplisted word is also scrubbed where
 the session repeats it bare.
 
 Pages imported before this detector (or a later widening of it) shipped are
-not rewritten automatically, so run the audit again after upgrading. `gbrain transcripts audit-secrets --json` (read-only; all
+not rewritten automatically, so run the audit again after upgrading. The audit
+finds every shape above except a value sent as its own message: a stored page
+no longer marks where one message ends. `gbrain transcripts audit-secrets --json` (read-only; all
 sources, or one with `--source-id`) lists the conversation pages that still
 carry a credential: slug, source, hit count per pattern and line numbers,
 never the text. The doctor check `transcript_secret_exposure` reads the

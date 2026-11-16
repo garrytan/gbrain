@@ -1,12 +1,15 @@
-import { spawnSync } from 'node:child_process';
 import { PoolStallWatch } from '../core/postgres-engine/pool-stall-watch.ts';
 import { installRestartRequiredExit, recordServeTransport, resolveRestartRequiredExitSeconds, SERVE_RESTART_REQUIRED_EXIT_ENV } from './serve-health.ts';
 import { SERVE_UNHEALTHY_EXIT_CODE } from '../core/exit-codes.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import type { IdleUpkeep } from '../core/maintenance/idle.ts';
 // C10: `--fail-fast` / GBRAIN_SERVE_FAIL_FAST=1 — exit with the classified envelope instead of status-only/degraded mode (decided in src/cli.ts's connect path; F4's status mode consults it too).
 export { serveFailFastRequested, writeServeFailFastEnvelope } from '../core/serve-fail-fast.ts';
 import { isEngineDegraded as isEngineDegradedForServe } from '../core/degraded-marker.ts';
 import { startMcpServer, stdioRpcsInFlightCount, resolveMcpStdioSourceScope } from '../mcp/server.ts';
+import { exitAfterStdoutDrains, installStdioShutdownTriggers, probeWatchdogAvailable, readLiveParentPid, resolveEofDrainMs, type StdioLifecycleDeps } from '../mcp/stdio-lifecycle.ts';
+// The parent-liveness readers moved to the engine-free stdio lifecycle the thin-client bridge shares.
+export { isPidAlive, probeWatchdogAvailable, readLiveParentPid } from '../mcp/stdio-lifecycle.ts';
 import { VERB_NAMES } from '../core/verbs.ts';
 import { parseStdioMemberFlag } from '../core/stdio-member-flag.ts';
 import { RESIDENT_POOL_FLOOR } from '../core/pg-access-classify.ts';
@@ -14,9 +17,10 @@ import { redirectStdoutLoggingToStderr } from '../core/console-prefix.ts';
 import { startFactsDrainScheduler, type FactsDrainScheduler, type FactsDrainSchedulerOpts } from '../core/facts/drain-scheduler.ts';
 import { startMovementWatch, type MovementWatch } from '../core/persistence/sync-movement.ts';
 import { startServeHeadWatcher } from '../core/serve-head-watcher.ts';
+import { startMcpLogPruneTicker, type McpLogPruneTicker, type McpLogPruneTickerOpts } from '../core/mcp-request-log-retention.ts';
 import { isReadOnlyServeArgs, readOnlyServeSkipsResidentDuties } from '../core/direct-pool-profile.ts';
 import { onForwardProgress } from '../core/forward-progress.ts';
-import { foregroundWindow } from '../core/foreground-activity.ts';
+import { foregroundWindow, onForegroundRequest } from '../core/foreground-activity.ts';
 import { graduationHandoffRequested, writeServeGraduationEnvelope } from '../core/persistence/graduation-serve-guard.ts';
 import { withLocalScope } from '../core/engine-scope-store.ts';
 import {
@@ -57,15 +61,6 @@ const CLEANUP_DEADLINE_MS = 5_000;
 // one window. Env-tunable via GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS; 0 disables.
 const DEFAULT_BOOT_TIMEOUT_SECONDS = 60;
 
-// How often the parent-process watchdog polls the live kernel parent PID
-// (via `readLiveParentPid`, NOT the cached `process.ppid` — see that
-// helper's comment). We don't receive a signal when our parent dies (the
-// kernel just re-parents us to init / launchd / a subreaper-PID), so
-// polling is the only reliable way to detect "parent went away without
-// closing stdin". 5s matches the cadence in the concurrent #591 PR;
-// faster polling has no benefit, slower would extend the lock-leak window.
-const PARENT_WATCHDOG_INTERVAL_MS = 5_000;
-
 // Idle maintenance sweep [ENG-5]: cadence of the stdin-inactivity check.
 // Each tick that saw NO stdin data since the previous tick runs a bounded
 // sweep (fence reconcile / link+timeline extraction / corpus ingest — see
@@ -77,6 +72,38 @@ const IDLE_SWEEP_INTERVAL_MS = 10 * 60_000;
 function idleSweepIntervalMs(): number {
   const n = Number(process.env.GBRAIN_SWEEP_IDLE_INTERVAL_MS);
   return Number.isFinite(n) && n >= 1_000 ? Math.floor(n) : IDLE_SWEEP_INTERVAL_MS;
+}
+
+/** GBRA-438: idle upkeep, skipped while a delegated sync owns the event loop (the sweep's rule); loaded lazily, off the boot path. */
+function defaultIdleUpkeep(log: (line: string) => void): IdleUpkeep {
+  return async (engine, signal, retryParked) => {
+    if ((await loadSyncRunner()).isDelegatedSyncRunning()) return;
+    const { runIdleUpkeep } = await import('../core/maintenance/idle.ts');
+    await runIdleUpkeep(engine, { runner: 'serve', signal, retryParked, log });
+  };
+}
+
+/**
+ * GBRA-438: the stdio serve's idle upkeep, one run at a time. abort() (stdin data), a foreground request or stop()
+ * (shutdown) aborts the run in flight. run() never throws.
+ */
+function idleUpkeepSlot(upkeep: IdleUpkeep): { run(engine: BrainEngine): Promise<void>; abort(): void; stop(): void } {
+  let running: AbortController | null = null;
+  let first = true;
+  const abort = (): void => { running?.abort(); };
+  const unsubscribe = onForegroundRequest(abort);
+  return {
+    async run(engine) {
+      if (running) return;
+      const controller = new AbortController();
+      running = controller;
+      const retryParked = first;
+      first = false;
+      try { await upkeep(engine, controller.signal, retryParked); } catch { /* idle upkeep is best-effort; never kill serve */ } finally { running = null; }
+    },
+    abort,
+    stop() { unsubscribe(); abort(); },
+  };
 }
 
 /** GBRA-156: each idle sweep names its start and its duration on stderr, so slow requests can be lined up with it. */
@@ -152,6 +179,10 @@ export interface ServeOptions {
   // sweep core (which opens engine work). Defaults to a lazy-imported
   // runMaintenanceSweep with a small budget.
   sweep?: (engine: BrainEngine) => Promise<unknown>;
+  // Test seam for idle upkeep (GBRA-438): one run with the abort signal stdin
+  // data or a foreground request trips. Defaults to runIdleUpkeep as runner
+  // 'serve' (on and due only, small budget, never at boot); retryParked is true on the process's first run.
+  upkeep?: IdleUpkeep;
   // Kill switch seam for the idle sweep. Defaults to
   // `process.env.GBRAIN_SWEEP !== '0'` when omitted.
   sweepEnabled?: boolean;
@@ -180,6 +211,8 @@ export interface ServeOptions {
   // Test seam for the automatic facts drain (src/core/facts/drain-scheduler.ts):
   // false disables it; an object overrides its timer and run body.
   factsDrain?: false | Pick<FactsDrainSchedulerOpts, 'run' | 'tickMs' | 'maxGapMs' | 'now'>;
+  // Test seam for the request-log retention ticker (src/core/mcp-request-log-retention.ts): false disables it; an object overrides its timer.
+  mcpLogPrune?: false | Pick<McpLogPruneTickerOpts, 'setInterval' | 'clearInterval' | 'tickMs'>;
 }
 
 /**
@@ -407,6 +440,15 @@ async function serveBrain(
     // waited for a hand-run sweep and then for retention GC.
     const { armCorpusDrain } = await import('../core/sweep.ts');
     const corpusDrain = (opts.armCorpusDrain ?? armCorpusDrain)(engine, { sourceId: process.env.GBRAIN_SOURCE || undefined });
+    // GBRA-438: the HTTP serve's idle tick (it had none): free upkeep when due, keyed on /mcp request activity.
+    // Same kill switch as the stdio serve's idle tick (GBRAIN_SWEEP=0); HTTP refuses --access read-only, so it is never lean.
+    const idleUpkeep = (opts.sweepEnabled ?? (process.env.GBRAIN_SWEEP !== '0')) ? (await import('../core/maintenance/idle.ts')).armIdleUpkeep(engine, {
+      intervalMs: idleSweepIntervalMs(),
+      setInterval: opts.setInterval ?? ((fn, ms) => setInterval(fn, ms)),
+      clearInterval: opts.clearInterval ?? ((h) => clearInterval(h as ReturnType<typeof setInterval>)),
+      upkeep: opts.upkeep ?? defaultIdleUpkeep(httpLog),
+    }) : null;
+    const mcpLogPrune = installMcpLogPrune(engine, opts, httpLog, () => false);
 
     const cliSocket = cliSocketOn ? await (await import('../core/cli-socket/server.ts')).startCliSocket(engine, httpLog) : null;
     try {
@@ -414,6 +456,8 @@ async function serveBrain(
     } finally {
       stallWatchdog?.dispose();
       corpusDrain?.cancel();
+      idleUpkeep?.stop();
+      mcpLogPrune?.stop();
       cliSocket?.close();
     }
 
@@ -508,27 +552,6 @@ async function serveBrain(
   // hooks from being able to call process.exit() cleanly.
 }
 
-// #4409: stdin-EOF drain bound. Long enough for a real tool call (a query
-// with embedding + LLM expansion) to finish; short enough that a genuinely
-// wedged handler can't pin the PGLite lock forever after the parent left.
-const DEFAULT_EOF_DRAIN_MS = 30_000;
-
-// Env resolution for the stdin-EOF drain bound. Lenient like
-// resolveBootTimeoutMs: a typo'd env var must not turn the data-loss fix
-// into a shutdown failure. 0 disables the drain (immediate exit).
-function resolveEofDrainMs(): number {
-  const raw = process.env.GBRAIN_SERVE_EOF_DRAIN_MS;
-  if (raw === undefined || raw.trim() === '') return DEFAULT_EOF_DRAIN_MS;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) {
-    console.error(
-      `[gbrain serve] ignoring invalid GBRAIN_SERVE_EOF_DRAIN_MS=${JSON.stringify(raw)} — using default ${DEFAULT_EOF_DRAIN_MS}ms`,
-    );
-    return DEFAULT_EOF_DRAIN_MS;
-  }
-  return Math.floor(n);
-}
-
 /**
  * #5205: the boot-deadline line names the boot phase that never finished and
  * the engine's pool pressure, so a pool below the resident floor reads as a
@@ -575,7 +598,7 @@ function resolveBootTimeoutMs(): number {
  */
 function installGraduationHandoff(engine: BrainEngine, opts: ServeOptions): ServeOptions {
   if (engine.kind !== 'pglite') return opts;
-  const exit = opts.exit ?? ((code?: number) => { process.exit(code); });
+  const exit = opts.exit ?? exitAfterStdoutDrains();
   const log = opts.log ?? ((msg: string) => console.error(msg));
   let handoffExit: number | null = null;
   let shutdown: ((reason: string) => void) | null = null;
@@ -594,17 +617,6 @@ function installGraduationHandoff(engine: BrainEngine, opts: ServeOptions): Serv
     exit: (code?: number) => exit(handoffExit ?? code),
     onShutdownReady: (fn) => { shutdown = fn; opts.onShutdownReady?.(fn); },
   };
-}
-
-interface StdioLifecycleDeps {
-  stdin: NodeJS.ReadableStream & { isTTY?: boolean };
-  signals: Pick<NodeJS.Process, 'on'>;
-  exit: (code?: number) => void;
-  log: (msg: string) => void;
-  getParentPid: () => number;
-  setInterval: (fn: () => void, ms: number) => unknown;
-  clearInterval: (handle: unknown) => void;
-  probeWatchdog: () => boolean;
 }
 
 /**
@@ -642,12 +654,20 @@ function installFactsDrain(engine: BrainEngine, opts: ServeOptions, deps: StdioL
  * the on-commit HEAD watcher (`sync.on_commit`, core/serve-head-watcher.ts)
  * stops with them, before shutdownDelegatedSync aborts the sync it started.
  */
+/** #6770: the PGLite lock owner's request-log retention prune, hourly (a no-op on Postgres or while retention is off). */
+function installMcpLogPrune(engine: BrainEngine, opts: ServeOptions, log: (line: string) => void, shuttingDown: () => boolean): McpLogPruneTicker | null {
+  if (opts.mcpLogPrune === false) return null;
+  return startMcpLogPruneTicker(engine, { log, ...(opts.mcpLogPrune ?? {}),
+    canRun: async () => !shuttingDown() && !isEngineDegradedForServe(engine) && !(await loadSyncRunner()).isDelegatedSyncRunning() });
+}
+
 function installResidentTickers(engine: BrainEngine, opts: ServeOptions, deps: StdioLifecycleDeps, shuttingDown: () => boolean): { stop(): Promise<void> } {
   const factsDrain = installFactsDrain(engine, opts, deps, shuttingDown);
+  const mcpLogPrune = installMcpLogPrune(engine, opts, deps.log, shuttingDown);
   // The watch keeps its own unref'd timer: the injected lifecycle timers are the parent watchdog's and the idle sweep's, which tests count.
   const movementWatch: MovementWatch = startMovementWatch(engine, { log: deps.log });
   const headWatcher = startServeHeadWatcher(engine, { log: deps.log });
-  return { stop: async () => { const settled = headWatcher.stop(); movementWatch.stop(); await settled; await factsDrain?.stop(); } };
+  return { stop: async () => { const settled = headWatcher.stop(); movementWatch.stop(); mcpLogPrune?.stop(); await settled; await factsDrain?.stop(); } };
 }
 
 function installStdioLifecycle(
@@ -658,7 +678,7 @@ function installStdioLifecycle(
   const deps: StdioLifecycleDeps = {
     stdin: opts.stdin ?? process.stdin,
     signals: opts.signals ?? process,
-    exit: opts.exit ?? ((code?: number) => { process.exit(code); }),
+    exit: opts.exit ?? exitAfterStdoutDrains(),
     log: opts.log ?? ((msg: string) => console.error(msg)),
     getParentPid: opts.getParentPid ?? readLiveParentPid,
     setInterval: opts.setInterval ?? ((fn, ms) => setInterval(fn, ms)),
@@ -667,8 +687,9 @@ function installStdioLifecycle(
   };
 
   let shuttingDown = false;
-  let parentWatchdog: unknown = null;
+  let stopWatchdog = (): void => {};
   let idleSweepTimer: unknown = null;
+  const idleUpkeep = idleUpkeepSlot(opts.upkeep ?? defaultIdleUpkeep(deps.log)); // GBRA-438
   let activateIdleActivityTracking = (): void => {};
   let factsDrain: { stop(): Promise<void> } | null = null;
   const beginShutdown = (reason: string): void => {
@@ -678,10 +699,7 @@ function installStdioLifecycle(
     // Stop the parent-watchdog interval as soon as a shutdown begins so
     // it cannot fire a redundant 'parent-died' shutdown while the first
     // one is still draining the cleanup chain.
-    if (parentWatchdog !== null) {
-      deps.clearInterval(parentWatchdog);
-      parentWatchdog = null;
-    }
+    stopWatchdog();
 
     // Stop the idle-sweep interval too [ENG-5] — a sweep must never start
     // while the engine is being disconnected underneath it.
@@ -689,6 +707,7 @@ function installStdioLifecycle(
       deps.clearInterval(idleSweepTimer);
       idleSweepTimer = null;
     }
+    idleUpkeep.stop();
 
     deps.log(`GBrain MCP server: graceful exit (${reason})`);
 
@@ -745,127 +764,16 @@ function installStdioLifecycle(
       });
   };
 
-  // Signal-based termination. SIGTERM: daemon ask. SIGINT: user Ctrl-C.
-  // SIGHUP: terminal disconnect / daemon-style "reload" channels — Aragorn
-  // observed real-world hosts (Claude Desktop on macOS, hermes-agent
-  // restart) send these instead of closing stdin. All three get the same
-  // graceful path; the idempotency guard absorbs duplicate signals.
-  deps.signals.on('SIGTERM', () => beginShutdown('SIGTERM'));
-  deps.signals.on('SIGINT', () => beginShutdown('SIGINT'));
-  deps.signals.on('SIGHUP', () => beginShutdown('SIGHUP'));
-
-  // Stdin EOF — the parent closes the pipe but the MCP SDK's
-  // StdioServerTransport only listens for 'data'/'error', not 'end' or
-  // 'close', so without these hooks the process keeps the engine (and its
-  // PGLite write lock) live indefinitely after the parent disconnects.
-  // 'end' fires on a clean EOF; 'close' fires when the underlying handle
-  // is destroyed (e.g. parent SIGKILL'd while pipe still open). Both
-  // converge on the same idempotent shutdown.
-  // Skip when stdin is a TTY: interactive `gbrain serve` use shouldn't
-  // terminate just because the user hasn't typed anything. Signal /
-  // watchdog paths still cover that case if needed.
-  // v0.34.1 (#870): when MCP_STDIO=1, the wrapping gateway pipes the
-  // JSON-RPC handshake then closes its stdin half. Treating that as a
-  // permanent disconnect kills the server before the first tool call.
-  // Signal handlers (SIGTERM/SIGINT/SIGHUP), transport.onclose, and the
-  // parent-process watchdog below still cover legitimate shutdown paths.
-  // `mcpStdio` is the injectable form; default reads the env once at
-  // install time so tests stay isolated (no process.env mutation).
-  const mcpStdioMode = opts.mcpStdio ?? (process.env.MCP_STDIO === '1');
-  // #4409: a one-shot MCP client writes its frames and closes stdin
-  // immediately. Node delivers 'end' AFTER all 'data' events, and the SDK
-  // parses every received frame synchronously during 'data' (handler start
-  // is queued as a microtask) — so at EOF time requests can be in flight
-  // with no response written yet. Treating EOF as an immediate shutdown
-  // silently dropped those responses (the codex-plugin door went red on
-  // exactly this shape). Drain in-flight RPCs — bounded — before the
-  // graceful exit; idle servers still exit promptly (one timer tick).
-  // GBRAIN_SERVE_EOF_DRAIN_MS tunes the bound; 0 restores immediate exit.
-  const pendingRpcs = opts.pendingRpcs ?? stdioRpcsInFlightCount;
-  const eofDrainMs = opts.eofDrainMs ?? resolveEofDrainMs();
-  let eofDrainStarted = false;
-  const drainThenShutdown = (reason: string): void => {
-    if (shuttingDown || eofDrainStarted) return;
-    eofDrainStarted = true;
-    void (async () => {
-      if (eofDrainMs > 0) {
-        // One macrotask so already-parsed requests' handlers (microtasks)
-        // start and increment the counter before the first check.
-        await new Promise<void>((r) => setTimeout(r, 0));
-        if (pendingRpcs() > 0) {
-          deps.log(
-            `GBrain MCP server: stdin EOF with ${pendingRpcs()} in-flight request(s) — draining before exit (bound ${eofDrainMs}ms; GBRAIN_SERVE_EOF_DRAIN_MS)`,
-          );
-          const deadlineAt = Date.now() + eofDrainMs;
-          while (pendingRpcs() > 0 && Date.now() < deadlineAt && !shuttingDown) {
-            await new Promise<void>((r) => setTimeout(r, 25));
-          }
-        }
-        // One extra macrotask: the SDK sends the response in a .then AFTER
-        // the handler resolves — let that stdout write get issued before
-        // the cleanup chain starts.
-        await new Promise<void>((r) => setTimeout(r, 0));
-      }
-      beginShutdown(reason);
-    })();
-  };
-  opts.onShutdownReady?.(drainThenShutdown);
-  if (!deps.stdin.isTTY && !mcpStdioMode) {
-    deps.stdin.once('end', () => drainThenShutdown('stdin-end'));
-    deps.stdin.once('close', () => drainThenShutdown('stdin-close'));
-  }
-
-  // Parent-process watchdog. Some hosts (launchd, cron, certain MCP
-  // gateways) terminate without closing stdin and without sending a
-  // signal — the kernel just re-parents us to whichever ancestor is
-  // still alive (PID 1, or any closer subreaper such as launchd, systemd,
-  // tmux, or a parent shell with PR_SET_CHILD_SUBREAPER). Polling is the
-  // only portable way to notice; see `readLiveParentPid` for why we
-  // cannot rely on `process.ppid` (cached at process creation and never
-  // refreshed on re-parent in Node or Bun). On Windows the same class of
-  // orphan is WORSE in practice: MCP hosts typically launch the server
-  // through a `cmd.exe` wrapper (.bat/.cmd), and killing the wrapper
-  // does not kill the child — so without a watchdog the orphan holds the
-  // PGLite write lock until the machine reboots. `readLiveParentPid`
-  // handles the platform split internally (PPID-change on POSIX,
-  // parent-liveness on Windows); the comparison below works for both.
-  //
-  // We capture the initial parent PID once at install time and fire on
-  // ANY change, not just reparent-to-PID-1. The PR-#676 author's original
-  // `=== 1` check missed reparent-to-subreaper-PID-N, which is the actual
-  // observed behavior under launchd / systemd subreapers (codex review
-  // finding #3). A process legitimately started under PID 1 (e.g. a
-  // systemd service) skips the watchdog: there's no parent-death event
-  // to detect, and any reparent FROM 1 doesn't happen. `unref()` keeps
-  // the interval from blocking other exit paths.
-  //
-  // A one-shot startup probe (D2-revisited per codex finding #4) verifies
-  // that the underlying mechanism (`spawnSync('ps')`) actually works on
-  // this host. Stripped containers / busybox-without-procps environments
-  // would silently fall back to the cached `process.ppid` on every tick
-  // — the watchdog claims to be installed but never fires. When the probe
-  // fails, we skip installing the interval entirely and log loudly so the
-  // operator sees the degraded mode instead of a phantom watchdog.
-  // `> 1` (was `!== 1`): PID 1 is the documented legitimate-init-child
-  // skip; PID 0 is the new "parent already gone at install time" report
-  // from the Windows liveness reader — installing an interval that
-  // compares 0 to 0 forever would be a phantom watchdog, and stdin
-  // 'close' already covers a parent that died before we booted.
-  const initialParentPid = deps.getParentPid();
-  if (initialParentPid > 1) {
-    if (!deps.probeWatchdog()) {
-      deps.log(
-        '[gbrain serve] watchdog disabled: no parent-liveness mechanism (ps / signal-0 probe failed) — child will rely on stdin EOF / signals only',
-      );
-    } else {
-      parentWatchdog = deps.setInterval(() => {
-        if (deps.getParentPid() !== initialParentPid) {
-          beginShutdown('parent-died');
-        }
-      }, PARENT_WATCHDOG_INTERVAL_MS);
-      (parentWatchdog as { unref?: () => void } | null)?.unref?.();
-    }
-  }
+  // Signals, the bounded stdin-EOF drain (#4409; skipped under MCP_STDIO=1, #870, and on a TTY) and the parent-pid
+  // watchdog: the engine-free triggers in src/mcp/stdio-lifecycle.ts, shared with the thin-client bridge.
+  const triggers = installStdioShutdownTriggers(deps, {
+    beginShutdown, isShuttingDown: () => shuttingDown,
+    pendingRpcs: opts.pendingRpcs ?? stdioRpcsInFlightCount,
+    eofDrainMs: opts.eofDrainMs ?? resolveEofDrainMs(),
+    mcpStdio: opts.mcpStdio ?? (process.env.MCP_STDIO === '1'),
+  });
+  stopWatchdog = triggers.stopWatchdog;
+  opts.onShutdownReady?.(triggers.drainThenShutdown);
 
   // Idle maintenance sweep [ENG-5]: every IDLE_SWEEP_INTERVAL_MS tick that
   // saw no stdin data since the previous tick runs one bounded sweep (small
@@ -914,7 +822,7 @@ function installStdioLifecycle(
         // unlike the opt-in --stdio-idle-timeout listener below). By the
         // first tick the transport is long live. No activity signal exists
         // for this first window yet, so treat it as active and re-arm.
-        deps.stdin.on('data', () => { stdinSawData = true; });
+        deps.stdin.on('data', () => { stdinSawData = true; idleUpkeep.abort(); });
         dataListenerAttached = true;
         return;
       }
@@ -926,6 +834,7 @@ function installStdioLifecycle(
       Promise.resolve()
         .then(() => loggedIdleSweep(deps.log, () => runIdleSweep(engine)))
         .catch(() => { /* idle sweep is best-effort; never kill serve */ })
+        .then(() => shuttingDown || stdinSawData || sawForeground() ? undefined : idleUpkeep.run(engine)) // GBRA-438: after the sweep, never beside it
         .finally(() => { sweepInFlight = false; });
     }, idleSweepIntervalMs());
     (idleSweepTimer as { unref?: () => void } | null)?.unref?.();
@@ -972,112 +881,6 @@ function installStdioLifecycle(
   }
 
   return activateIdleActivityTracking;
-}
-
-/**
- * Signal-0 process-liveness probe (`process.kill(pid, 0)` — existence
- * check only, no signal delivered; OpenProcess under the hood on
- * Windows). EPERM means the PID exists but we lack rights to signal it
- * — that is still "alive" for watchdog purposes. Exported for direct
- * unit testing of the Windows watchdog path.
- */
-export function isPidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
-/**
- * Resolve the live parent PID from the kernel (not the cached startup
- * value). Both Node and Bun expose `process.ppid` as a property captured
- * at process creation, so it does NOT update when the kernel re-parents
- * us to a new ancestor after the original parent dies — which is the
- * exact event the watchdog needs to detect. Empirical evidence on
- * macOS / Bun 1.3.12: `process.ppid` stays at the original parent ID
- * indefinitely while `ps -o ppid= -p $$` reports the new parent within
- * one tick.
- *
- * Windows has no `ps` — the original ps-only implementation made the
- * startup probe fail on every Windows host, so the watchdog was always
- * disabled and an orphaned serve (e.g. its cmd.exe .bat wrapper killed
- * by the MCP host without closing stdin) held the PGLite write lock
- * indefinitely. But Windows also never re-parents orphans, so the
- * cached `process.ppid` stays correct for the process's lifetime and
- * the question inverts from "did the live PPID change?" to "is the
- * original parent still alive?" — answered in-process via signal-0,
- * no external binary needed. Parent dead → report 0 (kernel PID 0 is
- * the System Idle Process, never our parent), which differs from
- * `initialParentPid` and fires the watchdog. Known degraded mode:
- * Windows recycles PIDs aggressively, so a reused parent PID can mask
- * a death — stdin EOF / signals remain the primary shutdown channels
- * and the watchdog stays the backstop, same posture as POSIX.
- *
- * Cost: ~10ms per ps spawn on POSIX, effectively free on Windows.
- * Called every 5s (PARENT_WATCHDOG_INTERVAL_MS), so amortized < 0.5%
- * CPU. Falls back to `process.ppid` if `ps` fails (best-effort safety
- * net for stripped-down containers, etc.); the startup probe at
- * watchdog-install time loud-logs and skips the interval entirely when
- * no mechanism is available, so a per-tick fallback is a redundant
- * safety net rather than a primary mechanism.
- *
- * `platform` is a test seam (defaults to the real platform) so CI on
- * any OS can exercise both branches — signal-0 works everywhere.
- */
-export function readLiveParentPid(platform: NodeJS.Platform = process.platform): number {
-  if (platform === 'win32') {
-    return isPidAlive(process.ppid) ? process.ppid : 0;
-  }
-  try {
-    const r = spawnSync('ps', ['-o', 'ppid=', '-p', String(process.pid)], {
-      encoding: 'utf8',
-      timeout: 1000,
-    });
-    if (r.status === 0 && typeof r.stdout === 'string') {
-      const n = parseInt(r.stdout.trim(), 10);
-      if (Number.isInteger(n) && n >= 0) return n;
-    }
-  } catch {
-    /* fall through */
-  }
-  return process.ppid;
-}
-
-/**
- * One-shot probe at watchdog-install time to confirm the platform's
- * parent-liveness mechanism actually works on this host. POSIX: true
- * iff `spawnSync('ps','-o','ppid=','-p',PID)` exits 0 with a parseable
- * integer. Windows: true iff signal-0 succeeds against our own PID
- * (always alive — verifies the mechanism, not the parent). When it
- * returns false, the caller skips installing the watchdog and emits a
- * loud stderr line — the operator sees "watchdog disabled" instead of
- * an installed-but-never-fires phantom.
- *
- * Why a separate probe rather than relying on the per-tick fallback in
- * `readLiveParentPid`: the per-tick fallback returns the cached
- * `process.ppid` silently, so the watchdog runs every 5s, compares
- * cached PPID to itself, never detects a change, and never fires —
- * while still claiming to be active. The probe surfaces the gap once
- * at install time and lets the caller short-circuit cleanly.
- */
-export function probeWatchdogAvailable(platform: NodeJS.Platform = process.platform): boolean {
-  if (platform === 'win32') {
-    return isPidAlive(process.pid);
-  }
-  try {
-    const r = spawnSync('ps', ['-o', 'ppid=', '-p', String(process.pid)], {
-      encoding: 'utf8',
-      timeout: 1000,
-    });
-    if (r.status !== 0 || typeof r.stdout !== 'string') return false;
-    const n = parseInt(r.stdout.trim(), 10);
-    return Number.isInteger(n) && n >= 0;
-  } catch {
-    return false;
-  }
 }
 
 function parseStdioIdleTimeout(args: string[]): number {

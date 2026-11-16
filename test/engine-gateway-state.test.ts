@@ -109,4 +109,60 @@ describe('per-engine adaptive gateway state', () => {
       await closeAll(a, b);
     }
   }, 60_000);
+
+  test('closing one engine keeps another engine\'s in-flight query embedding (#8605 item 1)', async () => {
+    let calls = 0;
+    let hold = false;
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let started!: () => void;
+    const inFlight = new Promise<void>(resolve => { started = resolve; });
+    __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
+      calls++;
+      if (hold) { started(); await held; }
+      return vectors(values, 1024);
+    }) as any);
+    const a = await open({ providers: { voyage: { apiKey: key('a') } } });
+    const b = await open({ providers: { voyage: { apiKey: key('b') } } });
+    try {
+      await withEngineScope(a, () => embedQuery('a question'));
+      hold = true;
+      const pending = withEngineScope(b, () => embedQuery('held question'));
+      await inFlight;
+      await a.disconnect();
+      release();
+      await pending;
+      expect(calls).toBe(2);
+      await withEngineScope(b, () => embedQuery('held question'));
+      expect(calls).toBe(2);
+    } finally {
+      release();
+      await closeAll(a, b);
+    }
+  }, 60_000);
+
+  test('an engine\'s own in-flight query embedding is not cached after it closes', async () => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let started!: () => void;
+    const inFlight = new Promise<void>(resolve => { started = resolve; });
+    __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
+      started();
+      await held;
+      return vectors(values, 1024);
+    }) as any);
+    const a = await open({ providers: { voyage: { apiKey: key('a') } } });
+    try {
+      const before = __queryEmbedCacheKeysForTests().length;
+      const pending = withEngineScope(a, () => embedQuery('closing question'));
+      await inFlight;
+      await a.disconnect();
+      release();
+      expect(await pending).toHaveLength(1024);
+      expect(__queryEmbedCacheKeysForTests().length).toBe(before);
+    } finally {
+      release();
+      await closeAll(a);
+    }
+  }, 60_000);
 });

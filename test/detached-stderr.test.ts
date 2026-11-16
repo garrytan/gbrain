@@ -16,7 +16,8 @@
  *      no longer passes stderr 'inherit' (source pin — the branch needs a
  *      live Postgres supervisor to exercise end-to-end).
  */
-import { describe, test, expect } from 'bun:test';
+import { afterEach, describe, test, expect, mock, spyOn } from 'bun:test';
+import * as childProcess from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, writeSync, closeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,6 +25,7 @@ import { withEnv } from './helpers/with-env.ts';
 import {
   openDetachedStderrSink,
   closeDetachedStderrSink,
+  spawnDetachedSupervisor,
 } from '../src/core/minions/detached-stderr.ts';
 import { surfaceSource } from './helpers/source-surface.ts';
 
@@ -72,6 +74,38 @@ describe('openDetachedStderrSink (#4418)', () => {
     const sink = openDetachedStderrSink();
     closeDetachedStderrSink(sink);
     closeDetachedStderrSink(sink); // double-close swallowed
+  });
+});
+
+describe('spawnDetachedSupervisor argv (#7532)', () => {
+  afterEach(() => { mock.restore(); });
+
+  async function spawnedArgs(execPath: string, cliScript: string): Promise<unknown[]> {
+    const dir = mkdtempSync(join(tmpdir(), 'gb-detached-argv-'));
+    const spawn = spyOn(childProcess, 'spawn').mockImplementation((() => ({ pid: 4242, unref: () => {} })) as never);
+    try {
+      await withEnv({ GBRAIN_AUDIT_DIR: dir }, async () => {
+        expect(spawnDetachedSupervisor(execPath, cliScript, ['jobs', 'supervisor', 'start']).pid).toBe(4242);
+      });
+      expect(spawn.mock.calls.length).toBe(1);
+      expect(spawn.mock.calls[0]?.[0]).toBe(execPath);
+      return spawn.mock.calls[0]?.[1] as unknown[];
+    } finally {
+      mock.restore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  test('a compiled binary gets only its CLI args, not its embedded /$bunfs entry', async () => {
+    expect(await spawnedArgs('/opt/acme-example/bin/gbrain-linux-x64', '/$bunfs/root/gbrain-linux-x64'))
+      .toEqual(['jobs', 'supervisor', 'start']);
+  });
+
+  test('a bun or node runtime keeps the CLI script as its first arg', async () => {
+    expect(await spawnedArgs('/usr/local/bin/bun', '/opt/acme-example/gbrain/src/cli.ts'))
+      .toEqual(['/opt/acme-example/gbrain/src/cli.ts', 'jobs', 'supervisor', 'start']);
+    expect(await spawnedArgs('/usr/local/bin/node', '/opt/acme-example/gbrain/dist/cli.js'))
+      .toEqual(['/opt/acme-example/gbrain/dist/cli.js', 'jobs', 'supervisor', 'start']);
   });
 });
 

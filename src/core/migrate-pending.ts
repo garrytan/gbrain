@@ -1,5 +1,27 @@
 import type { BrainEngine } from './engine.ts';
+import { engineKey } from './engine-key.ts';
 import { LATEST_SCHEMA_VERSION } from './schema-migrations/latest.generated.ts';
+
+const SCHEMA_VERSION_SEEN = Symbol('gbrain.schemaVersionSeen');
+const SCHEMA_VERSION_AT_CONNECT = Symbol('gbrain.schemaVersionAtConnect');
+type Recorded = { [SCHEMA_VERSION_SEEN]?: number; [SCHEMA_VERSION_AT_CONNECT]?: number };
+
+/** GST-2687: records config `version` on the engine as it just read or wrote it (the connect gate below, migrations); a transaction or view records on its engine. */
+export function noteSchemaVersion(engine: object, version: number): void {
+  const recorded = engineKey(engine) as Recorded;
+  recorded[SCHEMA_VERSION_SEEN] = Number.isInteger(version) ? version : undefined;
+  if (recorded[SCHEMA_VERSION_AT_CONNECT] === undefined && Number.isInteger(version)) recorded[SCHEMA_VERSION_AT_CONNECT] = version;
+}
+
+/** The first schema version recorded on `engine`, read before this process migrated anything; above 1, the brain's schema existed before this run. */
+export function schemaVersionAtConnect(engine: object): number | undefined {
+  return (engineKey(engine) as Recorded)[SCHEMA_VERSION_AT_CONNECT];
+}
+
+/** The schema version `engine` (or the engine a transaction or view belongs to) last recorded, read with no query; undefined when none was. */
+export function schemaVersionSeen(engine: object): number | undefined {
+  return (engineKey(engine) as Recorded)[SCHEMA_VERSION_SEEN];
+}
 
 /**
  * Cheap probe: does this engine have schema migrations pending?
@@ -23,6 +45,7 @@ export async function hasPendingMigrations(engine: BrainEngine): Promise<boolean
   try {
     const currentStr = await engine.getConfig('version');
     const current = parseInt(currentStr || '1', 10);
+    noteSchemaVersion(engine, current);
     return current < LATEST_SCHEMA_VERSION;
   } catch {
     return true;

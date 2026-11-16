@@ -118,6 +118,7 @@ describe('worker configuration admission and actual execution', () => {
       ensureSchema: async () => { schemaEntered.resolve(); await schemaReady.promise; events.push('schema'); },
       promoteDelayed: async () => { events.push('promote'); },
       claim: async () => { events.push('claim'); worker.stop(); return null; },
+      hasOverdueWatchdogSuspect: async () => false,
     };
     worker.register('fixture', async () => {});
     worker.on('ready', () => { events.push('ready'); });
@@ -145,6 +146,7 @@ describe('worker configuration admission and actual execution', () => {
       ensureSchema: async () => { events.push('schema'); },
       promoteDelayed: async () => { events.push('promote'); },
       claim: async () => { events.push('claim'); return null; },
+      hasOverdueWatchdogSuspect: async () => false,
     };
     worker.register('fixture', async () => {});
     worker.on('ready', () => { throw new Error('fixture status publication failed'); });
@@ -210,6 +212,7 @@ describe('worker configuration admission and actual execution', () => {
       ensureSchema: async () => { events.push('schema'); },
       promoteDelayed: async () => { events.push('promote'); },
       claim: async () => { events.push('claim'); worker.stop(); return null; },
+      hasOverdueWatchdogSuspect: async () => false,
     };
     worker.register('fixture', async () => {});
     await worker.start();

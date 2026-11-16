@@ -13,7 +13,8 @@
  * 300 ms), load-error (throws while loading), exit (waits on nothing, so
  * the thread ends without answering); commit-held and commit-written
  * (hook-lane.ts) stop the main thread's commit once it holds the lease, or
- * once its temp file is written. GBRAIN_TEST_SKILL_LANE_DEADLINE_MS (tests only, hook-lane.ts)
+ * once its temp file is written; gc (hook-lane.ts) makes the session GC pass
+ * after the logged turn never settle. GBRAIN_TEST_SKILL_LANE_DEADLINE_MS (tests only, hook-lane.ts)
  * widens the lane's deadline so a loaded test machine can assert delivery.
  */
 import { parentPort, workerData } from 'node:worker_threads';

@@ -24,7 +24,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
-import { readGitHold, SYNC_IMPORT_PROVENANCE_OP, writeGitHold } from '../src/core/persistence/sync-holds.ts';
+import { FILE_DRIFT_VERSION, readGitHold, SYNC_IMPORT_PROVENANCE_OP, writeGitHold } from '../src/core/persistence/sync-holds.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { __resetTreeReuseForTests } from '../src/core/persistence/sync-tree-reuse.ts';
 import { RECOVERY_VERSION } from '../src/core/markdown.ts';
@@ -121,7 +121,8 @@ for (const backend of testBackends()) {
       const page = (await engine.readPageSnapshot('notes/c', { sourceId: 'default' }))!;
       await engine.transaction(tx => writeGitHold(tx, { source_id: 'default', incarnation, path: 'notes/c.md', source_path: 'notes/c.md', slug: 'notes/c', page_id: Number(page.page.id),
         code: 'file_drift', message: 'Synthetic file_drift hold.', upstream_version: null, observed_at: new Date().toISOString(), run_id: null, mode: 'managed',
-        meta: { recovery_version: RECOVERY_VERSION, blob_oid: git(root, 'rev-parse', 'HEAD:notes/c.md'), page_revision: page.revision } } as never));
+        // Screened by the current drift rule, so the pass leaves it alone (an older one is re-screened and released by the pass itself, GST-2568).
+        meta: { recovery_version: RECOVERY_VERSION, drift_version: FILE_DRIFT_VERSION, blob_oid: git(root, 'rev-parse', 'HEAD:notes/c.md'), page_revision: page.revision } } as never));
       edit(root, 'notes/a', 'A committed change of notes/a.'); commit(root, 'change a');
       const run = await pass(engine, async () => { await engine.executeRaw("DELETE FROM op_checkpoints WHERE op='sync-hold' AND fingerprint=$1", [`default:${incarnation}:notes/c.md`]); });
       expect(round2(run)).toEqual({ taken: false, reason: 'holds', rows: 0 });

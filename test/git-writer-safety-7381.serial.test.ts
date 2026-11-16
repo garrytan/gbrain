@@ -332,27 +332,44 @@ describe('opt-in commit guard', () => {
 });
 
 describe('the helper\'s no-gbrain fallback', () => {
-  test('marks its children with the real lock path and releases the commit lock before it pushes', async () => {
+  test('marks its children with the real lock path, commits under it, releases it and pushes nothing (GST-2456)', () => {
     const { bare, a } = setup();
     mkdirSync(join(a, 'scripts'), { recursive: true });
     writeFileSync(join(a, 'scripts', 'brain-commit-push.sh'), renderCommitPushHelper(), { mode: 0o755 });
     const lockPath = git(a, 'rev-parse', '--path-format=absolute', '--git-path', 'brain-commit.lock');
     writeFileSync(join(a, '.git', 'hooks', 'pre-commit'), `#!/bin/sh\nprintf '%s' "$BRAIN_COMMIT_LOCK_HELD" > ${JSON.stringify(join(root, 'marker'))}\n`);
     chmodSync(join(a, '.git', 'hooks', 'pre-commit'), 0o755);
-    writeFileSync(join(bare, 'hooks', 'pre-receive'), `#!/bin/sh\n: > ${JSON.stringify(join(root, 'pushing'))}\nsleep 3\n`, { mode: 0o755 });
+    const before = git(bare, 'rev-parse', 'main');
     writeFileSync(join(a, 'x.md'), 'via the fallback\n');
-    const helper = spawn('bash', [join(a, 'scripts', 'brain-commit-push.sh'), 'fallback', 'x.md'], {
-      cwd: a, stdio: 'ignore', env: { ...process.env, PATH: '/usr/bin:/bin', GIT_CONFIG_PARAMETERS: "'protocol.file.allow=always'" } });
-    const exited = new Promise<number | null>(r => helper.on('exit', code => r(code)));
-    let freeDuringPush = false;
-    for (let i = 0; i < 100 && !freeDuringPush; i++) {
-      await new Promise(r => setTimeout(r, 50));
-      try { readFileSync(join(root, 'pushing')); } catch { continue; }
-      freeDuringPush = spawnSync('flock', ['-n', lockPath, 'true']).status === 0;
-    }
-    expect(await exited).toBe(0);
-    expect(freeDuringPush).toBe(true);
+    const helper = spawnSync('bash', [join(a, 'scripts', 'brain-commit-push.sh'), 'fallback', 'x.md'], {
+      cwd: a, encoding: 'utf8', env: { ...process.env, PATH: '/usr/bin:/bin', GIT_CONFIG_PARAMETERS: "'protocol.file.allow=always'" } });
+    expect(helper.status).toBe(4);
+    expect(helper.stderr).toContain('NOT PUSHED');
     expect(read(root, 'marker')).toBe(lockPath);
-    expect(git(bare, 'show', 'main:x.md')).toBe('via the fallback');
+    expect(spawnSync('flock', ['-n', lockPath, 'true']).status).toBe(0);
+    expect(git(a, 'show', 'HEAD:x.md')).toBe('via the fallback');
+    expect(git(bare, 'rev-parse', 'main')).toBe(before);
+  }, 30_000);
+
+  test('a path with glob characters is a literal pathspec: [ab].md never commits a concurrent edit to a.md (#7792)', () => {
+    const { bare, a } = setup();
+    mkdirSync(join(a, 'scripts'), { recursive: true });
+    writeFileSync(join(a, 'scripts', 'brain-commit-push.sh'), renderCommitPushHelper(), { mode: 0o755 });
+    writeFileSync(join(a, 'a.md'), 'a v1\n');
+    git(a, 'add', 'a.md'); git(a, 'commit', '-qm', 'seed a'); git(a, 'push', '-q', 'origin', 'main');
+    writeFileSync(join(a, 'a.md'), 'a concurrent edit\n');
+    writeFileSync(join(a, '[ab].md'), 'the literal name\n');
+    const run = (...paths: string[]) => spawnSync('bash', [join(a, 'scripts', 'brain-commit-push.sh'), 'glob name', ...paths], {
+      cwd: a, encoding: 'utf8', env: { ...process.env, PATH: '/usr/bin:/bin', GIT_CONFIG_PARAMETERS: "'protocol.file.allow=always'" } });
+    const pushed = git(bare, 'rev-parse', 'main');
+    const result = run('[ab].md');
+    expect(result.status).toBe(4);
+    expect(git(a, 'show', '--name-only', '--format=', 'HEAD')).toBe('[ab].md');
+    expect(git(a, 'show', 'HEAD:[ab].md')).toBe('the literal name');
+    expect(git(a, 'show', 'HEAD:a.md')).toBe('a v1');
+    expect(git(bare, 'rev-parse', 'main')).toBe(pushed);
+    expect(status(a)).toBe(' M a.md\n?? scripts/');
+    expect(run('').status).toBe(2);
+    expect(status(a)).toBe(' M a.md\n?? scripts/');
   }, 30_000);
 });

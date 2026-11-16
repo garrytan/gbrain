@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { Glob } from 'bun';
 import { CLI_ONLY, cliOnlyFlagArgs, validateCommandFlags } from '../src/cli/main.ts';
 import { CLI_FLAG_REGISTRY } from '../src/core/cli-flag-registry.generated.ts';
-import { COMMAND_VALUES, END_OF_OPTIONS, EQUALS_READERS, OWN_EQUALS_PARSERS, directEntryArgs, findUnknownFlag, knownSwitches, splitFlagEquals } from '../src/cli/flag-equals.ts';
+import { COMMAND_VALUES, END_OF_OPTIONS, EQUALS_READERS, NO_VALUE_FLAG_PATHS, OWN_EQUALS_PARSERS, directEntryArgs, findUnknownFlag, knownSwitches, splitFlagEquals } from '../src/cli/flag-equals.ts';
 import { CLI_COMMANDS } from '../src/cli/command-table.ts';
 import { SEARCH_SUBCOMMANDS } from '../src/cli/subcommands.ts';
 import { SYNC_FLAGS } from '../src/core/sync-flags.ts';
@@ -21,7 +21,7 @@ import { strictSpecFor } from '../src/cli/strict-args.ts';
 import { surfaceFileSource } from './helpers/source-surface.ts';
 import { loadCuratedHelp } from '../src/cli/help/render.ts';
 import { parseAccessFlag, parseSurfaceFlag } from '../src/mcp/surface.ts';
-import { parseMovementArgs } from '../src/commands/sources-writer-movement.ts';
+import { parseMovementArgs } from '../src/commands/sources-writer-movement-cli.ts';
 import { parseAddTypeArgs } from '../src/commands/schema-add-type.ts';
 import { parseRepairArgs } from '../src/commands/repair.ts';
 import { parseTakesMutation } from '../src/commands/takes-mutation.ts';
@@ -108,6 +108,10 @@ describe('#7619 table: every registered CLI_ONLY flag', () => {
 
 describe('#7619 split rules', () => {
   afterEach(() => _resetCliOptionsForTest());
+
+  test('doctor --scope=<v> splits into --scope <v>, which doctor reads (#7624)', async () => {
+    expect(await argvFor('doctor', ['--scope=brain'])).toEqual(['--scope', 'brain']);
+  });
 
   test('a value containing = splits at the first =', async () => {
     expect(await argvFor('serve', ['--public-url=https://brain.example.com/?a=b'])).toEqual(['--public-url', 'https://brain.example.com/?a=b']);
@@ -238,7 +242,6 @@ describe('#7619 split rules', () => {
     expect(await argvFor('config', ['set', 'k', '--x=true'])).toEqual(['set', 'k', '--x=true']);
     expect(await argvFor('pages', ['purge-deleted', '--older-than=72'])).toEqual(['purge-deleted', '--older-than=72']);
     expect(await argvFor('embed', ['--pace=gentle'])).toEqual(['--pace=gentle']);
-    expect(await argvFor('doctor', ['--scope=brain'])).toEqual(['--scope=brain']);
     expect(await argvFor('search', ['--limit=5'])).toEqual(['--limit=5']);
     expect(await argvFor('retrieval-upgrade', ['--yes=true'])).toEqual(['--yes=true']);
     expect(await argvFor('migrate', ['embeddings', '--to=x'])).toEqual(['embeddings', '--to=x']);
@@ -295,6 +298,8 @@ describe('#7619 split rules', () => {
       'src/commands/doctor.ts': ['doctor'],
       'src/commands/doctor/budget.ts': ['doctor'],
       'src/commands/doctor/registry.ts': ['doctor'],
+      'src/commands/doctor/alert.ts': ['doctor'],
+      'src/commands/doctor/remote-tier.ts': 'doctor argv the alert tier passes to buildChecks (--scope=brain), not a CLI reader',
       'src/commands/edge-proposals.ts': ['edge-proposals list'],
       'src/commands/embed.ts': ['embed'],
       'src/commands/eval-conversation-parser.ts': ['eval conversation-parser'],
@@ -318,6 +323,7 @@ describe('#7619 split rules', () => {
       'src/commands/pages-unsearchable.ts': ['pages unsearchable'],
       'src/commands/recall.ts': ['recall', 'forget'],
       'src/commands/reindex.ts': ['reindex'],
+      'src/commands/reindex-synopsis.ts': ['reindex'],
       'src/commands/resolvers.ts': ['resolvers list'],
       'src/commands/routing-eval.ts': ['routing-eval'],
       'src/commands/schema.ts': ['schema active', 'schema detect', 'schema suggest', 'schema review-candidates', 'schema review-orphans', 'schema stats', 'schema cardinality-preview', 'schema sync', 'schema lint', 'schema reload', 'schema update-type', 'schema add-alias', 'schema add-prefix', 'schema add-link-type', 'schema set-extractable', 'schema set-expert-routing', 'schema scaffold-extractable'],
@@ -325,6 +331,7 @@ describe('#7619 split rules', () => {
       'src/commands/skillpack.ts': ['skillpack status', 'skillpack sync', 'skillpack migrate-fence', 'skillpack scrub-legacy-fence-rows', 'skillpack harvest', 'skillpack diff'],
       'src/commands/skillpack/harness.ts': ['skillpack scaffold', 'skillpack reference'], // also the OWN parser of skillpack remove
       'src/commands/skillpack/reference.ts': ['skillpack reference'],
+      'src/commands/skillpack/update.ts': ['skillpack reference'],
       'src/commands/skillpack/scaffold.ts': ['skillpack scaffold'],
       'src/commands/sources-harden.ts': ['sources harden', 'sources pull'], // *
       'src/commands/sources.ts': ['sources status'], // * (paged regex :1214)
@@ -349,7 +356,7 @@ describe('#7619 split rules', () => {
       'src/commands/source-reconcile.ts': 'own parser: sources reconcile',
       'src/commands/sources-lifecycle-args.ts': 'managed/delegated sources add|remove|archive|restore|purge|set-path|reclone parser; legacy fallback reads exact tokens only (see below)',
       'src/commands/sources-reset-upstream.ts': 'own parser: sources reset-upstream (:90,:135 are git args)',
-      'src/commands/sources-writer-movement.ts': 'own parser: sources writer',
+      'src/commands/sources-writer-movement-cli.ts': 'own parser: sources writer',
       'src/commands/takes-mutation.ts': 'own parser: takes add|update|supersede|resolve|remove (:116 filters a fix argv); takes rebuild reads --source-id exact (:172)',
       'src/core/embedding-migration-cli.ts': 'own parser: migrate embeddings, retrieval-upgrade',
 
@@ -406,6 +413,8 @@ describe('#7619 split rules', () => {
       'src/core/git-head.ts': 'git child argv',
       'src/core/git-remote.ts': 'git child argv',
       'src/core/git/commit-push.ts': 'git child argv',
+      'src/core/git/skipped-paths.ts': 'git child argv',
+      'src/core/persistence/git-durability-administration.ts': 'git child argv',
       'src/core/git/range-secret-scan.ts': 'git child argv',
       'src/core/git/reconcile.ts': 'git child argv',
       'src/core/git/upstream-history.ts': 'git child argv',
@@ -419,6 +428,7 @@ describe('#7619 split rules', () => {
       'src/core/persistence/topology-filesystem.ts': 'git child argv',
       'src/core/persistence/worktree-refresh.ts': 'git child argv',
       'src/core/reason-trailers.ts': 'git child argv (the reason scan and its notice fix)',
+      'src/core/repair/file-drift-compare.ts': 'git child argv',
       'src/core/skillpack/bundle.ts': 'git child argv',
       'src/core/skillpack/tarball.ts': 'tar child argv',
       'src/core/source-health.ts': 'git child argv',
@@ -426,6 +436,7 @@ describe('#7619 split rules', () => {
       'src/core/sync-upstream.ts': 'git child argv',
       'src/core/tailscale.ts': 'tailscale child argv',
       'src/mcp/surface.ts': 'serve --access/--surface parsers read both forms (#7603); the entry splits the = form first',
+      'src/mcp/remote-bridge-errors.ts': 'prints the global --timeout=Ns form in a bridge fix; reads no flag',
       'src/core/stdio-member-flag.ts': 'serve --stdio-member parser reads both forms; the entry splits the = form first, and setup and doctor read it back from a harness entry\'s args as written (GST-363)',
       'src/core/direct-pool-profile.ts': 'pool profile reads serve --access in both forms from the raw argv before the gate',
       'src/commands/access.ts': 'access has no EQUALS_READERS key, so the entry refuses every = form; flagValue and the --as guard also read it for a direct caller',
@@ -440,8 +451,11 @@ describe('#7619 split rules', () => {
       'src/commands/doctor/checks/foreign-writers.ts': 'git child argv',
       'src/core/persistence/pending-import.ts': 'git child argv',
       'src/core/persistence/sync-blobs.ts': 'git child argv',
+      'src/core/persistence/moved-pages.ts': 'git child argv',
       'src/cli/enforced-commit-push.ts': 'git child argv',
       'src/cli/enforced-member.ts': 'the GBRAIN_ENFORCED_MEMBER gate reads both forms of the recall and sync flags it checks, so an = spelling cannot skip a refusal or the source check',
+      'src/core/bootstrap/repo.ts': 'git child argv',
+      'src/commands/upgrade.ts': 'bun child argv (--backend=copyfile)',
     };
     const READER = [/['"`]--[a-z0-9-]+=/, /(?:startsWith|indexOf|===)\(?\s*`\$\{\w+\}=`/, /startsWith\(\w+ \+ '='\)/];
     const found = [...new Glob('src/**/*.ts').scanSync('.')].filter(p => !p.endsWith('.generated.ts') && READER.some(r => r.test(readFileSync(p, 'utf8'))));
@@ -589,6 +603,34 @@ describe('#7619 refusals that keep consent, scope and targets right', () => {
     }
   });
 
+  // Value: protects=the agent run leading zone skips a value flag's value, so an = flag after it is read as a leading flag and gets the two-argument advice; fails_when=the value-skip is removed and the value ends the zone, so the = flag is read as prompt text with advice to move it before the prompt it already precedes; why_new=no row put an = flag after a value flag and its value (#7672 item 6); seam=none; no_claim=agent run's own parse after the gate
+  test('agent run reads an = flag after a value flag and its value as a leading flag', async () => {
+    for (const [args, flag] of [[['run', '--model', 'opus', '--tools=read', 'go'], '--tools'], [['run', '--source', 'source-a', '--detach', '--max-turns=2', 'go'], '--max-turns']] as const) {
+      const r = await cliOnlyFlagArgs('agent', [...args]);
+      expect('refusal' in r && r.refusal.message).toContain(`${flag}=…`);
+      expect('refusal' in r && r.refusal.message).toContain('as two arguments');
+      expect('refusal' in r && r.refusal.message).not.toContain('before the prompt');
+    }
+  });
+
+  // Value: protects=an = value flag on an edge-proposals path that reads no value flag refuses with advice to drop it; fails_when=the refusal advises --limit <value>, and the handler then takes that value as the proposal id (accept --limit 5 12 acts on proposal 5); why_new=the generic two-argument advice assumed every path reads the flag (#7672 item 4); seam=none; no_claim=the list path, which reads --limit= itself
+  test('edge-proposals paths that read no value flag say to drop an = value flag', async () => {
+    const { EDGE_PROPOSALS_SUBCOMMANDS } = await import('../src/cli/subcommands.ts');
+    expect([...NO_VALUE_FLAG_PATHS].sort()).toEqual(EDGE_PROPOSALS_SUBCOMMANDS.filter(s => s !== 'list').map(s => `edge-proposals ${s}`).sort());
+    for (const sub of ['show', 'accept', 'reject', 'undo', 'date', 'retry']) {
+      for (const flag of ['--limit', '--source']) {
+        const r = await cliOnlyFlagArgs('edge-proposals', [sub, `${flag}=5`, '12']);
+        expect('refusal' in r && r.refusal.code).toBe('invalid_params');
+        expect('refusal' in r && r.refusal.message).toContain(`gbrain edge-proposals ${sub} does not read ${flag}`);
+        expect('refusal' in r && r.refusal.suggestion).toContain(`Leave ${flag} out`);
+        expect('refusal' in r && r.refusal.suggestion).not.toContain(`Write ${flag} <value>`);
+      }
+    }
+    expect(await refusalFor('edge-proposals', ['retry', '--all-held=1'])).toContain('--all-held is a switch');
+    expect(await refusalFor('edge-proposals', ['undo', '--all-applied=true'])).toContain('--all-applied is a switch');
+    expect(await argvFor('edge-proposals', ['list', '--limit=5', '--status=all'])).toEqual(['list', '--limit=5', '--status=all']);
+  });
+
   test('the hand-parsed search subcommands refuse an = form without vouching for the flag', async () => {
     for (const [args, flag] of [[['modes', '--mdoe=balanced'], '--mdoe'], [['diagnose', 'q', '--target', 'x', '--source=source-a'], '--source'], [['stats', '--yes=n'], '--yes'], [['modes', '--dry-run=x'], '--dry-run'], [['stats', '--no-thing=x'], '--no-thing']] as const) {
       const r = await cliOnlyFlagArgs('search', [...args]);
@@ -671,7 +713,7 @@ describe('#7619 refusals that keep consent, scope and targets right', () => {
       'src/commands/eval-longmemeval.ts': 'eval longmemeval', 'src/commands/git.ts': 'git', 'src/commands/persistence-admin.ts': 'auth local-writer',
       'src/commands/repair.ts': 'repair', 'src/commands/schema-add-type.ts': 'schema add-type', 'src/commands/skillpack/harness.ts': 'skillpack remove',
       'src/commands/source-reconcile.ts': 'sources reconcile', 'src/commands/sources-reset-upstream.ts': 'sources reset-upstream',
-      'src/commands/sources-writer-movement.ts': 'sources writer', 'src/commands/takes-mutation.ts': 'takes add', 'src/commands/google-attachments.ts': 'google attachments',
+      'src/commands/sources-writer-movement-cli.ts': 'sources writer', 'src/commands/takes-mutation.ts': 'takes add', 'src/commands/google-attachments.ts': 'google attachments',
       // normalizeReindexArgs splits its own value flags; the entry refuses other = forms before it runs.
       'src/commands/reindex.ts': null,
       // Governs managed brains only: an unmanaged brain falls back to runSources, which reads exact tokens, so the entry rule applies.
@@ -683,7 +725,7 @@ describe('#7619 refusals that keep consent, scope and targets right', () => {
       repair: 'src/commands/repair.ts', 'schema add-type': 'src/commands/schema-add-type.ts', 'skillpack remove': 'src/commands/skillpack/harness.ts',
       'sources connect': 'src/commands/company-brain-connect.ts', 'sources inspect': 'src/commands/company-brain-inspect.ts',
       'sources reconcile': 'src/commands/source-reconcile.ts', 'sources reset-upstream': 'src/commands/sources-reset-upstream.ts',
-      'sources writer': 'src/commands/sources-writer-movement.ts', 'takes add': 'src/commands/takes-mutation.ts', 'takes remove': 'src/commands/takes-mutation.ts',
+      'sources writer': 'src/commands/sources-writer-movement-cli.ts', 'takes add': 'src/commands/takes-mutation.ts', 'takes remove': 'src/commands/takes-mutation.ts',
       'takes resolve': 'src/commands/takes-mutation.ts', 'takes supersede': 'src/commands/takes-mutation.ts', 'takes update': 'src/commands/takes-mutation.ts',
     };
     const found = [...new Glob('src/commands/**/*.ts').scanSync('.')].filter(p => /\b(?:eq|equal|equals) = \w+\.indexOf\('='\)|\.split\(\/=\(\.\*\)\/s\)/.test(readFileSync(p, 'utf8'))).sort();

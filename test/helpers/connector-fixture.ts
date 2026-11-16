@@ -138,15 +138,24 @@ export function createConnectorFixture() {
   return { home, engines, env, backends, setup, teardown, source, boundSource, standaloneConnector };
 }
 
+/** #7490: the People reachability probe (one connection, email addresses only), told apart from a contacts sweep page. */
+export function isPeopleAccessProbe(url: string): boolean {
+  const u = new URL(url);
+  return u.pathname.endsWith('/people/me/connections') && u.searchParams.get('pageSize') === '1' && u.searchParams.get('personFields') === 'emailAddresses';
+}
+
 /**
- * #5686: a managed Google run resolves the credential's account (People `me`,
- * Calendar primary, Gmail profile) before any service runs. Fixture fetchers
- * that only model sweep routes get those identity routes answered here.
+ * #5686: a managed Google run resolves the credential's account (People
+ * reachability, Calendar primary, Gmail profile, then OAuth userinfo) before
+ * any service runs. Fixture fetchers that only model sweep routes get those
+ * identity routes answered here.
  */
 export function withGoogleAccount(fetcher: ((url: string, init?: RequestInit) => Promise<Response>) | undefined, account = googleConfig.g_account) {
   return async (url: string, init?: RequestInit) => {
     const path = new URL(url).pathname;
     if (path.endsWith('/people/me')) return json({ resourceName: 'people/me', emailAddresses: [{ value: account, metadata: { primary: true } }] });
+    if (isPeopleAccessProbe(url)) return json({ connections: [] });
+    if (path.endsWith('/v1/userinfo')) return json({ email: account });
     if (path.endsWith('/calendars/primary')) return json({ id: account });
     if (!fetcher) throw new Error('Unexpected external fixture route');
     return fetcher(url, init);

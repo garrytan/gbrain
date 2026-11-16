@@ -63,7 +63,7 @@ import { readSessionSource } from '../context/corpus-source.ts';
 import { parseCorpusTurns } from '../context/corpus-turns.ts';
 import { DETECTED_PRINCIPAL, readSpeakerSidecar, speakerContextNote } from '../context/session-speaker.ts';
 import { stripPastedContent } from '../transcripts/pasted-content.ts';
-import { isSegmentedPage } from '../page-body/page-shape.ts';
+import { wholeBodySnapshot } from '../persistence/segmented-apply.ts';
 import { shellQuote } from '../shell-quote.ts';
 import { pruneDir } from '../sync.ts';
 import { CAPTURE_LANES, captureSessionId } from './captured-facts.ts';
@@ -77,6 +77,8 @@ const OPENING_CHARS = 160;
 const OPENING_MIN_CHARS = 40;
 const OPENING_MIN_OTHERS = 3;
 const HEAD_BYTES = 64 * 1024;
+/** #9390: what Claude Code writes into a user turn around a slash command (/clear, /model), never text the owner typed. */
+const HARNESS_BLOCKS = /<(local-command-caveat|command-name|command-message|command-args|local-command-stdout|local-command-stderr)>[\s\S]*?<\/\1>/g;
 const NOTE_SEPARATOR = CONTEXT_NOTE_SEPARATOR;
 const NOTE_MARK = 'speaker: agent ';
 
@@ -123,7 +125,8 @@ interface ApprovedPage {
   takes?: AgentSessionTake[];
 }
 
-interface PageItem extends RepairItem { page: ApprovedPage; hash: string; last: boolean; options: AgentSessionOptions }
+/** `indexes`: the run's corpus index by corpus dir, shared by every item of one run (each run plans new items). */
+interface PageItem extends RepairItem { page: ApprovedPage; hash: string; last: boolean; options: AgentSessionOptions; indexes: Map<string | null, CorpusIndex> }
 
 interface FactRow {
   id: number | string; source_id: string; source_session: string | null; fact: string; visibility: string; entity_slug: string | null;
@@ -162,7 +165,7 @@ function readHead(path: string): string {
   } finally { closeSync(fd); }
 }
 
-/** The session's first user turn, normalized; null when no retained file holds one long enough to compare, 'unread' when its files could not be read. */
+/** The session's first user turn with owner text once harness blocks are dropped, normalized; null when no retained file holds one long enough to compare, 'unread' when its files could not be read. */
 function openingKey(paths: string[], unreadable: string[]): string | null {
   const ranked = paths.map(path => {
     let mtime = Number.POSITIVE_INFINITY;
@@ -173,8 +176,9 @@ function openingKey(paths: string[], unreadable: string[]): string | null {
   for (const { path, wb } of ranked) {
     let head: string;
     try { head = readHead(path); } catch { unreadable.push(path); unread = true; continue; }
-    const turn = wb ? stripPastedContent(head).text : parseCorpusTurns(head).find(t => t.role === 'user')?.body;
-    const key = turn?.replace(/\s+/g, ' ').trim().toLowerCase().slice(0, OPENING_CHARS);
+    const ownerText = (text: string) => text.replace(HARNESS_BLOCKS, ' ').replace(/\s+/g, ' ').trim();
+    const turn = wb ? ownerText(stripPastedContent(head).text) : parseCorpusTurns(head).filter(t => t.role === 'user').map(t => ownerText(t.body)).find(Boolean);
+    const key = turn?.toLowerCase().slice(0, OPENING_CHARS);
     if (key) return key.length >= OPENING_MIN_CHARS ? key : null;
   }
   return unread ? 'unread' : null;
@@ -239,7 +243,7 @@ const targetSlug = (row: Pick<FactRow, 'source_markdown_slug' | 'entity_slug'>) 
 
 /** Read-only: every user-attributed (or unattributed) capture-lane fact of these sources from a suspect session, classified, in (source, page, id) order. */
 export async function classifyAgentSessionFacts(db: BrainEngine, sourceIds: string[],
-  opts: AgentSessionOptions & { corpusDir?: string | null; ids?: number[] } = {}): Promise<AgentSessionFactsClassification> {
+  opts: AgentSessionOptions & { corpusDir?: string | null; ids?: number[]; indexes?: Map<string | null, CorpusIndex> } = {}): Promise<AgentSessionFactsClassification> {
   const rows = await db.executeRaw<FactRow>(`
     SELECT f.id, f.source_id, f.source_session, f.fact, f.visibility, f.entity_slug, f.row_num, f.source_markdown_slug, f.attributed_to, f.context,
            EXISTS (SELECT 1 FROM facts a WHERE a.source_id=f.source_id AND a.id<>f.id AND a.expired_at IS NULL AND a.superseded_by IS NULL
@@ -253,8 +257,9 @@ export async function classifyAgentSessionFacts(db: BrainEngine, sourceIds: stri
        AND (f.attributed_to IS NULL OR f.attributed_to='user') AND ($3::bigint[] IS NULL OR f.id=ANY($3::bigint[]))
      ORDER BY f.source_id, f.id`, [sourceIds, [...CAPTURE_LANES], opts.ids ?? null]);
   if (!rows.length) return { candidates: [], unclassifiable: 0, not_suspect: 0, unreadable_corpus_files: [] };
-  const corpusDir = opts.corpusDir === undefined ? await db.getConfig(CORPUS_KEY) : opts.corpusDir;
-  const index = corpusIndex(corpusDir ?? null);
+  const corpusDir = (opts.corpusDir === undefined ? await db.getConfig(CORPUS_KEY) : opts.corpusDir) ?? null;
+  const index = opts.indexes?.get(corpusDir) ?? corpusIndex(corpusDir);
+  opts.indexes?.set(corpusDir, index);
   const cwdPrefixes = (opts.cwdPrefixes ?? []).map(canonicalPath);
   const verdicts = new Map<string, Verdict>();
   const verdict = (sourceSession: string | null): Verdict => {
@@ -325,9 +330,20 @@ async function brainId(engine: BrainEngine): Promise<string> {
   return brain?.brain_id ?? 'host';
 }
 
-function pageItem(page: ApprovedPage, hash: string, index: number, last: boolean, options: AgentSessionOptions): PageItem {
-  return { cursor: { phase: page.facts ? 0 : 1, id: index }, source_id: page.source_id, slug: page.slug, chars: 0,
-    action: page.facts ? `re-attribute ${page.facts.length} agent-session fact(s)` : `retire ${page.takes!.length} take(s)`, page, hash, last, options };
+/**
+ * One item per write, in cursor order. A fact page with both database-only and fenced rows is two items, the fenced one
+ * after every fact page (`id` = page count + index), so a database write still pending never skips the page's fenced
+ * rows and the runner holds the fenced rewrite until that write settles, like any later write to the same page.
+ */
+function pageItems(approved: ApprovedPage[], hash: string, options: AgentSessionOptions, indexes: Map<string | null, CorpusIndex>): PageItem[] {
+  const parts = approved.flatMap((page, i) => {
+    const fenced = page.facts?.filter(f => f.row_num !== null) ?? [];
+    return !fenced.length || fenced.length === page.facts!.length ? [{ page, id: i }]
+      : [{ page: { ...page, facts: page.facts!.filter(f => f.row_num === null) }, id: i }, { page: { ...page, facts: fenced }, id: approved.length + i }];
+  }).sort((a, b) => Number(!a.page.facts) - Number(!b.page.facts) || a.id - b.id);
+  return parts.map(({ page, id }, i) => ({ cursor: { phase: page.facts ? 0 : 1, id }, source_id: page.source_id, slug: page.slug, chars: 0,
+    action: page.facts ? `re-attribute ${page.facts.length} agent-session fact(s)` : `retire ${page.takes!.length} take(s)`, page, hash, last: i === parts.length - 1,
+    options, indexes }));
 }
 
 function groupByPage<T extends { source_id: string; slug: string }>(rows: T[], make: (first: T) => ApprovedPage, field: 'facts' | 'takes'): ApprovedPage[] {
@@ -370,7 +386,7 @@ export const agentSessionFactsRepair: RepairHandler = {
         detail: `row ${take.row_num}; contributing facts ${take.fact_ids.join(', ')}` });
       for (const path of unreadable_corpus_files) listing.push({ item: path, class: 'unreadable_corpus_file',
         detail: 'not read (check its permissions); facts of its sessions are counted unclassifiable and kept' });
-      return { items: approved.map((page, i) => pageItem(page, hash, i, i === approved.length - 1, options)), preview_hash: hash, listing,
+      return { items: pageItems(approved, hash, options, new Map()), preview_hash: hash, listing,
         residuals: { evidenced: count('evidenced'), ambiguous: count('ambiguous'), excluded: count('excluded'), unclassifiable, not_suspect, takes_to_retire: takes.length,
           ...(unreadable_corpus_files.length ? { unreadable_corpus_files: unreadable_corpus_files.length } : {}) } };
     }
@@ -384,17 +400,21 @@ export const agentSessionFactsRepair: RepairHandler = {
     if (approved.items.some(page => page.include_ambiguous !== includeAmbiguous || JSON.stringify(page.scope) !== scopeKey || page.options !== optionsKey)) {
       throw previewChangedError(opts.expect, command);
     }
-    const items = approved.items.map((page, i) => pageItem(page, opts.expect!, i, i === approved.items.length - 1, options))
-      .filter(item => afterCursor(item.cursor, after));
+    const items = pageItems(approved.items, opts.expect, options, new Map()).filter(item => afterCursor(item.cursor, after));
     if (!items.length) await clearApprovedSet(engine, { command: COMMAND, hash: opts.expect });
     return { items, preview_hash: opts.expect, residuals: { approved_pages: approved.items.length, pending_pages: items.length } };
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
-    const { page, hash, last, options } = entry as PageItem;
+    const { page, hash, last, options, indexes } = entry as PageItem;
     const engine = ctx.engine;
     const done: number[] = [];
     if (page.facts) {
-      const live = new Map((await classifyAgentSessionFacts(engine, [page.source_id], { ...options, ids: page.facts.map(f => f.id) })).candidates.map(c => [c.id, c]));
+      const live = new Map((await classifyAgentSessionFacts(engine, [page.source_id], { ...options, ids: page.facts.map(f => f.id), indexes })).candidates.map(c => [c.id, c]));
+      const gone = page.facts.filter(f => !live.has(f.id));
+      const settled = gone.length ? await engine.executeRaw<{ id: number | string; context: string | null }>(
+        "SELECT id, context FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) AND attributed_to='other' AND expired_at IS NULL AND superseded_by IS NULL",
+        [page.source_id, gone.map(f => f.id)]) : [];
+      done.push(...gone.filter(f => settled.some(row => Number(row.id) === f.id && (row.context ?? '').includes(speakerContextNote(f.principal)))).map(f => f.id));
       const unchanged = page.facts.filter(f => {
         const current = live.get(f.id);
         return !!current && (['class', 'reason', 'principal', 'fact_hash', 'slug', 'row_num'] as const).every(field => current[field] === f[field]);
@@ -478,12 +498,13 @@ export async function prepareAgentSessionFactsWrite(engine: BrainEngine, row: Wr
 /**
  * Fenced facts: set `attributed_to: other` and append the note on each still-matching, still user-attributed active
  * fence row and publish the page once, bound to the revision read; the canonical projection rewrites the rows in
- * place. Returns the facts that now read back as `other`. A page stored in segments is not rewritten.
+ * place. Returns the facts that now read back as `other`. A page stored in segments (#9027) is read back whole, as
+ * every fence write through the put path reads it, and one over 24 MiB declines `page_body_segmented`, its rows kept.
  */
 async function rewriteFencedFacts(ctx: Parameters<RepairHandler['apply']>[0], item: RepairItem, page: ApprovedPage, facts: AgentSessionFactCandidate[]): Promise<number[]> {
   const engine = ctx.engine;
-  const snapshot = await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
-  if (!snapshot || isSegmentedPage(snapshot.page)) return [];
+  const snapshot = await wholeBodySnapshot(engine, await engine.readPageSnapshot(page.slug, { sourceId: page.source_id }), 'repair agent-session-facts');
+  if (!snapshot) return [];
   const rows = await engine.executeRaw<{ id: number | string; fact: string; row_num: number }>(
     'SELECT id, fact, row_num FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) AND expired_at IS NULL', [page.source_id, facts.map(f => f.id)]);
   let body = snapshot.page.compiled_truth ?? '';
@@ -509,12 +530,11 @@ async function rewriteFencedFacts(ctx: Parameters<RepairHandler['apply']>[0], it
 /**
  * Takes: a take the page's takes fence holds (same row and claim, active) is struck there by one revision-bound
  * `put_page` (the projection sets `active = false`); the rest are retired in the database. A page stored in
- * segments is not rewritten. Returns the retired takes.
+ * segments is read back whole, as rewriteFencedFacts reads it. Returns the retired takes.
  */
 async function retireTakes(ctx: Parameters<RepairHandler['apply']>[0], item: RepairItem, page: ApprovedPage, hash: string, takes: AgentSessionTake[]): Promise<number[]> {
   const engine = ctx.engine;
-  const snapshot = await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
-  if (snapshot && isSegmentedPage(snapshot.page)) return [];
+  const snapshot = await wholeBodySnapshot(engine, await engine.readPageSnapshot(page.slug, { sourceId: page.source_id }), 'repair agent-session-facts');
   const body = snapshot ? serializePageToMarkdown(snapshot.page, snapshot.tags) : '';
   const fence = parseTakesFence(body);
   const fenced = takes.filter(t => fence.takes.some(row => row.rowNum === t.row_num && row.claim.trim() === t.claim.trim() && row.active));

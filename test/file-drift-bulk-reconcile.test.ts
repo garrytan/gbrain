@@ -151,10 +151,6 @@ for (const backend of testBackends()) describe(`C7 bulk file-drift reconcile (${
 
   const put = (ctx: OperationContext, slug: string, content: string) =>
     submitPageMutation(ctx, { operation: 'put_page', params: { slug, content, request_id: randomUUID() } });
-  const drift = (root: string, slug: string, edit: (text: string) => string) => {
-    const file = join(root, `${slug}.md`);
-    writeFileSync(file, edit(readFileSync(file, 'utf8')));
-  };
   /** A caller write refused source_changed: one conflict receipt for the slug. */
   const refusedWrite = async (ctx: OperationContext, slug: string) => {
     const expected_revision = (await engine.readPageSnapshot(slug, { sourceId: ctx.sourceId! }))!.revision;
@@ -168,12 +164,25 @@ for (const backend of testBackends()) describe(`C7 bulk file-drift reconcile (${
     for (const slug of slugs) if ((await liveFileDrift(engine, sourceId, slug)).still_present === true) drifted.push(slug);
     return drifted;
   };
-  /** Three concepts drifted by an appended line, one person rewritten (another drift class); each with a conflict receipt. */
+  /**
+   * Three concepts drifted by an appended line, one person rewritten (another drift class); each with a conflict receipt.
+   * Each file goes back to bytes gbrain wrote for it earlier, so the database copy is the newer side and a database-wins
+   * repair discards nothing (a file edit sync never imported is kept_newer_file instead, GST-2579).
+   */
   async function driftedPages(root: string, ctx: OperationContext): Promise<void> {
-    for (const slug of CONCEPTS) await put(ctx, slug, `---\ntype: concept\ntitle: ${slug.slice(9)}\n---\nStored ${slug}.\n`);
-    await put(ctx, PERSON, '---\ntype: person\ntitle: Alice Example\n---\nOriginal sentence.\n');
-    for (const slug of CONCEPTS) drift(root, slug, text => `${text}\nA line added in the file only.\n`);
-    drift(root, PERSON, text => text.replace('Original sentence.', 'A different sentence.'));
+    const earlier = new Map<string, string>();
+    const stage = async (slug: string, older: string, newer: string) => {
+      await put(ctx, slug, older);
+      earlier.set(slug, readFileSync(join(root, `${slug}.md`), 'utf8'));
+      const expected_revision = (await engine.readPageSnapshot(slug, { sourceId: ctx.sourceId! }))!.revision;
+      await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content: newer, expected_revision, request_id: randomUUID() } });
+    };
+    for (const slug of CONCEPTS) {
+      const head = `---\ntype: concept\ntitle: ${slug.slice(9)}\n---\nStored ${slug}.\n`;
+      await stage(slug, `${head}\nA line added in the file only.\n`, head);
+    }
+    await stage(PERSON, '---\ntype: person\ntitle: Alice Example\n---\nA different sentence.\n', '---\ntype: person\ntitle: Alice Example\n---\nOriginal sentence.\n');
+    for (const [slug, bytes] of earlier) writeFileSync(join(root, `${slug}.md`), bytes);
     for (const slug of [...CONCEPTS, PERSON]) await refusedWrite(ctx, slug);
     expect(await stillDrifted(ctx.sourceId!, [...CONCEPTS, PERSON])).toEqual([...CONCEPTS, PERSON]);
   }
@@ -313,7 +322,9 @@ for (const backend of testBackends()) describe(`C7 bulk file-drift reconcile (${
     expect(await pass.freeze(PERSON)).toEqual({ refused: 'outside_keep_db' });
     expect(await requests(sourceId)).toBe(before);
 
-    const ids = (await engine.executeRaw<{ lifetime_ids: string }>("SELECT lifetime_ids::text FROM persistence_counters WHERE key LIKE 'principal:%' ORDER BY lifetime_ids DESC LIMIT 1"))[0]!;
+    // The principal that wrote this source's pages (earlier tests' principals share the engine and may hold more ids).
+    const ids = (await engine.executeRaw<{ lifetime_ids: string }>(`SELECT lifetime_ids::text FROM persistence_counters WHERE key IN
+      (SELECT DISTINCT 'principal:' || principal_kind || ':' || principal_id FROM persistence_requests WHERE source_id=$1) ORDER BY lifetime_ids DESC LIMIT 1`, [sourceId]))[0]!;
     await engine.setConfig('persistence.limits.principal_lifetime_ids', ids.lifetime_ids);
     expect(await pass.admit(CONCEPTS[0]!)).toEqual({ refused: 'capacity' });
     expect(await requests(sourceId)).toBe(before);

@@ -19,6 +19,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { registerLocalWriter, readLocalWriter } from '../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import type { Principal } from '../src/core/persistence/model.ts';
@@ -66,6 +67,7 @@ async function brain(engine: BrainEngine): Promise<Brain> {
   await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
   await registerLocalWriter(engine, 'cli');
   const minted = await mintLegacyToken(engine, { name: `token-${sourceId}`, scopes: ['read', 'write'], sourceGrant: [sourceId], takesHolders: ['world'] });
+  await readsUnscopedOnPurpose(engine, minted.id);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
   const base = { engine, config: { engine: engine.kind, embedding_disabled: true }, sourceId, dryRun: false, logger: quiet };
   await readLocalWriter(engine, 'cli');

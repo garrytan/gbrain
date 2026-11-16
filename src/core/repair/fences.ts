@@ -50,7 +50,7 @@ import { dailyLedger, FENCE_REPAIR_LEDGER, nextUtcMidnight } from '../budget/dai
 import { pricingSetCommand } from '../budget/no-pricing.ts';
 import type { CapSource } from '../consent.ts';
 import { sha256 } from '../persistence/digest.ts';
-import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { readGitSourceHolds, recordFenceHoldRepair } from '../persistence/sync-holds.ts';
 import { attemptStore } from '../fence-repair/attempts.ts';
 import { listFenceCandidates, runFenceCensus, type FenceCandidate } from '../fence-repair/census.ts';
@@ -378,9 +378,8 @@ export const fencesRepair: RepairHandler = {
     if (ctx.remote !== false) throw trustedCliRequired('gbrain repair fences writes files and may call a paid model, so it runs only from the trusted local CLI or the maintenance job on the brain host.');
     const { entry, hash, last } = raw as FenceItem;
     try {
-      return await applyFence(ctx, entry, { embed: opts?.embed === true, expect: hash, allowanceUsd: opts?.llmAllowanceUsd, deadline: opts?.deadline, noLlm: opts?.noLlm === true });
+      return await retireAfterLastItem(ctx.engine, 'fences', hash, last, () => applyFence(ctx, entry, { embed: opts?.embed === true, expect: hash, allowanceUsd: opts?.llmAllowanceUsd, deadline: opts?.deadline, noLlm: opts?.noLlm === true }));
     } finally {
-      if (hash && last) await clearApprovedSet(ctx.engine, { command: 'fences', hash });
       if (!hash) await saveRotation(ctx.engine, ROTATION_OP, await rotationBrain(ctx.engine), rotationKey(entry)).catch(() => undefined);
     }
   },

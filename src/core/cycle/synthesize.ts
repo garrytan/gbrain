@@ -80,7 +80,7 @@ import { stampDreamProvenance, summaryProvenanceLines } from './dream-provenance
 import { activateSynthesisGenerations } from './synthesize-generations.ts';
 import { summaryDerivation, withTranscriptTaint } from './dream-taint.ts';
 import { DREAM_SUMMARY_KIND, publishSinglePage } from '../generations/adapters/single-page.ts';
-import { findSynthV2Completion, partitionCompletedSynthesis } from './synthesize-completion.ts';
+import { findSynthV2Completion, noCandidates, noNewTranscripts, partitionCompletedSynthesis, resynthesisHold, resynthesisHoldSuffix } from './synthesize-completion.ts';
 
 // Re-exports: the drain was peeled to inline-drain.ts (dream-wave C7), the
 // allow-list loader to filing-rules.ts (#2397); patterns.ts and the
@@ -97,7 +97,7 @@ import { safeSplitIndex, truncateUtf8 } from '../text-safe.ts';
 import { PAGE_SLUG_SEG, slugifyText } from '../cjk.ts';
 import { withChatPhase, estimateChatCostUsd } from '../ai/chat-usage.ts';
 import { verifyAndRepairDreamPages, normForGrounding, readVerifyEpoch, loadChildWriteEpochs, isDreamOwnedPage, type QuoteVerifyStats, type TranscriptForVerify } from './synthesize-verify.ts';
-import { dreamBreakerRefusal, loadDreamBreaker } from './dream-breaker.ts';
+import { loadDreamBreaker, synthBreakerRefusal } from './dream-breaker.ts';
 import { resolveTriageDecide, type TriageDecide, type TriageDecideStats } from './triage-decide.ts';
 import { OperationError } from '../ops/contract.ts';
 import { isRetryableConnError } from '../retry-matcher.ts';
@@ -532,7 +532,7 @@ async function runPhaseSynthesizeInner(
         })), { corpusDir: config.corpusDir, sourceId: opts.sourceId ?? 'default', readOnly: opts.dryRun }, routing);
 
     if (transcripts.length === 0) {
-      return ok('no transcripts to process', { transcripts_processed: 0, pages_written: 0 });
+      return noCandidates('no transcripts to process', { transcripts_discovered: 0 });
     }
 
     // Best-effort housekeeping (#4069): expiry is enforced on reads
@@ -547,6 +547,7 @@ async function runPhaseSynthesizeInner(
 
     const { completed, retainedSkips, successfulV2Keys, synthesisIdentity } = await partitionCompletedSynthesis(engine, transcripts, opts.sourceId ?? 'default', maintenance, opts.dryRun);
     const synthesisState = { candidates: transcripts.length - completed.size, already_synthesized: completed.size };
+    if (synthesisState.candidates === 0 && !maintenance && !opts.dryRun) return noNewTranscripts(engine, transcripts, { retainedSkips, successfulV2Keys, synthesisIdentity });
     const pass = await runTriagePass(engine, transcripts.filter(t => !completed.has(t.filePath)), {
       model: config.triage.model,
       maxChars: config.triage.maxChars,
@@ -724,7 +725,7 @@ async function runPhaseSynthesizeInner(
     const synthMeter = new BudgetMeter({ budgetUsd: config.budgetUsd, allowUnpriced: config.allowUnpriced, pricingOverrides: await loadPricingOverrides(engine), phase: 'synthesize' });
     const childMaxOutputTokens = resolveMaxOutputTokens(undefined, await engine.getConfig('agent.max_output_tokens').catch(() => null), config.model);
 
-    const breaker = await loadDreamBreaker(engine);
+    const [breaker, resynthesisHeld] = await Promise.all([loadDreamBreaker(engine), resynthesisHold(engine, cycleSourceId, explicitTarget ? 0 : config.cooldownHours)]);
     // Admission-quota latch: once a submit is rejected, every later transcript
     // this run would be rejected too — record one skip per remaining file
     // without hammering the queue.
@@ -796,8 +797,7 @@ async function runPhaseSynthesizeInner(
         continue;
       }
 
-      const refusal = breaker && dreamBreakerRefusal(breaker,
-        `dream:synth-v2:${encodeURIComponent(synthesisIdentity)}:filename:${encodeURIComponent(basename(t.filePath))}:${hash16}`);
+      const refusal = resynthesisHeld(t.filePath, hash16, synthesisIdentity) || breaker && synthBreakerRefusal(breaker, { synthesisIdentity, sourceId: cycleSourceId, filePath: t.filePath, hash16 });
       if (refusal) { process.stderr.write(`[dream] ${t.basename}: ${refusal}\n`); skipReports.push({ filePath: t.filePath, reason: refusal }); continue; }
       const chunks = splitTranscriptByBudget(t.content, t.contentHash, maxCharsPerChunk);
 
@@ -1039,7 +1039,7 @@ async function runPhaseSynthesizeInner(
     // a run that did no synthesis must not suppress the retry window that
     // would pick these files up.
     if (childIds.length === 0) {
-      return ok(`no synthesis submitted (${skipReports.length} passing file(s) skipped)${deferralSuffix}`, {
+      return ok(`no synthesis submitted (${skipReports.length} passing file(s) skipped)${resynthesisHoldSuffix(skipReports)}${deferralSuffix}`, {
         transcripts_discovered: transcripts.length,
         transcripts_processed: 0,
         pages_written: 0,
@@ -1374,7 +1374,7 @@ async function runPhaseSynthesizeInner(
     const turnsSamples = childOutcomes.filter(
       (o): o is { jobId: number; status: string; turns: number } => typeof o.turns === 'number',
     );
-    return reportFileHolds(withPostprocessConflicts(postprocessConflicts, withPublishPending(publishPending, ok(`${submittedTranscripts} transcript(s) synthesized in ${(ms / 1000).toFixed(1)}s${deferralSuffix}`, {
+    return reportFileHolds(withPostprocessConflicts(postprocessConflicts, withPublishPending(publishPending, ok(`${submittedTranscripts} transcript(s) synthesized in ${(ms / 1000).toFixed(1)}s${resynthesisHoldSuffix(skipReports)}${deferralSuffix}`, {
       transcripts_discovered: transcripts.length,
       transcripts_processed: submittedTranscripts,
       pages_written: writtenSlugs.length,
@@ -2882,7 +2882,7 @@ function buildSynthesisPrompt(
 CONTEXT
 ${dateContextLine}
 - Transcript hash suffix (USE THIS in slugs): ${hashSuffix}
-- Source file basename: ${baseSlugSegment}${chunkBanner}${priorContradictionsBlock}${triageMapBlock}${linkManifestBlock}${allowedPathsBlock}
+- Source file basename: ${baseSlugSegment}${t.speaker ? `\n- Speaker: this session was launched by the automated agent "${t.speaker}". Its user turns are that agent's brief, not the user's words: never present them as what the user said, requested or prefers; attribute them to Agent ${t.speaker}.` : ''}${chunkBanner}${priorContradictionsBlock}${triageMapBlock}${linkManifestBlock}${allowedPathsBlock}
 
 OUTPUT POLICY (ALL of these are required)
 1. Quote the user verbatim. Quotation marks are ONLY for spans reproducible EXACTLY from the transcript below — if you cannot reproduce a span exactly, paraphrase it WITHOUT quotation marks. Do not paraphrase memorable phrasings you can quote exactly.

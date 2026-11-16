@@ -260,6 +260,20 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async engine => (await import('./checks/dream-breaker.ts')).dreamPaidLoopCheck(engine),
   },
   {
+    id: 'dream_write_deferred', resolution: 'operator', registration: 'wave',
+    count: d => (d.items ?? []).filter((item: { replays: number; bound: number }) => item.replays >= item.bound).length,
+    impact: 'A dream phase write is still pending after its replay bound, so the phase submits nothing more for that source',
+    instruction: 'Read the receipt with the `gbrain write-request` command doctor prints; if the writer is stuck, `gbrain sources writer status --source <id> --json` names why.',
+    run: async (engine, scope) => (await import('./checks/dream-write-deferred.ts')).dreamWriteDeferredCheck(engine, scope.sourceIds),
+  },
+  {
+    id: 'embedding_restamp_stalled', resolution: 'operator', registration: 'wave',
+    count: d => (d.last ? 1 : 0),
+    impact: 'The free embedding signature restamp keeps failing, so current vectors still read as another model\'s space',
+    instruction: 'Fix the error doctor prints, then run `gbrain dream --phase embed` once.',
+    run: async engine => (await import('./checks/embedding-restamp.ts')).embeddingRestampStalledCheck(engine),
+  },
+  {
     id: 'writer_version', resolution: 'operator', registration: 'wave',
     impact: 'A writer older than this release admitted or published a recent write',
     instruction: 'Run `gbrain upgrade` on each host doctor names (by host UUID), then restart its gbrain processes; an older writer may still delete database-only timeline rows.',
@@ -386,6 +400,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     count: d => Number(d.evidenced ?? 0) + Number(d.ambiguous ?? 0),
     impact: 'Some facts were retired by a facts-fence generation although no fence of their page held them, and recall no longer returns them',
     run: async (engine, scope) => (await import('./checks/unwithdrawn-facts.ts')).unwithdrawnFactsCheck(engine, scope.sourceIds),
+  },
+  {
+    id: 'purged_page_facts', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Retiring facts left by purged pages is a host-side, explicit-only repair.',
+    count: d => Number(d.evidenced ?? 0) + Number(d.ambiguous ?? 0),
+    impact: 'Some facts extracted from pages that were purged are still active, and recall still returns them',
+    run: async (engine, scope) => (await import('./checks/purged-page-facts.ts')).purgedPageFactsCheck(engine, scope.sourceIds),
   },
   {
     id: 'conversation_label_facts', resolution: 'repair', registration: 'wave',

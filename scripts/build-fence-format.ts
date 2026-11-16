@@ -45,7 +45,7 @@ const FACTS_TEXT: Record<(typeof FACTS_COLUMNS)[number], string> = {
   valid_from: 'When it became true (`YYYY-MM-DD`), or empty.',
   valid_until: 'When it stopped being true, or empty.',
   source: 'Where it came from, free text.',
-  context: 'Free text. `superseded by #N` names the row that replaced a struck row; `forgotten: ...` marks a row withdrawn with `forget`.',
+  context: 'Free text. On a struck row, `superseded by #N` names the row that replaced it and `forgotten: ...` marks it withdrawn with `forget`. On a live row both are plain text.',
   claim_metric: 'Metric of a typed claim (`mrr`, `team_size`, ...), or empty.',
   claim_value: 'Value of a typed claim.',
   claim_unit: 'Unit (`USD`, `people`, ...), or empty.',

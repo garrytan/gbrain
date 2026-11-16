@@ -19,7 +19,7 @@ describe('upgrade autopilot opt-out propagation', () => {
       writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'gbrain', repository: { url: 'https://github.com/garrytan/gbrain' } }));
       const driver = join(pkg, 'src', 'cli.ts');
       writeFileSync(driver, `const { runUpgrade } = await import(${JSON.stringify(join(REPO, 'src/commands/upgrade.ts'))});\nawait runUpgrade(['--no-autopilot-install', '--no-bun-floor-check']);\n`);
-      writeFileSync(join(bin, 'bun'), `#!/bin/sh\nprintf 'bun:%s:no-autopilot=%s\\n' "$*" "$GBRAIN_NO_AUTOPILOT_INSTALL" >> "$HOME/calls.log"\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(join(REPO, 'scripts/postinstall.ts'))}\n`, { mode: 0o755 });
+      writeFileSync(join(bin, 'bun'), `#!/bin/sh\nprintf 'bun:%s:no-autopilot=%s\\n' "$*" "$GBRAIN_NO_AUTOPILOT_INSTALL" >> "$HOME/calls.log"\n`, { mode: 0o755 });
       writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\nprintf 'gbrain:%s:no-autopilot=%s\\n' "$*" "$GBRAIN_NO_AUTOPILOT_INSTALL" >> "$HOME/calls.log"\nif [ "$1" = '--version' ]; then echo 'gbrain ${VERSION}'; fi\n`, { mode: 0o755 });
       const result = spawnSync(process.execPath, ['--no-env-file', driver], {
         cwd: home,
@@ -28,7 +28,7 @@ describe('upgrade autopilot opt-out propagation', () => {
       });
       expect(result.status, result.stderr + result.stdout).toBe(0);
       const calls = readFileSync(join(home, 'calls.log'), 'utf8');
-      expect(calls).toContain('bun:update gbrain:no-autopilot=1');
+      expect(calls).toContain('bun:update --backend=copyfile gbrain:no-autopilot=1');
       expect(calls).not.toContain('gbrain:apply-migrations');
       expect(calls).toContain('gbrain:post-upgrade --no-autopilot-install:no-autopilot=1');
     } finally {

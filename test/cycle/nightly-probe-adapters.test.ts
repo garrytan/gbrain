@@ -151,6 +151,7 @@ describe('nightly-probe-adapters: model routes reach the eval commands', () => {
     '--batch', '/w/lme.jsonl',
     '--output', '/w/summary.json',
     '--max-usd', '2.5',
+    '--concurrent', '1',
     '--dimensions', PROBE_QA_DIMENSIONS.join(','),
     '--yes',
     '--json',

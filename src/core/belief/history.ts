@@ -21,7 +21,7 @@
  * inherits no history.
  */
 import type { BrainEngine } from '../engine.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { remoteReadFloorSql } from '../search/private-visibility.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
 
 export interface BeliefHistoryRow {
@@ -61,7 +61,7 @@ export async function readBeliefHistoryPage(engine: BrainEngine, q: BeliefHistor
   const rows = await engine.executeRaw<BeliefHistoryRow & { stream_visible: boolean | null; later_private: boolean; take_holder: string | null }>(`SELECT e.id, e.slug, e.page_lifetime::text AS page_lifetime,
       e.subject_kind, e.subject_key, e.event_type, e.origin, e.trust_tier, e.writer_tier, e.tier_basis, e.visibility, e.recorded_at, e.source_time,
       e.value, e.value_hash, e.prior_hash, e.state_hash, e.cause, e.purged, e.redacted_fields,
-      (SELECT ${privatePagesFilterFragment('p')} AND (e.subject_kind NOT IN ('fact', 'take') OR ${quarantineFilterFragment('p')}) FROM belief_page_lifetimes l JOIN pages p ON p.source_id = l.source_id AND p.slug = l.slug
+      (SELECT ${remoteReadFloorSql('p')} AND (e.subject_kind NOT IN ('fact', 'take') OR ${quarantineFilterFragment('p')}) FROM belief_page_lifetimes l JOIN pages p ON p.source_id = l.source_id AND p.slug = l.slug
         AND p.deleted_at IS NULL AND (l.page_id IS NULL OR p.id = l.page_id)
         WHERE l.page_lifetime = e.page_lifetime AND l.ended_at IS NULL) AS stream_visible,
       (e.claim_fp IS NOT NULL AND EXISTS (SELECT 1 FROM belief_events v WHERE v.source_id = e.source_id AND v.source_incarnation = e.source_incarnation
@@ -84,7 +84,7 @@ export async function readBeliefHistoryPage(engine: BrainEngine, q: BeliefHistor
   const linkIds = [...new Set(out.filter(r => r.subject_kind === 'link' || r.subject_kind === 'link_transition').flatMap(r => linkLifetimes(r.subject_key)))];
   const visibleLifetimes = new Set(linkIds.length ? (await engine.executeRaw<{ page_lifetime: string }>(`SELECT l.page_lifetime::text AS page_lifetime
     FROM belief_page_lifetimes l JOIN pages p ON p.source_id = l.source_id AND p.slug = l.slug AND p.deleted_at IS NULL AND (l.page_id IS NULL OR p.id = l.page_id)
-    WHERE l.page_lifetime = ANY($1::uuid[]) AND l.ended_at IS NULL AND ${privatePagesFilterFragment('p')}`, [linkIds])).map(r => r.page_lifetime) : []);
+    WHERE l.page_lifetime = ANY($1::uuid[]) AND l.ended_at IS NULL AND ${remoteReadFloorSql('p')}`, [linkIds])).map(r => r.page_lifetime) : []);
   const holders = new Set(q.takesHolders ?? ['world']);
   return page(out.filter(r => r.visibility === 'world' && r.later_private !== true
     && (r.subject_kind !== 'take' || typeof r.take_holder === 'string' && holders.has(r.take_holder))

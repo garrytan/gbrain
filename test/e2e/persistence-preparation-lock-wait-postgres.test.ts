@@ -66,9 +66,9 @@ async function fixture(e: BrainEngine, count: number) {
   await e.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
   return { id, root };
 }
-type ImportRow = { slug: string; state: string; blocked_reason: string | null; error_code: string | null; preparation_attempts: number; error_message: string | null };
+type ImportRow = { slug: string; state: string; blocked_reason: string | null; error_code: string | null; preparation_attempts: number; error_message: string | null; error_detail?: unknown };
 const imports = (e: BrainEngine, source: string) => e.executeRaw<ImportRow>(
-  `SELECT slug,state,blocked_reason,error_code,preparation_attempts,error_message FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY sequence`, [source]);
+  `SELECT slug,state,blocked_reason,error_code,preparation_attempts,error_message,error_detail FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY sequence`, [source]);
 const ORIGIN_CHECK_SQL = 'SELECT id,slug,source_path,deleted_at FROM pages WHERE source_id=$1 AND ';
 
 /** The lock holder: another session holding `pages` ACCESS EXCLUSIVE in an open transaction until `drop()`. */
@@ -184,6 +184,11 @@ describe.skipIf(!hasDatabase())('a lock-blocked preparation read ends at the bud
     expect(observed.leftover ?? []).toEqual([]);
     expect(observed.clearedAfterMs).toBeLessThan(SLACK_MS);
     // The root was free: the same member and every page committed once the lock dropped, and the counter reset on commit.
+    if (result.drain?.outcome !== 'synced') {
+      const uncommitted = (await imports(engine, f.id)).filter(row => row.state !== 'committed')
+        .map(({ slug, state, error_code, error_message, error_detail }) => ({ slug, state, error_code, error_message, error_detail }));
+      console.error(`[lock-wait] drain ${JSON.stringify(result.drain)}; rows not committed: ${JSON.stringify(uncommitted)}`);
+    }
     expect(result.drain).toMatchObject({ outcome: 'synced' });
     const rows = await imports(engine, f.id);
     expect(rows.find(row => row.slug === stuckSlug)).toMatchObject({ state: 'committed', preparation_attempts: 0 });

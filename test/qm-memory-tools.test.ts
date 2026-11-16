@@ -42,6 +42,7 @@ import { withTrustPromotion } from '../src/core/persistence/context.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 
 const DIMS = 1536;
 const TICKS = String.fromCharCode(96).repeat(3);
@@ -215,6 +216,8 @@ for (const kind of testBackends()) {
       const legacyRead = await mintLegacyToken(engine, { name: 'qm-mem-legacy-ro-' + randomUUID().slice(0, 8), scopes: ['read'], takesHolders: ['world'], sourceGrant: [SRC] });
       await bindCredential(engine, { kind: 'token', id: legacyRead.id }, { attestActor: 'qm', attestOps: ATTEST_OPS });
       tokens.legacyRead = legacyRead.token;
+      for (const c of [qm, plain, qmDefault]) await readsUnscopedOnPurpose(engine, c.id, 'client');
+      for (const t of [legacy, legacyRead]) await readsUnscopedOnPurpose(engine, t.id);
       await linkMember(engine, 'alice-example', 'qm', ALICE_ID);
       await linkMember(engine, 'bob-example', 'qm', BOB_ID);
       await linkMember(engine, 'carol-example', 'qm', CAROL_ID);

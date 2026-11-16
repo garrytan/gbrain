@@ -74,7 +74,14 @@ jobs:
       matrix:
         rtt: ${{ fromJSON(needs.plan.outputs.rtts) }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 3
+        continue-on-error: true
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 3
       - name: Bootstrap (Docker images, bun, frozen dependencies)
         timeout-minutes: 20
         run: bash scripts/bench/production-soak/vm-setup.sh

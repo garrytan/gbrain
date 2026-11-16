@@ -1,8 +1,8 @@
 /**
  * `skill_resolver` (GBRA-377 PR B): the skill-resolver hook lane that
- * `gbrain setup <claude-code|codex> --skill-loading resolve` turns on
+ * `gbrain setup <claude-code|codex|hermes> --skill-loading resolve` turns on
  * (src/core/skills/resolver/hook-lane.ts). Per harness it reports the lane's
- * hook (wired, untrusted in Codex, outdated when it predates the SessionStart
+ * hook (wired, untrusted in Codex or unapproved in Hermes, outdated when it predates the SessionStart
  * compaction reset, or missing), each catalog's freshness
  * (the content tier: source re-read, index re-hashed) and the recent
  * outcomes and error codes from the lane log. It emits nothing when the
@@ -22,9 +22,11 @@ import { CLAUDE_PLUGINS_CATALOG, projectCatalogPrefix, userCatalogName } from '.
 import { readResolverConfig, resolverHarnesses } from '../../../core/setup/skill-resolver-config.ts';
 import { inspectSkillResolverHook, type ResolverHarness, type ResolverHookState } from '../../../core/setup/skill-resolver-hook.ts';
 import { describeOpenclawSkill, openclawSkillView, type OpenclawSkillView } from './skill-resolver-openclaw.ts';
+import { describePiSkillView, piSkillView, type PiSkillView } from './skill-resolver-pi.ts';
+import { cursorSkillView, describeCursorSkillView, type CursorSkillView } from './skill-resolver-cursor.ts';
 
 const name = 'skill_resolver';
-const HARNESSES: ResolverHarness[] = ['claude-code', 'codex'];
+const HARNESSES: ResolverHarness[] = ['claude-code', 'codex', 'hermes'];
 /** Lane-log lines doctor reads (the newest), and the tail it reads them from. */
 const RECENT_LINES = 200;
 const LOG_TAIL_BYTES = 64 * 1024;
@@ -37,6 +39,10 @@ export interface SkillResolverView {
   recent: { turns: number; outcomes: Record<string, number>; errors: Record<string, number> };
   /** The OpenClaw plugin (gbrain setup openclaw --skill-loading resolve|shadow), when any of it exists. */
   openclaw?: OpenclawSkillView;
+  /** The Pi extension (gbrain setup pi --skill-loading resolve), when any of it exists. */
+  pi?: PiSkillView;
+  /** Cursor's pinned-skills rules (gbrain setup cursor --skill-loading resolve), when a project is recorded. */
+  cursor?: CursorSkillView;
 }
 
 function recentLane(home: string): SkillResolverView['recent'] | null {
@@ -79,8 +85,10 @@ export async function skillResolverView(home = configDir()): Promise<SkillResolv
     harnesses.push({ harness, on: on.includes(harness), hook, catalogs: views });
   }
   const openclaw = await openclawSkillView(home);
-  if (harnesses.length === 0 && !recent && !(cfg.state === 'ok' && on.length) && !openclaw) return null;
-  return { config: cfg.state, harnesses, recent: recent ?? { turns: 0, outcomes: {}, errors: {} }, ...(openclaw ? { openclaw } : {}) };
+  const pi = await piSkillView(home);
+  const cursor = await cursorSkillView(home);
+  if (harnesses.length === 0 && !recent && !(cfg.state === 'ok' && on.length) && !openclaw && !pi && !cursor) return null;
+  return { config: cfg.state, harnesses, recent: recent ?? { turns: 0, outcomes: {}, errors: {} }, ...(openclaw ? { openclaw } : {}), ...(pi ? { pi } : {}), ...(cursor ? { cursor } : {}) };
 }
 
 const setupArgv = (harness: string) => ['gbrain', 'setup', harness, '--skill-loading', 'resolve'];
@@ -95,7 +103,9 @@ export function describeSkillResolver(v: SkillResolverView): string {
   });
   const errs = Object.entries(v.recent.errors).map(([c, n]) => `${c} x${n}`).join(', ');
   const oc = v.openclaw ? `; ${describeOpenclawSkill(v.openclaw).line}` : '';
-  return `Skill resolver: ${parts.join('; ') || (v.openclaw ? 'no hook harness on' : 'no harness on')}${v.recent.turns ? `; last ${v.recent.turns} turns${errs ? ` with ${errs}` : ' without errors'}` : ''}${oc}.`;
+  const pi = v.pi ? `; ${describePiSkillView(v.pi).line}` : '';
+  const cursor = v.cursor ? `; ${describeCursorSkillView(v.cursor).line}` : '';
+  return `Skill resolver: ${parts.join('; ') || (v.openclaw || v.pi || v.cursor ? 'no hook harness on' : 'no harness on')}${v.recent.turns ? `; last ${v.recent.turns} turns${errs ? ` with ${errs}` : ' without errors'}` : ''}${oc}${pi}${cursor}.`;
 }
 
 export function skillResolverCheck(v: SkillResolverView | null): Check | null {
@@ -105,12 +115,12 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
     return { name, status: 'warn', message: `${describeSkillResolver(v)} The hook lane prints nothing until it can read it.`, details: { ...details, code: 'skill_resolver_config_unreadable' },
       fix: { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(name), docs: 'docs/guides/skill-resolver.md#skill_resolver_config_unreadable',
         why: 'gbrain never rewrites a config file it cannot parse; the lane and setup leave it alone.',
-        user_message: `gbrain's config file (${join(configDir(), 'config.json')}) is not valid JSON, so the skill resolver is paused. Fix or move it, then run: gbrain setup <claude-code|codex> --skill-loading resolve` } };
+        user_message: `gbrain's config file (${join(configDir(), 'config.json')}) is not valid JSON, so the skill resolver is paused. Fix or move it, then run: gbrain setup <claude-code|codex|hermes> --skill-loading resolve` } };
   }
   const broken = v.harnesses.find((h) => h.on && (h.hook !== 'wired' || !h.catalogs.some((c) => isTurnCatalog(h.harness, c.name))));
   if (broken) {
     const what = broken.hook === 'outdated' ? `its hook has no SessionStart entry (installed before the compaction reset), so skills offered before a compaction are not offered again; ${setupArgv(broken.harness).join(' ')} adds it`
-      : `${broken.hook === 'untrusted' ? 'its Codex hook is not trusted' : broken.hook === 'absent' ? 'its hook entry is missing' : 'its user catalog is missing'}, so no skills block is added`;
+      : `${broken.hook === 'untrusted' ? (broken.harness === 'hermes' ? 'its Hermes hook is not approved in shell-hooks-allowlist.json (hermes hooks doctor shows it)' : 'its Codex hook is not trusted') : broken.hook === 'absent' ? 'its hook entry is missing' : 'its user catalog is missing'}, so no skills block is added`;
     return { name, status: 'warn', message: `${describeSkillResolver(v)} ${broken.harness}: the resolver is on but ${what}.`, details,
       fix: { argv: setupArgv(broken.harness), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name),
         why: `Rebuilds the ${broken.harness} user catalog and rewrites only the skill-resolver hook entry; --skill-loading off removes it instead.` } };
@@ -120,6 +130,18 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
     return { name, status: 'warn', message: `${describeSkillResolver(v)} OpenClaw: ${oc.what}.`, details: { ...details, code: oc.code },
       fix: { argv: ['gbrain', 'setup', 'openclaw', '--skills-index-only'], consent: [], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${oc.code}`,
         why: 'Rebuilds the OpenClaw catalogs, the library and the plugin state without running any OpenClaw command; gbrain setup openclaw --skill-loading resolve reinstalls the plugin itself.' } };
+  }
+  const pi = v.pi ? describePiSkillView(v.pi).problem : null;
+  if (pi) {
+    return { name, status: 'warn', message: `${describeSkillResolver(v)} Pi: ${pi.what}.`, details: { ...details, code: pi.code },
+      fix: { argv: setupArgv('pi'), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${pi.code}`,
+        why: 'Rebuilds the pi-user catalog, the library and the state, and rewrites the Pi extension; gbrain setup pi --skill-loading off removes it instead.' } };
+  }
+  const cursor = v.cursor ? describeCursorSkillView(v.cursor).problem : null;
+  if (cursor) {
+    return { name, status: 'warn', message: `${describeSkillResolver(v)} Cursor: ${cursor.what}.`, details: { ...details, code: cursor.code },
+      fix: { argv: setupArgv('cursor'), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${cursor.code}`,
+        why: `Run it in ${cursor.project}: it rebuilds that project's catalog and rewrites its pinned-skills rule; gbrain setup cursor --skill-loading off there removes them instead.` } };
   }
   return { name, status: 'ok', message: describeSkillResolver(v), details };
 }

@@ -97,8 +97,8 @@ test('classic: with one committable and one skipped path, the first is committed
   expect(e.fix?.next).toBe('report');
   expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');
   expect(remoteTip(f)).toBe(head(f));
-  const detail = JSON.parse(e.detail!) as { skipped: { path: string; reason: string }[]; committed: string; pushed: string };
-  expect(detail.skipped).toEqual([{ path: nested, reason: 'not_staged' }]);
+  const detail = JSON.parse(e.detail!) as { skipped: { path: string; reason: string; why: string }[]; committed: string; pushed: string };
+  expect(detail.skipped).toEqual([{ path: nested, reason: 'not_staged', why: 'it sits inside the nested Git repository imports, so git add stages nothing for it' }]);
   expect(detail.committed).toBe(head(f));
   expect(detail.pushed).toBe(head(f));
   expect(readFileSync(join(f.home, '.gbrain', 'brain-push.log'), 'utf8')).toContain(`[push] ok main ${head(f).slice(0, 7)}`);
@@ -113,8 +113,9 @@ test('classic: a skip-worktree entry under a named directory and a page inside a
   expect(r.exitCode).not.toBe(0);
   const e = envelope(r.stdout);
   expect(e.code).toBe('commit_paths_skipped');
-  const detail = JSON.parse(e.detail!) as { skipped: { path: string; reason: string }[] };
-  expect(detail.skipped).toEqual([{ path: 'imports/carol-example.md', reason: 'not_staged' }, { path: 'people/bob-example.md', reason: 'skip_worktree' }]);
+  const detail = JSON.parse(e.detail!) as { skipped: { path: string; reason: string; why: string }[] };
+  expect(detail.skipped).toEqual([{ path: 'imports/carol-example.md', reason: 'not_staged', why: 'it sits inside the nested Git repository imports, so git add stages nothing for it' },
+    { path: 'people/bob-example.md', reason: 'skip_worktree', why: 'the index entry carries the skip-worktree flag, so git add does not see the edit on disk' }]);
   expect(head(f)).toBe(before);
 }, 60_000);
 
@@ -193,6 +194,16 @@ function helper(f: Fixture, cli: boolean, ...args: string[]) {
     env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: f.home, GBRAIN_HOME: f.home, GBRAIN_SKIP_STARTUP_HOOKS: '1', ...identity } });
 }
 
+test('#7793: helper without gbrain commits a named page when git exported GIT_LITERAL_PATHSPECS=1 to it', () => {
+  const f = fixture('helper-literal', 'remoteless');
+  helper(f, false);
+  writeFileSync(join(f.brain, 'people', 'bob-example.md'), page('Bob', 'Second version.'));
+  const r = spawnSync('bash', [join(f.brain, 'scripts', 'brain-commit-push.sh'), 'write pages', 'people/bob-example.md'], { cwd: f.brain, encoding: 'utf8', timeout: 60_000,
+    env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: f.home, GBRAIN_HOME: f.home, GBRAIN_SKIP_STARTUP_HOOKS: '1', GIT_LITERAL_PATHSPECS: '1', ...identity } });
+  expect(r.stderr).not.toContain('did not match');
+  expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');
+}, 60_000);
+
 test('helper without gbrain: a skipped path fails loudly instead of printing nothing to commit and exiting 0', () => {
   const f = fixture('helper-fallback', 'classic');
   editHidden(f, 'people/alice-example.md');
@@ -258,7 +269,8 @@ test('helper without gbrain: a non-ASCII flagged path, a nested-repository file 
   git(f.brain, 'add', '--', accented, 'people/link-example.md'); git(f.brain, 'commit', '-qm', 'more'); git(f.brain, 'push', '-q', 'origin', 'main');
   git(f.brain, 'update-index', '--assume-unchanged', '--', 'people/link-example.md');
   const clean = helper(f, false, 'write pages', 'people/link-example.md');
-  expect(clean.status).toBe(0);
+  expect(clean.status).toBe(4);
+  expect(clean.stderr).not.toContain('commit_paths_skipped');
   editHidden(f, accented);
   const accentedRun = helper(f, false, 'write pages', accented);
   expect(accentedRun.status).not.toBe(0);
@@ -270,7 +282,7 @@ test('helper without gbrain: a non-ASCII flagged path, a nested-repository file 
   expect(mixed.stderr).toContain('commit_paths_skipped');
   expect(mixed.stderr).toContain(nested);
   expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');
-  expect(remoteTip(f)).toBe(head(f));
+  expect(remoteTip(f)).not.toBe(head(f));
 }, 90_000);
 
 test('write-through: commitPathsLocked fails commit_paths_skipped for a nested-repository file instead of returning the commit', () => {
@@ -307,14 +319,14 @@ test('classic: a skipped path still fails commit_paths_skipped when the push fai
   expect(readFileSync(join(f.home, '.gbrain', 'brain-push.log'), 'utf8')).toContain('LOCAL-ONLY, NEEDS ATTENTION: main');
 }, 60_000);
 
-test('helper without gbrain: a skipped path is still named when the push fails', () => {
+test('helper without gbrain: a skipped path is still named when nothing is pushed', () => {
   const f = fixture('helper-pushfail', 'classic');
   writeFileSync(join(f.brain, 'people', 'bob-example.md'), page('Bob', 'Second version.'));
   const nested = nestedPage(f, 'carol-example.md');
   git(f.brain, 'remote', 'set-url', 'origin', join(dir, 'missing.git'));
   const r = helper(f, false, 'write pages', 'people/bob-example.md', nested);
   expect(r.status).toBe(4);
-  expect(r.stderr).toContain('PUSH FAILED');
+  expect(r.stderr).toContain('NOT PUSHED');
   expect(r.stderr).toContain('commit_paths_skipped');
   expect(r.stderr).toContain(nested);
   expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');

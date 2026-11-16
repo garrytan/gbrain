@@ -113,8 +113,8 @@ async function runStableUpgrade(args: string[], opts: RunOpts = {}): Promise<Run
   writeFileSync(state, VERSION);
   writeFileSync(join(bin, 'git'), `#!/bin/sh\ncase "$1" in ls-remote) cat '${join(home, 'tags.txt')}'; exit 0;; esac\nexit 1\n`);
   writeFileSync(join(home, 'tags.txt'), tags(opts.stableCommit === undefined ? C_NEWER : opts.stableCommit));
-  // `bun add -g github:garrytan/gbrain#v<x>` installs <x>; `gbrain --version` reports what is installed.
-  writeFileSync(join(bin, 'bun'), `#!/bin/sh\necho "$*" >> '${join(home, 'bun-calls.log')}'\n${opts.failAdd ? `case "$*" in "add -g github:garrytan/gbrain#v${opts.failAdd}") exit 1;; esac\n` : ''}case "$*" in "add -g github:garrytan/gbrain#v"*) echo "$3" | sed 's/.*#v//' > '${state}';; esac\nexit 0\n`);
+  // `bun add -g --backend=copyfile github:garrytan/gbrain#v<x>` installs <x>; `gbrain --version` reports what is installed.
+  writeFileSync(join(bin, 'bun'), `#!/bin/sh\necho "$*" >> '${join(home, 'bun-calls.log')}'\n${opts.failAdd ? `case "$*" in "add -g --backend=copyfile github:garrytan/gbrain#v${opts.failAdd}") exit 1;; esac\n` : ''}case "$*" in "add -g --backend=copyfile github:garrytan/gbrain#v"*) echo "$4" | sed 's/.*#v//' > '${state}';; esac\nexit 0\n`);
   writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "gbrain $(cat '${state}')"; exit 0; fi\necho "$*" >> '${join(home, 'gbrain-calls.log')}'\nexit 0\n`);
   for (const f of ['git', 'bun', 'gbrain']) chmodSync(join(bin, f), 0o755);
   if (opts.config) {
@@ -160,7 +160,7 @@ async function withRun(args: string[], opts: RunOpts, check: (r: Run) => void): 
 describe('gbrain upgrade on the stable channel', () => {
   test('installs exactly the stable release pinned to its tag (remove, then add), not the newest release', () => withRun(['--channel', 'stable', '--swap-only'], {}, r => {
     expect(r.stdout).toContain(`Stable channel: installing gbrain ${NEWER}`);
-    expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g github:garrytan/gbrain#v${NEWER}`]);
+    expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWER}`]);
     expect(r.stdout).toContain(`Now running: gbrain ${NEWER}`);
     expect(r.exitCode).toBe(0);
   }));
@@ -177,18 +177,18 @@ describe('gbrain upgrade on the stable channel', () => {
   }));
 
   test('default flip: a home that never set a channel follows stable on a bare upgrade (repo-less config and no config at all)', async () => {
-    await withRun(['--swap-only'], {}, r => expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g github:garrytan/gbrain#v${NEWER}`]));
+    await withRun(['--swap-only'], {}, r => expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWER}`]));
     await withRun(['--swap-only'], { config: { engine: 'pglite', database_path: '/tmp/gbrain-stable-example.pglite' } }, r => {
-      expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g github:garrytan/gbrain#v${NEWER}`]);
+      expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWER}`]);
     });
   });
 
   test('self_upgrade.channel stable and GBRAIN_RELEASE_CHANNEL=stable both select stable over the other sources', async () => {
     await withRun(['--swap-only'], { config: { engine: 'pglite', database_path: '/tmp/gbrain-stable-example.pglite', self_upgrade: { channel: 'stable' } } }, r => {
-      expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g github:garrytan/gbrain#v${NEWER}`]);
+      expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWER}`]);
     });
     await withRun(['--swap-only'], { config: { engine: 'pglite', database_path: '/tmp/gbrain-stable-example.pglite', self_upgrade: { channel: 'alpha' } }, env: { GBRAIN_RELEASE_CHANNEL: 'stable' } }, r => {
-      expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g github:garrytan/gbrain#v${NEWER}`]);
+      expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWER}`]);
     });
   });
 
@@ -200,12 +200,12 @@ describe('gbrain upgrade on the stable channel', () => {
 
   test('known_bad: a build the record withdrew is moved to the current stable, the one move below the running build', () => withRun(['--channel', 'stable', '--swap-only'], { stableCommit: C_OLDER, record: record(OLDER, { known_bad: [VERSION] }) }, r => {
     expect(r.stdout).toContain(`gbrain ${VERSION} was withdrawn from the stable channel`);
-    expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g github:garrytan/gbrain#v${OLDER}`]);
+    expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${OLDER}`]);
     expect(r.exitCode).toBe(0);
   }));
 
   test('a failed add restores the release that was installed and records the recovery step', () => withRun(['--channel', 'stable', '--swap-only'], { failAdd: NEWER }, r => {
-    expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g github:garrytan/gbrain#v${NEWER}`, `add -g github:garrytan/gbrain#v${VERSION}`]);
+    expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWER}`, `add -g --backend=copyfile github:garrytan/gbrain#v${VERSION}`]);
     expect(r.stderr).toContain(`Restored gbrain ${VERSION}.`);
     const rec = JSON.parse(readFileSync(join(r.home, '.gbrain', 'upgrade-errors.jsonl'), 'utf8').trim().split('\n').at(-1)!);
     expect(rec).toMatchObject({ phase: 'stable-reinstall', from_version: VERSION, to_version: NEWER });
@@ -217,8 +217,8 @@ describe('gbrain upgrade on the stable channel', () => {
     for (const channel of ['alpha', 'latest']) {
       await withRun(['--channel', channel, '--swap-only'], { spec: 'github:garrytan/gbrain#0123456789abcdef0123456789abcdef01234567' }, r => {
         expect(r.stdout).toContain('pinned to github:garrytan/gbrain#0123456789abcdef0123456789abcdef01234567');
-        expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g github:garrytan/gbrain#v${NEWEST}`]);
-        expect(r.bunCalls).not.toContain('update gbrain');
+        expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWEST}`]);
+        expect(r.bunCalls).not.toContain('update --backend=copyfile gbrain');
         expect(r.stdout).toContain(`Now running: gbrain ${NEWEST}`);
         expect(r.exitCode).toBe(0);
       });

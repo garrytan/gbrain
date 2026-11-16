@@ -367,7 +367,9 @@ test('probe: the writer recovers on its own: a Git effect parked by a held lock 
  */
 const fixtureProcRunnable = !blind && process.getuid?.() !== 0;
 const procFixtures: string[] = [];
-afterEach(() => {
+const mutators: ChildProcess[] = [];
+afterEach(async () => {
+  await Promise.all(mutators.splice(0).map(child => child.exitCode !== null || child.signalCode !== null ? undefined : new Promise(done => child.once('exit', done))));
   for (const proc of procFixtures.splice(0)) {
     execFileSync('chmod', ['-R', 'u+rwx', proc]);
     rmSync(proc, { recursive: true, force: true });
@@ -388,8 +390,12 @@ function fixtureProc(pids: Record<string, { uid: number; state?: string; fds?: R
   }
   return proc;
 }
-/** Change a fixture process after `ms` from another process, while the synchronous proof runs. */
-const later = (ms: number, script: string) => { const child = spawn('sh', ['-c', `sleep ${ms / 1000}; ${script}`], { stdio: 'ignore' }); children.push(child); };
+/**
+ * Change a fixture process after `ms` from another process, while the synchronous proof runs. The proof can
+ * return before the script ends, so the fixture cleanup waits for it: killing the shell would leave its `rm`
+ * running against the tree the cleanup walks.
+ */
+const later = (ms: number, script: string) => { mutators.push(spawn('sh', ['-c', `sleep ${ms / 1000}; ${script}`], { stdio: 'ignore' })); };
 const staleEmptyLock = () => { const r = repo(); writeFileSync(r.lock, ''); age(r.lock, RECLAIM_MIN_AGE_MS + 1_000); return r; };
 
 test.skipIf(!fixtureProcRunnable)('this user\'s git that denies its open files while it exits is re-checked, and the proof follows once it is gone', () => {

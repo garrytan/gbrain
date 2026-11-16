@@ -20,14 +20,15 @@ export async function listAllSources(exec: LegacyUnscopedRead, opts?: {
     // how many archived rows exist. ORDER BY (id='default') DESC, id
     // matches sources-ops.listSources for operator-output stability.
     // localPathOnly skips pure-DB sources so autopilot fan-out doesn't
-    // dispatch jobs that would fall back to the global sync.repo_path.
+    // dispatch jobs that would fall back to the global sync.repo_path, and
+    // the storage shelf, whose cycle is always skipped (GST-1943).
     const includeArchived = opts?.includeArchived === true;
     const localPathOnly = opts?.localPathOnly === true;
     const { rows } = await exec.run(sqlFragment`
       SELECT id, name, local_path, last_sync_at, config
         FROM sources
        WHERE (${includeArchived} OR archived IS NOT TRUE)
-         AND (${!localPathOnly} OR local_path IS NOT NULL)
+         AND (${!localPathOnly} OR (local_path IS NOT NULL AND config->>'role' IS DISTINCT FROM 'storage_manifest'))
        ORDER BY (id = 'default') DESC, id
     `);
     return rows.map((r) => ({

@@ -10,8 +10,8 @@
               "boolean",
               "boolean"
             ],
-            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR local_path IS NOT NULL) ORDER BY (id = 'default') DESC, id",
-            "textSha256": "8f708b7f5bb279ea14ecc0f958457d31237d81a165a02fbc5f62339bba8b9291"
+            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR (local_path IS NOT NULL AND config->>'role' IS DISTINCT FROM 'storage_manifest')) ORDER BY (id = 'default') DESC, id",
+            "textSha256": "7a9f40530ae88bb9c1d059fb6b47a75e864c4e3a9579d0145dfdff0bfdae61ce"
           }
         ]
       },

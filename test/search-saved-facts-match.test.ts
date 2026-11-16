@@ -12,12 +12,13 @@
  * fixture is the shape of a harness case where a channel post was corrected
  * in another channel and every search returned the retracted figure.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { serializeMarkdown } from '../src/core/markdown.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { SAVED_FACTS_SUPERSEDE_KEY } from '../src/core/search/saved-facts-match.ts';
+import { SAVED_FACTS_SUPERSEDE_KEY, matchingSavedFacts } from '../src/core/search/saved-facts-match.ts';
+import type { OperationContext } from '../src/core/operations.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const WRITER = { remote: true, transport: 'http' as const, sourceId: 'default' };
@@ -369,5 +370,151 @@ describe('search.saved_facts_supersede: what a correction must share', () => {
     } finally {
       await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'false');
     }
+  });
+});
+
+// Value: protects=entity enrichment never shows a corrected claim as current (#7938 item 1); fails_when=the entity-facts copy of a claim the five-fact cap cut comes back unlabelled, beside its corrector or without it; why_new=the entity-copy test above keeps both facts inside the cap; seam=none; no_claim=fact rows the facts arm returns
+describe('search.saved_facts_supersede: entity facts and the five-fact cap', () => {
+  async function seedCapped(name: string, desks: number): Promise<{ query: string; old: number; fix: number }> {
+    const slug = `companies/${name.toLowerCase()}`;
+    await importFromContent(engine, slug, serializeMarkdown({}, `${name} is a customer account.`, '', { type: 'company', title: name, tags: [] }), { noEmbed: true, forceRechunk: true });
+    const old = await remember(`${name} renews at 52 seats.`, '2025-08-01T09:00:00Z');
+    const fix = await remember(`Correction: ${name} is at 46 seats, ignore the 52.`, '2025-08-02T09:00:00Z');
+    const seeded = [old, fix];
+    for (let i = 0; i < desks; i++) seeded.push(await remember(`${name} renewal seats reviewed by desk ${'abcdef'[i]}.`, '2025-08-03T09:00:00Z'));
+    // Only the corrected claim is filed under the entity, so it alone comes back through the entity facts.
+    await engine.executeRaw('UPDATE facts SET entity_slug = CASE WHEN id = $1 THEN $2 ELSE NULL END WHERE id = ANY($3::int[])', [old, slug, seeded]);
+    return { query: `${name} renewal seats`, old, fix };
+  }
+  const savedFactsBlock = (text: string) => text.slice(text.indexOf('Saved facts (remember)'));
+
+  test('a claim whose corrector the cap cut does not come back through the entity facts', async () => {
+    await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'true');
+    try {
+      const f = await seedCapped('Quarnetix', 5);
+      const { facts, text } = await search(f.query);
+      expect(facts.map(x => x.id)).not.toContain(f.fix);
+      expect(facts.map(x => x.id)).not.toContain(f.old);
+      expect(savedFactsBlock(text)).not.toContain('Quarnetix renews at 52 seats.');
+    } finally {
+      await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'false');
+    }
+  });
+
+  test('a claim the cap cut but the entity facts return is labelled with its returned corrector', async () => {
+    await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'true');
+    try {
+      const f = await seedCapped('Brisketon', 4);
+      const { facts } = await search(f.query);
+      expect(facts.map(x => x.id)).toContain(f.fix);
+      expect(facts.find(x => x.id === f.old)?.corrected_by).toBe(f.fix);
+    } finally {
+      await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'false');
+    }
+  });
+
+  test('dropping an entity fact whose corrector the cap cut also drops the entity fact it corrects', async () => {
+    await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'true');
+    try {
+      await importFromContent(engine, 'companies/kelvanta', serializeMarkdown({}, 'Kelvanta is a customer account.', '', { type: 'company', title: 'Kelvanta', tags: [] }), { noEmbed: true, forceRechunk: true });
+      const old = await remember('Kelvanta renews at 52 seats.', '2025-07-01T09:00:00Z');
+      const fix = await remember('Correction: Kelvanta renewal seats are 46.', '2025-07-02T09:00:00Z');
+      // Restates the old figure, so it corrects the correction but not the claim it corrected.
+      const refix = await remember('Correction: Kelvanta seats are 52.', '2025-07-03T09:00:00Z');
+      const desks = [];
+      for (const desk of 'abcde') desks.push(await remember(`Kelvanta renewal seats reviewed by desk ${desk}.`, '2025-07-04T09:00:00Z'));
+      await engine.executeRaw("UPDATE facts SET entity_slug = CASE WHEN id = ANY($1::int[]) THEN 'companies/kelvanta' ELSE NULL END WHERE id = ANY($2::int[])",
+        [[old, fix], [old, fix, refix, ...desks]]);
+      const { facts } = await search('Kelvanta renewal seats');
+      const returned = new Set(facts.map(x => x.id));
+      expect([old, fix, refix].filter(id => returned.has(id))).toEqual([]);
+      for (const x of facts) if (x.corrected_by !== undefined) expect(returned.has(x.corrected_by), String(x.id)).toBe(true);
+    } finally {
+      await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'false');
+    }
+  });
+});
+
+// Value: protects=a corrected fact always follows its correction in the reply (#7938 item 12); fails_when=a labelled entity fact sits above its corrector, so "corrected by a newer saved fact above" is false and the reply budget, which cuts from the end, can keep the label without the corrector; why_new=entity facts lead the list and no test placed a labelled entity fact; seam=none; no_claim=the order of facts nothing corrects
+describe('search.saved_facts_supersede: a corrected fact follows its correction', () => {
+  test('a labelled entity fact comes after the matched fact correcting it, in _meta and in the reply text', async () => {
+    await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'true');
+    try {
+      await importFromContent(engine, 'companies/ostravel', serializeMarkdown({}, 'Ostravel is a customer account.', '', { type: 'company', title: 'Ostravel', tags: [] }), { noEmbed: true, forceRechunk: true });
+      const old = await remember('Ostravel renews at 52 seats.', '2025-06-01T09:00:00Z');
+      const fix = await remember('Correction: Ostravel is at 46 seats, ignore the 52.', '2025-06-02T09:00:00Z');
+      await engine.executeRaw("UPDATE facts SET entity_slug = CASE WHEN id = $1 THEN 'companies/ostravel' ELSE NULL END WHERE id = ANY($2::int[])", [old, [old, fix]]);
+      const { facts, text } = await search('Ostravel renewal seats');
+      expect(facts.find(x => x.id === old)?.corrected_by).toBe(fix);
+      expect(order(facts, fix)).toBeGreaterThanOrEqual(0);
+      expect(order(facts, fix)).toBeLessThan(order(facts, old));
+      const block = text.slice(text.indexOf('Saved facts (remember)'));
+      expect(block.indexOf('Correction: Ostravel is at 46 seats')).toBeGreaterThan(0);
+      expect(block.indexOf('Correction: Ostravel is at 46 seats')).toBeLessThan(block.indexOf('Ostravel renews at 52 seats.'));
+    } finally {
+      await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'false');
+    }
+  });
+});
+
+// Value: protects=an acknowledgement restating a figure in another format corrects nothing, a figure-free withdrawal still corrects, and a name the query writes in another word form still gates (#7938 items 5, 9, 10); fails_when=figures() compares 52,000 and 52000 (or 52.0 and 52) as different numbers, a withdrawal stating no figure stops correcting, or namedWords compares the literal query word with the fact's name; why_new=every earlier acknowledgement restated the figure verbatim, no withdrawal without a figure was tested, and every name matched literally; seam=none; no_claim=decimal commas
+describe('search.saved_facts_supersede: figures, withdrawals and names', () => {
+  test.each([
+    ['Pemberly', 'Pemberly renews at 52000 seats.', 'Correction noted: Pemberly renews at 52,000 seats.'],
+    ['Quintavo', 'Quintavo renews at 52 seats.', 'Correction noted: Quintavo renews at 52.0 seats.'],
+  ])('%s: an acknowledgement restating the figure in another format relabels nothing', async (name, fact, ack) => {
+    await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'true');
+    try {
+      const older = await remember(fact, '2025-05-01T09:00:00Z');
+      const noted = await remember(ack, '2025-05-02T09:00:00Z');
+      const { facts } = await search(`${name} renewal seats`);
+      expect(facts.map(f => f.id)).toEqual(expect.arrayContaining([older, noted]));
+      expect(facts.find(f => f.id === older)?.corrected_by).toBeUndefined();
+    } finally {
+      await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'false');
+    }
+  });
+
+  test('a withdrawal that states no figure still corrects the fact it withdraws', async () => {
+    await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'true');
+    try {
+      const older = await remember('Rostanne renews at 52 seats.', '2025-05-03T09:00:00Z');
+      const withdrawal = await remember('Disregard what I said about Rostanne seats.', '2025-05-04T09:00:00Z');
+      const { facts } = await search('Rostanne renewal seats');
+      expect(facts.find(f => f.id === older)?.corrected_by).toBe(withdrawal);
+      expect(order(facts, withdrawal)).toBeLessThan(order(facts, older));
+    } finally {
+      await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'false');
+    }
+  });
+
+  test('a name the query writes in another word form still keeps out a correction about another name', async () => {
+    await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'true');
+    try {
+      const older = await remember('Agencies Calder renews at 52 seats.', '2025-05-05T09:00:00Z');
+      await remember('Correction: Tolvane renews at 46 seats, ignore the 52.', '2025-05-06T09:00:00Z');
+      const { facts } = await search('agency renewal seats');
+      expect(facts.map(f => f.id)).toContain(older);
+      expect(facts.find(f => f.id === older)?.corrected_by).toBeUndefined();
+    } finally {
+      await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'false');
+    }
+  });
+});
+
+// Value: protects=a failed saved-facts read is logged, so a statement timeout is not mistaken for "no saved facts" (#7938 item 11); fails_when=the catch swallows the error silently; why_new=no test drove the failure path; seam=none (a stub engine whose read throws); no_claim=the reply's degraded stages
+describe('saved facts: a failed match read', () => {
+  afterEach(() => { (console.warn as unknown as { mockRestore?: () => void }).mockRestore?.(); });
+
+  test('returns no facts and warns with the SQLSTATE', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const stub = {
+      getConfig: async () => null,
+      executeRaw: async () => { throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }); },
+    };
+    const ctx = { engine: stub, remote: true, sourceId: 'default', emitResponseMeta: () => {} } as unknown as OperationContext;
+    const out = await matchingSavedFacts(ctx, {}, 'Orbix renewal seats');
+    expect(out.facts).toEqual([]);
+    expect(warn.mock.calls.map(a => String(a[0]))).toEqual([expect.stringContaining('Saved-facts match failed (SQLSTATE 57014)')]);
   });
 });

@@ -11,20 +11,24 @@ import { affectsRecall } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, enforceBoundClientOpAllowList, opError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
+import { asSegmentedWriteRefusal } from '../core/page-body/page-shape.ts';
 import type { Operation, OperationMeta } from '../core/ops/contract.ts';
 import { loadConfig } from '../core/config.ts';
 import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core/config-snapshot.ts';
-import { withCallerAccess } from '../core/search/private-visibility.ts';
-import { appliedAccessSummary, folderAccessFor, remoteCallerAccess } from '../core/access/caller.ts';
+import { currentCallerAccess, withCallerAccess } from '../core/search/private-visibility.ts';
+import { appliedAccessSummary, identityLookupUnavailable, remoteCallerAccess } from '../core/access/caller.ts';
+import { credentialScopeFor, requesterScopeGate, requesterScopeRefuses, requiresRequesterScope, withServesReread, type RequesterScopeNotice } from '../core/access/requester-scope.ts';
+import type { GuestChannels } from '../core/guests/admission.ts';
+import { assessRoom, readRoomDeclaration, roomResponseCapNotice, type RoomChannels, type RoomDeclaration } from '../core/access/room.ts';
 import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, parseAudience, type AudienceAuditEvent, type AudienceChannels, type AudiencePrincipal } from '../core/access/audience.ts';
 import { ACTOR_ARGUMENT, actorNotAttested, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
-import { attestedReadMode, SCOPE_READ_ACCESS, withReadMode, type ReadMode } from '../core/access/scope-read.ts';
+import { attestedReadMode, scopeReadAccess, scopeReadLabelledOnlyRefused, withReadMode, type ReadMode } from '../core/access/scope-read.ts';
 import { attestedReadScope } from '../core/access/member-sources.ts';
 import { QM_PERSONAL_OPS, qmMemoryToolResult, recallArguments, unlinkedRecallResult } from '../core/ops/qm-memory.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
-import { cliRenderContext, orderNotices, redactForTransport, renderNotice, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
+import { cliRenderContext, orderNotices, redactForTransport, renderAction, renderNotice, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
 import { cliOnlyRefusal, isCallable } from '../core/ops/callable.ts';
 import { hostFix, scopeDeniedError } from '../core/ops/op-fix.ts';
 import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger, type NoticeAudience } from '../core/notice-ledger.ts';
@@ -186,6 +190,17 @@ export interface DispatchOpts {
    * header, request-level `_meta`), set by harness code. Never populated from tool arguments, which are refused.
    */
   onBehalfOf?: AudienceChannels;
+  /**
+   * GBRA-498: the room channels the transport read (the X-Gbrain-Room header, request-level _meta.room), set by harness
+   * code. A `room` tool argument is read too, and can only add people (access/room.ts).
+   */
+  room?: RoomChannels;
+  /** GBRA-504: the guest attribution channels the transport read (the X-Gbrain-Guest header, request-level _meta.guest). */
+  guest?: GuestChannels;
+  /** GBRA-498 (internal): the room this call declared, resolved by dispatchToolCall; never set by a transport. */
+  roomDeclaration?: RoomDeclaration;
+  /** GBRA-498 (internal): the call named an attested actor, so its answer is never marked for a room. */
+  roomAttested?: boolean;
   /** #6696 (A5): set by the trusted transport for the user's own agent calls; never from wire params. */
   admissionOrigin?: OperationContext['admissionOrigin'];
   /** The caller's self-declared agent label (X-Gbrain-Agent-Label), parsed by the transport; recorded only, never authority. */
@@ -439,7 +454,7 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
   const r = retrieval as {
     type_filter_notice?: unknown;
     other_names?: Array<{ name: string; alias: string; slug: string }>;
-    saved_facts?: Array<{ fact: string; entity_slug: string | null; valid_from: string; source: string; linked_from?: string; corrected_by?: number; quoted?: string }>;
+    saved_facts?: Array<{ fact: string; entity_slug: string | null; valid_from: string; source: string; linked_from?: string; corrected_by?: number; quoted?: string; room_access?: { readable: unknown; reason?: string } }>;
     answer_id?: unknown;
     feedback?: { rateable?: boolean; how_to_rate?: string };
   };
@@ -452,7 +467,7 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
   }
   if (r.saved_facts?.length) {
     const { text, more } = wholeItemsWithin('Saved facts (remember): about the entity this query names (newest first), then facts those point to, then matches for its words; recall returns more:\n',
-      r.saved_facts.map(f => `- ${f.fact}${f.quoted ? '\n' : ''} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}${f.linked_from ? `; named in a saved fact about ${f.linked_from}` : ''}${f.corrected_by ? '; corrected by a newer saved fact above' : ''}]`),
+      r.saved_facts.map(f => `- ${f.fact}${f.quoted ? '\n' : ''} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}${f.linked_from ? `; named in a saved fact about ${f.linked_from}` : ''}${f.corrected_by ? '; corrected by a newer saved fact above' : ''}${f.room_access ? `; room: ${f.room_access.readable === true ? 'readable' : f.room_access.readable === false ? `not readable (${f.room_access.reason})` : `unknown (${f.room_access.reason})`}` : ''}]`),
       '\n', SAVED_FACTS_NOTICE_MAX_CHARS);
     blocks.push(more ? `${text}\n(+${more} more; recall returns them)` : text);
   }
@@ -860,7 +875,7 @@ type ToolTail = Parameters<NonNullable<OperationContext['emitToolTail']>>[0];
  * under gbrain's own keys, which it never replaces (a conversation credential: never logged).
  */
 function appendToolTail(out: ToolResult, tail: ToolTail): void {
-  if (tail.text) out.content.push({ type: 'text', text: tail.text.slice(0, 2000) });
+  if (tail.text) out.content.push({ type: 'text', text: tail.text.slice(0, 16_000) });
   if (tail.meta && typeof tail.meta === 'object') out._meta = { ...tail.meta, ...(out._meta ?? {}) };
 }
 
@@ -968,6 +983,7 @@ export function buildOperationContext(
     ...(opts.surfaceCeiling ? { surfaceCeiling: opts.surfaceCeiling } : {}),
     ...(opts.stdioSurface ? { stdioSurface: opts.stdioSurface } : {}),
     ...(opts.stdioMember !== undefined && opts.transport === 'stdio' && !opts.auth ? { stdioMember: opts.stdioMember } : {}),
+    ...(opts.guest && opts.remote !== false ? { guestChannels: opts.guest } : {}),
     ...(opts.revealTools ? { revealTools: opts.revealTools } : {}),
     ...(opts.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
     ...(opts.admissionOrigin ? { admissionOrigin: opts.admissionOrigin } : {}),
@@ -1000,6 +1016,11 @@ export async function dispatchToolCall(
   // GBRA-156: a remote read sees private pages only in the sources its grant names under private_pages: granted_sources.
   // Writes, local callers and every path outside this call keep the empty set, so they hide or see exactly what they did.
   // context_pack and delta stay world-only for every caller unless a trusted local one passes include_private, so no grant widens them.
+  // GBRA-498: a room declaration only marks the answer; its argument is taken out here, before any validation,
+  // handler, cache, retry call or stored write intent sees it, and a trusted local caller's is ignored.
+  const roomRead = readRoomDeclaration(opts.remote === false ? undefined : opts.room, params);
+  params = roomRead.args;
+  const roomDeclaration = opts.remote === false ? undefined : roomRead.declaration ?? undefined;
   const op = operations.find(o => o.name === name);
   const readOnly = op?.mutating === false;
   const args = op && params ? normalizeOptionalParams(op, params) : params;
@@ -1015,6 +1036,7 @@ export async function dispatchToolCall(
     let access: Awaited<ReturnType<typeof remoteCallerAccess>>;
     let readMode: ReadMode | null = null;
     let scoped = resolved;
+    let scopeNotice: RequesterScopeNotice | null = null;
     const header = opts.actor?.header ?? undefined;
     const actorNamed = header !== undefined || opts.actor?.audience != null || (!!args && Object.prototype.hasOwnProperty.call(args, ACTOR_ARGUMENT));
     const assertion = (outcome: AudienceAuditEvent['outcome'], reason?: string) => logAudienceAssertion({ outcome, op: name,
@@ -1028,18 +1050,42 @@ export async function dispatchToolCall(
         auth: opts.auth, transport: opts.transport, audienceAsserted: audience !== null });
       // GST-1158 E1: an attested read that names sources reads as the scope (access/scope-read.ts), or as the person on an attest_read person credential.
       readMode = attested?.actor ? attestedReadMode(name, attested.params, attested.read) : null;
-      access = readMode === 'scope' ? { ...SCOPE_READ_ACCESS, folderCoverage: (await folderAccessFor(engine, [])).folderCoverage } : attested?.access ?? await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience, opts.transport === 'stdio' && !opts.auth ? opts.stdioMember : undefined, readOnly);
+      if (readMode === 'scope' && attested?.access?.labelledOnly) throw scopeReadLabelledOnlyRefused(name);
+      access = readMode === 'scope' ? await scopeReadAccess(engine) : attested?.access ?? await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience, opts.transport === 'stdio' && !opts.auth ? opts.stdioMember : undefined, readOnly);
       // GBRA-284: an attested call reads its grant minus other members' personal sources, a scope read minus every personal source (access/member-sources.ts).
       if (attested?.actor) scoped = await attestedReadScope(engine, resolved, attested.actor.member, readMode === 'scope');
+      if (roomDeclaration) scoped = { ...scoped, roomDeclaration, roomAttested: !!attested?.actor };
       if (opts.enforcedMember) access = { ...access, hidePrivate: true, owner: false, privateReadableSources: [] };
-    } catch (e) {
+      // GST-363: on a brain that serves several people, a read from a connection bound to nobody is refused (or, in its grace, noticed) before any work.
+      // An op this connection cannot reach (hidden by its surface, localOnly off stdio, or cliOnly over MCP) keeps its own refusal instead.
+      const reachable = !!op && (!opts.allowedOps || opts.allowedOps.has(name)) && (!op.localOnly || opts.transport === 'stdio') && !op.cliOnly;
+      try {
+        if (!attested?.actor && reachable && requiresRequesterScope(op, opts.auth)) {
+          const credential = opts.auth ? await credentialScopeFor(engine, opts.auth) : undefined;
+          access = await withServesReread(engine, access, credential);
+          scopeNotice = requesterScopeGate(op, access, credential, opts.transport);
+        } else if (!attested?.actor && reachable && scoped.metaHook) {
+          // GST-363: the ops the gate lets through (exempt reads, writes) carry no hot memory to a connection whose reads it refuses.
+          const credential = opts.auth ? await credentialScopeFor(engine, opts.auth) : undefined;
+          if (requesterScopeRefuses(await withServesReread(engine, access, credential), credential, opts.transport)) scoped = { ...scoped, metaHook: undefined };
+        }
+      } catch (dbFailure) {
+        // The serves re-read met a database that is unreachable or missing its schema: its own envelope, nothing read.
+        if (dbFailure instanceof OperationError) throw dbFailure;
+        return errorResult(dbFailure, opts, { op: name });
+      }
+    } catch (thrown) {
+      const e = identityLookupUnavailable(thrown) ?? thrown;
       // GST-359: a call that names a person gets every failure here (a lock timeout reading its link included) in the
-      // envelope QM reads, never a thrown call; anything else keeps the caller's own error path.
-      if (!(e instanceof OperationError) || !/^(on_behalf_of_|actor_)/.test(String(e.code))) {
-        if (!actorNamed) throw e;
-        return withStructuredError(errorResult(e, opts, { op: name }));
+      // envelope QM reads, never a thrown call; a coded refusal (access_identity_unavailable) is an error result, before
+      // anything is admitted; anything else keeps the caller's own error path.
+      if (!(e instanceof OperationError) || !/^(on_behalf_of_|actor_|requester_scope_(required|unknown)$)/.test(String(e.code))) {
+        if (actorNamed) return withStructuredError(errorResult(e, opts, { op: name }));
+        if (e instanceof OperationError) return errorResult(e, opts, { op: name });
+        throw e;
       }
       assertion(e.code as AudienceAuditEvent['outcome'], e.reason);
+      if (e.code === 'requester_scope_required' || e.code === 'requester_scope_unknown') return qmMemoryToolResult(name, withStructuredError(errorResult(e, opts, { op: name })));
       return qmMemoryToolResult(name, actorNamed ? actorRefusal(e, opts, name, header, args) : errorResult(e, opts, { op: name }));
     }
     if (audience || attested?.actor) assertion('accepted');
@@ -1048,6 +1094,10 @@ export async function dispatchToolCall(
       const out = await withRequestIdentityMemo(() => withReadMode(readMode, () => dispatchResolvedCall(engine, name, callParams, scoped)));
       // _meta.access (MCP_META_CHANNELS.md): the view this call was answered under, for the harness; own producer, isolated.
       try { out._meta = { ...(out._meta ?? {}), access: await appliedAccessSummary(engine, scoped.auth, [scoped.sourceId, ...(scoped.localFederatedSourceIds ?? [])]) }; } catch { /* the key is absent */ }
+      if (scopeNotice) {
+        const applied = (out._meta?.access ?? {}) as Record<string, unknown>;
+        out._meta = { ...(out._meta ?? {}), access: { ...applied, requester_scope: { ...scopeNotice, fix: renderAction(scopeNotice.fix, dispatchRenderContext(opts)) } } };
+      }
       const personal = !!attested?.actor;
       const shaped = qmMemoryToolResult(name, out, personal);
       // GST-1158 F2: a personal read's structuredContent repeats its JSON, so the final frame is measured again.
@@ -1107,6 +1157,48 @@ function namesOwnSources(params: Record<string, unknown>, sourceId: string | und
 async function runMetaHook(hook: NonNullable<DispatchOpts['metaHook']>, name: string, ctx: OperationContext): Promise<{ meta?: Record<string, unknown>; failure?: string }> {
   try { return { meta: await hook(name, ctx) }; }
   catch (metaErr) { return { failure: metaErr instanceof Error ? metaErr.message : String(metaErr) }; }
+}
+
+/**
+ * GBRA-498: an answer going into a room is marked for it on a detached copy (hot memory too, so the hook runs first),
+ * before the notices, the degraded stamp and the frame are built. Marking never fails the call.
+ */
+async function markForRoom(engine: BrainEngine, opts: DispatchOpts, name: string, result: unknown, retrieval: unknown, ctx: OperationContext, hook: ReturnType<typeof runMetaHook> | undefined) {
+  const hookOut = hook ? await hook : undefined;
+  const room = await assessRoom(engine, { op: name, result, hotMemory: hookOut?.meta, retrieval, declaration: opts.roomDeclaration!, sourceId: ctx.sourceId,
+    caller: { access: currentCallerAccess(), auth: ctx.auth, transport: ctx.transport, stdioMember: opts.stdioMember, attested: opts.roomAttested } });
+  return { hookOut, room: room as Awaited<ReturnType<typeof assessRoom>> | null };
+}
+
+/**
+ * GBRA-498: room marks never cost a read. Over the cap, the unmarked answer goes out with the room_hints_unavailable
+ * notice (reason response_cap) and a one-key _meta.room note, then with the notice alone, then bare.
+ */
+async function roomCapFallback(build: (meta: Record<string, unknown>, extra: Notice[]) => ToolResult, cap: (built: ToolResult) => Promise<unknown>, responseMeta: Record<string, unknown>): Promise<ToolResult | null> {
+  const note = [roomResponseCapNotice()];
+  const tries: Array<[Record<string, unknown>, Notice[]]> = [[{ ...responseMeta, room: { complete: false, unavailable: 'response_cap' } }, note], [responseMeta, note], [responseMeta, []]];
+  for (const [meta, extra] of tries) {
+    const fallback = build(meta, extra);
+    if (!await cap(fallback)) return fallback;
+  }
+  return null;
+}
+
+function assembleToolResult(
+  call: { name: string; result: unknown; batchError: boolean; evidence: (retrieval: unknown) => string[]; tail: ToolTail | undefined; opts: DispatchOpts },
+  body: unknown, shown: Notice[], stamped: Notice[], meta: Record<string, unknown>, hook: Record<string, unknown> | undefined,
+): ToolResult {
+  const built: ToolResult = call.batchError ? toolErrorResult(body as never) : toolResultWithNotices(body, shown, dispatchRenderContext(call.opts));
+  const evidenceBlocks = call.evidence(meta.retrieval);
+  if (evidenceBlocks.length > 0) built.content.splice(1, 0, ...evidenceBlocks.map(text => ({ type: 'text' as const, text })));
+  // _meta assembly (WP2 amendment 9): one producer per top-level key,
+  // each isolated — handler-emitted keys (retrieval, warnings) attach
+  // BEFORE and independently of the metaHook, so a hot-memory hook
+  // failure can never drop the retrieval channel. Per-key merge, never
+  // wholesale assignment. See docs/protocol/MCP_META_CHANNELS.md.
+  attachResponseMeta(built, meta, degradedStampFor(call.name, call.result, meta, stamped)); if (call.tail) appendToolTail(built, call.tail);
+  if (hook && Object.keys(hook).length > 0) built._meta = { ...(built._meta ?? {}), ...hook };
+  return built;
 }
 
 async function dispatchResolvedCall(
@@ -1343,7 +1435,7 @@ async function dispatchResolvedCall(
     if (emptyBlock) notices.push({ code: 'empty_retrieval', kind: emptyBlock.includes('degraded:') ? 'degraded' : 'info', why: emptyBlock });
     // Cat 40 (#5932) evidence blocks (type-filter notice, other names, saved facts) are retrieval
     // data, not advice: they stay plain extra text blocks right after content[0], as measured.
-    const evidenceBlocks = retrievalNoticeBlocks(result, responseMeta.retrieval).slice(emptyBlock ? 1 : 0);
+    const evidence = (retrieval: unknown) => retrievalNoticeBlocks(result, retrieval).slice(emptyBlock ? 1 : 0);
     // Lane F (F3): degraded recall and a source binding that narrowed an empty read.
     const rerankDegradedCalls = recordRerankDegradation(responseMeta, opts);
     notices.push(...recallInteropNotices(name, result, responseMeta, safeParams,
@@ -1369,31 +1461,32 @@ async function dispatchResolvedCall(
     if (opts.transport === 'stdio' && opts.remote !== false && !batchError) notices.push(...await mcpOnboardingNotices({ engine, op: name, result, meta: responseMeta, config: ctx.config, render: dispatchRenderContext(opts) }));
     if (opts.transport === 'stdio' && opts.remote !== false && !batchError) { const drain = takeFactsDrainNotice(); if (drain) notices.push(drain); } // Lane D facts drain
     if (!batchError) notices.push(...await sessionSafetyNotices(engine, opts, ctx.config), ...await grantBlockedNotices(engine, opts, false));
-    const out: ToolResult = batchError ? toolErrorResult(result as never) : toolResultWithNotices(result, admitNotices(notices, opts), dispatchRenderContext(opts));
-    if (evidenceBlocks.length > 0) out.content.splice(1, 0, ...evidenceBlocks.map(text => ({ type: 'text' as const, text })));
+    let { hookOut, room } = opts.roomDeclaration && ctx.remote !== false && !batchError ? await markForRoom(engine, opts, name, result, responseMeta.retrieval, ctx, metaHook && (earlyMeta ?? runMetaHook(metaHook, name, ctx))) : { hookOut: undefined, room: null };
+    const admitted = admitNotices(room ? [...notices, ...room.notices] : notices, opts);
+    const assemble = (body: unknown, shown: Notice[], stamped: Notice[], meta: Record<string, unknown>, hook: Record<string, unknown> | undefined) =>
+      assembleToolResult({ name, result, batchError, evidence, tail, opts }, body, shown, stamped, meta, hook);
     if (opts.transport === 'stdio') {
       maybeRefreshBackupStatusInProcess(engine);
     }
-    // _meta assembly (WP2 amendment 9): one producer per top-level key,
-    // each isolated — handler-emitted keys (retrieval, warnings) attach
-    // BEFORE and independently of the metaHook, so a hot-memory hook
-    // failure can never drop the retrieval channel. Per-key merge, never
-    // wholesale assignment. See docs/protocol/MCP_META_CHANNELS.md.
-    attachResponseMeta(out, responseMeta, degradedStampFor(name, result, responseMeta, notices)); if (tail) appendToolTail(out, tail);
     // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.
     // The hook is wrapped in its own try/catch — any DB blip / cache miss /
     // helper crash degrades to no hook keys rather than flipping the whole
     // tool call to error.
-    if (metaHook) {
-      const { meta, failure } = await (earlyMeta ?? runMetaHook(metaHook, name, ctx));
-      if (meta && Object.keys(meta).length > 0) out._meta = { ...(out._meta ?? {}), ...meta };
-      if (failure !== undefined) ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${failure}; degrading to no hook keys`);
-    }
+    if (metaHook && !hookOut) hookOut = await (earlyMeta ?? runMetaHook(metaHook, name, ctx));
+    if (hookOut?.failure !== undefined) ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${hookOut.failure}; degrading to no hook keys`);
+    const cap = (built: ToolResult) => op.mutating ? Promise.resolve(null) : frameOverCap(built, { remote: ctx.remote, transport: ctx.transport, engine, config: ctx.config });
+    const out = room
+      ? assemble(room.result, admitted, [...notices, ...room.stamped], { ...responseMeta, ...(room.retrieval ? { retrieval: room.retrieval } : {}), room: room.meta }, (room.hotMemory ?? hookOut?.meta) as Record<string, unknown> | undefined)
+      : assemble(result, admitted, notices, responseMeta, hookOut?.meta);
     // Large pages: the egress backstop measures the final frame; a read over the connection's cap is refused whole, never cut.
-    const over = op.mutating ? null : await frameOverCap(out, { remote: ctx.remote, transport: ctx.transport, engine, config: ctx.config });
+    const over = await cap(out);
+    const fallback = over && room ? await roomCapFallback((meta, extra) => assemble(result, [...admitted.filter(n => !n.code.startsWith('room_')), ...extra], [...notices, ...extra], meta, hookOut?.meta), cap, responseMeta) : null;
+    if (fallback) return fallback;
     if (over) return errorResult(resultTooLargeError(name, safeParams, over), opts, { op: name, mutating: false, idempotent: op.idempotent === true });
     return out;
-  } catch (e: unknown) {
+  } catch (thrown: unknown) {
+    // A transient failure of the member-identity lookup at submission is the retryable access_identity_unavailable.
+    const e = identityLookupUnavailable(thrown) ?? thrown;
     logVerb(false);
     if (op.mutating) invalidateHotMemoryForEngine(engine); // a failed write may have committed part of its work
     // Agent contract v1 (A1): every failure — OperationError, classified DB
@@ -1403,6 +1496,7 @@ async function dispatchResolvedCall(
     notices.push(...await sessionSafetyNotices(engine, opts, ctx.config));
     notices.push(...await grantBlockedNotices(engine, opts, refusedByGrant(e)));
     attachRetryCall(op, name, safeParams, e);
+    if (op.mutating) asSegmentedWriteRefusal(e);
     return deferredWriteResult(e, notices, opts) ?? errorResult(e, opts, { op: name, mutating: op.mutating === true, idempotent: op.idempotent === true, notices: admitNotices(notices, opts) });
   }
 }

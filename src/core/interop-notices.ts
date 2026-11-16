@@ -149,9 +149,12 @@ function projectionReadinessFix(): Action {
 function projectionPendingWhy(coverage: RetrievalCoverage, could: number, total: number): string {
   const counted = `(${could} of ${total}${coverage.capped ? '+' : ''} pending page(s) could match this query)`;
   const images = coverage.could_affect.pending_images ?? 0;
-  if (images === 0) return `recently written pages are being indexed and are not in the search index yet ${counted}`;
+  const rebuild = coverage.rebuild;
+  const rate = rebuild?.pages_per_second ? `, at about ${rebuild.pages_per_second < 10 ? rebuild.pages_per_second.toFixed(1) : Math.round(rebuild.pages_per_second)} page(s) per second measured since it started` : '';
+  const progress = rebuild ? `; the search index rebuild an upgrade started is ${rebuild.done} of ${rebuild.total} page(s) done${rate}, and \`gbrain doctor --only text_projection_readiness\` shows its progress` : '';
+  if (images === 0) return `${rebuild ? 'pages wait for that rebuild' : 'recently written pages are being indexed'} and are not in the search index yet ${counted}${progress}`;
   const text = could - images;
-  return `${images} image page(s) that could match are not in the search index and will not be indexed on their own: sealable images wait for \`gbrain projections drain\` and the rest for a paid re-import (\`gbrain embed --stale --images\`), and doctor's text_projection_readiness check counts them by class${text > 0 ? `; ${text} recently written page(s) are being indexed` : ''} ${counted}`;
+  return `${images} image page(s) that could match are not in the search index and will not be indexed on their own: sealable images wait for \`gbrain projections drain\` and the rest for a paid re-import (\`gbrain embed --stale --images\`), and doctor's text_projection_readiness check counts them by class${text > 0 ? `; ${text} recently written page(s) are being indexed` : ''} ${counted}${progress}`;
 }
 
 /** Doctor on the brain host; `run_doctor` where callable (renderAction drops it otherwise). */
@@ -208,7 +211,7 @@ export function degradedRecallNotice(
   const byChoice = opts.optedOut || entries.some(s => s.reason === 'embedding_disabled');
   const emb = fixKind === 'embeddings' ? (byChoice ? { byChoice: true } as { fix?: Action; byChoice: boolean } : embeddingsFix(opts.config, opts.transport)) : undefined;
   const onlyKeywordNeedsDoctor = keywordSkipped && names.every(n => n === 'keyword_arm_failed' || DEGRADED_STAGE_GUIDANCE[n].fix !== 'doctor');
-  const onlyImagesNeedDoctor = (opts.coverage?.could_affect?.pending_images ?? 0) > 0 && names.every(n => n === 'projection_pending' || DEGRADED_STAGE_GUIDANCE[n].fix !== 'doctor');
+  const onlyImagesNeedDoctor = ((opts.coverage?.could_affect?.pending_images ?? 0) > 0 || opts.coverage?.rebuild !== undefined) && names.every(n => n === 'projection_pending' || DEGRADED_STAGE_GUIDANCE[n].fix !== 'doctor');
   const fix = emb ? emb.fix
     : fixKind === 'doctor' ? (onlyKeywordNeedsDoctor ? keywordPlanFix() : onlyImagesNeedDoctor ? projectionReadinessFix() : doctorFix('Doctor names the failing retrieval dependency and its fix.'))
     : rerank ? rerankFix(rerank, opts.retry) : undefined;
@@ -296,6 +299,30 @@ export function keylessThinkNotice(): Notice {
   };
 }
 
+/** GBRA-437: a remote think's `model` was not used; the host's think model answered instead. */
+export function modelOverrideIgnoredNotice(reason: 'not_allowed' | 'unusable'): Notice {
+  return {
+    code: 'model_override_ignored',
+    kind: 'info',
+    dedupe_key: reason,
+    why: reason === 'not_allowed'
+      ? 'This brain runs think on its own configured model for remote callers, so the requested model was not used; think ran on the host think model instead (modelUsed names it). Omit model, or ask the brain owner to allow it on the brain host.'
+      : 'The requested model is allowed for remote callers on this brain but cannot run there right now, so it was not used; think ran on the host think model instead (modelUsed names it).',
+    ...(reason === 'not_allowed' ? {
+      fix: {
+        argv: ['gbrain', 'config', 'set', 'think.remote_models', '<models>'],
+        consent: ['paid'],
+        actor: 'host_admin',
+        why: 'think.remote_models is a comma-separated list of models remote callers may pick for think; every think answer is a paid call on the host\'s key.',
+        user_message: 'This brain answers remote think calls with its own configured model. The owner can allow another model on the brain host with gbrain config set think.remote_models <models>.',
+        inputs: [{ name: 'models', how: 'The current think.remote_models value plus the requested model, comma-separated.' }],
+        verify: { argv: ['gbrain', 'config', 'get', 'think.remote_models'] },
+        requires_exclusive: false,
+      },
+    } : {}),
+  };
+}
+
 /** think with save/take over MCP: persistence is local-CLI only, so `saved_slug` is null. */
 export function thinkNotSavedNotice(): Notice {
   return {
@@ -331,10 +358,10 @@ export function privateFactNotice(factId?: string | number): Notice {
  * per session. GST-2492: a fact held in Git (on memory/unattributed) needs nothing, so the notice only says where it is
  * and when it moves; a fact in the database alone needs the user's word, so the step asks before creating the page.
  */
-export function entityPageMissingNotice(sourceId: string, entitySlug: string, held = false): Notice {
+export function entityPageMissingNotice(sourceId: string, entitySlug: string, held?: { slug: string; committed: boolean }): Notice {
   const base = { code: 'entity_page_missing', kind: 'info' as const, dedupe_key: `${sourceId}\0${entitySlug}` };
   if (held) return { ...base,
-    why: `Saved and committed to Git; held on memory/unattributed until ${entitySlug} has a page. Say that when you report the save. Nothing needs to run: once the page exists, the next maintenance cycle (gbrain dream) moves the fact into the page's Facts table, in its file.` };
+    why: `${held.committed ? 'Saved and committed to Git' : 'Saved in the database only, as its folder keeps its pages out of Git'}; held on ${held.slug} until ${entitySlug} has a page. Say that when you report the save. Nothing needs to run: once the page exists, the next maintenance cycle (gbrain dream) moves the fact into the page's Facts table${held.committed ? ', in its file' : ''}.` };
   const userMessage = `The fact is saved in the database only: ${entitySlug} has no page, so it is in no file in Git. Should I create a page for ${entitySlug}?`;
   return { ...base,
     why: `Entity ${entitySlug} has no page in source ${sourceId}, so a fact saved for it is stored in the database only: recall returns it, but it is on no page and in no file in Git. Say that when you report the save, and ask the user whether to create the page; once it exists, the next maintenance cycle (gbrain dream) can move the facts saved for ${entitySlug} into the page's Facts table, in its file.`,

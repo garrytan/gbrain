@@ -1,0 +1,1 @@
+A dream cycle phase skipped for want of a checkout no longer says (postgres/remote engine), which was wrong on PGLite: the summary is now: requires a local brain directory; this brain has no on-disk checkout; pass --dir <path> to run filesystem phases. The reason code `no_brain_dir` is unchanged.

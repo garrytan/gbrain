@@ -5,11 +5,14 @@ name: Release
 # compiled binaries attached (#3521), plus the skill resolver library bundle
 # for Node adapters (gbrain-skill-resolver.mjs, GBRA-377).
 #
-# Why every bump: `gbrain check-update` resolves the latest version from the
-# VERSION file on master, but binary self-update
-# (src/core/binary-self-update.ts) downloads assets from `releases/latest`.
-# If releases lag VERSION, binary installs are told an upgrade exists that
-# self-update cannot apply. Keeping releases/latest == VERSION closes that gap.
+# Every release is published as a pre-release that never becomes GitHub's
+# "Latest": scripts/promote-stable.ts marks the stable release Latest, with
+# notes rolled up since the previous stable, so the Releases page and its
+# Latest badge show the release installs follow. The alpha channel follows
+# the latest-stable tag this workflow moves last; binary self-update reads
+# VERSION there and downloads that exact release (src/core/binary-self-update.ts),
+# never releases/latest. Bring older releases in line, or take the rule out,
+# with scripts/release-channel.ts (docs/RELEASING.md).
 #
 # Idempotent: the `version` job skips build+release when a release for
 # v<VERSION> already exists WITH all expected assets. A half-published release
@@ -23,17 +26,24 @@ name: Release
 # CI gate (docs/RELEASING.md#release-ci-gate): the `ci-gate` job waits for
 # the push-to-master runs of Test and E2E Tests on the release commit
 # (scripts/release-gate.ts). Build, publication and the latest-stable move
-# run only after both succeed. A failed run publishes nothing and the job
-# fails with the next step; a run cancelled by a newer push is followed to
-# the next master commit with the same VERSION (published there) or marks
-# this version superseded; workflow_dispatch backfills master HEAD's VERSION
-# through the same gate.
+# run only after both succeed. A failed or cancelled run publishes nothing
+# and the job fails with the next step; master push runs are keyed by commit,
+# so no newer push cancels them, and no later commit is published in the
+# release commit's place (it may carry unreleased changes under the same
+# VERSION). workflow_dispatch backfills only while master HEAD is the release
+# commit (the commit that last changed VERSION); otherwise it refuses and names
+# the re-run of that commit's push Release run.
+#
+# Releases per batch (docs/RELEASING.md#releases-per-batch): PRs land with
+# changelog.d fragments and no version; a release PR moves VERSION, so this
+# workflow runs once per release. Its ci-gate refuses a commit that still
+# holds an unfolded fragment or a stale behavior-change table.
 
 on:
   push:
     branches: [master]
     paths: [VERSION]
-  workflow_dispatch: {}  # manual first run / backfill of the current VERSION
+  workflow_dispatch: {}  # backfill of the current VERSION while master HEAD is its release commit
 
 permissions:
   contents: read
@@ -88,20 +98,25 @@ jobs:
         with:
           persist-credentials: false
           sparse-checkout: |
+            .gstack
             scripts
+            changelog.d
+            behavior-changes.d
             src/core/behavior-change-notice.ts
+            src/core/behavior-changes.generated.ts
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.4.4
-      # A since: 'TBD' BEHAVIOR_CHANGES row never ships (scripts/check-behavior-since.ts).
-      - name: Refuse a since 'TBD' BEHAVIOR_CHANGES row
+      # A since: 'TBD' BEHAVIOR_CHANGES row never ships, and a release commit folds every changelog
+      # fragment and dates every behavior-change row (scripts/check-behavior-since.ts --stamped).
+      - name: Refuse a since 'TBD' row, an unfolded fragment or a stale behavior-change table
         run: bun scripts/check-behavior-since.ts --stamped
       - id: gate
         name: Wait for Test and E2E Tests on the release commit
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.version.outputs.version }}
-        run: bun scripts/release-gate.ts --sha "$GITHUB_SHA" --version "$RELEASE_VERSION" --ref "$GITHUB_REF" --repo "$GITHUB_REPOSITORY" --output "$GITHUB_OUTPUT"
+        run: bun scripts/release-gate.ts --sha "$GITHUB_SHA" --version "$RELEASE_VERSION" --ref "$GITHUB_REF" --event "$GITHUB_EVENT_NAME" --repo "$GITHUB_REPOSITORY" --output "$GITHUB_OUTPUT"
 
   build:
     needs: [version, ci-gate]
@@ -221,6 +236,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ needs.ci-gate.outputs.sha }}
+          # Full history and tags: the notes list reads the fragments every
+          # release commit since the previous v* tag folded.
+          fetch-depth: 0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           path: artifacts
@@ -235,8 +253,21 @@ jobs:
           RELEASE_VERSION: ${{ needs.version.outputs.version }}
         run: |
           v="$RELEASE_VERSION"
-          if ! bash scripts/changelog-entry.sh "$v" > /tmp/release-notes.md || ! [ -s /tmp/release-notes.md ]; then
+          if ! bash scripts/changelog-entry.sh --pr-list "$v" > /tmp/release-notes.md || ! [ -s /tmp/release-notes.md ]; then
             echo "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/master/CHANGELOG.md) for v$v." > /tmp/release-notes.md
+          fi
+      # A re-run that repairs a half-published release republishes it as a
+      # pre-release. If that release is already the stable one, the re-run
+      # would take away the stable flag and GitHub's Latest; refuse instead.
+      - name: Refuse to republish the current stable release
+        env:
+          RELEASE_SHA: ${{ needs.ci-gate.outputs.sha }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          stable="$(git ls-remote origin 'refs/tags/stable^{}' | cut -f1)"
+          if [ -n "$stable" ] && [ "$stable" = "$RELEASE_SHA" ]; then
+            echo "::error::v$RELEASE_VERSION is the current stable release; re-publishing it would mark it a pre-release. Upload the missing assets with gh release upload v$RELEASE_VERSION <files> instead (docs/RELEASING.md)."
+            exit 1
           fi
       - name: Create release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
@@ -245,6 +276,8 @@ jobs:
           name: v${{ needs.version.outputs.version }}
           target_commitish: ${{ needs.ci-gate.outputs.sha }}
           body_path: /tmp/release-notes.md
+          prerelease: true
+          make_latest: 'false'
           fail_on_unmatched_files: true
           files: |
             artifacts/gbrain-darwin-arm64/gbrain-darwin-arm64

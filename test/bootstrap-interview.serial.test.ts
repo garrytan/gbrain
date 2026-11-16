@@ -462,6 +462,17 @@ describe('routeProviderKeyToConfig (0600 config sink)', () => {
     expect(statSync(configPath()).mode & 0o777).toBe(0o600);
   });
 
+  test('an OpenRouter key (sk-or-v1-) is saved as openrouter_api_key, never openai_api_key (#7977)', () => {
+    seedConfig();
+    const key = `sk-or-v1-${'a1'.repeat(32)}`;
+    const r = routeProviderKeyToConfig(key);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.configKey).toBe('openrouter_api_key');
+    const cfg = JSON.parse(readFileSync(configPath(), 'utf8'));
+    expect(cfg.openrouter_api_key).toBe(key);
+    expect(cfg.openai_api_key).toBeUndefined();
+  });
+
   test('unrecognized key shape → error that never echoes the value', () => {
     seedConfig();
     const r = routeProviderKeyToConfig('xoxb-not-a-supported-provider');

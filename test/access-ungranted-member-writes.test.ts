@@ -39,6 +39,7 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 
 const PRIVATE_SRC = 'private-alice-example';
 const SHARED_PAGE = 'notes/team-shared';
@@ -100,6 +101,7 @@ for (const kind of testBackends()) {
         const minted = await mintLegacyToken(engine, { name, scopes: ['read', 'write'], takesHolders: ['world'], ...(sourceGrant ? { sourceGrant: [...sourceGrant] } : {}) });
         tokens[name] = minted.token;
         if (member) await engine.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id = $1::uuid', [minted.id, member]);
+        else await readsUnscopedOnPurpose(engine, minted.id);
       }
     }, 240_000);
     afterAll(async () => { await close?.(); }, 60_000);

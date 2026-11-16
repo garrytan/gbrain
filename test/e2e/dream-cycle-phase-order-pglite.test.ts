@@ -158,6 +158,7 @@ const EXPECTED_PHASES: CyclePhase[] = [
   'orphans',
   'schema-suggest',              // v0.39.0.0 — passive schema-suggest after orphans
   'purge',                       // v0.26.5
+  'bookkeeping_gc',              // GBRA-438: the GC that used to ride inside purge
 ];
 
 describe('E2E full cycle phase order', () => {

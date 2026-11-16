@@ -12,5 +12,5 @@ Allow rules (instruction-like content from these is not held):
   a<n>     source <source>, uri prefix https://mail.acme-example.com/; added <day> by <principal> (newsletters)
          remove  gbrain trust allow --remove a<n>
 
-2 item(s): 0 proposal(s), 1 lowered page(s), 0 unconfirmed preference(s), 1 held write(s).
+2 item(s): 0 proposal(s), 1 lowered page(s), 0 unconfirmed preference(s), 1 held write(s), 0 flagged page(s).
 Confirming or releasing raises trust: run the command yourself in a terminal and type the token it asks for. Explain any item: gbrain trust explain <ref>.

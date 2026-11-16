@@ -25,6 +25,7 @@ import { quoteIdentifier, resolveActiveEmbeddingColumnFromEngine } from '../core
 import { effectiveBytesBlock } from '../core/import-screen.ts';
 import { loadSyncEligibility, syncGit } from '../core/persistence/sync-discovery.ts';
 import { fenceAutoRepairFor, gitHoldFix, readGitHold } from '../core/persistence/sync-holds.ts';
+import { literalPathspecs } from '../core/git-env.ts';
 
 export const PAGES_STATUS_USAGE = 'Usage: gbrain pages status <slug...> [--source <id>] [--json]';
 /** Slugs one call reads. */
@@ -145,7 +146,7 @@ async function readGitView(engine: BrainEngine, sourceId: string, source: { loca
     let synced: Set<string> | null = null;
     if (source.last_commit && mapped.length) {
       try {
-        const listed = syncGit(gitRoot, ['--literal-pathspecs', 'ls-tree', '-z', '--name-only', source.last_commit, '--', ...mapped.map(m => m.gitPath)]);
+        const listed = syncGit(gitRoot, ['ls-tree', '-z', '--name-only', source.last_commit, '--', ...literalPathspecs(mapped.map(m => m.gitPath))]);
         synced = new Set(listed.split('\0').filter(Boolean));
       } catch { /* the synced commit is not in this checkout */ }
     }

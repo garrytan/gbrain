@@ -9,7 +9,10 @@
  * byte scan for brackets and native indexOf jumps between quotes and
  * backslashes (nesting and string ends checked, scalars not), and only kept
  * strings are decoded, so a 5 MB history costs about as much as JSON.parse
- * of it. Leaf module: no I/O of its own.
+ * of it. It can also count the items of an array at a path (the same byte
+ * scan, counting commas at its own depth) and read a boolean at a path, so
+ * Hermes's history length and first-turn flag cost no extra pass. Leaf
+ * module: no I/O of its own.
  */
 
 /** The turn input's message cap (resolve.ts MESSAGE_CAP_BYTES); resolve.ts is not loaded on the lane's main thread. */
@@ -20,9 +23,10 @@ type Mode = 'value' | 'key' | 'key-or-end' | 'colon' | 'after' | 'done';
 type Num = 'sign' | 'zero' | 'int' | 'dot' | 'frac' | 'e' | 'esign' | 'exp';
 /** A string being read: kept ones gather their raw JSON bytes (escapes included) up to `room`. */
 interface Str { key: boolean; path: string | null; keep: boolean; raw: Buffer[]; room: number; over: boolean; esc: boolean }
-/** A discarded array or object being skipped: its open brackets and string state. */
-interface Skip { open: number[]; inStr: boolean; esc: boolean }
+/** A discarded array or object being skipped: its open brackets and string state; a counted array also tracks its top-level items (any: null until its first non-space byte). */
+interface Skip { open: number[]; inStr: boolean; esc: boolean; count?: { path: string; commas: number; any: boolean | null } }
 
+const COMMA = 0x2c;
 const QUOTE = 0x22, BACKSLASH = 0x5c, OPEN_OBJECT = 0x7b, CLOSE_OBJECT = 0x7d, OPEN_ARRAY = 0x5b, CLOSE_ARRAY = 0x5d;
 
 /**
@@ -31,8 +35,13 @@ const QUOTE = 0x22, BACKSLASH = 0x5c, OPEN_OBJECT = 0x7b, CLOSE_OBJECT = 0x7d, O
  * the chunk ran out first (state kept in `s`), -2 when malformed.
  */
 function skipScan(t: Uint8Array, i: number, s: Skip): number {
-  const open = s.open, n = t.length;
+  const open = s.open, n = t.length, count = s.count;
   let inStr = s.inStr, esc = s.esc, nb = -1;
+  if (count && count.any === null) {
+    while (i < n && isSpace(t[i]!)) i++;
+    if (i === n) return -1;
+    count.any = t[i] !== CLOSE_ARRAY;
+  }
   while (i < n) {
     if (esc) { esc = false; i++; continue; }
     if (inStr) {
@@ -44,10 +53,11 @@ function skipScan(t: Uint8Array, i: number, s: Skip): number {
       continue;
     }
     let c = 0;
-    for (; i < n; i++) { c = t[i]!; if (c === QUOTE || c === OPEN_OBJECT || c === CLOSE_OBJECT || c === OPEN_ARRAY || c === CLOSE_ARRAY) break; }
+    for (; i < n; i++) { c = t[i]!; if (c === QUOTE || c === OPEN_OBJECT || c === CLOSE_OBJECT || c === OPEN_ARRAY || c === CLOSE_ARRAY || (count && c === COMMA)) break; }
     if (i === n) break;
     i++;
-    if (c === QUOTE) inStr = true;
+    if (c === COMMA) { if (open.length === 1) count!.commas++; }
+    else if (c === QUOTE) inStr = true;
     else if (c === OPEN_OBJECT || c === OPEN_ARRAY) open.push(c);
     else if (open.pop() !== (c === CLOSE_OBJECT ? OPEN_OBJECT : OPEN_ARRAY)) return -2;
     else if (open.length === 0) return i;
@@ -101,10 +111,28 @@ function decodeKept(s: Str): string | undefined {
  * that is not an object. The stream is always read to its end.
  */
 export async function readJsonFields(stream: AsyncIterable<Uint8Array | string> & { isTTY?: boolean }, paths: readonly string[], cap: number): Promise<Record<string, string> | null> {
+  return (await readHookFields(stream, { strings: paths }, cap))?.strings ?? null;
+}
+
+export interface HookFields { strings: Record<string, string>; counts: Record<string, number>; flags: Record<string, boolean> }
+
+/**
+ * readJsonFields plus, in the same pass, the item count of the array at each
+ * of `counts` and the boolean at each of `flags` (a path holding anything
+ * else is left out). Null on the same conditions, so a stream cut off inside
+ * a counted array yields no count at all.
+ */
+export async function readHookFields(stream: AsyncIterable<Uint8Array | string> & { isTTY?: boolean }, spec: { strings: readonly string[]; counts?: readonly string[]; flags?: readonly string[] }, cap: number): Promise<HookFields | null> {
   if (stream.isTTY) return null;
-  const wanted = new Set(paths);
+  const wanted = new Set(spec.strings);
+  const counted = new Set(spec.counts ?? []);
+  const flagged = new Set(spec.flags ?? []);
+  const paths = [...wanted, ...counted, ...flagged];
+  const leaves = new Set(paths);
   const prefixes = new Set(paths.flatMap(p => p.split('.').slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join('.'))));
   const out: Record<string, string> = {};
+  const counts: Record<string, number> = {};
+  const flags: Record<string, boolean> = {};
   const stack: string[] = [];
   let mode = 'value' as Mode;
   let keyPath: string | null = null;
@@ -121,7 +149,7 @@ export async function readJsonFields(stream: AsyncIterable<Uint8Array | string> 
     if (s.key) {
       const parent = stack.at(-1)!;
       const p = parent ? `${parent}.${value}` : value;
-      keyPath = s.keep && !s.over && (wanted.has(p) || prefixes.has(p)) ? p : null;
+      keyPath = s.keep && !s.over && (leaves.has(p) || prefixes.has(p)) ? p : null;
       mode = 'colon';
       return true;
     }
@@ -143,6 +171,7 @@ export async function readJsonFields(stream: AsyncIterable<Uint8Array | string> 
         const end = skipScan(t, i, skip);
         if (end === -1) return true;
         if (end === -2) return false;
+        if (skip.count) counts[skip.count.path] = skip.count.any ? skip.count.commas + 1 : 0;
         skip = null;
         i = end;
         endValue();
@@ -196,10 +225,11 @@ export async function readJsonFields(stream: AsyncIterable<Uint8Array | string> 
       if (root && c !== OPEN_OBJECT) return false;
       const path = root ? '' : keyPath;
       if (c === OPEN_OBJECT && path !== null) { stack.push(path); mode = 'key-or-end'; }
+      else if (c === OPEN_ARRAY && path !== null && counted.has(path)) skip = { open: [c], inStr: false, esc: false, count: { path, commas: 0, any: null } };
       else if (c === OPEN_OBJECT || c === OPEN_ARRAY) skip = { open: [c], inStr: false, esc: false };
       else if (c === QUOTE) { const keep = path !== null && wanted.has(path); str = { key: false, path, keep, raw: [], room: keep ? cap * 6 + 12 : 0, over: false, esc: false }; }
-      else if (c === 0x74) literal = 'rue';
-      else if (c === 0x66) literal = 'alse';
+      else if (c === 0x74) { literal = 'rue'; if (path !== null && flagged.has(path)) flags[path] = true; }
+      else if (c === 0x66) { literal = 'alse'; if (path !== null && flagged.has(path)) flags[path] = false; }
       else if (c === 0x6e) literal = 'ull';
       else if (c === 0x2d) num = 'sign';
       else if (isDigit(c)) num = c === 0x30 ? 'zero' : 'int';
@@ -214,5 +244,5 @@ export async function readJsonFields(stream: AsyncIterable<Uint8Array | string> 
       if (!bad) bad = !feed(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
     }
   } catch { return null; }
-  return bad || mode !== 'done' || str || skip || literal || num !== null ? null : out;
+  return bad || mode !== 'done' || str || skip || literal || num !== null ? null : { strings: out, counts, flags };
 }

@@ -247,6 +247,31 @@ describe('#6697 revoked writer: parked Git effect', () => {
   }), 120_000);
 });
 
+describe('#7110 a remote writer that can no longer see its page', () => {
+  test('bulk retry refuses only that request, names its request id, and still retries the healthy push', () => isolated(async home => {
+    const root = await gitRoot(home);
+    const { sourceId } = await claimedSource(root);
+    await registerLocalWriter(engine, 'stdio');
+    const hidden = await parked(root, sourceId, 'hidden7110', { remote: true });
+    const current = (await engine.getPage('hidden7110', { sourceId }))!;
+    await engine.putPage('hidden7110', { ...current, frontmatter: { ...current.frontmatter, visibility: 'private' } }, { sourceId });
+    await registerLocalWriter(engine, 'cli', undefined, true);
+    const healthy = await parked(root, sourceId, 'healthy7110');
+    const before = await gitOutcome(hidden);
+    const refusal = { source_id: sourceId, request_id: await publicId(hidden), code: 'page_not_found',
+      message: expect.stringContaining('hidden7110'), fix: expect.objectContaining({ argv: ['gbrain', 'write-request', '--', await publicId(hidden)] }) };
+    const preview = await runPersistenceAdministration(engine, 'writer_retry_effects', { source_id: sourceId, parked_pushes: true, dry_run: true });
+    expect(preview).toMatchObject({ status: 'partial', requests: 2, queued: 1, unchanged: 0 });
+    expect(preview.refused).toEqual([expect.objectContaining(refusal)]);
+    expect(await gitOutcome(healthy)).toMatchObject({ state: 'failed' });
+    const applied = await runPersistenceAdministration(engine, 'writer_retry_effects', { source_id: sourceId, parked_pushes: true });
+    expect(applied).toMatchObject({ status: 'partial', requests: 2, queued: 1, unchanged: 0 });
+    expect(applied.refused).toEqual(preview.refused);
+    expect(await gitOutcome(hidden)).toEqual(before);
+    expect(await gitOutcome(healthy)).toMatchObject({ state: 'queued', data: { retried: 1 } });
+  }), 120_000);
+});
+
 describe('#6665 doctor parked_effects', () => {
   test('names the fix for a parked git_target_pending target', () => isolated(async home => {
     const root = await gitRoot(home);

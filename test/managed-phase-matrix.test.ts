@@ -467,12 +467,29 @@ const MATRIX: Record<CyclePhase, Entry> = {
       expect((await committed(engine, sourceId, 'notes/expired')).at(-1)?.outcome?.status).toBe('purged');
     },
   },
+  bookkeeping_gc: {
+    seed: async ({ engine, sourceId }) => {
+      await put(engine, sourceId, 'notes/kept-deleted', page('note', 'Kept', 'Deleted, but GC never purges pages.'));
+      await engine.executeRaw("UPDATE pages SET deleted_at=now() - interval '100 hours' WHERE source_id=$1 AND slug='notes/kept-deleted'", [sourceId]);
+      await engine.executeRaw("INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at) VALUES ('matrix-gc', $1, '[]'::jsonb, now() - interval '8 days')", [sourceId]);
+    },
+    assert: async ({ engine, sourceId, result }) => {
+      expect(result.details.purged_checkpoints_count).toBeGreaterThanOrEqual(1);
+      expect(await engine.executeRaw("SELECT 1 FROM op_checkpoints WHERE op='matrix-gc' AND fingerprint=$1", [sourceId])).toEqual([]);
+      expect(await engine.readPageSnapshot('notes/kept-deleted', { sourceId, includeDeleted: true })).not.toBeNull();
+    },
+  },
 };
 
 test('every cycle phase is classified for managed brains, with no extra keys', () => {
   expect(Object.keys(MANAGED_PHASE_TABLE).sort()).toEqual([...ALL_PHASES].sort());
   expect(Object.keys(MATRIX).sort()).toEqual([...ALL_PHASES].sort());
   for (const entry of Object.values(MANAGED_PHASE_TABLE)) expect(entry.reason.length).toBeGreaterThan(0);
+});
+
+test('every cycle phase carries a tier (GBRA-438)', () => {
+  const missing = ALL_PHASES.filter(phase => !['free', 'paid', 'deletes', 'filesystem'].includes((MANAGED_PHASE_TABLE[phase] as { tier?: string } | undefined)?.tier ?? ''));
+  expect(missing).toEqual([]);
 });
 
 const REFUSALS = ['writer_coordinator_required', 'owner_unavailable'];

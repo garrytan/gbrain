@@ -86,7 +86,16 @@
     ],
     "scripts/bench/**": [],
     "docs/eval/system-one/runners/**": [],
-    "docs/eval/system-one/generators/**": []
+    "docs/eval/system-one/generators/**": [],
+    "docs/schemas/skill-resolver.v1.turn-input.json": ["test/skill-resolver-contract.test.ts"],
+    "docs/schemas/skill-resolver.v1.turn-output.json": ["test/skill-resolver-contract.test.ts"],
+    "scripts/check-skill-health.ts": ["test/skill-drift.test.ts", "test/skill-health.test.ts"],
+    "scripts/check-skills-lock-history.ts": ["test/skills-integrity.test.ts"],
+    "scripts/skill-drift-baseline.txt": ["test/skill-drift.test.ts"],
+    "scripts/skill-drift-undeclared-subcommands.txt": ["test/skill-drift.test.ts"],
+    "scripts/skills-commit-gate.sh": ["test/skill-health.test.ts", "test/skill-drift.test.ts"],
+    "skills/skill-budgets.tsv": ["test/skill-health.test.ts"],
+    "skills/skills.lock.history.json": ["test/skills-integrity.test.ts", "test/skillpack-safe-update.test.ts"]
   },
   "guards": [
     {

@@ -58,9 +58,12 @@ const ACK_PHRASE =
   '(thanks|thank you|thx|ty|ok(ay)?|k+|sure|yes|yep|yeah|no|nope|got it|sounds good|great|perfect|nice|cool|awesome|good (morning|afternoon|evening|night)|hi|hello|hey|bye|goodbye|see you|lgtm|will do|done|please (do|continue)|go ahead|continue|proceed|stop|cancel|never ?mind|nvm|please|so much|a lot)';
 const ACK_RE = new RegExp(`^${ACK_PHRASE}((\\s|,)+${ACK_PHRASE})*$`);
 
+/** A '>' quote line; '>90%' or '>= 3' is the user's own comparison, not a quote. */
+const QUOTE_LINE_RE = /^\s*>(?:\s|>|$)/;
+
 function stripQuotedAndToolOutput(text: string): string {
   // Fenced code blocks.
-  let out = text.replace(/```[\s\S]*?(```|$)/g, ' ');
+  let out = text.replace(/(```|~~~)[\s\S]*?(\1|$)/g, ' ');
   const lines = out.split('\n');
   const kept: string[] = [];
   let indentRun: string[] = [];
@@ -71,13 +74,31 @@ function stripQuotedAndToolOutput(text: string): string {
     indentRun = [];
   };
   for (const line of lines) {
-    if (line.trimStart().startsWith('>')) continue; // quoted material
+    if (QUOTE_LINE_RE.test(line)) continue; // quoted material
     if (/^\s{4,}\S/.test(line)) { indentRun.push(line); continue; }
     flushRun();
     kept.push(line);
   }
   flushRun();
   return kept.join('\n');
+}
+
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+function dropQuotedLines(text: string): string {
+  let fence = '';
+  return text.split('\n').filter((line) => {
+    const m = FENCE_RE.exec(line);
+    if (fence) {
+      if (m && m[1][0] === fence[0] && m[1].length >= fence.length && m[2].trim() === '') fence = '';
+      return true;
+    }
+    if (m && !(m[1][0] === '`' && m[2].includes('`'))) {
+      fence = m[1];
+      return true;
+    }
+    return !QUOTE_LINE_RE.test(line);
+  }).join('\n');
 }
 
 /** NFC + trim + collapse whitespace runs — the canonical form the hash and
@@ -142,6 +163,7 @@ export function gateWritebackTurn(text: unknown): WritebackGateResult {
     return { ok: false, reason: 'quoted_or_tool_output' };
   }
 
-  const normalized = normalizeTurnText(own);
+  // Quoted lines are someone else's words (#8410): bank only the rest.
+  const normalized = normalizeTurnText(dropQuotedLines(own));
   return { ok: true, normalized, hash24: turnHash24(normalized) };
 }

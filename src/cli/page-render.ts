@@ -29,6 +29,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
 import { opError } from '../core/ops/contract.ts';
 import { transcriptFence, unquoteTranscriptText } from '../core/search/transcript-quote.ts';
+import { guestWarningLine } from '../core/guests/marker.ts';
 import { readFix } from '../core/ops/op-fix.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
 import { isSegmentedPage } from '../core/page-body/page-shape.ts';
@@ -131,8 +132,12 @@ export function asOfExitCode(r: GetPageResult | null | undefined): number {
   return r.compiled_truth === undefined && !r.window ? 1 : 0;
 }
 
-/** stdout text for one get_page result; partial responses add a stderr note. */
+/** stdout text for one get_page result; partial responses add a stderr note. A guest page's text starts with its warning line (GBRA-504). */
 export function formatGetPage(r: GetPageResult): string {
+  if (r.guest) {
+    const text = formatGetPage({ ...r, guest: undefined });
+    return text && `${guestWarningLine(r.guest)}\n${text}`;
+  }
   if (r.valid_time) process.stderr.write(validTimeLine(r.valid_time) + '\n');
   if (asOfNotInForce(r)) return `status: ${r.valid_time.status}\nwhy: ${r.valid_time.why ?? 'none'}\n`;
   if (r.valid_time?.history !== undefined && r.compiled_truth === undefined && !r.window) return '';

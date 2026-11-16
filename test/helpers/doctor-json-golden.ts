@@ -214,13 +214,25 @@ function maskWriterFloor(value: unknown): unknown {
     [k, k === 'floor' && v === SEGMENTED_WRITER_FLOOR ? '<segmented-writer-floor>' : maskWriterFloor(v)]));
 }
 
+/**
+ * GBRA-133: `session_lane_budget` on Postgres reports a live census of the server's connections (every client of the
+ * cluster, other test processes included), so its status, message and counts change between captures; the check's own
+ * test (test/doctor-session-lane-gbra133.test.ts) pins its behavior. PGLite's not-applicable entry stays exact.
+ */
+function maskSessionLaneCensus(report: unknown): unknown {
+  const checks = (report as { checks?: Array<Record<string, unknown>> } | null)?.checks;
+  if (!Array.isArray(checks)) return report;
+  return { ...(report as object), checks: checks.map(check => check.name === 'session_lane_budget' && check.readiness_state !== 'not_applicable'
+    ? { ...check, status: '<live-census>', message: '<live-census>', details: '<live-census>' } : check) };
+}
+
 export function doctorJsonNormalizer(extra: Array<[RegExp | string, string]> = [], name = 'doctor-json-v1') {
   return defineNormalizer<GbrainRun>(name, (run) => {
     const fn = (s: string) => normalizeDoctorText(s, run.roots, extra);
     return {
       args: run.args.map(fn),
       exit_code: run.exitCode,
-      report: run.json === null ? null : mapStrings(maskWriterFloor(scrubKeys(run.json, VOLATILE_KEYS)), fn),
+      report: run.json === null ? null : mapStrings(maskSessionLaneCensus(maskWriterFloor(scrubKeys(run.json, VOLATILE_KEYS))), fn),
       stdout: run.json === null ? fn(run.stdout).split('\n').filter(Boolean) : '<json>',
       stderr: fn(run.stderr).split('\n').filter(Boolean),
     };

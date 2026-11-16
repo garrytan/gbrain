@@ -16,7 +16,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { remoteReadFloorSql } from '../search/private-visibility.ts';
 import { PAGE_INLINE_MAX_BYTES } from '../page-size-policy.ts';
 import { coverageAt } from './coverage-report.ts';
 
@@ -271,6 +271,6 @@ function coverageRefusal(c: { code: 'coverage_from' | 'coverage_gap'; from: stri
 /** A remote caller reads an interval only when its event was world-visible when recorded and its page is visible now; it fails closed when the page row is gone. */
 export async function remoteMayRead(engine: BrainEngine, pageId: number | null, interval: PageInterval): Promise<boolean> {
   if (pageId == null || interval.event.visibility !== 'world') return false;
-  const [row] = await engine.executeRaw<{ visible: boolean }>(`SELECT ${privatePagesFilterFragment('p')} AS visible FROM pages p WHERE p.id = $1 AND p.deleted_at IS NULL`, [pageId]);
+  const [row] = await engine.executeRaw<{ visible: boolean }>(`SELECT ${remoteReadFloorSql('p')} AS visible FROM pages p WHERE p.id = $1 AND p.deleted_at IS NULL`, [pageId]);
   return row?.visible === true;
 }

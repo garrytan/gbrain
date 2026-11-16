@@ -235,6 +235,7 @@ async function uploadFile(engine: BrainEngine, args: string[]) {
  *   >= 100 MB OR media  → upload to cloud storage, create .redirect.yaml pointer
  *
  * The .redirect.yaml pointer stays in the brain repo so git tracks what was stored.
+ * On a managed canonical worktree the pointer write is refused before the upload (#7346).
  */
 async function uploadRaw(engine: BrainEngine, args: string[]) {
   const filePath = args.find(a => !a.startsWith('--'));
@@ -342,6 +343,11 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
     process.exit(1);
   }
 
+  if (!noPointer && pageSlug) {
+    const refusal = (await import('../core/raw-file-upload.ts')).managedPointerRefusal(filePath, pageSlug, fileType);
+    if (refusal) throw refusal;
+  }
+
   const { createStorage } = await import('../core/storage.ts');
   const storage = await createStorage(config.storage as any);
   const hash = fileHash(filePath);
@@ -350,6 +356,8 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
   const cloudName = filename.normalize('NFC');
   const storagePath = pageSlug ? `${pageSlug}/${cloudName}` : `unsorted/${hash.slice(0, 8)}-${cloudName}`;
   const bucket = (config.storage as any).bucket || 'brain-files';
+  const backend = (config.storage as StorageConfig).backend;
+  const reference = `${backend}://${bucket}/${storagePath}`;
 
   const method = stat.size >= SIZE_THRESHOLD ? 'TUS resumable' : 'standard';
   console.error(`Uploading ${humanSize(stat.size)} via ${method}...`);
@@ -360,7 +368,7 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
   if (!noPointer && pageSlug) {
     const { stringify } = await import('../core/yaml-lite.ts');
     const pointer = stringify({
-      target: `supabase://${bucket}/${storagePath}`,
+      target: reference,
       bucket,
       storage_path: storagePath,
       size: stat.size,
@@ -390,16 +398,16 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
        mime_type = EXCLUDED.mime_type,
        ${FILES_METADATA_MERGE_SQL}`,
     [pageSlug, cloudName, storagePath, mimeType, stat.size, 'sha256:' + hash],
-    [{ storage: (config.storage as StorageConfig).backend, ...(fileType ? { type: fileType } : {}), upload_method: method }],
+    [{ storage: backend, ...(fileType ? { type: fileType } : {}), upload_method: method }],
   );
 
   // Output JSON for scripting
   console.log(JSON.stringify({
     success: true,
-    storage: 'supabase',
+    storage: backend,
     storagePath,
     bucket,
-    reference: `supabase://${bucket}/${storagePath}`,
+    reference,
     pointerPath,
     size: stat.size,
     size_human: humanSize(stat.size),

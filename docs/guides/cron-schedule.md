@@ -36,8 +36,16 @@ scheduling surfaces — reach for these first:
   hand-rolling the dream cycle below.
 - **`gbrain jobs` / minions** — queue shell jobs or LLM subagents with retry,
   backoff, and an audit trail. See the `minion-orchestrator` skill.
-- **`gbrain autopilot`** — the long-lived background daemon that runs cycles
-  on its own cadence.
+- **`gbrain serve`** — while the agent connected to it is idle, it runs the
+  free upkeep (`gbrain maintain --unattended`) once a day, with nothing to
+  install. A source too big to finish in its short idle slices is parked after
+  30 tries and finished by the next full run. `gbrain maintain --status` shows
+  the last run and anything parked.
+- **`gbrain maintain --schedule`** — for a brain no agent opens most days:
+  installs a job that runs the same upkeep every 6 hours (launchd, a systemd
+  user timer or cron). Opt-in; preview with `--dry-run`.
+- **`gbrain autopilot`** — the long-lived background daemon that runs full
+  cycles on its own cadence, for a Postgres brain with a repo.
 - **`cron-scheduler` skill** (`skills/cron-scheduler/`) — teaches an agent to
   manage its harness's scheduler.
 - **Bootstrap session-triggered schedules** — `gbrain bootstrap` installs
@@ -73,6 +81,11 @@ those (`maintenance_lock_busy`) and the holder runs them.
 # Brain health — weekly Mondays at 6 AM. Every gbrain call goes through the
 # wrapper below (gbrain-run), never a bare `gbrain` or `bun run src/cli.ts`.
 0 6 * * 1 gbrain-run doctor --json >> /tmp/gbrain-health.log 2>&1 && gbrain-run embed --stale
+
+# Health alert — hourly. Page on the alert verdict, never on health_score:
+# exit 0 none, 17 act (alert.items carry each fix), 18 unknown (a page-class
+# check did not run fresh); page on 18 only from the second run in a row.
+17 * * * * gbrain-run doctor --alert --json > /tmp/gbrain-alert.json 2>> /tmp/gbrain-alert.err; rc=$?; case $rc in 0) ;; 17) your-notify "gbrain needs action" ;; 18) [ "$(jq -r '.alert.consecutive_unknown // 0' /tmp/gbrain-alert.json)" -ge 2 ] && your-notify "gbrain health unknown twice in a row" ;; *) your-notify "gbrain doctor --alert failed (exit $rc)" ;; esac
 
 # Autopilot health gate — daily at 7 AM. The exit code is the signal:
 # 0 fresh (or nothing installed), 1 needs attention (stale heartbeat,
@@ -478,8 +491,8 @@ echo "Dream cycle starting at $(date)"
 # Phase 2: Shipped maintenance cycle (lint, backlinks, extract, sync, embed, synthesize)
 gbrain dream
 
-# Phase 3: Surface anything the cycle flagged
-gbrain doctor --json | jq '.checks[] | select(.status=="warn")'
+# Phase 3: Surface anything that needs someone (exit 17 act, 18 unknown)
+gbrain doctor --alert --json | jq '.alert'
 
 echo "Dream cycle complete at $(date)"
 ```

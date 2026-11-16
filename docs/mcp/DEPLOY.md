@@ -97,8 +97,12 @@ instructions tell the agent how many more tools are callable. On stdio,
 `request_tools` with `tools: [names]` returns their schemas and adds them to
 that session's list (the server sends `tools/list_changed`). On the OAuth HTTP
 server, a client that set its own surface (`request_tools` with `surface`, or
-`gbrain auth rescope-client`) has that surface listed in full. Unset
-advertises the whole callable set.
+`gbrain auth rescope-client`) has that surface listed in full, and a client an
+install default set up (`gbrain auth clients` shows `full (set by install)`)
+lists the memory verbs and `request_tools` whatever the server's `--advertise`
+or `mcp.advertised_surface` says; `gbrain auth rescope-client <client_id>
+--surface full` lists everything for it. Unset advertises the whole callable
+set.
 
 #### Stdio source binding
 

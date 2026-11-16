@@ -1,0 +1,6 @@
+# Key files: Commands (2/6, doctor alert)
+
+[Subsystem index](../KEY_FILES.md) · [Previous entries](commands-2-continued.md). Read only the entries relevant to your change.
+Current behavior and load-bearing invariants; history belongs in Git and CHANGELOG.
+
+- `src/commands/doctor/alert.ts` — GBRA-224 W4 `DoctorReport.alert`: `computeAlert(checks, { ran, render })` (called by `computeDoctorReport` after fixes render) grades only `PAGE_CHECK_LEVELS` (`src/core/doctor-categories.ts`): `act` items keep the check's rendered `fix` plus a stable `code` and `docs`; `unknown` items (budget, bound, errored, last_known, not_run) name the check, `budget_ms` and a measuring `fix`; act over unknown over none. `ran` (`alertRanChecks`: none without an ok `connection`, else the page checks whose entry runs at the tier) makes a page check the run executed but did not emit "did not apply"; without it a missing page check is unknown. A non-CLI render omits messages and redacts. `alertRunArgs` turns `--alert` into `--only <page class> --budget-ms 30000 --scope=brain` unless `--tier`/`--only`/`--budget-ms` is given; `recordAlertStreak` keeps the per-brain consecutive-unknown count in `doctor-alert-state.json` (atomic, read-only home tolerated); exit 0/17/18 via `alertExitCode`. Tests: `test/doctor-alert-w4.test.ts`, `test/doctor-alert-cli-w4.test.ts`.

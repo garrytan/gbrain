@@ -80,6 +80,7 @@ describe('stall-detection interval reconnect (#1720 gap 1)', () => {
     setQueue(worker, {
       ensureSchema: async () => {},
       promoteDelayed: async () => [],
+      hasOverdueWatchdogSuspect: async () => false,
       claim: async () => {
         claims += 1;
         // Stop once the first stall tick fully ran (or bail out after a bound
@@ -149,6 +150,7 @@ describe('failJob failure-recording resilience (#1720 gap 2)', () => {
     setQueue(worker, {
       ensureSchema: async () => {},
       promoteDelayed: async () => [],
+      hasOverdueWatchdogSuspect: async () => false,
       handleStalled: async () => ({ requeued: [], dead: [] }),
       handleTimeouts: async () => [],
       handleWallClockTimeouts: async () => [],

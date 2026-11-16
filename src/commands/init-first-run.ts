@@ -6,13 +6,18 @@
  * options' argv.
  *
  * Decisions: `search_mode` (the picker's recommendation and cost matrix),
- * `writeback` (recommended `salient`, offered on a personal brain whose
- * operator has not answered), `harness_wiring` (the A7 readiness fix) and the
+ * `writeback` (in effect `off`, recommended `salient`, offered on a personal brain whose
+ * operator has not answered) and the
  * optional `skills_scaffold` (recommended skills missing from the detected
- * agent workspace; default skip). Human output renders the same bundle
+ * agent workspace; default skip), then `upkeep` (GBRA-438: the free upkeep
+ * line, a setting in effect whose default `on` needs no answer; it rides a
+ * bundle that has another entry and never opens one alone) and
+ * `conversation_archive` (GST-2768: on, or offered on a shared brain; rides the
+ * same way). Human output renders the same bundle
  * (`[AGENT]` block without a terminal, `Note` lines on one); it replaces
  * init's separate writeback ask and skills pointer. Extend
- * `buildInitFirstRunNotices` rather than adding a second notice.
+ * `buildInitFirstRunNotices` rather than adding another settings notice; the
+ * one separate notice is `harness_wiring`, an install step the agent does.
  */
 import { cliRenderContext, renderNotice, shellQuote, type Decision, type Notice } from '../core/agent-output.ts';
 import { loadConfig, type GBrainConfig } from '../core/config.ts';
@@ -20,7 +25,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { resolveGbrainBin } from '../core/gbrain-bin.ts';
 import { configReadiness, embeddingEnablement, harnessWiringEntry } from '../core/readiness.ts';
 import type { SearchMode } from '../core/search/mode.ts';
-import { costMatrixSentence } from '../core/search/mode-advice.ts';
+import { costMatrixSentence, OPENAI_COST_MATRIX_MODELS } from '../core/search/mode-advice.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 
 export interface InitFirstRunInputs {
@@ -34,6 +39,61 @@ export interface InitFirstRunInputs {
   skillsScaffold?: { missing: string[]; argv: string[] } | null;
   /** `gbrain init --surface`: the surface the harness registration pins (default REGISTRATION_SURFACE). */
   surface?: McpSurface;
+  /** GBRA-438: the upkeep line, relayed with the block as a setting in effect; `embedding` says the capped embedding step applies. */
+  upkeep?: { embedding: boolean };
+  /** GST-2768: the conversation archive line, a setting in effect: on (a personal brain) or offered (a shared one). */
+  archive?: { state: 'on' | 'offered'; embedding: boolean };
+}
+
+/** GBRA-438: what runs on its own, stated as a setting in effect (the plan's wording; the keyed form names the one capped paid step). */
+export function upkeepLine(embedding: boolean): string {
+  return "Upkeep: free upkeep runs on its own while your agent's gbrain session is open. "
+    + (embedding
+      ? 'Nothing is deleted without you, and the only paid step is embedding new text, capped at $1 a day (maintenance.embed_daily_usd). '
+      : 'Nothing is deleted or paid for without you. ')
+    + 'Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule.';
+}
+
+/** GST-2768: the conversation archive as a setting in effect: what it keeps, where, what leaves the machine, how to change it. */
+export function archiveLine(state: 'on' | 'offered', embedding: boolean): string {
+  if (state === 'offered') {
+    return 'Conversation archive: off on this shared brain. Turn it on with gbrain transcripts archive on: one redacted page per conversation per day from '
+      + 'your agent sessions, kept to the owner member, in the conversations source.';
+  }
+  return 'Conversation archive: on. gbrain keeps one redacted page per conversation per day from your agent sessions (Claude Code, Codex, OpenClaw, Hermes, Grok) '
+    + 'in the conversations source, written by the maintenance pass. '
+    + (embedding
+      ? 'New days are embedded like any new page (unattended upkeep caps that at maintenance.embed_daily_usd); older history is keyword-only until you approve its cost (gbrain embed --held --dry-run). '
+      : 'Without an embedding key nothing leaves this machine. ')
+    + 'Turn off: gbrain transcripts archive off.';
+}
+
+function archiveDecision(state: 'on' | 'offered', embedding: boolean): Decision {
+  return {
+    id: 'conversation_archive',
+    question: archiveLine(state, embedding),
+    options: [
+      { id: 'on', label: state === 'on' ? 'Keep the conversation archive on (in effect now)' : 'Turn the conversation archive on', ...(state === 'on' ? {} : { argv: ['gbrain', 'transcripts', 'archive', 'on'] }) },
+      { id: 'off', label: state === 'on' ? 'Turn the conversation archive off' : 'Keep it off (in effect now)', ...(state === 'on' ? { argv: ['gbrain', 'transcripts', 'archive', 'off'] } : {}) },
+    ],
+    default: state === 'on' ? 'on' : 'off',
+    default_reason: state === 'on'
+      ? 'In effect now: on by default on a personal brain; nothing needs an answer.'
+      : 'A shared brain is only offered the archive; it stays off until the owner turns it on.',
+  };
+}
+
+function upkeepDecision(embedding: boolean): Decision {
+  return {
+    id: 'upkeep',
+    question: upkeepLine(embedding),
+    options: [
+      { id: 'on', label: 'Keep free upkeep on (in effect now)' },
+      { id: 'off', label: 'Turn free upkeep off', argv: ['gbrain', 'config', 'set', 'maintenance.auto', 'false'] },
+    ],
+    default: 'on',
+    default_reason: 'In effect now: the agent\'s gbrain serve runs the free upkeep tier while idle; nothing needs an answer.',
+  };
 }
 
 function searchModeDecision(applied: { mode: SearchMode; reason: string }): Decision {
@@ -47,18 +107,29 @@ function searchModeDecision(applied: { mode: SearchMode; reason: string }): Deci
   };
 }
 
-function harnessWiringDecision(config: GBrainConfig, surface?: McpSurface): Decision | null {
+/**
+ * Connecting gbrain to the agent is an install step, never a setting waiting
+ * for the user's OK (Garry's G, GST-2719): its own notice, so an agent that
+ * relays the settings has already connected memory.
+ */
+function harnessWiringNotice(config: GBrainConfig, surface?: McpSurface): Notice | null {
   const entry = configReadiness(config, { transport: 'cli', ...(surface ? { surface } : {}) }).entries.find(e => e.capability === 'harness_wiring');
   if (!entry?.fix || entry.state === 'ok') return null;
+  const fix = entry.fix;
+  const registration = !!fix.argv && fix.actor === 'agent' && fix.consent.length === 1 && fix.consent[0] === 'persistent_install';
+  if (!registration) {
+    return {
+      code: 'harness_wiring',
+      kind: 'info',
+      why: `gbrain is not connected to an agent here, and this step is not a command the agent runs by itself; say so in the reply that reports the install, without waiting on it. ${fix.user_message ?? ''} ${fix.why ?? ''}`.trim(),
+      fix,
+    };
+  }
   return {
-    id: 'harness_wiring',
-    question: entry.fix.user_message ?? entry.why,
-    options: [
-      { id: 'wire', label: entry.fix.why, ...(entry.fix.argv ? { argv: entry.fix.argv } : {}) },
-      { id: 'skip', label: 'Do not register gbrain with an agent harness now.' },
-    ],
-    default: entry.fix.argv ? 'wire' : 'skip',
-    default_reason: entry.why,
+    code: 'harness_wiring',
+    kind: 'info',
+    why: 'Connect gbrain to the agent now, as part of this install: it is an install step, not a setting, so do it before reporting the install. The fix names the command for this host.',
+    fix: { ...fix, actor: 'agent', consent: [], user_message: undefined },
   };
 }
 
@@ -73,8 +144,8 @@ function writebackDecision(): Decision {
       { id: 'all', label: 'Every direct factual statement (more low-value facts, more extraction spend)', argv: set('all') },
       { id: 'off', label: 'Save only what the user explicitly asks to remember (records the answer)', argv: set('off') },
     ],
-    default: 'salient',
-    default_reason: 'Recommended for a personal brain: the brain learns what the user tells their agents. It is opt-in, so it applies only when the user accepts the defaults or picks it.',
+    default: 'off',
+    default_reason: 'In effect now: agents save only what the user asks them to remember. salient is recommended for a personal brain; it is opt-in, so it turns on only when the user picks it.',
   };
 }
 
@@ -97,21 +168,30 @@ export function buildInitFirstRunNotices(inputs: InitFirstRunInputs): Notice[] {
   const decisions: Decision[] = [];
   if (inputs.searchMode) decisions.push(searchModeDecision(inputs.searchMode));
   if (inputs.writeback) decisions.push(writebackDecision());
-  if (inputs.config) {
-    const wiring = harnessWiringDecision(inputs.config, inputs.surface);
-    if (wiring) decisions.push(wiring);
-  }
   if (inputs.skillsScaffold?.missing.length) decisions.push(skillsScaffoldDecision(inputs.skillsScaffold));
-  if (decisions.length === 0) return [];
-  const defaults = decisions.map(d => `${d.id}: ${d.default}`).join('; ');
-  return [{
+  const wiring = inputs.config ? harnessWiringNotice(inputs.config, inputs.surface) : null;
+  if (decisions.length === 0 && !(wiring && inputs.upkeep)) return wiring ? [wiring] : [];
+  if (inputs.upkeep) decisions.push(upkeepDecision(inputs.upkeep.embedding));
+  if (inputs.archive) decisions.push(archiveDecision(inputs.archive.state, inputs.archive.embedding));
+  const searchMode = decisions.find(d => d.id === 'search_mode');
+  const upkeep = decisions.find(d => d.id === 'upkeep');
+  const archive = decisions.find(d => d.id === 'conversation_archive');
+  const inEffect = [
+    ...(searchMode ? [`search mode ${searchMode.default}`] : []),
+    ...(decisions.some(d => d.id === 'writeback') ? [WRITEBACK_IN_EFFECT] : []),
+  ];
+  return [...(wiring ? [wiring] : []), {
     code: 'first_run_decisions',
     kind: 'ask',
-    why: 'The brain is ready. These settings were applied with defaults or need the user\'s choice; none blocks using the brain.',
-    user_message: `gbrain is installed. Reply 'defaults' to keep the recommended settings (${defaults}), or tell me what to change.`,
+    why: 'The brain is ready and these first-run settings are in effect as listed; none blocks memory. '
+      + 'Relay them once, in the reply that reports the install, as the current settings and how to change them; do not hold the install open or end it waiting on an answer. '
+      + 'When the user picks an option, run its command. Nothing paid turns on from these settings without a key the user supplied.',
+    user_message: `gbrain is installed.${inEffect.length ? ` In effect: ${inEffect.join('; ')}.` : ''}${upkeep ? ` ${upkeep.question}` : ''}${archive ? ` ${archive.question}` : ''}${searchMode ? ` ${costMatrixSentence()}` : ''} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
     decisions,
   }];
 }
+
+const WRITEBACK_IN_EFFECT = 'agents save only what you ask them to remember, until you turn on automatic saving (salient is recommended: durable facts you state, saved with provenance)';
 
 /**
  * `gbrain setup <harness>`'s form of init's bundle (read from `init --json`).
@@ -120,24 +200,34 @@ export function buildInitFirstRunNotices(inputs: InitFirstRunInputs): Notice[] {
  * time: the agent relays them in the reply that reports the install instead
  * of ending it on a question whose answer needs another turn (Cat 41 wave 2).
  * Open decisions keep returning in later sessions until answered or muted.
+ * The Report back (Wakeshift) row states whether gbrain wakes the agent's
+ * conversation when a job finishes (`opts.reportBack`: published) and the
+ * one command that flips it.
  */
-export function setupFirstRunNotices(initNotices: readonly unknown[], harness: string): Notice[] {
+export function setupFirstRunNotices(initNotices: readonly unknown[], harness: string, opts: { reportBack?: boolean } = {}): Notice[] {
   const bundle = initNotices.find((n): n is Notice => (n as Notice | null)?.code === 'first_run_decisions');
-  const decisions = (bundle?.decisions ?? []).filter(d => d.id !== 'harness_wiring');
+  const matrix = costMatrixSentence(harness === 'Codex' ? OPENAI_COST_MATRIX_MODELS : undefined);
+  const decisions = (bundle?.decisions ?? []).filter(d => d.id !== 'harness_wiring')
+    .map(d => (d.id === 'search_mode' ? { ...d, question: `Which search mode should this brain use? ${matrix}` } : d));
   if (decisions.length === 0) return [];
   const searchMode = decisions.find(d => d.id === 'search_mode');
+  const upkeep = decisions.find(d => d.id === 'upkeep');
+  const archive = decisions.find(d => d.id === 'conversation_archive');
   const inEffect = [
     ...(searchMode ? [`search mode ${searchMode.default}`] : []),
-    ...(decisions.some(d => d.id === 'writeback') ? ['agents save only what you ask them to remember, until you turn on automatic saving (gbrain recommends salient: durable facts you state, saved with provenance)'] : []),
+    ...(decisions.some(d => d.id === 'writeback') ? [WRITEBACK_IN_EFFECT] : []),
   ];
-  if (inEffect.length === 0) return [];
+  if (inEffect.length === 0 && !upkeep && !archive) return [];
+  const reportBack = opts.reportBack
+    ? 'Report back (Wakeshift): on. gbrain wakeshift disable turns it off.'
+    : 'Report back (Wakeshift): off. gbrain wakeshift enable turns it on.';
   return [{
     code: 'first_run_decisions',
     kind: 'ask',
     why: `Setup is complete: the brain is ready and ${harness} is wired, so memory works now. These first-run settings are in effect as listed; none blocks memory or needs a new session to answer. `
       + 'Relay them once, in the reply that reports this install, as the current settings and how to change them; do not hold the install open or end it waiting on an answer. '
       + 'When the user picks an option, run its command. Automatic saving (`writeback`) is separate from setup\'s capture decision (Stop/SessionEnd hooks); while unanswered it comes back in a later session until the user answers or mutes it.',
-    user_message: `gbrain is set up and ${harness} is wired, so memory works now. In effect: ${inEffect.join('; ')}.${searchMode ? ` ${costMatrixSentence()}` : ''} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
+    user_message: `gbrain is set up and ${harness} is wired, so memory works now.${inEffect.length ? ` In effect: ${inEffect.join('; ')}.` : ''} ${reportBack}${upkeep ? ` ${upkeep.question}` : ''}${archive ? ` ${archive.question}` : ''}${searchMode ? ` ${matrix}` : ''} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
     decisions,
   }];
 }
@@ -157,7 +247,16 @@ export function deferredEmbeddingHint(cfg: GBrainConfig): string {
 export async function firstRunBundle(engine: BrainEngine, searchMode: { mode: SearchMode; reason: string } | undefined, surface?: McpSurface): Promise<Notice[]> {
   const { writebackAskApplies } = await import('../core/onboard/writeback-nudge.ts');
   const { initSkillsScaffold } = await import('../core/skillpack/post-install-advisory.ts');
-  return buildInitFirstRunNotices({ searchMode, config: loadConfig(), writeback: await writebackAskApplies(engine), skillsScaffold: initSkillsScaffold(), surface });
+  const { isAvailable } = await import('../core/ai/gateway.ts');
+  let embedding = false;
+  try { embedding = isAvailable('embedding'); } catch { /* gateway not configured: keyless */ }
+  const { resolveArchiveEnabled } = await import('../core/transcripts/archive-default.ts');
+  const archive = await resolveArchiveEnabled(engine, { config: loadConfig() }).catch(() => null);
+  const archiveState = archive?.enabled ? 'on' as const : archive?.offered ? 'offered' as const : null;
+  return buildInitFirstRunNotices({
+    searchMode, config: loadConfig(), writeback: await writebackAskApplies(engine), skillsScaffold: initSkillsScaffold(), surface, upkeep: { embedding },
+    ...(archiveState ? { archive: { state: archiveState, embedding } } : {}),
+  });
 }
 
 /** D2/G5: the bundle rendered into init's --json document (`notices`, empty → omitted). */

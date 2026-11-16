@@ -378,8 +378,8 @@ async function runLinksTimelinePass(
   // edit between SELECT and stamp stays stale and re-sweeps. Deferred pages are left out in SQL, before the LIMIT.
   const deferred = await liveDeferredPages(engine, sourceId, cutoffIso);
   skip('segmented_page_deferred', deferred.length);
-  const recent = await engine.executeRaw<{ slug: string; updated_at_iso: string; body_storage: string | null; body_bytes: number | null }>(
-    `SELECT slug,
+  const recent = await engine.executeRaw<{ slug: string; updated_at_iso: string; body_storage: string | null; body_bytes: number | null; read_at: string }>(
+    `SELECT slug, to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS read_at,
             to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso,
             body_storage, body_bytes
        FROM pages
@@ -392,7 +392,7 @@ async function runLinksTimelinePass(
       LIMIT $3`,
     [sourceId, cutoffIso, batchLimit, deferred],
   );
-  if (recent.length === 0) return;
+  const readAt = recent[0]?.read_at; if (!readAt) return;
 
   // resolveCandidateSources + stampExtracted are the shared helpers the
   // extract command exports precisely so sibling walkers can't drift from
@@ -617,7 +617,7 @@ async function runLinksTimelinePass(
           const result = await engine.replaceDerivedLinks({ slug: ref.slug, sourceId,
             expectedRevision: snapshot.revision, sourceIncarnation: snapshot.sourceIncarnation }, desired,
           { includeFrontmatter: false, preserveExisting: true, lineGrammar: grammar,
-            wanted: { producers: ['body'], rows: wantedBySlug.get(ref.slug) ?? [] }, temporalBody: temporalBodies.get(ref.slug), expectedEndpoints: [...new Set(desired.flatMap(row =>
+            wanted: { producers: ['body'], rows: wantedBySlug.get(ref.slug) ?? [], readAt }, temporalBody: temporalBodies.get(ref.slug), expectedEndpoints: [...new Set(desired.flatMap(row =>
             [`${row.from_source_id}\0${row.from_slug}`, `${row.to_source_id}\0${row.to_slug}`]))].map(key => {
             const endpoint = endpointMetadata.get(key)!;
             return { slug: endpoint.slug, sourceId: endpoint.source_id, revision: endpoint.knowledge_revision };

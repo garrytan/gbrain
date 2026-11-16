@@ -11,6 +11,8 @@ export const RUNTIME_READER_CONFIG_KEYS: readonly string[] = [
   'embed.content_drift.pass_interval_hours', // content-drift-sweep.ts: hours between completed content-drift passes, default 24 (0 = every run)
   'facts.absorb_warn_threshold', // doctor facts_extraction_health absorb-refusal warn threshold, default 10 per 24 h
   'think.trajectory_enabled', // think/index.ts: trajectory substrate on temporal intents, default on
+  'think.remote_models', // ops/takes.ts (GBRA-437): comma-separated models a remote think may pick; default empty, so remote callers get the host think model
+  'cycle.grade_takes.auto_resolve.enabled', // cycle/grade-takes.ts: apply verdicts at or above the 0.95 confidence threshold, default off (#7542)
   'embedding_image_ocr_max_images', 'embedding_image_ocr_max_usd', // import-file.ts image-OCR per-run caps, default 200 images / $1
   'agent.search_snippet_chars', // ops/search.ts subagent snippet cap, default 300 (0 = full text)
   'skillopt.allowed_skills', // JSON array of skills remote callers may optimize (ops/skillopt.ts, shared-skills/optimizer.ts); default deny-all
@@ -28,7 +30,12 @@ export const RUNTIME_READER_CONFIG_KEYS: readonly string[] = [
   'access.owner_reads_restricted', // access/owner.ts (GST-2490): '1' lets owner-bound credentials read past readers lists and rules (gbrain access owner reads-restricted on)
   'access.members_read_lineage', // access/lineage.ts (GBRA-108 design 3): '1' lets a member read derived pages and facts of origins it reads (gbrain access members-read-lineage on)
   'access.serves', // access/serves.ts (GST-363): one or several; explicit wins over the enabled-member count (gbrain setup --serves several writes it)
+  'access.enforced_member_writes', // cli/enforced-member.ts (GST-2675): refuse makes GBRAIN_ENFORCED_MEMBER refuse every member write; unset or checked = writes checked as today; any other value or a failed read refuses
+  'access.requester_scope_enforce', // access/requester-scope.ts (GST-363): false turns the unscoped-read refusal on a brain that serves several people into a notice (hosted, until connections are bound); default on
   'mcp.stdio_may_act_for', // access/audience.ts (GBRA-231): whom a local stdio server may act for (_meta.on_behalf_of); unset, stdio refuses every audience
   'proposals.ttl_hours', 'proposals.max_pending_per_actor', 'proposals.max_pending_per_credential', // persistence/memory-proposals.ts: held QM proposal TTL (168 h) and pending caps (10 per person, 50 per credential)
+  'transcripts.archive.enabled', 'transcripts.archive.source', 'transcripts.archive.timezone', // transcripts/archive.ts (GST-2768): the conversation archive switch (gbrain transcripts archive on|off), its source (default conversations) and the timezone its days are cut in (pinned per source on the first run)
+  'transcripts.archive.backfill_days_per_run', 'transcripts.archive.run_window_days', 'transcripts.archive.quiet_minutes', // transcripts/archive.ts: days one backfill run writes, days a run re-reads, and minutes of quiet before an open day embeds
+  'transcripts.archive.maintenance_floor_min', 'transcripts.archive.stale_days', // transcripts/archive-maintenance.ts (GST-2768 PR 3): minutes between maintenance-pass archive runs (360) and days behind before doctor transcript_archive_freshness warns (2)
   'proposals.retention_days', 'proposals.max_payload_chars', 'proposals.max_reason_chars', // persistence/memory-proposals.ts: closed-row retention (30 d), payload (1,000) and deny-reason (500) character caps
 ];

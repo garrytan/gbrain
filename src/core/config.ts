@@ -1423,6 +1423,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.collapse', // result-time collapse of twins, redirect stubs and document copies (mode.ts reads; boolean)
   'search.rank_priors', // rank priors after the reranker (mode.ts reads; boolean)
   'search.keyword_phrase', // keyword phrase factor, #7175 (mode.ts reads; boolean)
+  'search.qualified_aliases', // qualified alias hop (mode.ts reads; boolean)
+  'search.title_qualified', // qualified title boost (mode.ts reads; boolean)
   'search.diverse_pool_depth', // session-diverse pool before the reranker (mode.ts reads; `off` | 0..100; 0 = off)
   // Ranker wave (Phase E2): keyword-arm confidence floor — weak keyword arm fuses at half weight (mode.ts reads; `off` | (0, 1]).
   'search.keyword_arm_confidence_floor',
@@ -1615,6 +1617,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Paid-loop breaker: dead submissions of one dream key within 24h before
   // it is refused (default 3; 0 disables). `gbrain dream reset-key` clears one.
   'dream.breaker.max_dead_submissions',
+  'dream.write_deferral.enabled', 'embed.restamp.enabled', // GBRA-224 W3 self-heal switches, default on (heal-audit.ts healEnabled)
   // Emotional weight (v0.29)
   'emotional_weight.high_tags',
   'emotional_weight.user_holder',
@@ -1757,6 +1760,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'sync.admission', // #6712 PR 4b: normal | imports_only | classify_only, what a managed pass admits (persistence/sync-admission.ts)
   'sync.max_deletes', 'sync.max_delete_ratio', 'sync.apply_held_deletions', // #7130 delete caps (sync-reconcile.ts), GBRA-133 held-deletion switch (persistence/sync-held-deletions.ts); per source: <key>.source.<id>
   'purge.retention_hours', // #7130: hours a soft-deleted page waits before the autopilot purge phase may purge it (default 72)
+  'cycle.purge.mcp_request_log_retention_days', // #6770: opt-in request-log retention, 30-3650 days (mcp-request-log-retention.ts)
   'sync.federated_v2',
   'sync.include_working_tree',
   'sync.metafile_pages', // GBRA-150: typed (default) | off, whether a nested folder-scaffolding file with type:/title: frontmatter is a page (core/sync.ts)
@@ -1797,6 +1801,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'embed.backfill_cooldown_min',
   'embed.backfill_max_usd_per_source_24h',
   'embed.backfill_max_usd',
+  // GBRA-438: free unattended upkeep on/off and its daily embedding cap (core/maintenance/run.ts).
+  'maintenance.auto', 'maintenance.embed_daily_usd',
   // Brain-level default source. Read by source-resolver.ts tier 5
   // (`engine.getConfig('sources.default')`) and written by
   // `gbrain sources default <id>`. Listed here so `gbrain config set`

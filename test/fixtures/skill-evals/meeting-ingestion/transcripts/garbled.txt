@@ -1,0 +1,12 @@
+Recorder: notetaker-a
+Recording ID: rec-1020-a
+Title: Ledger cutover dry run
+Date: 2026-10-20 13:00 ET
+Duration: 22m
+Attendees: Alise Exampel <alice@acme-example.com>, Bob Exampel <bob@acme-example.com>
+
+[00:00] Alise Exampel: The dry run of the ledger cutover finished with zero mismatches.
+[00:35] Bob Exampel: Zero? On every account?
+[00:50] Alise Exampel: Every account. The reconciliation fix did its job.
+[01:30] Bob Exampel: Then we schedule the real cutover for November 15.
+[02:10] Alise Exampel: I'll send the customer notice on November 1.

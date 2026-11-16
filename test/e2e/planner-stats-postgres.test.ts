@@ -164,6 +164,28 @@ d('planner stats on Postgres', () => {
       }
     });
 
+    test('a role that does not own pages is told it cannot inspect the projection statistic, not that it is fresh (#8530)', async () => {
+      const engine = getEngine();
+      await engine.executeRaw("DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'gbrain_8530_reader') THEN CREATE ROLE gbrain_8530_reader; END IF; END $$");
+      await engine.executeRaw('GRANT USAGE ON SCHEMA public TO gbrain_8530_reader');
+      await engine.executeRaw('GRANT SELECT ON ALL TABLES IN SCHEMA public TO gbrain_8530_reader');
+      try {
+        expect((await doctor()).details?.projection_statistics).toBeUndefined();
+        const entry = DOCTOR_CHECK_REGISTRY.find(e => e.name === 'planner_stats_stale')!;
+        const check = await engine.transaction(async tx => {
+          await tx.executeRaw('SET LOCAL ROLE gbrain_8530_reader');
+          const ctx = { engine: tx, progress: { heartbeat() {}, start() {}, tick() {}, finish() {} } } as unknown as DoctorContext;
+          return ((await entry.run(ctx)) as Check[])[0]!;
+        });
+        expect(check.details?.projection_statistics).toBe('uninspectable');
+        if (check.status === 'ok') expect(check.message).toContain('cannot inspect the projection statistic');
+      } finally {
+        await engine.executeRaw('REVOKE ALL ON ALL TABLES IN SCHEMA public FROM gbrain_8530_reader');
+        await engine.executeRaw('REVOKE ALL ON SCHEMA public FROM gbrain_8530_reader');
+        await engine.executeRaw('DROP ROLE gbrain_8530_reader');
+      }
+    });
+
     test('buildIndexOnline builds concurrently, prints the notice and analyzes the table', async () => {
       await getEngine().executeRaw(`DROP INDEX IF EXISTS ${TITLE_INDEX.name}`);
       const notices: string[] = [];

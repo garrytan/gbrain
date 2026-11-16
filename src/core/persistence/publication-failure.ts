@@ -34,6 +34,8 @@ export interface PublicationFailureDetail {
   reason?: PublicationReason;
   /** Owner-only, #6904: the relation or column a `schema_missing` refusal names (an identifier, never a value). */
   missing?: string;
+  /** Owner-only, #7780: the table an `unreadable_state` refusal could not fully read (`UNREADABLE_STATES`). */
+  state?: string;
   /** Owner-only: source identifiers can name private sources. */
   sources?: { target: string | null; old: string | null; allowed: string[] };
   stage?: PublicationStage;
@@ -57,7 +59,9 @@ export interface OwnerExceptionDetail extends Pick<PublicationFailureDetail, 'st
 export type WithdrawalRefusalDetail = WithdrawalFailureDetail & Pick<PublicationFailureDetail, 'stage' | 'attempt'>;
 /** #6696 (A12): the page's recorded canonical file is gone (`prepareFileTarget`); a producer refuses the same write before admission. */
 export const CANONICAL_FILE_MISSING = 'canonical_file_missing';
-export interface CanonicalFileDetail { origin: typeof CANONICAL_FILE_MISSING; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
+/** #7837: a `managed_grandfather` request an older binary queued, refused because the v0.13.1 grandfather is retired (#7814). */
+export const GRANDFATHER_RETIRED = 'grandfather_retired';
+export interface CanonicalFileDetail { origin: typeof CANONICAL_FILE_MISSING | typeof GRANDFATHER_RETIRED; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
 /** GST-465: the source's whole canonical checkout is missing on this host (`prepareFileTarget`, `sourceCheckoutMissingRefusal`). */
 export const SOURCE_CHECKOUT_MISSING = 'source_checkout_missing';
 /**
@@ -115,16 +119,52 @@ const GIT_PROTOCOL_PREFIX = 'git_protocol_required:';
 /** trust/schema.ts: the tier trigger's refusal of a raise without owner confirmation. */
 const TRUST_PREFIX = 'trust_raise_refused:';
 const PURGED_PREFIX = 'purged_content:';
+/** GBRA-504 (trust/schema.ts GUEST_GUARD, guests/schema.ts): the guest-source guards' codes, each the message prefix of its raise. */
+const GUEST_GUARD_TEXT: Record<string, string> = {
+  source_writer_restricted: 'only the listed writers of a guest source may create or change its pages',
+  guest_page_immutable: 'a guest source holds no facts, takes or timeline entries, and its pages are never changed',
+  guest_attribution_missing: 'a listed writer creates or changes a guest page only as a guest note carrying its attribution',
+  guest_mark_immutable: 'a guest mark is never changed',
+  guest_source_database_only: 'a guest source is database-only and takes no local path or repository',
+};
 const RELATIONSHIP_TEXT: Record<string, string> = {
   different_source: 'a row in a source this publication does not own',
   missing_source: 'a row whose source could not be resolved',
   old_source_outside: 'a row moved from a source this publication does not own',
   checkpoint_outside_owner: 'a source sync checkpoint outside owner publication',
   topology_outside_administration: 'a source topology change outside writer administration',
-  unreadable_state: 'writer state this database role cannot read (row-level security hides it, or its row is missing)',
+  unreadable_state: 'writer state this database role cannot fully read (row-level security hides it or applies to the role, or a singleton row is missing)',
 };
+/** #7780: the tables an unreadable_state raise names in its DETAIL `state` (writer-guard-schema.ts, git-canonical-schema.ts). */
+const UNREADABLE_STATES: ReadonlySet<unknown> = new Set(['persistence_brain', 'git_canonical_brain', 'sources', 'pages', 'guest_sources']);
 
-function guardDetail(raw: unknown): Pick<PublicationFailureDetail, 'op' | 'relationship' | 'sources'> {
+/**
+ * #7777: the persistence protocol guards (shared-skills/persistence-schema.ts) raise SQLSTATE 42501, which is also
+ * ordinary permission denial (a missing GRANT, row-level security). A 42501 is typed only when the innermost PL/pgSQL
+ * frame is one of these guards and the message is one of that guard's own fixed diagnostics, verbatim; its code is the
+ * message prefix. Anything else at 42501 stays unclassified.
+ */
+const PROTOCOL_GUARD_SQLSTATE = '42501';
+const PROTOCOL_UNREADABLE = 'writer_coordinator_required: writer state is unreadable to this database role';
+const PROTOCOL_DISABLED = 'writer_not_quiesced: shared publication is disabled';
+const PROTOCOL_GUARD_DIAGNOSTICS = new Map<string, readonly string[]>([
+  ['gbrain_require_persistence_protocol', ['writer_upgrade_required: this mutation requires persistence protocol 2']],
+  ['gbrain_guard_request_protocol', [PROTOCOL_UNREADABLE, PROTOCOL_DISABLED,
+    'unsupported_mutation_protocol: a request target is immutable',
+    'unsupported_mutation_protocol: skill operations require a typed target',
+    'unsupported_mutation_protocol: invalid skill target',
+    'unsupported_mutation_protocol: invalid page target',
+    'unsupported_mutation_protocol: recovery target mismatch',
+    'writer_not_quiesced: canonical owner capability must be revalidated']],
+  ['gbrain_guard_effect_protocol', [PROTOCOL_UNREADABLE]],
+  ['gbrain_guard_protocol_activation', [PROTOCOL_UNREADABLE,
+    'writer_upgrade_required: the protocol floor cannot be lowered',
+    'writer_not_quiesced: drain and verify all canonical owners before activation']],
+  ['gbrain_guard_skill_publication', [PROTOCOL_DISABLED,
+    'writer_coordinator_required: canonical skill writes require a coordinated source capability']],
+]);
+
+function guardDetail(raw: unknown): Pick<PublicationFailureDetail, 'op' | 'relationship' | 'state' | 'sources'> {
   if (typeof raw !== 'string' || raw.length > 4096) return {};
   let parsed: Record<string, unknown>;
   try { parsed = JSON.parse(raw) as Record<string, unknown>; } catch { return {}; }
@@ -132,6 +172,7 @@ function guardDetail(raw: unknown): Pick<PublicationFailureDetail, 'op' | 'relat
   const allowed = Array.isArray(parsed.allowed) ? parsed.allowed.map(ident).filter((v): v is string => !!v).slice(0, 32) : [];
   const target = ident(parsed.target_source) ?? null, old = ident(parsed.old_source) ?? null;
   return { op: ident(parsed.op), relationship: ident(parsed.relationship),
+    ...(UNREADABLE_STATES.has(parsed.state) ? { state: parsed.state as string } : {}),
     ...(target || old || allowed.length ? { sources: { target, old, allowed } } : {}) };
 }
 
@@ -175,12 +216,21 @@ export function databaseRefusal(error: unknown): PublicationFailure | null {
   }
   if (sqlstate === READ_ONLY_SQLSTATE) return { code: 'connection_inherited_read_only', detail: { origin: 'database', sqlstate },
     message: `The database refused this write as read-only (SQLSTATE ${sqlstate}${typeof e.message === 'string' ? `: ${e.message}` : ''}), so nothing was committed: the server connection defaults to read-only transactions (pooler session state left by another client, a role or database default, or a read-only server).` };
-  if (sqlstate !== 'P0001' && sqlstate !== GRADUATION_SQLSTATE) return null;
+  if (sqlstate !== 'P0001' && sqlstate !== GRADUATION_SQLSTATE && sqlstate !== PROTOCOL_GUARD_SQLSTATE) return null;
   const where = typeof e.where === 'string' ? e.where : '';
   const raiser = ident(/PL\/pgSQL function (?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)[( ]/.exec(where)?.[1]);
   const table = ident(e.table_name ?? e.table);
   const constraint = typeof (e.constraint_name ?? e.constraint) === 'string' ? String(e.constraint_name ?? e.constraint) : '';
   const message = typeof e.message === 'string' ? e.message : '';
+  if (sqlstate === PROTOCOL_GUARD_SQLSTATE) {
+    if (!raiser || !PROTOCOL_GUARD_DIAGNOSTICS.get(raiser)?.includes(message)) return null;
+    const separator = message.indexOf(': ');
+    return { code: message.slice(0, separator),
+      message: `The persistence protocol guard (${raiser}) refused this write: ${message.slice(separator + 2)}. Nothing was committed.`,
+      detail: { origin: 'database_guard', sqlstate, raiser,
+        ...(message === PROTOCOL_UNREADABLE ? { branch: 'unreadable_state', relationship: 'unreadable_state' } : {}),
+        ...(message === PROTOCOL_UNREADABLE && raiser !== 'gbrain_guard_protocol_activation' ? { state: 'persistence_brain' } : {}) } };
+  }
   if (sqlstate === GRADUATION_SQLSTATE) {
     const reason = publicationReason(sqlstate, raiser, message);
     return { code: 'storage_error', detail: { origin: raiser ? 'database_trigger' : 'database', sqlstate, ...(raiser ? { raiser } : {}), ...(table ? { table } : {}), reason },
@@ -207,6 +257,9 @@ export function databaseRefusal(error: unknown): PublicationFailure | null {
       ...guardDetail(e.detail) },
     message: `The trust-tier guard refused a write${table ? ` on ${table}` : ''}: raising a tier needs the owner's confirmation. Nothing was committed.` };
   }
+  const guestCode = constraint === 'guest_source_guard' ? Object.keys(GUEST_GUARD_TEXT).find(code => message.startsWith(`${code}:`)) : undefined;
+  if (guestCode) return { code: guestCode, message: `The guest-source guard refused a write${table ? ` on ${table}` : ''}: ${GUEST_GUARD_TEXT[guestCode]}. Nothing was committed.`,
+    detail: { origin: 'database_trigger', sqlstate, ...(raiser ? { raiser } : {}), ...(table ? { table } : {}) } };
   const reason = publicationReason(sqlstate, raiser, message);
   return { code: 'storage_error', message: `Publication failed (P0001${raiser ? ` in ${raiser}` : ''}: ${reason}). Inspect owner diagnostics.`,
     detail: { origin: raiser ? 'database_trigger' : 'database', sqlstate, ...(raiser ? { raiser } : {}), ...(table ? { table } : {}), reason } };

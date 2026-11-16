@@ -1,10 +1,9 @@
 /** `gbrain sync` CLI body (`runSyncInner`): flag parsing, --all fan-out, watch mode. */
 import { existsSync } from 'fs';
-import { isAbsolute } from 'path';
 import { getCompanyBrainProfile } from '../../core/company-brain/profile.ts';
 import { slog, withSourcePrefix } from '../../core/console-prefix.ts';
 import type { BrainEngine } from '../../core/engine.ts';
-import { msysToNativePath } from '../../core/path-confine.ts';
+import { isHostAbsolutePath, msysToNativePath } from '../../core/path-confine.ts';
 import { syncFailureJsonFields, readManagedSyncFailures } from '../../core/persistence/sync-failures.ts';
 import { syncHoldJsonFields } from '../../core/persistence/sync-holds.ts';
 import { printHoldNotes } from '../sync-diagnostics.ts';
@@ -48,7 +47,7 @@ import { cliRenderContext, renderNotice, type Notice } from '../../core/agent-ou
 const emitJson = (text: string): void => { void writeJsonDocument(text); };
 
 /** #7630: a stored root that is not absolute names the cwd, so post-sync .gitignore upkeep skips it. */
-const absoluteStoredPath = (path: string | null): string | null => path && isAbsolute(path) ? path : null;
+const absoluteStoredPath = (path: string | null): string | null => path && isHostAbsolutePath(path) ? path : null;
 
 type SyncAllSourceRow = { id: string; name: string; local_path: string | null; config: Record<string, unknown>; last_commit: string | null; chunker_version: string | null };
 
@@ -59,6 +58,8 @@ type PerSourceResult = {
   status: 'ok' | 'error' | 'skipped_missing_path';
   result?: SyncResult;
   error?: string;
+  /** #7646: a refusal's agent contract (code, why, fix), so an --all consumer gets what a single-source sync exits 3 with. */
+  contract?: Record<string, unknown>;
   localPath?: string;
 };
 
@@ -66,6 +67,11 @@ type PerSourceResult = {
 function runNotices(result: SyncResult): Notice[] {
   return [...(result.tail?.notice ? [result.tail.notice] : []), ...(result.reason_notices ?? []), ...(result.privacy_label_notice ? [result.privacy_label_notice] : [])];
 }
+const failureContract = (error: unknown): Record<string, unknown> | undefined => {
+  if (!(error instanceof Error) || error.name !== 'OperationError') return undefined;
+  const { code, suggestion, why, fix } = (error as Error & { toJSON(): Record<string, unknown> }).toJSON();
+  return { code, ...(suggestion ? { suggestion } : {}), ...(why ? { why } : {}), ...(fix ? { fix } : {}) };
+};
 
 /**
  * #6696 (A4): a sync receipt carries the capacity notices (60 s snapshot, at most once an hour per process per
@@ -482,7 +488,7 @@ async function runSyncAll(
   const policyFailures = new Map<string, unknown>();
   for (const source of runnableSources) {
     // #7630: a relative local_path fails its source before the cost gate walks the directory.
-    if (source.local_path && !isAbsolute(msysToNativePath(source.local_path))) { policyFailures.set(source.id, syncAnchorRelativeError(source.id, source.local_path)); continue; }
+    if (source.local_path && !isHostAbsolutePath(source.local_path)) { policyFailures.set(source.id, syncAnchorRelativeError(source.id, source.local_path)); continue; }
     try { companyPolicies.set(source.id, await getCompanyBrainProfile(engine, source.id)); }
     catch (error) { policyFailures.set(source.id, error); }
   }
@@ -722,6 +728,7 @@ export async function dispatchSyncAll(input: {
           sourceName: src.name,
           status: 'error',
           error: msg,
+          contract: failureContract(r.reason),
         });
       }
     }
@@ -746,6 +753,7 @@ export async function dispatchSyncAll(input: {
           sourceName: src.name,
           status: 'error',
           error: msg,
+          contract: failureContract(e),
         });
       }
     }
@@ -798,6 +806,7 @@ function emitSyncAllEnvelope(input: {
         ...(r.result.type_warnings ? { type_warnings: r.result.type_warnings } : {}),
       } : {}),
       ...(r.error ? { error: r.error } : {}),
+      ...r.contract,
       ...(embedBackfillBySource.has(r.sourceId)
         ? { embed_backfill: embedBackfillBySource.get(r.sourceId) }
         : {}),
@@ -874,7 +883,7 @@ async function runSingleSourceSync(
     if (gateRows.length > 0) {
       const gate = await resolveSingleSyncEmbedPlan(engine, {
         sourceId,
-        local_path: (gateRows[0].local_path && isAbsolute(gateRows[0].local_path) ? gateRows[0].local_path : null) ?? repoPath ?? null,
+        local_path: absoluteStoredPath(gateRows[0].local_path) ?? repoPath ?? null,
         config: gateRows[0].config ?? {},
         last_commit: gateRows[0].last_commit,
         chunker_version: gateRows[0].chunker_version,

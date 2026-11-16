@@ -66,6 +66,8 @@ export interface ThinkGatherResult {
   takes: TakeHit[];
   /** Graph nodes — slugs reachable from anchor within graphDepth. Empty when no anchor. */
   graphSlugs: string[];
+  /** GBRA-498: each graph node with its own source (a federated walk crosses sources), for room marks; the anchor first. */
+  graphRefs?: Array<{ slug: string; sourceId: string }>;
   /** Pages the search found that the window dropped as dated outside it: not evidence, but still who the question is about (GST-731). */
   outsideWindowSlugs: string[];
   /**
@@ -243,6 +245,7 @@ export async function runGather(
     : Promise.resolve([] as TakeHit[]);
 
   // Stream 4: graph walk (anchor only).
+  const graphRefs: Array<{ slug: string; sourceId: string }> = [];
   const graphPromise: Promise<string[]> = opts.anchor
     ? engine.traversePaths(opts.anchor, { depth: graphDepth, direction: 'both', ...pageScope })
         .then(paths => {
@@ -250,6 +253,7 @@ export async function runGather(
           for (const p of paths) {
             slugs.add(p.from_slug);
             slugs.add(p.to_slug);
+            graphRefs.push({ slug: p.from_slug, sourceId: p.from_source_id }, { slug: p.to_slug, sourceId: p.to_source_id });
           }
           return Array.from(slugs);
         })
@@ -318,6 +322,7 @@ export async function runGather(
     pages: pages.slice(0, gatherLimit),
     takes: fusedTakes,
     graphSlugs,
+    graphRefs: opts.anchor ? [{ slug: opts.anchor, sourceId: anchorPage?.source_id ?? opts.sourceId ?? 'default' }, ...graphRefs] : graphRefs,
     outsideWindowSlugs,
     warnings,
     diagnostics: {
@@ -720,20 +725,20 @@ function graphEvidenceLine(p: SearchResult): string {
 
 export function takesHitToTakeForPrompt(h: TakeHit | Take): {
   page_slug: string; row_num: number; claim: string; kind: string;
-  holder: string; weight: number; source?: string | null; since_date?: string | null; trust_tier?: TrustTier; origin?: string;
+  holder: string; weight: number; source: string | null; since_date: string | null; until_date: string | null; trust_tier?: TrustTier; origin?: string;
 } {
-  // TakeHit + Take share the slug/claim/kind/holder/weight surface.
-  const t = h as Take & TakeHit;
+  // TakeHit + Take share the slug/claim/kind/holder/weight/source/validity-window surface.
   const lt = h as { trust_tier?: TrustTier; origin?: string };
   return {
-    page_slug: t.page_slug,
-    row_num: t.row_num,
-    claim: t.claim,
-    kind: t.kind,
-    holder: t.holder,
-    weight: t.weight,
-    source: 'source' in t ? (t as Take).source : null,
-    since_date: 'since_date' in t ? (t as Take).since_date : null,
+    page_slug: h.page_slug,
+    row_num: h.row_num,
+    claim: h.claim,
+    kind: h.kind,
+    holder: h.holder,
+    weight: h.weight,
+    source: h.source,
+    since_date: h.since_date,
+    until_date: h.until_date,
     ...(lt.trust_tier ? { trust_tier: lt.trust_tier, origin: lt.origin } : {}),
   };
 }

@@ -1,5 +1,5 @@
 /** The fence functions alone: replacing one takes no table lock (#7636). */
-const requestProtocolGuardSql = (pageRecoveryMismatch: string): string => `CREATE OR REPLACE FUNCTION gbrain_guard_request_protocol() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+const requestProtocolGuardSql = (pageRecoveryMismatch: string): string => `CREATE OR REPLACE FUNCTION gbrain_guard_request_protocol() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
   DECLARE target text; version integer; floor integer; active boolean; record jsonb;
   BEGIN
     IF TG_OP='DELETE' THEN target:=OLD.target_kind; version:=OLD.protocol_version;
@@ -44,9 +44,9 @@ const requestProtocolGuardSql = (pageRecoveryMismatch: string): string => `CREAT
  */
 export const REQUEST_PROTOCOL_GUARD_V287_SQL = requestProtocolGuardSql(`record->>'version' IS DISTINCT FROM '1'
         AND NOT (record->>'version'='3' AND record->>'target'='pages' AND jsonb_typeof(record->'files')='array')`);
-/** The request guard as v278 shipped it (page recovery version 1 only), so that published migration stays byte for byte as released; the current guard is REQUEST_PROTOCOL_GUARD_V287_SQL. */
+/** The request guard as v278 shipped it (page recovery version 1 only), so that published migration keeps its released guard logic; the current guard is REQUEST_PROTOCOL_GUARD_V287_SQL. */
 export const REQUEST_PROTOCOL_GUARD_SQL = requestProtocolGuardSql(`record->>'version' IS DISTINCT FROM '1'`);
-export const EFFECT_PROTOCOL_GUARD_SQL = `CREATE OR REPLACE FUNCTION gbrain_guard_effect_protocol() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+export const EFFECT_PROTOCOL_GUARD_SQL = `CREATE OR REPLACE FUNCTION gbrain_guard_effect_protocol() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
   DECLARE floor integer;
   BEGIN
     SELECT writer_protocol_floor INTO floor FROM persistence_brain WHERE singleton=1 FOR SHARE;
@@ -55,7 +55,7 @@ export const EFFECT_PROTOCOL_GUARD_SQL = `CREATE OR REPLACE FUNCTION gbrain_guar
     IF TG_OP='DELETE' THEN RETURN OLD; END IF;
     RETURN NEW;
   END $$`;
-export const PROTOCOL_ACTIVATION_GUARD_SQL = `CREATE OR REPLACE FUNCTION gbrain_guard_protocol_activation() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+export const PROTOCOL_ACTIVATION_GUARD_SQL = `CREATE OR REPLACE FUNCTION gbrain_guard_protocol_activation() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
   BEGIN
     IF NEW.writer_protocol_floor<OLD.writer_protocol_floor THEN
       RAISE EXCEPTION 'writer_upgrade_required: the protocol floor cannot be lowered' USING ERRCODE='42501';
@@ -92,7 +92,7 @@ export const SHARED_SKILLS_PERSISTENCE_SCHEMA_STATEMENTS: readonly string[] = [
     registered_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY(worktree_id,host_id)
   )`,
-  `CREATE OR REPLACE FUNCTION gbrain_require_persistence_protocol(required integer) RETURNS void LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+  `CREATE OR REPLACE FUNCTION gbrain_require_persistence_protocol(required integer) RETURNS void LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
   BEGIN
     IF required >= 2 AND COALESCE(current_setting('gbrain.persistence_protocol',true),'') <> '2' THEN
       RAISE EXCEPTION 'writer_upgrade_required: this mutation requires persistence protocol 2' USING ERRCODE='42501';
@@ -110,7 +110,7 @@ export const SHARED_SKILLS_PERSISTENCE_SCHEMA_STATEMENTS: readonly string[] = [
   `DROP TRIGGER IF EXISTS gbrain_protocol_activation ON persistence_brain`,
   `CREATE TRIGGER gbrain_protocol_activation BEFORE UPDATE ON persistence_brain
     FOR EACH ROW EXECUTE FUNCTION gbrain_guard_protocol_activation()`,
-  `CREATE OR REPLACE FUNCTION gbrain_guard_skill_publication() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+  `CREATE OR REPLACE FUNCTION gbrain_guard_skill_publication() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
   DECLARE permitted jsonb;
   BEGIN
     PERFORM gbrain_require_persistence_protocol(2);

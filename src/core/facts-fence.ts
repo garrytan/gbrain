@@ -58,13 +58,28 @@ import { isOpPageSlug } from './page-slug-grammar.ts';
 export const UNATTRIBUTED_MEMORY_SLUG = 'memory/unattributed';
 
 /**
- * Which page a fence is parsed for: only `memory/unattributed` reads the `entity` column, so on every other page an
- * `entity` header stays an unsupported column. `reader` is for a body-only reader that decides nothing about what a page
- * may hold (the withdrawal overlay, the remote-read strip): every write and import is parsed for its page, so only
- * `memory/unattributed` can carry the column, and such a reader reads it wherever it finds it.
+ * GST-2492: the holding pages, `memory/unattributed` and each folder's `<folder>/memory/unattributed`. An entity under a
+ * folder access rule holds its fact on the page of its own folder (`partners/alice-example/deal-notes` on
+ * `partners/alice-example/memory/unattributed`), so every prefix rule that covers the entity covers its holding page.
+ */
+export const isHoldingSlug = (slug: string | null | undefined): boolean =>
+  slug === UNATTRIBUTED_MEMORY_SLUG || typeof slug === 'string' && slug.endsWith(`/${UNATTRIBUTED_MEMORY_SLUG}`);
+
+/** SQL twin of isHoldingSlug over a text expression. */
+export const holdingSlugSql = (column: string): string => `(${column} = '${UNATTRIBUTED_MEMORY_SLUG}' OR ${column} LIKE '%/${UNATTRIBUTED_MEMORY_SLUG}')`;
+
+/** The holding page of `entity`'s own folder (memory/unattributed for an entity with no folder). */
+export const folderHoldingSlug = (entity: string): string =>
+  entity.includes('/') ? `${entity.slice(0, entity.lastIndexOf('/'))}/${UNATTRIBUTED_MEMORY_SLUG}` : UNATTRIBUTED_MEMORY_SLUG;
+
+/**
+ * Which page a fence is parsed for: only a holding page (isHoldingSlug) reads the `entity` column, so on every other page
+ * an `entity` header stays an unsupported column. `reader` is for a body-only reader that decides nothing about what a page
+ * may hold (the withdrawal overlay, the remote-read strip): every write and import is parsed for its page, so only a
+ * holding page can carry the column, and such a reader reads it wherever it finds it.
  */
 export interface FactsFenceParseOpts { slug?: string | null; reader?: boolean }
-const readsEntity = (opts?: FactsFenceParseOpts): boolean => opts?.reader === true || opts?.slug === UNATTRIBUTED_MEMORY_SLUG;
+const readsEntity = (opts?: FactsFenceParseOpts): boolean => opts?.reader === true || isHoldingSlug(opts?.slug);
 
 // HTML-comment fence markers — verbatim per spec. Same shape as the takes
 // fence markers so anyone who's seen one immediately recognizes the other.
@@ -255,6 +270,20 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
   return parseFactsFenceFor(body);
 }
 
+/**
+ * GST-2497: one write reads the same table many times (the withdrawal overlay, the chunker, the remote-read strip, the
+ * refusal scan). A table's parse depends only on its text, whether the `entity` column is read and which folder's
+ * entities a folder holding page may hold, so the newest few parses are kept under that key (at most 8, and 16M
+ * characters of table text) and every caller gets its own copy.
+ */
+const PARSE_CACHE_LIMIT = 8;
+const PARSE_CACHE_MAX_CHARS = 16 * 1024 * 1024;
+const parseCache = new Map<string, FactsFenceParseResult>();
+let cachedChars = 0;
+let tableParses = 0;
+/** Test seam: how many fence tables parseFactsFenceFor has parsed in this process, cached reads excluded. */
+export const factsFenceTableParses = (): number => tableParses;
+
 /** parseFactsFence for a known page: `memory/unattributed` also reads its `entity` column (GST-2492). */
 export function parseFactsFenceFor(body: string, opts?: FactsFenceParseOpts): FactsFenceParseResult {
   const { beginIdx, endIdx } = locateOutsideCode(body, FACTS_FENCE_BEGIN, FACTS_FENCE_END);
@@ -269,8 +298,25 @@ export function parseFactsFenceFor(body: string, opts?: FactsFenceParseOpts): Fa
     warnings.push('FACTS_FENCE_UNBALANCED: end marker before begin');
     return { facts: [], warnings };
   }
-
   const inner = body.slice(beginIdx + FACTS_FENCE_BEGIN.length, endIdx);
+  const folder = isHoldingSlug(opts?.slug) && opts?.slug !== UNATTRIBUTED_MEMORY_SLUG ? opts!.slug : '';
+  const key = `${readsEntity(opts) ? 1 : 0}\0${folder}\0${inner}`;
+  const hit = parseCache.get(key);
+  const parsed = hit ?? parseFactsTable(inner, opts);
+  if (hit) parseCache.delete(key);
+  else cachedChars += key.length;
+  parseCache.set(key, parsed);
+  for (const old of parseCache.keys()) {
+    if (parseCache.size <= PARSE_CACHE_LIMIT && cachedChars <= PARSE_CACHE_MAX_CHARS) break;
+    parseCache.delete(old);
+    cachedChars -= old.length;
+  }
+  return { facts: parsed.facts.map(fact => ({ ...fact })), warnings: [...parsed.warnings] };
+}
+
+function parseFactsTable(inner: string, opts?: FactsFenceParseOpts): FactsFenceParseResult {
+  tableParses++;
+  const warnings: string[] = [];
   const lines = inner.split('\n');
   const facts: ParsedFact[] = [];
   let sawHeader = false;
@@ -379,16 +425,18 @@ export function parseFactsFenceFor(body: string, opts?: FactsFenceParseOpts): Fa
     }
 
     // GST-2492: a held row's entity is a page slug; any other cell is a fence problem, so the page is held, never misfiled.
+    // A folder's holding page holds only entities of that folder.
     const entity = entityRaw.trim();
-    if (entity && (!isOpPageSlug(entity) || entity === UNATTRIBUTED_MEMORY_SLUG)) {
+    if (entity && (!isOpPageSlug(entity) || isHoldingSlug(entity)
+      || isHoldingSlug(opts?.slug) && opts?.slug !== UNATTRIBUTED_MEMORY_SLUG && folderHoldingSlug(entity) !== opts?.slug)) {
       warnings.push(`FACTS_TABLE_MALFORMED: invalid entity "${entity}" in row ${rowNumStr} (expected a page slug such as people/alice-example)`);
       continue;
     }
 
     const { text: claimText, struck } = stripStrikethrough(claimRaw);
     const context = parseStringCell(contextRaw);
-    const supersededBy = parseSupersededByFromContext(context);
-    const forgotten    = parseForgottenFromContext(context);
+    const supersededBy = struck ? parseSupersededByFromContext(context) : undefined;
+    const forgotten    = struck && parseForgottenFromContext(context);
 
     facts.push({
       rowNum,
@@ -403,7 +451,7 @@ export function parseFactsFenceFor(body: string, opts?: FactsFenceParseOpts): Fa
       context,
       active: !struck,
       supersededBy,
-      forgotten: struck ? forgotten : false,
+      forgotten,
       // v0.35.4 — typed-claim fields, all optional.
       claimMetric: parseStringCell(claimMetricRaw),
       claimValue,

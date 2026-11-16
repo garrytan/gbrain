@@ -80,11 +80,24 @@ export const HIGH_ENTROPY_REQUIRES_NON_DIGIT_RE = /[^0-9]/;
 // the sentence's full stop and its bare echoes still scrub.
 // Both keep the 12-4096 bounds and the digit + entropy gates. Each also has
 // an ESCAPE_BOUNDARY twin (#7978): `\\npassword=…` in escaped tool output.
+//
+// ESCAPED AND ENCODED SYNTAX (#8265). The key may close, and a quoted value
+// open, on up to three backslashes before the quote (`{\"password\":\"…\"}`,
+// JSON inside a JSON string), and the separator may be URL-encoded
+// (`password%3D…`, `token%3A…`). The quoted value never ends on a backslash,
+// so an escaped closing quote stays outside it. After an encoded separator the
+// value never takes `%26` (the next encoded parameter; `&` is outside both
+// classes), and a quoted value never opens there. The escapes and the encoded
+// separator sit in group 1, so offsets and fingerprints stay on the stored
+// bytes. A URL-encoded URL (`https%3A%2F%2F…`) is a reference like a plain one,
+// unless it carries userinfo (`%40`): the plain form's userinfo is caught by
+// db_url_credentials, which never sees the encoded form.
 export const assignmentKey = (boundary: string) =>
-  `${boundary}(?:(?:secret|token|passwd|password|passphrase|credential|api[_-]?key|apikey)[A-Za-z0-9_-]{0,64}|[A-Za-z][A-Za-z0-9_-]{0,63}[_-]key)["']?\\s*[:=]\\s*`;
-export const ASSIGNMENT_QUOTED_SOURCE = (key: string) => `(${key}["'])([^"'\\s]{12,4096})`;
+  `${boundary}(?:(?:secret|token|passwd|password|passphrase|credential|api[_-]?key|apikey)[A-Za-z0-9_-]{0,64}|[A-Za-z][A-Za-z0-9_-]{0,63}[_-]key)(?:\\\\{0,3}["'])?(?:\\s*[:=]\\s*|%3[AaDd])`;
+export const ASSIGNMENT_QUOTED_SOURCE = (key: string) => `(${key}(?<!%3[AaDd])\\\\{0,3}["'])([^"'\\s]{11,4095}[^"'\\s\\\\])`;
 export const ASSIGNMENT_UNQUOTED_SOURCE = (key: string) =>
-  `(${key})([A-Za-z0-9+/_=\\-!#$%*@^~.?<>]{11,4095}[A-Za-z0-9+/_=\\-#$%*@^~<>])`;
+  `(${key})((?<=%3[AaDd])(?:[A-Za-z0-9+/_=\\-!#$*@^~.?<>]|%(?!26)){11,4095}(?:[A-Za-z0-9+/_=\\-#$*@^~<>]|%(?!26))` +
+  `|(?<!%3[AaDd])[A-Za-z0-9+/_=\\-!#$%*@^~.?<>]{11,4095}[A-Za-z0-9+/_=\\-#$%*@^~<>])`;
 /** The legacy (pre-punctuation) value class, whole-value form. */
 const LEGACY_ASSIGNMENT_VALUE_RE = /^[A-Za-z0-9+/_=-]+$/;
 /** A dotted member path in code (`process.env.DB_PASSWORD_2`): every segment an identifier. */
@@ -104,6 +117,7 @@ const DOTTED_IDENTIFIER_RE = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/;
  */
 export function assignmentValueIsSecretShaped(value: string): boolean {
   if (/^[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\//.test(value)) return false;
+  if (/^[A-Za-z][A-Za-z0-9+.-]{0,31}%3A%2F%2F/i.test(value) && !/%40/i.test(value)) return false;
   if (value.startsWith('./') || value.startsWith('~/') || value.startsWith('${') || value.startsWith('$(')) return false;
   if (value.startsWith('<REDACTED:') || DOTTED_IDENTIFIER_RE.test(value)) return false;
   return !(value.startsWith('/') && !LEGACY_ASSIGNMENT_VALUE_RE.test(value));

@@ -240,6 +240,8 @@ export interface ClaimState {
   last_sql: ClaimLastSql | null;
   /** Whether the same request continues without anyone acting (after its lease lapses or its transaction ends). */
   resumes_on_its_own: boolean;
+  /** #9227: present when the owner provably exited: no process renews the claim and the next write to the brain releases it. */
+  owner_exited?: true;
   why: string;
 }
 export interface ClaimRow {
@@ -249,6 +251,10 @@ export interface ClaimRow {
   /** `claim_expires_at < now()`, read on the database clock. */
   claim_lapsed?: boolean | null;
   publication_started?: boolean | null;
+  /** #9227: last written before `abandonedClaimCutoff` (PGLite, read by a process that holds the brain); the owner has exited. */
+  abandoned?: boolean | null;
+  /** #9227: also prove the stamped owner dead the way the consumer's dead-owner scan does (`claimOwnerProvablyDead`). */
+  probe_owner?: boolean;
 }
 
 const age = (at: unknown, now: number): number | null => {
@@ -279,6 +285,11 @@ export function claimStateOf(row: ClaimRow, now = Date.now()): ClaimState | null
     owner: own ? stampOwner(stamp!.owner) : null, last_sql: own ? stampLastSql(stamp!.last_sql, now) : null };
   if (row.publication_started) return { phase: 'file_publication', claim_age_ms: claimAge, phase_age_ms: null, ...detail, resumes_on_its_own: false,
     why: 'Its files were being published; the publication recovery path restores or finishes them when the owning process scans its roots again (after a restart if it hung).' };
+  if (row.abandoned === true || row.probe_owner && own && claimOwnerProvablyDead(stamp)) {
+    const recorded = own && (stamp!.phase === 'preparing' || stamp!.phase === 'publishing') ? stamp!.phase as 'preparing' | 'publishing' : 'unrecorded';
+    return { phase: recorded, claim_age_ms: claimAge, phase_age_ms: recorded === 'unrecorded' ? null : age(stamp!.since, now), ...detail, resumes_on_its_own: true, owner_exited: true,
+      why: `Its owner process has exited (${row.abandoned === true ? 'it last wrote the claim before this process opened the brain, which admits one process at a time' : 'same machine boot, its process is gone'}) and nothing renews the claim. The next write from this machine (or a gbrain process already running here, within seconds) releases it and runs the request again; nothing else is needed.` };
+  }
   if (row.claim_lapsed) return { phase: 'publication_transaction', claim_age_ms: claimAge, phase_age_ms: null, ...detail, resumes_on_its_own: true,
     why: 'Its claim lapsed while it was still running and nothing was published: a transaction holds the request row (renewals cannot reach it) or its owner is gone. It is requeued once that transaction ends or the owner process exits.' };
   // #6650: an undispatched group follower's stamp names its token and owner but no phase yet.
@@ -295,6 +306,6 @@ function safeJson(text: string): unknown {
 /** The running-overdue verdict: a `preparing` claim older than its budget. */
 export interface ClaimStall { reason: 'preparation_overdue'; step: string | null; step_age_ms: number | null; waiting_on: WaitingOn; budget_ms: number }
 export function claimStall(claim: ClaimState | null, budgetMs: number): ClaimStall | null {
-  if (!claim || claim.phase !== 'preparing' || claim.phase_age_ms === null || claim.phase_age_ms < budgetMs) return null;
+  if (!claim || claim.owner_exited || claim.phase !== 'preparing' || claim.phase_age_ms === null || claim.phase_age_ms < budgetMs) return null;
   return { reason: 'preparation_overdue', step: claim.step, step_age_ms: claim.step_age_ms, waiting_on: claim.waiting_on, budget_ms: budgetMs };
 }

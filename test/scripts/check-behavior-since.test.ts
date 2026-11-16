@@ -12,6 +12,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { main, NOTICE_FILE, tbdLines } from '../../scripts/check-behavior-since.ts';
+import { build, OUT } from '../../scripts/build-behavior-changes.ts';
 import { DEFAULT_CHECKS } from '../../scripts/release-restamp.ts';
 import { BEHAVIOR_NOTICE_FILE, restampSinceLines, stampTbdSince } from '../../scripts/lib/restamp.ts';
 
@@ -49,7 +50,7 @@ function repo(): string {
   git(root, 'init', '-q', '-b', 'master');
   git(root, 'config', 'user.email', 't@t.co');
   git(root, 'config', 'user.name', 't');
-  put(root, { VERSION: '0.60.322.0\n', 'CHANGELOG.md': changelog('0.60.322.0'), [NOTICE_FILE]: notice('0.60.321.0', '0.60.322.0') });
+  put(root, { VERSION: '0.60.322.0\n', 'CHANGELOG.md': changelog('0.60.322.0'), [NOTICE_FILE]: notice('0.60.321.0', '0.60.322.0'), '.gstack/ship-policy.json': '{ "bump": "patch" }\n' });
   commit(root, 'master');
   git(root, 'update-ref', 'refs/remotes/origin/master', 'HEAD');
   git(root, 'checkout', '-q', '-b', 'feature');
@@ -108,6 +109,19 @@ describe('check:behavior-since', () => {
     expect(run(root, ['--stamped']).code).toBe(1);
   });
 
+  test('--stamped fails closed when .gstack/ship-policy.json is missing or cannot be parsed', () => {
+    const root = repo();
+    rmSync(join(root, '.gstack/ship-policy.json'));
+    const missing = run(root, ['--stamped']);
+    expect(missing.code).toBe(1);
+    expect(missing.out).toContain('FAIL: .gstack/ship-policy.json is missing');
+    put(root, { '.gstack/ship-policy.json': '{ "merge": "direct",\n' });
+    const broken = run(root, ['--stamped']);
+    expect(broken.code).toBe(1);
+    expect(broken.out).toContain('FAIL: .gstack/ship-policy.json cannot be parsed');
+    expect(run(root).code).toBe(0);
+  });
+
   test('master refuses a TBD row: by GITHUB_REF, by HEAD at the base, and when the base itself ships one', () => {
     const root = repo();
     put(root, { [NOTICE_FILE]: notice('0.60.322.0', 'TBD') });
@@ -158,5 +172,80 @@ describe('release:restamp and the TBD rows', () => {
 
   test("restamp's drift checks run the guard with --stamped", () => {
     expect(DEFAULT_CHECKS.map((c) => c.argv.join(' '))).toContain('bun scripts/check-behavior-since.ts --stamped');
+  });
+});
+
+describe('check:behavior-since under merge: direct', () => {
+  const POLICY = { '.gstack/ship-policy.json': JSON.stringify({ merge: 'direct' }) + '\n' };
+  const marker = '<!-- behavior-change: faster_sync_abc -->';
+  const fragment = { 'behavior-changes.d/faster_sync_abc.md': 'Sync is faster now.\n' };
+
+  /** origin/master already switched to merge: direct; the feature branch starts from it. */
+  function directRepo(): string {
+    const root = repo();
+    git(root, 'checkout', '-q', 'master');
+    put(root, POLICY);
+    commit(root, 'merge: direct');
+    git(root, 'update-ref', 'refs/remotes/origin/master', 'HEAD');
+    git(root, 'checkout', '-q', '-B', 'feature');
+    return root;
+  }
+
+  test('a literal TBD row is refused even on an unstamped branch (VERSION equals origin/master)', () => {
+    const root = directRepo();
+    put(root, { [NOTICE_FILE]: notice('0.60.321.0', '0.60.322.0', 'TBD') });
+    commit(root, 'feature');
+    const r = run(root);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("FAIL: 1 BEHAVIOR_CHANGES row(s) in " + NOTICE_FILE + " say since: 'TBD' (line 4)");
+    expect(r.out).toContain('under merge: direct');
+    expect(r.out).toContain('behavior-changes.d/<id>.md');
+    expect(run(root, ['--stamped']).code).toBe(1);
+  });
+
+  test('a branch with a pending fragment and no TBD row passes without --stamped', () => {
+    const root = directRepo();
+    put(root, { ...fragment, 'changelog.d/feature.md': '**Faster sync.**\n\n' + marker + '\n' });
+    commit(root, 'feature');
+    expect(run(root).code).toBe(0);
+  });
+
+  test('--stamped refuses a release commit that still holds an unfolded changelog.d fragment', () => {
+    const root = directRepo();
+    put(root, { ...fragment, VERSION: '0.60.323.0\n', 'changelog.d/feature.md': '**Faster sync.**\n\n' + marker + '\n', 'changelog.d/README.md': 'docs\n' });
+    put(root, { [OUT]: build(root).text });
+    commit(root, 'release, fragments not folded');
+    const r = run(root, ['--stamped']);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('still holds 1 unfolded changelog.d fragment(s): feature.md');
+    expect(r.out).toContain('VERSION 0.60.323.0');
+  });
+
+  test('--stamped refuses a folded release whose generated table is stale, and passes once it is fresh', () => {
+    const root = directRepo();
+    put(root, { ...fragment, VERSION: '0.60.323.0\n', 'CHANGELOG.md': changelog('0.60.322.0').replace('# Changelog\n\n', '# Changelog\n\n## [0.60.323.0] - 2026-11-09\n\n**Faster sync.**\n\n' + marker + '\n\n'), 'changelog.d/README.md': 'docs\n' });
+    commit(root, 'release, table not regenerated');
+    const stale = run(root, ['--stamped']);
+    expect(stale.code).toBe(1);
+    expect(stale.out).toContain('has a stale ' + OUT);
+
+    const { text, problems } = build(root);
+    expect(problems).toEqual([]);
+    expect(text).toContain("{ since: '0.60.323.0', id: 'faster_sync_abc'");
+    put(root, { [OUT]: text });
+    commit(root, 'release, table regenerated');
+    const ok = run(root, ['--stamped']);
+    expect(ok.code).toBe(0);
+    expect(ok.out).toContain("no since: 'TBD' row");
+  });
+
+  test('--stamped names the first fragment problem when the table cannot be built', () => {
+    const root = directRepo();
+    put(root, { ...fragment, VERSION: '0.60.323.0\n' });
+    put(root, { [OUT]: build(root).text });
+    commit(root, 'release with an orphan fragment');
+    const r = run(root, ['--stamped']);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('has a stale ' + OUT + ' (behavior-changes.d/faster_sync_abc.md has no');
   });
 });

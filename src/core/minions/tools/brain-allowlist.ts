@@ -36,9 +36,10 @@ import { SLUG_CHARS_RULE } from '../../cycle/source-language.ts';
 import { BRAIN_TOOL_ALLOWLIST } from './brain-tool-allowlist.ts';
 import { stagePutPage } from './staged-put-page.ts';
 import { withCallerAccess } from '../../search/private-visibility.ts';
-import { folderAccessFor, remoteCallerAccess } from '../../access/caller.ts';
+import { remoteCallerAccess } from '../../access/caller.ts';
+import { credentialScopeFor, requesterScopeGate, requiresRequesterScope, withServesReread } from '../../access/requester-scope.ts';
 import { attestedCallerAccess, attestRightOf, storedActorIdentity } from '../../access/actor.ts';
-import { attestedReadMode, SCOPE_READ_ACCESS, withReadMode } from '../../access/scope-read.ts';
+import { attestedReadMode, scopeReadAccess, withReadMode } from '../../access/scope-read.ts';
 import { attestedReadScope } from '../../access/member-sources.ts';
 import type { AudiencePrincipal } from '../../access/audience.ts';
 import { currentSubmissionAuthority } from '../submission-authority.ts';
@@ -329,11 +330,11 @@ function brainTool(op: Operation, opts: BuildBrainToolsOpts): ToolDef {
         ? await (async () => {
           const identity = await storedActorIdentity(ctx.engine, agent.principal, actor, op.name);
           const readMode = attestedReadMode(op.name, params, (await attestRightOf(ctx.engine, { principal: agent.principal }))?.read);
-          const access = readMode === 'scope' ? { ...SCOPE_READ_ACCESS, folderCoverage: (await folderAccessFor(ctx.engine, [])).folderCoverage } : await attestedCallerAccess(ctx.engine, actor, identity);
+          const access = readMode === 'scope' ? await scopeReadAccess(ctx.engine) : await attestedCallerAccess(ctx.engine, actor, identity);
           return withCallerAccess(access, () => withReadMode(readMode, async () => run(await attestedReadScope(ctx.engine, opCtx, actor.member, readMode === 'scope'))));
         })()
         : opCtx.auth
-        ? await withCallerAccess(await remoteCallerAccess(ctx.engine, opCtx.auth, [], undefined, actingFor, undefined, op.mutating === false), run)
+        ? await withCallerAccess(await scopedJobAccess(ctx.engine, op, opCtx.auth, actingFor), run)
         : await run();
       const rejection = op.name === 'put_page' ? putPageRejection(output) : null;
       if (rejection) throw new Error(rejection);
@@ -341,6 +342,20 @@ function brainTool(op: Operation, opts: BuildBrainToolsOpts): ToolDef {
       return output;
     },
   };
+}
+
+/**
+ * The caller access of a remote-owned job's tool call. GST-363: the same requester-scope gate as dispatch, read live
+ * on every call: on a brain that serves several people, a read by a job whose credential is bound to nobody (and that
+ * names no audience) is refused with requester_scope_required once the grace ends; during it the call runs.
+ */
+async function scopedJobAccess(engine: BrainEngine, op: Operation, auth: NonNullable<OperationContext['auth']>, actingFor: AudiencePrincipal[] | undefined) {
+  const access = await remoteCallerAccess(engine, auth, [], undefined, actingFor, undefined, op.mutating === false);
+  if (!requiresRequesterScope(op, auth)) return access;
+  const credential = await credentialScopeFor(engine, auth);
+  const resolved = await withServesReread(engine, access, credential);
+  requesterScopeGate(op, resolved, credential, 'http');
+  return resolved;
 }
 
 /**

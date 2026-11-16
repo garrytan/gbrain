@@ -155,6 +155,7 @@ Every hold and error has three fields, from one table
 | `freeze_page_body_rows_unreadable` | page | repair | yes | always: the page's segment rows do not cover its stored body, so no sync can read it |
 | `page_write_failed` | page | upgrade | yes | always: the writer cannot place the failure |
 | `file_unreadable` | page | none | yes | always: only a change to the checkout makes the file readable |
+| `tag_too_long` | page | none | yes | always: only an edit to the file clears it |
 | `visibility_noncanonical` | page | none | yes | always: only an edit to the file clears it |
 | `content_null_bytes` | page | none | yes | always: only an edit to the file or its removal clears it |
 | `content_filter_owned` | page | none | yes | always: sync never runs the filter that would turn the file into text |
@@ -164,6 +165,7 @@ Every hold and error has three fields, from one table
 | `rename_identity_unreadable` | page | none | yes | always: the file title or id holds characters the database cannot compare |
 | `rename_reconcile_failed` | page | none | yes | always: the old page may be a duplicate |
 | `file_drift_unknown` | page | reconcile | yes | always: the file and the page differ and no import record says which changed |
+| `file_drift_mirror_database_only` | page | none | no | never: the page stays live and database-only because gbrain never writes a read-only mirror |
 | `origin_conflict_decision` | page | none | yes | always: the pages differ, their ids conflict or none is the page the path names |
 | `page_identity_decision` | page | none | yes | always: only a person decides which page the file is |
 | `absent_from_worktree` | page | none | yes | always: only a person decides whether the file comes back or its deletion is committed |
@@ -276,6 +278,18 @@ it and kept going; the receipt lists the hold (`held`, `held_count`) and
   `gbrain repair content --source <id>` previews it. A hold the lane will not
   decide is `needs_human` with the paragraph in `human_reason`
   ([held files](repair.md#held-files)).
+- `file_drift_mirror_database_only`: on a read-only mirror
+  (`gbrain sources mirror-readonly <id>`) a file gone upstream whose page was
+  edited in gbrain stays held and its page stays live and database-only, since
+  gbrain never writes the mirror. These holds never block the pass and are not
+  re-screened every sync; the run and `sync status` report them as `carried`
+  (class, count, a sample and the preview that lists them).
+- A symlink whose target does not exist is not a page: sync skips it and
+  counts it (`skipped.symlink_dangling`) instead of holding it as unreadable,
+  and releases an unreadable hold an older release wrote for it. A dangling
+  link at the path of a live page stays held, so the page is never deleted,
+  and so does a committed file whose working copy alone was replaced by a
+  dangling link.
 - The other repair codes (`invalid_frontmatter`, `rename_held`) stay
   consent-gated: unblock refuses them with the frontmatter repair preview to
   run ([held files](write-refusals.md#held-files-and-content-refusals)).
@@ -384,7 +398,7 @@ run converges on the next plain sync with no flag.
 |---|---|---|---|
 | `pass_unfinished` | resumable | The newest pass is open or stopped at a deadline. | The plain sync (`resume_argv`); safe to loop. |
 | `pass_interrupted` | resumable | The newest pass is open but no process holds the source's drain lease: its process was killed or crashed (an out-of-memory guard, a timeout) before it ended the pass, so nothing recorded a failure. `live` is null and `interrupted` names the pass, its last write and, when the lock row outlived the process, the holder and the pages it committed. Doctor `managed_sync_blocked` lists it as `pass_interrupted` (warn, then fail after an hour). | The plain sync; if that pass stops the same way, the reason becomes `pass_abandoned`. |
-| `pass_abandoned` | blocked | Two passes in a row never ended or ended on the same kind of transient stop: the drain stopped them for making no progress, their process was killed, or each hit a statement timeout, a lost connection or write back-pressure (#7982). The newest open pass counts once no process holds the source's drain lease (#7596; a reader without the lease read counts it once its row has not moved for 5 minutes). | `gbrain doctor --json` and a report with the gbrain version and the newest run's `drain.stall`; another plain sync is likely to stop the same way. |
+| `pass_abandoned` | blocked | Two passes in a row never ended or ended on the same kind of transient stop, and neither committed a page or wrote a hold before it stopped (a pass that committed work moved the source, so it resets the count; a pass that only reported progress does not): the drain stopped them for making no progress, their process was killed, or each hit a statement timeout, a lost connection or write back-pressure (#7982). The newest open pass counts once no process holds the source's drain lease (#7596; a reader without the lease read counts it once its row has not moved for 5 minutes). | `gbrain doctor --json` and a report with the gbrain version and the newest run's `drain.stall`; another plain sync is likely to stop the same way. |
 | `not_converged` | resumable | The pass used its four rounds while another writer kept changing the level. Everything it admitted stands. | The plain sync; after three such passes in a row `next` is `gbrain doctor --json` and a report, because another sync will not change it. |
 | `settle_mismatch` | resumable | A path keeps settling without reading settled. The next pass re-admits it once; after three passes at one level it is a `settle_mismatch` hold that needs a person. | The plain sync, then report the hold. |
 | `deletes_withheld` | blocked | The pass's deletes crossed the mass-delete threshold (#2828) or an absolute cap (#7130: `sync.max_deletes`, default 500; `sync.max_delete_ratio`, default 0.01 above 50 deletes; per source `<key>.source.<id>`). The record's `trip` names which. It wrote one withheld record and synced everything else; no per-page hold is written. | Ask the user: restore the checkout if it is wrong; when the deletion is intended, raise the cap for that source (`gbrain config set sync.max_deletes.source.<id> <n>`) or run `GBRAIN_ALLOW_MASS_RECONCILE=1 gbrain sync --source <id>` on the brain host. `gbrain sync --source <id> --dry-run --json` lists the set and its hash. |
@@ -435,7 +449,8 @@ it, and a `--full` continues until every path it covers is settled.
   file is unchanged; a page sync deleted because its file was gone is an `import` once the file is back), and `db_ahead` (the page changed in the database and the file
   did not; the sub-labels `pending`, `db_only` and `unproven` are
   informational, and `gbrain repair file-drift --prefer database` writes one
-  back to its file if the owner wants it).
+  back to its file if the owner wants it: its preview names any file change
+  sync never imported, and its apply asks for the owner's consent).
 - `owner`, sync finishes it by itself: `in_flight` (admitted, not yet
   published), `import`, `reparse` (an unchanged file whose page is imported
   again because its parser or schema pack changed, its origin moved, or an

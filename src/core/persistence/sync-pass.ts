@@ -635,6 +635,18 @@ async function reclassifyByOrigin(gitRoot: string, tips: Array<string | null | u
  * GBRA-133: the deleted-side `file_drift` holds and the `concurrent_write` holds (#8751) whose file is gone (`gone`, on the
  * Git path); the stamp releases those whose page is no longer live, where both sides agree the path is deleted.
  */
+/**
+ * Whether the pass releases a held path: one outside the sync domain, a `storage_invalid` hold once gbrain.yml's storage
+ * loads and resolves its folder (#8007), and (GST-2568) a live page whose file is gone once gbrain.yml declares its folder
+ * database-only, which is no drift.
+ */
+function releasableHold(hold: GitHoldRecord, inDomain: boolean, dbOnlyUnknown: boolean, storage: Parameters<typeof dbOnlyVerdict>[1]): boolean {
+  if (!inDomain) return true;
+  if (dbOnlyUnknown || hold.code !== 'file_drift') return false;
+  if (hold.meta.reason === 'storage_invalid') return !hold.slug || dbOnlyVerdict(hold.slug, storage) !== 'unknown';
+  return hold.meta.state === 'file_gone' && !!hold.slug && dbOnlyVerdict(hold.slug, storage) === true;
+}
+
 function deletionCandidates(holds: readonly GitHoldRecord[], gone: (path: string) => boolean, toGit: (path: string) => string): DeletionCandidate[] {
   return holds.filter(hold => (hold.code === 'concurrent_write' || hold.code === 'file_drift' && fileDriftSide(hold.meta) === 'deleted') && gone(toGit(hold.path)))
     .map(hold => ({ path: hold.path, page_id: hold.page_id ?? null, slug: hold.slug ?? null }));
@@ -936,7 +948,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
   }
   return { sourceId, incarnation, root, gitRoot, scope, slugMode, mode, strict, head, baselineCommit, full: input.full === true, kind: kind.kind, kindBlockers: kind.blockers,
     heldRenames: holds.flatMap(hold => hold.meta.rename_from ? [{ path: toGit(hold.path), rename: hold.meta.rename_from }] : []),
-    releasableHolds: holds.filter(hold => !domain.has(toGit(hold.path)) || (!dbOnlyUnknown && hold.code === 'file_drift' && hold.meta.reason === 'storage_invalid' && (!hold.slug || dbOnlyVerdict(hold.slug, storage) !== 'unknown'))).map(hold => hold.path),
+    releasableHolds: holds.filter(hold => releasableHold(hold, domain.has(toGit(hold.path)), dbOnlyUnknown, storage)).map(hold => hold.path),
     deletionCandidates: deletionCandidates(holds, path => domain.has(path) && !tree.has(path)
       && !(mode === 'working' && (untracked.has(path) || index.has(path))) && !readPresent(root, path, scope), toGit),
     paths, reconcilable, ...(colon.refusals.size ? { fileRefusals: [...colon.refusals.values()] } : {}), timings_ms: timings, statements: statements + attestationStatements + 3,

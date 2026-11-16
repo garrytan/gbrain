@@ -34,7 +34,8 @@ export function withAIInvocationGuard<T>(guard: AIInvocationGuard, run: () => Pr
     const outer = await parent(call);
     let inner: AIInvocationPermit;
     try { inner = await guard(call); }
-    catch (error) { await outer.settle(null); throw error; }
+    // #9086: nothing was dispatched, so release the outer hold at zero usage instead of keeping it as unknown.
+    catch (error) { await outer.settle({ inputTokens: 0, outputTokens: 0 }); throw error; }
     return { settle: async usage => { await outer.settle(usage); await inner.settle(usage); } };
   }, run);
 }

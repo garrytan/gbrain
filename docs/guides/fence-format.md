@@ -47,7 +47,7 @@ Facts cells are read by the column the header names, in any order. A header with
 | 7 | `valid_from` | free text | no | - | When it became true (`YYYY-MM-DD`), or empty. |
 | 8 | `valid_until` | free text | no | - | When it stopped being true, or empty. |
 | 9 | `source` | free text | no | - | Where it came from, free text. |
-| 10 | `context` | free text | yes | - | Free text. `superseded by #N` names the row that replaced a struck row; `forgotten: ...` marks a row withdrawn with `forget`. |
+| 10 | `context` | free text | yes | - | Free text. On a struck row, `superseded by #N` names the row that replaced it and `forgotten: ...` marks it withdrawn with `forget`. On a live row both are plain text. |
 | 11 | `claim_metric` | free text | yes | - | Metric of a typed claim (`mrr`, `team_size`, ...), or empty. |
 | 12 | `claim_value` | a number, optionally with 1,234 separators or a k/M/B suffix | yes | - | Value of a typed claim. |
 | 13 | `claim_unit` | free text | yes | - | Unit (`USD`, `people`, ...), or empty. |

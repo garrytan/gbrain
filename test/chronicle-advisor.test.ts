@@ -33,6 +33,19 @@ describe('collectChronicle', () => {
     expect(gap!.fix.command_argv).toEqual(['gbrain', 'chronicle-backfill', '--since', since, '--limit', '50', '--dry-run']);
   });
 
+  // Value: protects=the coverage gap counts only pages whose own date is recent (the automatic extraction's history cutoff) and its title names what it counts; fails_when=a bulk import of years-old conversations (fresh updated_at) is reported as tens of thousands of "recent meetings" with a paid backfill as the fix; why_new=#7282; seam=none; no_claim=the backfill's own selection
+  test('#7282: an old-dated page with a fresh updated_at is not a recent gap; the title names the types', async () => {
+    try {
+      const body = 'x'.repeat(120);
+      await engine.putPage('conversations/old-thread', { type: 'conversation', title: 'old thread', compiled_truth: body, frontmatter: { date: '2019-03-01' } } as never);
+      await engine.putPage('meetings/this-week', { type: 'meeting', title: 'this week', compiled_truth: body, frontmatter: { date: new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10) } } as never);
+      const gap = (await collectChronicle.collect(ctx())).find((f) => f.id === 'chronicle_coverage_gap');
+      expect(gap?.title).toBe("1 recent meeting, conversation or calendar page(s) aren't in the timeline yet (1 meeting)");
+    } finally {
+      await engine.executeRaw(`DELETE FROM pages WHERE type = 'conversation'`);
+    }
+  });
+
   test('flags unresolved ontology conflicts', async () => {
     await engine.mergeOntologyFact({ entitySlug: 'people/x', dimension: 'role', value: 'advisor', source: 'm/a', validFrom: '2026-05-01' });
     await engine.mergeOntologyFact({ entitySlug: 'people/x', dimension: 'role', value: 'founder', source: 'm/b', validFrom: '2026-01-01' });

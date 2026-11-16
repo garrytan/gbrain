@@ -8,6 +8,8 @@
 #      routing-eval fixtures)
 #   3. skills.lock.json regen + freshness
 #   4. check-skill-refs (dangling refs, donor remnants, CLI refs, links that leave skills/)
+#   5. check-skill-health (drift against the CLI surface, per-skill size ceilings) and
+#      Skill-size lines for the staged SKILL.md files
 #
 # Optional: pass changed .md file paths as arguments to also run the harvest
 # privacy linter over them (the merge-lane lint — harvest can't lint merges).
@@ -46,6 +48,9 @@ elif [ -n "$(git diff --name-only -- skills/skills.lock.json)" ]; then
 fi
 step "skills.lock freshness" bash scripts/check-skills-manifest-fresh.sh
 step "skill refs" bun scripts/check-skill-refs.mjs
+step "skill health (drift + size)" bun scripts/check-skill-health.ts
+# Skill-size lines for the commit message (CONTRIBUTING.md, "Changing a skill").
+bun scripts/check-skill-health.ts --sizes $(git diff --cached --name-only -- 'skills/*SKILL.md') >&2
 
 if [ "$#" -gt 0 ]; then
   # Single-quoted on purpose: nothing here is for bash to interpolate.

@@ -1,0 +1,1 @@
+`gbrain transcripts audit-secrets` and re-scans of stored pages again report a password glued to an importer redaction marker by punctuation (`<REDACTED:user-pattern>,<password>`, `<REDACTED:x>.<password>`): punctuation after a marker ends it only when a space or the line end follows. Pages that hold such a line show up as affected again; import-time redaction is unchanged.

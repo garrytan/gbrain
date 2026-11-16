@@ -99,12 +99,20 @@ for (const backend of testBackends()) describe(`GBRA-133: a held file-drift prev
         ...(opts.cursor ? { cursor: opts.cursor } : {}), ...(opts.deadline !== undefined ? { deadline: opts.deadline } : {}), ...(opts.expect ? { expect: opts.expect } : {}),
         ...(opts.progress ? { progress: opts.progress } : {}) });
   const refusal = async (promise: Promise<unknown>) => { try { await promise; } catch (error) { return error as OperationError; } throw new Error('expected a refusal'); };
-  /** `count` live pages whose committed files are then removed in one commit, each held as the file_gone Decision. */
-  async function fileGone(f: Fixture, count: number): Promise<string[]> {
+  /**
+   * `count` live pages whose committed files are then removed in one commit, each held as the file_gone Decision. With
+   * `committed: false` no commit ever held the files (never_committed), so recreating one undoes no commit; a committed
+   * delete newer than what sync imported is kept_newer_delete in a held window instead (GST-2579).
+   */
+  async function fileGone(f: Fixture, count: number, opts: { committed?: boolean } = {}): Promise<string[]> {
     const slugs = Array.from({ length: count }, (_, i) => `notes/gone-${String(i).padStart(4, '0')}`);
+    const committed = opts.committed !== false;
+    if (!committed) git(f.root, 'commit', '-q', '--allow-empty', '-m', 'base');
     for (const slug of slugs) await put(f.ctx, slug, `The page ${slug}.`);
-    commitAll(f.root, 'pages');
-    git(f.root, 'rm', '-q', '--', ...slugs.map(slug => `${slug}.md`)); git(f.root, 'commit', '-q', '-m', 'remove');
+    if (committed) {
+      commitAll(f.root, 'pages');
+      git(f.root, 'rm', '-q', '--', ...slugs.map(slug => `${slug}.md`)); git(f.root, 'commit', '-q', '-m', 'remove');
+    } else for (const slug of slugs) rmSync(join(f.root, `${slug}.md`));
     for (const slug of slugs) {
       const live = (await snapshot(f.sourceId, slug))!;
       await hold(f, { path: `${slug}.md`, slug, pageId: Number(live.page.id), side: 'deleted', state: 'file_gone', revision: live.revision });
@@ -115,7 +123,7 @@ for (const backend of testBackends()) describe(`GBRA-133: a held file-drift prev
   const slugsOf = (result: Awaited<ReturnType<typeof run>>) => (result.details!.pages as Array<{ slug: string }>).map(page => page.slug);
 
   test('past its time budget a window previews one page; the cursors walk the held set once, and an apply covers only its window', () => fixture(async f => {
-    const slugs = await fileGone(f, 3);
+    const slugs = await fileGone(f, 3, { committed: false });
     const ticks: string[] = [];
     const progress = { start: (phase: string, total?: number) => ticks.push(`start ${phase} ${total}`), tick: (_n?: number, note?: string) => ticks.push(`tick ${note}`),
       heartbeat() {}, finish: () => ticks.push('finish'), child: () => progress } as unknown as ProgressReporter;
@@ -148,8 +156,9 @@ for (const backend of testBackends()) describe(`GBRA-133: a held file-drift prev
   }), 240_000);
 
   test('an apply parses the preview artifact once while it is unchanged, and reports each item to its progress reporter', () => fixture(async f => {
+    // Named pages: a committed delete is recreated only when the page is named (GST-2579).
     const slugs = await fileGone(f, 3);
-    const preview = await run(f.sourceId, {});
+    const preview = await run(f.sourceId, { held: false, slugs });
     const hash = preview.preview_hash!;
     // Git durability is off in this fixture: the preview leads with what the next sync does to an uncommitted recreate.
     expect(preview.warnings![0]).toStartWith('The next sync undoes this repair unless the recreated files are committed');
@@ -162,14 +171,14 @@ for (const backend of testBackends()) describe(`GBRA-133: a held file-drift prev
     const ticks: string[] = [];
     const progress = { start: (phase: string, total?: number) => ticks.push(`start ${phase} ${total}`), tick: (_n?: number, note?: string) => ticks.push(`tick ${note}`),
       heartbeat() {}, finish: () => ticks.push('finish'), child: () => progress } as unknown as ProgressReporter;
-    const applied = await run(f.sourceId, { expect: hash, progress });
+    const applied = await run(f.sourceId, { held: false, slugs, expect: hash, progress });
     expect(applied.outcomes).toEqual({ repaired: 3 });
     expect(ticks).toEqual(['start repair.file-drift.apply 3', ...slugs.map(slug => `tick ${f.sourceId}:${slug}`), 'finish']);
     for (const slug of slugs) expect(existsSync(join(f.root, `${slug}.md`))).toBe(true);
   }), 240_000);
 
   test('a window stops at 200 pages and the next one previews the rest', () => fixture(async f => {
-    const slugs = await fileGone(f, 203);
+    const slugs = await fileGone(f, 203, { committed: false });
     const first = await run(f.sourceId, {});
     expect(slugsOf(first)).toEqual(slugs.slice(0, 200));
     expect(window(first)).toMatchObject({ previewed: 200, remaining: 3, complete: false });

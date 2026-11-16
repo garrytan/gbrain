@@ -2,11 +2,14 @@ name: Stable daily
 
 # The daily stable check (docs/RELEASING.md#daily-stable-check,
 # scripts/stable-daily.ts). Twice a day it promotes the newest release whose
-# exact tree passed the production soak with every integrity gate clean, but
-# only when a reason exists: a merged PR labelled stable:important that is
-# released but not yet in stable, or stable older than 7 days (the weekly
-# floor). With nothing to promote yet it dispatches one soak on the newest
-# release, and a later run promotes it. It never promotes without that soak,
+# exact tree passed the production soak with every integrity gate clean and
+# whose upgrade matrix run on that tag and tree is green, but only when a
+# reason exists: a merged PR labelled stable:important that is released but
+# not yet in stable, or stable older than 7 days (the weekly floor). While the
+# upgrade matrix's own break issue is open it holds, except for a security or
+# data-loss fix. With nothing to promote yet it dispatches one soak (and one
+# upgrade matrix run) on the newest release, and a later run promotes it. It
+# never promotes without that soak and matrix run,
 # never moves stable backward, pauses while stable is a rollback, and does
 # nothing while the STABLE_AUTO_PROMOTE repository variable is "off".
 # When the published stable.json is missing or names another commit than
@@ -38,7 +41,8 @@ on:
 
 permissions:
   contents: write  # push the stable-v<version> and stable tags and the stable-record branch (stable.json)
-  actions: write   # read soak runs and their scoreboards; dispatch a soak
+  actions: write   # read soak and upgrade matrix runs and their artifacts; dispatch a soak or the matrix
+  issues: read     # find the upgrade matrix's open break issue, which holds stable
 
 concurrency:
   group: promote-stable

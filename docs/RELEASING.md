@@ -134,7 +134,112 @@ queued commit against `master`.
   actually merged (`gh pr view <n> --json state,mergedAt`) before tagging,
   announcing or starting dependent work.
 
+## Releases per batch
+
+PRs no longer pick a version. A PR adds a changelog fragment and lands;
+a release PR, opened a few times a day, gives every fragment that reached
+master since the last release one version and writes all the stamps at once.
+`.gstack/ship-policy.json` turns this on (`changelog_fragments`,
+`merge: "direct"`), and gstack's /ship, receipt and land commands follow it.
+
+**How a PR lands.** Every PR, release PRs included, lands on master as one
+squashed commit whose subject is the PR title followed by `(#<number>)`, so
+`git log --oneline master` reads as a list of changes, with no
+"Merge pull request" lines and none of a branch's own housekeeping commits.
+The maintainer's merge step makes that commit; its body is the PR's
+summary lines, and everyone else who wrote commits on the branch is
+credited with a `Co-authored-by:` trailer. Only the landing squashes. A
+branch brings master in with a merge commit and is never rebased or
+force-pushed; `history: "merge-only"` in `.gstack/ship-policy.json` makes
+/ship refuse a plan that would. Write the PR title as the one line a
+reader of the log should see.
+
+**What a PR carries.**
+
+- `changelog.d/<branch-slug>.md`: the PR's CHANGELOG entry with no version
+  heading (bold one-line summary, then the itemized sections; voice rules
+  below). /ship writes it. Front matter may say
+  `important: security|regression|data-loss`, where regression means one in
+  a release that is on stable ("Daily stable check"); releases are PATCH
+  only, so `scripts/build-behavior-changes.ts` (in `check:regen-all`) refuses
+  a `bump:` line other than `patch` and any other `important:` class. Format:
+  [changelog.d/README.md](../changelog.d/README.md).
+- One `behavior-changes.d/<id>.md` file per new upgrade-notice row, named
+  in the fragment as `<!-- behavior-change: <id> -->`
+  ([behavior-changes.d/README.md](../behavior-changes.d/README.md)).
+- Its own schema migrations, numbered master's latest + 1 when written.
+- Nothing else that carries a version: no edit to VERSION, the package.json
+  version, the plugin manifests, the BOOTSTRAP stamp, the plugin or template
+  trees, a released CHANGELOG section or a released `since:` row. The PR
+  title is plain words with no version in front.
+
+**The release PR.** The merge lane runs `gstack-release-stamp open`. On a
+fresh worktree of `origin/master` it sets VERSION to master's PATCH + 1,
+runs `bun scripts/release-restamp.ts --stamp-only <version>` (every required row
+of the CLAUDE.md "Version locations" table plus the plugin, variant and
+template stamp lines; no fetch, no merge, no commit) and
+`bun scripts/build-behavior-changes.ts`, which dates each pending
+`behavior-changes.d` marker with the new version, in the order the fold
+writes them, then folds every `changelog.d` fragment under one
+`## [<version>] - <date>` heading and deletes the fragments. It
+pushes `release/<version>` and opens the PR. The lane lands it with
+`gstack-ship-queue land --pr <n> --pin <head>`, which accepts only a head
+that is exactly the release stamp of master's tip. The release PR runs the
+cheap tier; release.yml's ci-gate waits for the full Test and E2E push runs
+on the release commit before anything publishes.
+
+**When releases happen.** At 00:00, 06:00, 12:00 and 18:00 UTC the merge
+lane opens a release when master holds at least one fragment and the last
+release is 4 hours old or more. It also opens one right after landing a PR
+whose fragment says `important:`, so an important fix is in a published
+release within about an hour and can go to the stable channel (see "Daily
+stable check").
+
+**What refuses a bad release.** gstack's land refuses a release head that
+changes anything but stamps, the CHANGELOG fold and `release_outputs` (here
+`src/core/behavior-changes.generated.ts`, which it regenerates and compares
+byte for byte). release.yml runs `bun scripts/check-behavior-since.ts --stamped`,
+which refuses a release commit that still holds a `changelog.d` fragment,
+a literal `since: 'TBD'` row or a stale behavior-change table, and fails
+closed when `.gstack/ship-policy.json` is missing or unparsable. A cancelled
+or skipped Test or E2E push run fails the gate with the `gh run rerun <id>`
+to run; the gate no longer follows to a later commit with the same VERSION,
+because between releases every master commit shares one, and a
+`workflow_dispatch` refuses unless master HEAD is the release commit.
+
+**Migration collisions.** Two open PRs can take the same migration number.
+GitHub then reports the second one conflicting (both edit the generated
+registry), and `check:schema-migration-order` fails on the merged tree.
+`bun run migrations:renumber` renumbers the branch's own migrations after
+master's latest (file name, export name and `version:` literal; the rest
+must be token-identical) and regenerates the registry, as step 5 of
+[Release restamp](#release-restamp) describes. That makes a new head, which
+needs a new full CI run. Migration numbers stay sequential for the reason
+given there.
+
+**Converting an open stamped PR.** A PR written before this switch still
+carries a version. `bun run release:unstamp` merges `origin/master`, puts
+every stamp back to master's version, moves the branch's CHANGELOG entry to
+`changelog.d/<branch-slug>.md` and its appended plain-text
+`BEHAVIOR_CHANGES` rows to `behavior-changes.d/` (with their markers),
+puts the notice file and its size-table row back to master's, and commits
+once. It refuses, with the fix, a branch with no entry of its own, one that
+edits a released CHANGELOG section, one that carries other PRs' entries (land
+or convert those first), and notice rows it can't move (rows without an id,
+rows whose text is a function, edits other than appending). Plain
+`release:restamp` refuses once master's policy says `merge: "direct"`.
+
+**Why notice rows are files.** Every PR used to append its row to the end of
+one array in `src/core/behavior-change-notice.ts`, which also raised that
+file's line in `scripts/module-size-limits.tsv`; those two lines were the
+second-largest source of master conflicts after the stamps. Rows in their
+own files, which the release never edits or deletes, touch neither line.
+
 ## CHANGELOG + VERSION are branch-scoped
+
+Under [releases per batch](#releases-per-batch) a PR writes only its
+`changelog.d` fragment; the voice rules below apply to that text, and the
+version and placement rules apply to the release PR.
 
 **VERSION and CHANGELOG describe what THIS branch adds vs master, not how we got
 here.** Every feature branch that ships gets its own version bump and CHANGELOG
@@ -181,6 +286,11 @@ If any answer is no, fix it before continuing.
 - Credit to external contributors when a community PR was incorporated.
 
 ## Release restamp
+
+Under [releases per batch](#releases-per-batch) PRs do not restamp: the
+release PR stamps, and `release:restamp` refuses. Its renumbering runs on its
+own as `bun run migrations:renumber`, and `bun run release:unstamp` converts a
+PR stamped the old way. The steps below describe the shared machinery.
 
 `bun run release:restamp` makes a branch next-to-merge in one command. Run it
 when your PR is next in the merge line, not earlier: the merge coordinator
@@ -533,9 +643,12 @@ If any SHA differs from what's in the workflow files, update the pin and version
 `VERSION`, plus `workflow_dispatch` for a manual first run or repair). No
 manual tag push is part of the ship flow — the workflow reads `VERSION` (the
 single source of truth), mints tag `v<VERSION>` at the pushed commit, titles
-the release the same, uses that version's `CHANGELOG.md` entry as the notes
-(`scripts/changelog-entry.sh`; falls back to a CHANGELOG link if the entry is
-missing), and attaches the compiled binaries.
+the release the same, uses that version's `CHANGELOG.md` entry as the notes,
+opened by one line per folded changelog fragment with the pull request that
+added it (`scripts/changelog-entry.sh --pr-list`; falls back to a CHANGELOG
+link if the entry is missing), and attaches the compiled binaries. Every one is published as a
+pre-release; only the stable release is GitHub's "Latest" ([Which release GitHub
+calls Latest](#which-release-github-calls-latest)).
 
 The executable build job pins Bun 1.4.4, the first release with the Brotli fix
 for CVE-2026-111497 (#7373): a standalone binary embeds the Bun it was built
@@ -552,15 +665,22 @@ The `ci-gate` job (`scripts/release-gate.ts`) holds build, publication and the
 succeed on the release commit.
 
 - **Failed run:** nothing is published and the job fails with the run and the
-  master-red issue. After master is green again, publish the current VERSION
-  with `gh workflow run release.yml --ref master`.
-- **Run cancelled by a newer push:** the gate follows the next master commit.
-  If it contains the release commit and carries the same VERSION, that commit
-  is gated and published. If VERSION moved on, this version is skipped and the
-  newer VERSION's release run publishes.
+  master-red issue. When the failure is outside the release commit (a flake),
+  re-run the failed run, then re-run the Release run (`gh run rerun <release
+  run id>`), which gates the same commit; otherwise land the repair and open
+  the next release.
+- **Cancelled or skipped run:** nothing is published and the job fails with
+  `gh run rerun <id>`. Master push runs are keyed by commit, so a newer push
+  no longer cancels them; and between releases many master commits share one
+  VERSION, so the gate never follows to a later commit.
 - **Backfill:** `gh workflow run release.yml --ref master` gates and publishes
-  master HEAD's VERSION. Other refs are refused.
-- The gate waits up to 110 minutes, then fails with the backfill command.
+  master HEAD's VERSION only while HEAD is the release commit (the
+  first-parent commit that last changed VERSION): between releases a later
+  commit carries the same VERSION with unreleased changes, so the gate then
+  refuses and names the re-run of the release commit's push Release run.
+  Other refs are refused.
+- The gate waits up to 110 minutes, then fails naming the re-run of the
+  Release run.
 - **Reused push run:** a push run that reused a passed full-suite run of its
   exact tree ([master-push reuse](ci-event-parity.md#master-push-reuse))
   publishes only with a readable `reuse.json` naming the same workflow, the
@@ -591,6 +711,47 @@ release already exists with all assets):
 git push origin "+refs/tags/v<VERSION>^{commit}:refs/tags/latest-stable"
 ```
 
+### Which release GitHub calls Latest
+
+release.yml publishes every batch release with `prerelease: true` and
+`make_latest: false`, so the Releases page and its Latest badge point at the
+release installs follow. Each promotion (`scripts/promote-stable.ts`, from the
+promote dispatch or the daily check) ends by marking the promoted release
+Latest and clearing its pre-release flag. A forward promotion also replaces its
+notes with every CHANGELOG entry since the previous stable, newest first; the
+oldest entries drop with a link to the full CHANGELOG once the notes would pass
+GitHub's 125,000-character limit. A rollback keeps the notes.
+
+A forward promotion never moves Latest to an older release than the one it
+marks now, because binaries released before this rule download
+`releases/latest` as their update. So during the changeover Latest stays on
+the newest release published before the rule, until stable passes it; that
+promotion sets Latest, and from then on Latest is stable. `backfill` should
+not be needed. A hand re-run of release.yml that would republish the current
+stable release as a pre-release refuses; upload missing assets with
+`gh release upload` instead.
+
+Nothing that installs or updates gbrain reads GitHub's Latest: `#stable` and
+`gbrain upgrade` follow the `stable` tag and its record; the alpha channel
+(binary self-update included) reads `VERSION` at `latest-stable` and fetches
+that exact release; the upgrade matrix counts pre-releases as releases; the
+macOS signature check resolves its tag from `latest-stable`. Anyone who
+downloads from `releases/latest` by hand now gets the stable release, about a
+day behind the newest. People who watch the repository for releases are still
+notified of pre-releases: GitHub has no setting to skip them.
+
+`scripts/release-channel.ts` handles GitHub release state outside a promotion;
+each command prints its plan and writes nothing without `--apply`:
+
+- `backfill`: every published release newer than the current stable becomes a
+  pre-release and the stable release becomes Latest with rolled-up notes. It is
+  also the repair when a promotion moved `stable` but could not mark it Latest
+  (the refusal names it).
+- `undo`: every pre-release goes back to a normal release and the newest release
+  becomes Latest, as before this rule. Revert the workflow change with it.
+- `preview-promotion [--version <v>]`: the release a promotion would make
+  Latest and the notes it would write.
+
 ### Stable channel promotion
 
 The stable channel, the clients' default since GBRA-224, is a slower ref than
@@ -617,12 +778,15 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   version's first promotion and never moved or deleted. Both carry the same
   message: a title line (`gbrain`, then `stable channel: v<VERSION>`), then one
   `key: value` line each for `version`, `commit`, `tree`, `soak_run`,
-  `scoreboard`, `promoted_by`, `promoted_at` (UTC), `previous`
+  `scoreboard`, `matrix_run` (only when the promotion named one; `stable.json`
+  always has the key, `null` without one), `promoted_by`, `promoted_at` (UTC), `previous`
   (`none` on the first promotion), `rollback` and `reason` (`-` when
   empty).
 - **Inputs.** `version` (an existing `v<VERSION>` release tag),
   `soak_run_url` (the soak's Actions run URL, optionally
-  `/attempts/<n>`), `scoreboard_url` (optional, defaults to the run URL),
+  `/attempts/<n>`), `matrix_run_url` (optional for a maintainer: a green
+  upgrade matrix run on this release, see below), `scoreboard_url` (optional,
+  defaults to the run URL),
   `rollback` (default false), `reason` (required with rollback) and
   `withdraw` (versions added to the carried-forward `known_bad` list;
   clients on one are offered the current stable, even when older), and
@@ -655,6 +819,16 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   variables → Actions → Variables; a bare file name like `soak.yml` or the
   full `.github/workflows/soak.yml` path). With the variable unset, every
   promotion is refused.
+- **Upgrade matrix run.** When `matrix_run_url` is given, it must be a
+  completed run of `.github/workflows/upgrade-matrix.yml` from master's harness
+  (a schedule or dispatch run, not a pull request's), with the full from-version
+  set and no fault injection, whose `upgrade-matrix-receipt` artifact names this
+  release's tag, commit and tree and was written by that run's own commit, and
+  it must be green; a red or foreign run is refused
+  (`scripts/stable-matrix.ts` `judgeMatrixRun`). A maintainer may promote
+  without one, for example past an upgrade break the matrix found: the record
+  then says `matrix_run: null` and names the maintainer as `promoted_by`. A
+  scheduled promotion always names one.
 - **Published release.** The tag's `VERSION` file must say the version, and
   its GitHub release must exist and not be a draft, so binary clients can
   fetch the stable release.
@@ -710,9 +884,14 @@ and keeps stable between one day and one week behind what matters:
 - **Reason first.** It acts only when a merged PR labelled `stable:important` is in a
   published release but not in stable, or stable is more than 7 days old and
   a newer release exists (the weekly floor). Otherwise it does nothing. The
-  merge lane sets the label at merge on a security, regression or data-loss
-  fix, or a fix for something that blocks a crew or a user (on a train PR,
-  the train carries it); a label added after the merge counts too.
+  merge lane sets the label at merge on a security fix, a data-loss fix or a
+  fix for a regression in a release that is on stable (on a train PR, the
+  train carries it); a label added after the merge counts too. Anything else,
+  a regression only alpha has or a fix that unblocks one setup included, rides
+  the weekly floor unless a maintainer promotes by hand. The rule: an
+  important fix reaches stable within a day once it passes the full gate and
+  soak; everything else rides a weekly cut; stable never sits more than seven
+  days behind gated changes on master.
 - **Soak first.** The candidate is the newest release newer than stable whose
   commit is on master and whose exact tree passed a successful
   `STABLE_SOAK_WORKFLOW` run with the integrity gates (`privacy_leaks`,
@@ -733,6 +912,27 @@ and keeps stable between one day and one week behind what matters:
   (never while another soak runs, and never after a soak on any newer release
   failed to qualify: then a maintainer decides, and the check warns once stable
   is past the weekly floor), and a later run promotes it.
+- **Upgrade matrix next.** The soaked candidate also needs a green
+  [upgrade matrix](ci-upgrade-matrix.md) run on its exact tag and tree: a
+  schedule or dispatch run of master's harness with the full from-version set
+  (which includes every stable release in the window), checked as under
+  "Upgrade matrix run" above and again by `promote()`, and recorded as
+  `matrix_run`. With no run yet it dispatches one on the candidate's tag
+  (`upgrade-matrix.yml` on master, `candidate=v<version>`), unless a matrix run
+  is active, and a later run promotes; when it dispatches a soak on the
+  newest release it dispatches the matrix on that release too. A red or
+  foreign run holds stable with a warning and is never re-dispatched by the
+  schedule: a maintainer fixes the break or promotes by hand.
+- **Upgrade breaks hold.** While the matrix's own break issue is open (the
+  one the nightly run opens with the `<!-- gbrain-upgrade-matrix:nightly -->`
+  marker; another issue with the `upgrade-break` label holds nothing), the
+  check holds stable, the weekly floor included, and dispatches nothing. The
+  one way past it on the schedule is a released `stable:important` fix whose
+  `changelog.d` fragment says `important: security` or `important: data-loss`,
+  on a candidate whose matrix run fails on no from-version the issue names
+  (its `red-from` line) and on nothing else; the record's `reason` names the
+  excused from-versions. Everything else waits for the nightly run to close
+  the issue, or for a maintainer's promotion.
 - **Who.** A schedule event runs only the workflow file as merged on the
   default branch, so a scheduled run promotes by rule without a maintainer. A
   manual dispatch defaults to `dry_run` (report only); `dry_run=false` needs an
@@ -779,11 +979,10 @@ the template repository ONLY — no other repositories, no other permissions.
 Configure it as a repo secret; when absent, template publishing is disabled
 and the job skips cleanly.
 
-Why every bump, not selective: `gbrain check-update` resolves the latest
-version from `VERSION` on master, while binary self-update
-(`src/core/binary-self-update.ts`) downloads assets from `releases/latest`.
-Any release that lags `VERSION` tells binary installs an upgrade exists that
-self-update cannot apply. `releases/latest` must track `VERSION`.
+Why every bump, not selective: the alpha update check reads `VERSION` at
+`latest-stable`, and binary self-update downloads that exact release
+(`src/core/binary-self-update.ts`). Any version without a release tells binary
+installs an upgrade exists that self-update cannot apply.
 
 Invariants:
 
@@ -823,7 +1022,17 @@ to see what's actually in the PR before writing the body.
 
 ## Community PR wave process
 
-Never merge external PRs directly into master. Instead, use the "fix wave" workflow:
+Fix waves built from outside PR lists ended on 2026-11-01. Each outside PR is
+now triaged when it arrives, under the rules contributors see in
+[CONTRIBUTING.md](../CONTRIBUTING.md#how-an-outside-pull-request-is-handled):
+documentation people read may be merged as it is after a text read of every
+link, command and install step; a small, plainly correct fix (under about 40
+lines, not counting tests) is rebuilt on current master with credit, at most one
+small PR a day; anything else is read as a report and rebuilt only when it has
+proof and matters. Outside code is never checked out, run or merged. A rebuild
+PR lists the outside PR on a `Supersedes #N` line so the
+[closeout](#fix-wave-closeout) closes it with a link. The steps below are the
+older batch procedure; steps 4 to 7 still apply to any rebuild PR.
 
 1. **Categorize** — group PRs by theme (bug fixes, features, infra, docs)
 2. **Deduplicate** — if two PRs fix the same thing, pick the one that changes fewer
@@ -871,9 +1080,11 @@ master unless its head repository is `garrytan/gbrain` or the `maintainer-overri
 label counts. Only maintainers can push to `garrytan/gbrain`, so GBRA thread PRs
 (`capy/*`) and `garrytan/*` branches pass; fork PRs fail whatever their branch is
 called. When a contributor PR opens, a second job posts one comment with the same
-text as the failure: the work is welcome and the PR stays open, it lands through a
-fix wave with credit (`Contributed by @handle` plus a `Co-Authored-By:` trailer), and
-CONTRIBUTING.md "Where does my change go?" explains where changes belong.
+text as the failure: how outside PRs are handled (documentation merged as it is
+after a text read, small correct fixes rebuilt with credit, everything else read as
+a report and rebuilt with credit when taken, `Contributed by @handle` plus a
+`Co-Authored-By:` trailer), the proof a larger change needs, who the open-PR limit
+applies to, and a link to CONTRIBUTING.md "How an outside pull request is handled".
 
 The workflow uses `pull_request_target`, so the workflow and
 `scripts/fix-wave-gate.ts` always come from the default branch: a PR that edits
@@ -886,7 +1097,7 @@ repository (deleted fork) fails closed. The check re-runs on `opened`, `edited`,
 **`maintainer-override` label.** Who: a human on `MAINTAINERS` in
 `scripts/fix-wave-gate.ts` (starts as `garrytan`; changing it is a reviewed PR to
 master). When: only for a PR a maintainer has decided may land from its fork, such as
-a fix wave a maintainer opened from a fork; record the reason in a PR comment. How it
+an outside documentation change or a PR a maintainer opened from a fork; record the reason in a PR comment. How it
 is checked: the label counts only when the most recent `labeled` timeline event for it
 was made by an allowlisted `User`; bots (`capy-ai[bot]`, `github-actions[bot]`, any
 `[bot]` login) never qualify, and removing the label fails the PR again. Audit: the run

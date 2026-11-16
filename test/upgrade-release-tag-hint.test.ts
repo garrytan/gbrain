@@ -30,24 +30,24 @@ const TAGS = ['aaa\trefs/tags/v0.60.200.0', 'bbb\trefs/tags/v0.60.213.0', 'ccc\t
 describe('#6662 reinstall hint', () => {
   test('the tag probe runs before the removal, and the removal still precedes the add (#5034)', () => {
     const cmd = bunReinstallCommand('#v0.60.204.0');
-    expect(cmd).toBe('git ls-remote --exit-code --tags https://github.com/garrytan/gbrain refs/tags/v0.60.204.0 && bun remove -g gbrain && bun add -g github:garrytan/gbrain#v0.60.204.0');
+    expect(cmd).toBe('git ls-remote --exit-code --tags https://github.com/garrytan/gbrain refs/tags/v0.60.204.0 && bun remove -g gbrain && bun add -g --backend=copyfile github:garrytan/gbrain#v0.60.204.0');
     expect(cmd.indexOf('git ls-remote')).toBeLessThan(cmd.indexOf('bun remove -g gbrain'));
     expect(cmd.indexOf('bun remove -g gbrain')).toBeLessThan(cmd.indexOf('bun add -g'));
-    expect(bunReinstallCommand('')).toBe('bun remove -g gbrain && bun add -g github:garrytan/gbrain');
+    expect(bunReinstallCommand('')).toBe('bun remove -g gbrain && bun add -g --backend=copyfile github:garrytan/gbrain');
   });
 
   test('POSIX hint is the guarded one-liner plus a restore line; Windows prints one step per line', () => {
     expect(reinstallHintLines('0.60.213.0', '0.60.200.0', 'linux')).toEqual([
       bunReinstallCommand('#v0.60.213.0'),
-      'If the add fails, restore 0.60.200.0 with: bun add -g github:garrytan/gbrain#v0.60.200.0',
+      'If the add fails, restore 0.60.200.0 with: bun add -g --backend=copyfile github:garrytan/gbrain#v0.60.200.0',
     ]);
     const win = reinstallHintLines('0.60.213.0', '0.60.200.0', 'win32');
     expect(win.some(l => l.includes('&&'))).toBe(false);
     expect(win.slice(1)).toEqual([
       'git ls-remote --exit-code --tags https://github.com/garrytan/gbrain refs/tags/v0.60.213.0',
       'bun remove -g gbrain',
-      'bun add -g github:garrytan/gbrain#v0.60.213.0',
-      'If the add fails, restore 0.60.200.0 with: bun add -g github:garrytan/gbrain#v0.60.200.0',
+      'bun add -g --backend=copyfile github:garrytan/gbrain#v0.60.213.0',
+      'If the add fails, restore 0.60.200.0 with: bun add -g --backend=copyfile github:garrytan/gbrain#v0.60.200.0',
     ]);
   });
 
@@ -118,7 +118,7 @@ describe('#6662 upgrade on a pinned install whose target tag is missing', () => 
       expect(r.stderr).toContain(`v${target} is not published yet`);
       expect(r.stderr).toContain(`The newest published release is 98.0.0.0.`);
       expect(r.stderr).toContain(bunReinstallCommand('#v98.0.0.0'));
-      expect(r.stderr).toContain(`restore ${VERSION} with: bun add -g github:garrytan/gbrain#v${VERSION}`);
+      expect(r.stderr).toContain(`restore ${VERSION} with: bun add -g --backend=copyfile github:garrytan/gbrain#v${VERSION}`);
       expect(r.stderr).not.toContain(`gbrain#v${target}`);
     } finally {
       rmSync(r.home, { recursive: true, force: true });

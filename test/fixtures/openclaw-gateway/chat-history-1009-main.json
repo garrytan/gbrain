@@ -1,0 +1,48 @@
+{
+  "sessionKey": "agent:dev:main",
+  "sessionId": "00000000-0000-4000-8000-000000001009",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "alice-example asks for the weekly summary"
+        }
+      ],
+      "timestamp": 1794724680000,
+      "__openclaw": {
+        "id": "00000000-0000-4000-8000-0000000011a1",
+        "recordTimestampMs": 1794724680000,
+        "transcriptPosition": {
+          "source": "example-transcript-source",
+          "rawSeq": 1
+        },
+        "seq": 1
+      }
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "the weekly summary is in acme-example/notes"
+        }
+      ],
+      "timestamp": 1794724681000,
+      "__openclaw": {
+        "id": "00000000-0000-4000-8000-0000000011a2",
+        "recordTimestampMs": 1794724681000,
+        "transcriptPosition": {
+          "source": "example-transcript-source",
+          "rawSeq": 2
+        },
+        "seq": 2
+      },
+      "stopReason": "stop",
+      "provider": "openclaw",
+      "model": "gateway-injected"
+    }
+  ],
+  "hasMore": false
+}

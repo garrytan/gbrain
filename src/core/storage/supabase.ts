@@ -37,7 +37,13 @@ export class SupabaseStorage implements StorageBackend {
     return `${this.projectUrl}/storage/v1/object/${this.bucket}/${path}`;
   }
 
+  /**
+   * Publishable and secret keys (`sb_publishable_`, `sb_secret_`) are API
+   * keys, not JWTs: Supabase takes them on `apikey` only, and a JWT check on
+   * `Authorization: Bearer` fails on them (#7205). Legacy JWT keys keep both.
+   */
   private headers(): Record<string, string> {
+    if (/^sb_(secret|publishable)_/.test(this.serviceRoleKey)) return { 'apikey': this.serviceRoleKey };
     return {
       'Authorization': `Bearer ${this.serviceRoleKey}`,
       'apikey': this.serviceRoleKey,

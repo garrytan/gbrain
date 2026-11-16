@@ -46,6 +46,7 @@ const OUTGOING_RERANKER = 'fixture-provider:reranker-v1';
 import {
   configureGateway,
   resetGateway,
+  requireConfig,
   __setEmbedTransportForTests,
 } from '../src/core/ai/gateway.ts';
 import { runEmbedCore } from '../src/commands/embed.ts';
@@ -712,6 +713,26 @@ describe('config-plane hygiene (env leak + env-canonical gates)', () => {
       else process.env.OPENROUTER_API_KEY = prevOpenRouter;
       // persistEmbeddingFileConfig reconfigured the in-process gateway from
       // the env-merged view — restore the baseline file plane + gateway.
+      writeFileConfig('openai:text-embedding-3-small', TO_DIMS);
+      configureGateway({
+        embedding_model: 'openai:text-embedding-3-small',
+        embedding_dimensions: TO_DIMS,
+        env: { OPENAI_API_KEY: 'sk-test-fake', VOYAGE_API_KEY: 'pa-test-fake' },
+      });
+      installTransport();
+    }
+  }, 30000);
+
+  test('#7666: the post-apply gateway keeps a DB-plane provider_base_urls override, and the file plane never gains it', async () => {
+    const cfgPath = join(tmpHome, '.gbrain', 'config.json');
+    const url = 'http://127.0.0.1:11435/v1';
+    await engine.setConfig('provider_base_urls.ollama', url);
+    try {
+      await persistEmbeddingFileConfig('openai:text-embedding-3-small', TO_DIMS, engine);
+      expect(requireConfig().base_urls?.ollama).toBe(url);
+      expect(readFileSync(cfgPath, 'utf-8')).not.toContain(url);
+    } finally {
+      await engine.executeRaw(`DELETE FROM config WHERE key = 'provider_base_urls.ollama'`);
       writeFileConfig('openai:text-embedding-3-small', TO_DIMS);
       configureGateway({
         embedding_model: 'openai:text-embedding-3-small',

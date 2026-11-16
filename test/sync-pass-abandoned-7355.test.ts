@@ -135,8 +135,9 @@ for (const backend of testBackends()) {
     emptyCommits(root, 2_500);
     unlinkSync(join(root, 'b.md')); git(root, ['commit', '-qam', 'remove b']);
     __resetHistoryIndexesForTest();
-    // The previous pass never ended: its row is left open, as the governor or a killed process leaves it.
-    await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,telemetry,outcome}','"open"') WHERE op=$1`, [MANAGED_SYNC_PASS_OP]);
+    // The previous pass never ended: its row is left open, as the governor or a killed process leaves it, and (GST-2515) it
+    // committed nothing, so it counts: a fresh pass id that no committed write or hold carries.
+    await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(jsonb_set(completed_keys,'{0,telemetry,outcome}','"open"'),'{0,telemetry,pass_id}',to_jsonb(gen_random_uuid()::text)) WHERE op=$1`, [MANAGED_SYNC_PASS_OP]);
     const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id='default'");
     let pinnedStreak: number | undefined;
     installFaultHook(async point => { if (point === 'sync:round_start' && pinnedStreak === undefined) pinnedStreak = (await readPassRow(engine, 'default', incarnation!))?.value.obligations.abandoned_streak; });

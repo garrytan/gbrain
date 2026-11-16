@@ -9,6 +9,7 @@
  *   12 no results (a lookup matched nothing; opt-in, GBRAIN_FAIL_ON_EMPTY=1) ·
  *   14 harness wired, shared-skills/token cleanup pending ·
  *   15 no edition in force on the as_of date · 16 host upgrade required ·
+ *   17 doctor --alert: act · 18 doctor --alert: unknown ·
  *   69 serve exited unhealthy · 75 migration
  *   lock held · 124 timeout · 130 interrupted. `test/exit-codes.test.ts` enumerates every literal
  *   exit 3 in src/ so a new one cannot reuse it.
@@ -75,6 +76,19 @@ export const HARNESS_PENDING_VERIFY_EXIT_CODE = 13;
  * revoke or leave step when one cannot.
  */
 export const HARNESS_CLEANUP_PENDING_EXIT_CODE = 14;
+
+/**
+ * W4 `gbrain doctor --alert` (`doctor_alert_act`): a page-class check needs someone now; `--json` `alert.items`
+ * carries each check's fix. 0 is `alert.level: none`; 1 stays "doctor itself failed".
+ */
+export const DOCTOR_ALERT_ACT_EXIT_CODE = 17;
+
+/**
+ * W4 `gbrain doctor --alert` (`doctor_alert_unknown`): no page-class check needs action, but at least one did not run
+ * fresh (budget, error, last known result, tier). `alert.consecutive_unknown` counts the runs in a row; agent crons
+ * page on the second.
+ */
+export const DOCTOR_ALERT_UNKNOWN_EXIT_CODE = 18;
 
 /**
  * #6543: `gbrain serve` exited on its own because its persistence consumer

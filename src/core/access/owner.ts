@@ -14,7 +14,8 @@
 import type { BrainEngine } from '../engine.ts';
 import { OWNER_MEMBER_KEY, OWNER_READS_RESTRICTED_KEY } from '../search/private-visibility.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
-import { ACCESS_ID_RE } from './principals.ts';
+import { opError, type OperationError } from '../ops/contract.ts';
+import { ACCESS_ID_RE, normalizePrincipal } from './principals.ts';
 import { boundCredentials, memberIdentity } from './members.ts';
 import type { CredentialRef } from './members.ts';
 
@@ -48,6 +49,38 @@ export async function ownerView(engine: BrainEngine): Promise<OwnerView> {
   } catch (e) {
     return { owner: null, inactive: { value: raw, reason: e instanceof Error ? e.message : String(e) }, bound_credentials: [], reads_restricted };
   }
+}
+
+/**
+ * GST-2698: the owner a reader list must name: the live owner, else a configured owner that is a member id but not
+ * enabled now (live false). Null when no owner is set, so a brain without an owner never refuses a list.
+ */
+export async function readersOwner(engine: BrainEngine): Promise<{ owner: string | null; live: boolean }> {
+  const view = await ownerView(engine);
+  if (view.owner) return { owner: view.owner, live: true };
+  const inactive = view.inactive ? normalizePrincipal(view.inactive.value) : null;
+  return { owner: inactive?.startsWith('member:') ? inactive.slice('member:'.length) : null, live: false };
+}
+
+/**
+ * GST-2476, GST-2698: readers that leave out the owner close `what` to the owner's own keys on every read path
+ * (access/caller.ts), so `gbrain repair visibility --readers` and `gbrain access rule add` refuse such a list unless
+ * --allow-without-owner. A group that holds the owner does not count. `principals` are normalized (member:<id>, group:<id>).
+ */
+export function readersOmitOwnerError(owner: string, live: boolean, principals: string[], what: string): OperationError {
+  const shown = principals.map(p => p.startsWith('member:') ? p.slice('member:'.length) : p);
+  return opError('invalid_params', 'These readers leave out the brain owner "' + owner + '"' + (live ? '' : ' (configured, not enabled now)') + ', so the owner\'s own keys could no longer read ' + what + '; nothing was written. Name the owner, or pass --allow-without-owner.',
+    'Add the owner to the list (--readers ' + [...shown, owner].join(',') + '), or pass --allow-without-owner if the owner should not read it. A group that holds the owner does not count.',
+    { reason: 'readers_omit_owner' });
+}
+
+/**
+ * GST-2128: the reader list a printed `gbrain access rule add` command names: `readers` plus the owner readersOwner names,
+ * when one is set and not listed, so pasting it is not refused readers_omit_owner. An unreadable owner prints `readers`.
+ */
+export async function hintReaders(engine: BrainEngine, readers: string[]): Promise<string> {
+  const owner = await readersOwner(engine).then(r => r.owner, () => null);
+  return (owner && !readers.includes(owner) ? [...readers, owner] : readers).join(',');
 }
 
 /** GST-2490: is access.owner_reads_restricted on? Unset, anything but '1', or unreadable is off (nothing widens). */
@@ -84,9 +117,32 @@ export async function setOwnerReadsRestricted(engine: BrainEngine, on: boolean, 
   return ownerView(engine);
 }
 
-/** Names the owner; refuses an ill-formed or non-enabled member before writing anything. */
+/** The refusal for a labelled-only grant on the owner: `member` is the owner (or the labelled-only member named as owner). */
+export function labelledOnlyOwnerError(member: string, via: 'grant' | 'owner'): OperationError {
+  const grant = via === 'grant';
+  return opError('access_labelled_only_owner',
+    grant ? `Member "${member}" is the brain owner, so it cannot be labelled-only; nothing was changed.`
+      : `Member "${member}" is labelled-only, so it cannot be the brain owner; nothing was changed.`,
+    grant ? 'Ask the user which member the group or audience credential should read as, add that member, bind the credential to it and mark that member labelled-only.'
+      : `Ask the user whether to clear the labelled-only grant first (gbrain access member labelled-only ${member} off) or name another member the owner.`,
+    {
+      why: 'The owner reads the whole brain. A labelled-only grant would hide every unlabelled page from the owner\'s own credentials, so the two never go together.',
+      fix: grant
+        ? { ask_user: true, argv: ['gbrain', 'access', 'member', 'add', '<MEMBER>'], inputs: [{ name: 'MEMBER', how: 'Ask the user for a new member id for the group or audience credential (lower-case letters, digits, ., _ and -). Then: gbrain auth rescope --token <name> --member <MEMBER>, and gbrain access member labelled-only <MEMBER> on.' }],
+          consent: [], actor: 'user', why: 'Gives the group or audience credential its own member, which can be labelled-only, and leaves the owner reading the whole brain.', requires_exclusive: false }
+        : { ask_user: true, argv: ['gbrain', 'access', 'member', 'labelled-only', member, 'off'], consent: [], actor: 'user', requires_exclusive: false,
+          why: 'Clears the labelled-only grant, so the member may be named the owner; every credential bound to it then reads its whole grant again.' },
+    });
+}
+
+/**
+ * Names the owner; refuses an ill-formed or non-enabled member, and (GBRA-108 design 1) a labelled-only one, before
+ * writing anything.
+ */
 export async function setOwner(engine: BrainEngine, raw: unknown): Promise<OwnerView> {
   const { member } = await memberIdentity(engine, raw);
+  const [row] = await engine.executeRaw<{ labelled_only: boolean }>('SELECT labelled_only FROM access_members WHERE id = $1', [member]);
+  if (row?.labelled_only === true) throw labelledOnlyOwnerError(member, 'owner');
   await engine.setConfig(OWNER_MEMBER_KEY, member);
   return ownerView(engine);
 }

@@ -16,11 +16,12 @@ import type { AuthInfo } from '../ops/contract.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
 import { catalogueError, ERROR_CATALOGUE } from '../error-catalogue.ts';
-import type { CallerAccess } from '../search/private-visibility.ts';
+import { schemaVersionNow, type CallerAccess } from '../search/private-visibility.ts';
 import { identityFor } from './principals.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { memberByEmail, memberIdentity } from './members.ts';
 import { folderAccessFor, memberIdentityFor } from './caller.ts';
+import { labelledOnlyFor } from './labelled-only.ts';
 import { markedScopeSources, sourceNotAttested } from './attest-sources.ts';
 import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, attestRightFrom, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER, type AttestedActor, type AttestRight } from './actor-model.ts';
 
@@ -222,9 +223,10 @@ export async function attestedCallerAccess(engine: Pick<BrainEngine, 'executeRaw
     ...await folderAccessFor(engine, identity),
     privateReadableSources: [],
     hidePrivate: true,
+    labelledOnly: await labelledOnlyFor(engine, [identity]),
     applyRemoteReadPolicy: false,
     restricted: true,
-    remotePolicy: { privacyRelaxed: false, restricted: true },
+    remotePolicy: { privacyRelaxed: false, restricted: true, ...await schemaVersionNow(engine) },
   };
 }
 

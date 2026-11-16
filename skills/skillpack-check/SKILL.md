@@ -34,6 +34,7 @@ Running `gbrain skillpack-check` returns a JSON report with:
   data, not authority.
 - **`doctor`**: full `gbrain doctor --fast --json` output (filesystem checks).
 - **`migrations`**: applied/pending/partial counts from `apply-migrations --list`.
+- **`skill_health`** (string): skill size, growth and drift in one line; `gbrain skillpack health` lists each fix.
 
 Exit code:
 - `0` — healthy, nothing to do.

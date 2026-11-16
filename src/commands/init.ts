@@ -18,7 +18,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { readPrimaryEmbeddingStores, readStoredEmbeddingIdentity } from '../core/stored-embedding-identity.ts';
 import { deferInitJsonError, flushInitJsonResult, initJsonError, setInitJsonResult, writeDeferredInitJsonError } from './init-json.ts';
 import { deferredEmbeddingHint, firstRunBundle, firstRunJson, harnessRegistrationCommand } from './init-first-run.ts';
-import { keptEmbeddingIdentity, keptEmbeddingNotice } from './init-embedding-plane.ts';
+import { keptEmbeddingIdentity, keptEmbeddingNotice, recordInitEmbedding } from './init-embedding-plane.ts';
 import { writeCliNotices } from '../core/interop-notices.ts';
 import { exitCodeForCode } from '../core/error-catalogue.ts';
 import { promptLineStderr } from '../core/interaction.ts';
@@ -108,7 +108,7 @@ async function runInitBranches(args: string[]) {
 
   // Schema-only path: apply initSchema against the already-configured engine
   // without ever calling saveConfig. Used by apply-migrations, the stopgap
-  // script, and the postinstall hook. Bare `gbrain init` defaults to PGLite
+  // script, and older releases' postinstall hook. Bare `gbrain init` defaults to PGLite
   // and overwrites any existing Postgres config — we must never take that
   // branch from a migration orchestrator.
   //
@@ -861,7 +861,7 @@ async function initMigrateOnly(opts: { jsonOutput: boolean }) {
     }
   } catch (e) {
     // Preserve the CLI's shared retryable busy envelope for migration callers.
-    if (e instanceof PgliteBusyError) throw e;
+    if (e instanceof PgliteBusyError || (e as { code?: unknown }).code === 'client_behind') throw e;
     const isNoConfig = e instanceof MigrateOnlyError && e.message.startsWith('No brain configured');
     const msg = e instanceof Error ? e.message : String(e);
     if (opts.jsonOutput) process.exit(initJsonError({ status: 'error', reason: isNoConfig ? 'no_config' : 'migrate_failed', message: msg },
@@ -1237,7 +1237,7 @@ export async function initPGLite(opts: {
     // disables embedding at runtime.
     if (!opts.aiOpts?.noEmbedding && resolvedModel && resolvedDim) {
       delete config.embedding_disabled;
-      await engine.unsetConfig('embedding_disabled');
+      await recordInitEmbedding(engine, resolvedModel, resolvedDim);
     }
     // PR1: new installs publish their skill catalog over MCP by default
     // (existing config wins on re-init, so a prior opt-out is preserved).
@@ -1579,7 +1579,7 @@ export async function initPostgresCore(opts: {
     // disables embedding at runtime.
     if (!opts.aiOpts?.noEmbedding && resolvedModel && resolvedDim) {
       delete config.embedding_disabled;
-      await engine.unsetConfig('embedding_disabled');
+      await recordInitEmbedding(engine, resolvedModel, resolvedDim);
     }
     // PR1: new installs publish their skill catalog over MCP by default
     // (existing config wins on re-init, so a prior opt-out is preserved).
@@ -1868,7 +1868,7 @@ OPTIONS
                         Default subagent driver (v0.27+)
   --no-embedding        Defer embedding setup (skips the embedding-key check)
   --surface <verbs|starter|full>  Tool surface the printed harness registration pins, listed in full
-                                  (default: full, listing the memory verbs and request_tools)
+                                  (default: starter, listing the memory verbs and request_tools)
   --search-mode <conservative|balanced|tokenmax>  Record the operator's search mode (no first-run ask; an existing brain's mode needs --force)
   --skip-embed-check    Skip the init-time embedding-key validation (config +
                         live test-embed). Also via GBRAIN_INIT_SKIP_EMBED_CHECK=1

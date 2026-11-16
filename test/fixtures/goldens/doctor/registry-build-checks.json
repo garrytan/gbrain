@@ -38,6 +38,18 @@
         "name": "skill_preconditions"
       },
       {
+        "category": "skill",
+        "name": "skill_health"
+      },
+      {
+        "category": "skill",
+        "name": "skillpack_update_incomplete"
+      },
+      {
+        "category": "skill",
+        "name": "skillpack_backups"
+      },
+      {
         "category": "ops",
         "name": "plugin_lane_collision"
       },
@@ -359,6 +371,26 @@
       },
       {
         "category": "brain",
+        "name": "git_index_lag"
+      },
+      {
+        "category": "brain",
+        "name": "db_ahead_of_git"
+      },
+      {
+        "category": "brain",
+        "name": "strict_facts_outside_git"
+      },
+      {
+        "category": "ops",
+        "name": "owner_host_stale"
+      },
+      {
+        "category": "brain",
+        "name": "uncommitted_sync_deletions"
+      },
+      {
+        "category": "brain",
         "name": "access_readers_malformed"
       },
       {
@@ -395,6 +427,18 @@
       },
       {
         "category": "brain",
+        "name": "open_shared_pages"
+      },
+      {
+        "category": "brain",
+        "name": "unscoped_shared_reads"
+      },
+      {
+        "category": "brain",
+        "name": "shared_stdio_binding"
+      },
+      {
+        "category": "brain",
         "name": "access_may_act_for_wildcard"
       },
       {
@@ -415,7 +459,15 @@
       },
       {
         "category": "brain",
+        "name": "access_labelled_only_members"
+      },
+      {
+        "category": "brain",
         "name": "attest_read_shared_scope"
+      },
+      {
+        "category": "brain",
+        "name": "guest_source"
       },
       {
         "category": "ops",
@@ -444,6 +496,10 @@
       {
         "category": "meta",
         "name": "schema_missing_tables"
+      },
+      {
+        "category": "meta",
+        "name": "schema_function_bodies"
       },
       {
         "category": "ops",
@@ -599,6 +655,14 @@
       },
       {
         "category": "ops",
+        "name": "dream_write_deferred"
+      },
+      {
+        "category": "ops",
+        "name": "embedding_restamp_stalled"
+      },
+      {
+        "category": "ops",
         "name": "writer_version"
       },
       {
@@ -660,6 +724,10 @@
       {
         "category": "brain",
         "name": "unwithdrawn_facts"
+      },
+      {
+        "category": "brain",
+        "name": "purged_page_facts"
       },
       {
         "category": "brain",
@@ -819,6 +887,14 @@
       },
       {
         "category": "ops",
+        "name": "unattended_maintenance"
+      },
+      {
+        "category": "brain",
+        "name": "transcript_archive_freshness"
+      },
+      {
+        "category": "ops",
         "name": "embed_backfill_stalled"
       },
       {
@@ -848,6 +924,10 @@
       {
         "category": "ops",
         "name": "grant_new_ops_available"
+      },
+      {
+        "category": "ops",
+        "name": "unscoped_multi_user_token"
       },
       {
         "category": "ops",
@@ -982,6 +1062,10 @@
         "name": "wakeshift"
       },
       {
+        "category": "ops",
+        "name": "wakeshift_openclaw"
+      },
+      {
         "category": "brain",
         "name": "fact_take_vectors"
       },
@@ -1043,6 +1127,10 @@
       },
       {
         "category": "ops",
+        "name": "session_lane_budget"
+      },
+      {
+        "category": "ops",
         "name": "runtime_build_skew"
       },
       {
@@ -1087,15 +1175,15 @@
       },
       {
         "category": "brain",
+        "name": "derived_origin_parked"
+      },
+      {
+        "category": "brain",
         "name": "derivation_purge_sweeps"
       },
       {
         "category": "brain",
         "name": "missing_recorded_files"
-      },
-      {
-        "category": "brain",
-        "name": "uncommitted_sync_deletions"
       },
       {
         "category": "brain",
@@ -1123,18 +1211,6 @@
       },
       {
         "category": "brain",
-        "name": "db_ahead_of_git"
-      },
-      {
-        "category": "brain",
-        "name": "git_index_lag"
-      },
-      {
-        "category": "brain",
-        "name": "strict_facts_outside_git"
-      },
-      {
-        "category": "brain",
         "name": "local_edit_adoptions"
       },
       {
@@ -1142,12 +1218,20 @@
         "name": "outside_content_fences"
       },
       {
+        "category": "brain",
+        "name": "embedding_plane_disagreement"
+      },
+      {
         "category": "ops",
-        "name": "owner_host_stale"
+        "name": "mcp_request_log_retention"
       },
       {
         "category": "brain",
-        "name": "embedding_plane_disagreement"
+        "name": "storage_manifest"
+      },
+      {
+        "category": "brain",
+        "name": "facts_undated_lines"
       },
       {
         "category": "brain",
@@ -1156,6 +1240,10 @@
       {
         "category": "ops",
         "name": "search_mode"
+      },
+      {
+        "category": "brain",
+        "name": "synopsis_tier_coverage"
       },
       {
         "category": "brain",

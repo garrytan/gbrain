@@ -127,6 +127,17 @@ for (const { backend, databaseUrl } of arms) describe(`[${backend}] repair url-c
     });
   }, 180_000);
 
+  // Value: protects=a held file is an apply item, not also a residual, and its preview says sync will not re-screen the restored file (no hold appears); fails_when=residuals count every non-fence_rows_only class, or the detail promises a sync hold; why_new=#7910; seam=none; no_claim=the apply (covered above)
+  test('#7910: a held file is listed once, as an apply item and not a residual, and its preview says the restored file is not re-screened', async () => {
+    await withClone(databaseUrl, 'Visibility: private\n', async c => {
+      const preview = await repair(c.engine, { apply: false });
+      expect({ affected: preview.affected, residuals: preview.residuals }).toEqual({ affected: 1, residuals: {} });
+      const detail = preview.listing![0]!.detail!;
+      expect(detail).toContain('sync does not screen it again and records no hold');
+      expect(detail).not.toContain('sync holds the file');
+    });
+  }, 180_000);
+
   test('an approval saved before the fix applies as held: the file is restored and its row kept database-only, HEAD is not imported', async () => {
     await withClone(databaseUrl, 'visibility: Private\n', async c => {
       const page = await c.page();

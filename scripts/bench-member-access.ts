@@ -99,6 +99,9 @@ async function runCell(share: number, rules: number) {
   if (bot) {
     await engine.executeRaw("INSERT INTO access_members (id) VALUES ('alice-twin') ON CONFLICT DO NOTHING");
     await engine.executeRaw("UPDATE access_tokens SET may_act_for = ARRAY['member:alice-example', 'member:alice-twin'] WHERE id = $1::uuid", [bot.id]);
+    // Two members make a brain that serves several people, where an unbound read is refused (GST-363) unless the
+    // operator lets the credential read unscoped; the unbound cell measures that opted-out read.
+    await engine.executeRaw('UPDATE access_tokens SET reads_unscoped = now() WHERE id = $1::uuid', [unbound.id]);
   }
   const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
 

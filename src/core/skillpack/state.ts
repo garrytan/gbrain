@@ -11,19 +11,29 @@
  * source of truth for "what third-party scaffolds happened, when,
  * from where, with what verified hash."
  *
- * Atomic update via `.tmp` + `rename()`. Schema-versioned. Pure
- * function over the parsed JSON; the calling commands wrap it with
- * read/write helpers.
+ * v2 adds `roots`: per skills root (a workspace's `skills/` dir or a
+ * harness skills dir, absolute) and skill, the sha256 of each file as gbrain
+ * installed it (the install's base) and whether the skill is pinned.
+ * `gbrain skillpack reference --update-untouched` updates a skill only when
+ * every file still matches its base. A v1 file loads as v2 with no roots.
+ *
+ * Atomic update via a unique temp file + `rename()`. Schema-versioned.
+ * Writers that read-modify-write go through `updateState`, which holds the
+ * shared state lock (file-lock.ts) across the load and the save.
  */
 
 import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
+import { randomUUID } from 'crypto';
+import { dirname } from 'path';
+
+import { acquireFileLock } from './file-lock.ts';
 
 import { gbrainPath } from '../config.ts';
 
 /** Schema version stamped on every state file. */
-export const SKILLPACK_STATE_SCHEMA_VERSION = 'gbrain-skillpack-state-v1' as const;
+export const SKILLPACK_STATE_SCHEMA_VERSION = 'gbrain-skillpack-state-v2' as const;
+const SKILLPACK_STATE_SCHEMA_V1 = 'gbrain-skillpack-state-v1';
 
 /** Per-pack scaffold record. */
 export interface SkillpackStateEntry {
@@ -51,9 +61,21 @@ export interface SkillpackStateEntry {
   skill_slugs: string[];
 }
 
+/** One installed skill's base under a skills root. */
+export interface InstalledSkillRecord {
+  /** Path relative to the skills root (posix) → sha256 of the bytes gbrain wrote. */
+  files: Record<string, string>;
+  /** Pinned skills are never updated by --update-untouched. */
+  pinned?: boolean;
+  /** ISO 8601 UTC of the last base write. */
+  recorded_at: string;
+}
+
 export interface SkillpackState {
   schema_version: typeof SKILLPACK_STATE_SCHEMA_VERSION;
   packs: SkillpackStateEntry[];
+  /** Absolute skills root → skill slug → base record. loadState always fills it. */
+  roots?: Record<string, Record<string, InstalledSkillRecord>>;
 }
 
 export type SkillpackStateErrorCode =
@@ -71,10 +93,7 @@ export class SkillpackStateError extends Error {
   }
 }
 
-const EMPTY_STATE: SkillpackState = {
-  schema_version: SKILLPACK_STATE_SCHEMA_VERSION,
-  packs: [],
-};
+
 
 /** Default state file path. Override via `opts.statePath` in calling code. */
 export function defaultStatePath(): string {
@@ -88,7 +107,7 @@ export function defaultStatePath(): string {
  */
 export function loadState(opts: { statePath?: string } = {}): SkillpackState {
   const path = opts.statePath ?? defaultStatePath();
-  if (!existsSync(path)) return { ...EMPTY_STATE, packs: [] };
+  if (!existsSync(path)) return { schema_version: SKILLPACK_STATE_SCHEMA_VERSION, packs: [], roots: {} };
 
   let raw: unknown;
   try {
@@ -108,7 +127,7 @@ export function loadState(opts: { statePath?: string } = {}): SkillpackState {
   }
 
   const obj = raw as Record<string, unknown>;
-  if (obj.schema_version !== SKILLPACK_STATE_SCHEMA_VERSION) {
+  if (obj.schema_version !== SKILLPACK_STATE_SCHEMA_VERSION && obj.schema_version !== SKILLPACK_STATE_SCHEMA_V1) {
     throw new SkillpackStateError(
       `skillpack-state.json has unknown schema_version ${JSON.stringify(obj.schema_version)}; expected ${SKILLPACK_STATE_SCHEMA_VERSION}`,
       'state_schema_unknown',
@@ -122,7 +141,15 @@ export function loadState(opts: { statePath?: string } = {}): SkillpackState {
     );
   }
 
-  return { schema_version: SKILLPACK_STATE_SCHEMA_VERSION, packs: obj.packs as SkillpackStateEntry[] };
+  const roots = obj.schema_version === SKILLPACK_STATE_SCHEMA_V1 ? {} : (obj.roots ?? {});
+  if (typeof roots !== 'object' || roots === null || Array.isArray(roots)) {
+    throw new SkillpackStateError(`skillpack-state.json.roots must be an object`, 'state_malformed_json');
+  }
+  return {
+    schema_version: SKILLPACK_STATE_SCHEMA_VERSION,
+    packs: obj.packs as SkillpackStateEntry[],
+    roots: roots as NonNullable<SkillpackState['roots']>,
+  };
 }
 
 /**
@@ -134,7 +161,7 @@ export function saveState(state: SkillpackState, opts: { statePath?: string } = 
   const path = opts.statePath ?? defaultStatePath();
   assertLegacySkillFilesystemWrite(path);
   mkdirSync(dirname(path), { recursive: true });
-  const tmp = path + '.tmp';
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   assertLegacySkillFilesystemWrite(tmp);
   try {
     writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n', { mode: 0o644 });
@@ -163,15 +190,12 @@ export function findEntry(state: SkillpackState, name: string): SkillpackStateEn
  */
 export function upsertEntry(state: SkillpackState, entry: SkillpackStateEntry): SkillpackState {
   const others = state.packs.filter((p) => p.name !== entry.name);
-  return { schema_version: SKILLPACK_STATE_SCHEMA_VERSION, packs: [...others, entry] };
+  return { ...state, packs: [...others, entry] };
 }
 
 /** Remove a pack entry by name. Returns a new state value. */
 export function removeEntry(state: SkillpackState, name: string): SkillpackState {
-  return {
-    schema_version: SKILLPACK_STATE_SCHEMA_VERSION,
-    packs: state.packs.filter((p) => p.name !== name),
-  };
+  return { ...state, packs: state.packs.filter((p) => p.name !== name) };
 }
 
 /**
@@ -196,4 +220,40 @@ export function isAlreadyTrusted(
   }
   // Local-path source — no identity to pin; treat as untrusted (always re-confirm).
   return false;
+}
+
+/**
+ * Read-modify-write under the shared state lock. `fn` receives the current
+ * state and returns the state to save (or null to save nothing). Callers that
+ * also hold a workspace lock take it first.
+ */
+export async function updateState<T>(
+  fn: (state: SkillpackState) => { state: SkillpackState | null; result: T },
+  opts: { statePath?: string; timeoutMs?: number } = {},
+): Promise<T> {
+  const path = opts.statePath ?? defaultStatePath();
+  const lock = await acquireFileLock(`${path}.lock`, { code: 'skillpack_state_locked', timeoutMs: opts.timeoutMs });
+  try {
+    const { state, result } = fn(loadState({ statePath: path }));
+    if (state) saveState(state, { statePath: path });
+    return result;
+  } finally {
+    lock.release();
+  }
+}
+
+/** Record each file's base hash per skill under `skillsRoot` (merged over any existing record; pins are kept). */
+export function withSkillBases(
+  state: SkillpackState,
+  skillsRoot: string,
+  bases: Record<string, Record<string, string>>,
+  now = new Date().toISOString(),
+): SkillpackState {
+  const root = { ...(state.roots?.[skillsRoot] ?? {}) };
+  for (const [slug, files] of Object.entries(bases)) {
+    if (Object.keys(files).length === 0) continue;
+    const existing = root[slug];
+    root[slug] = { ...existing, files: { ...(existing?.files ?? {}), ...files }, recorded_at: now };
+  }
+  return { ...state, roots: { ...state.roots, [skillsRoot]: root } };
 }

@@ -20,11 +20,14 @@ interface ProjectionStatisticsRow {
   collected: boolean | null;
 }
 
-/** The projection statistics' definition and collection state; `$${n}` binds PROJECTION_STATISTICS_NAME. */
+/**
+ * The projection statistics' definition and collection state; `$${n}` binds PROJECTION_STATISTICS_NAME. can_inspect
+ * mirrors pg_stats_ext_exprs, which shows expression statistics only to the table owner's roles outside row security.
+ */
 const projectionStatisticsSql = (n: number) => `SELECT pg_get_expr(e.stxexprs, e.stxrelid) AS expression,
        e.stxrelid = 'pages'::regclass AS correct_table,
        p.reltuples AS sampled_rows,
-       has_table_privilege(p.oid, 'SELECT') AND NOT row_security_active(p.oid) AS can_inspect,
+       has_table_privilege(p.oid, 'SELECT') AND pg_has_role(p.relowner, 'USAGE') AND NOT row_security_active(p.oid) AS can_inspect,
        x.null_frac IS NOT NULL AS collected
      FROM pg_class p JOIN pg_statistic_ext e ON e.stxnamespace = p.relnamespace
      LEFT JOIN pg_stats_ext_exprs x
@@ -33,7 +36,7 @@ const projectionStatisticsSql = (n: number) => `SELECT pg_get_expr(e.stxexprs, e
        AND x.expr = pg_get_expr(e.stxexprs, e.stxrelid)
      WHERE p.oid = 'pages'::regclass AND e.stxname = $${n}`;
 
-async function readProjectionStatistics(engine: Pick<BrainEngine, 'executeRaw'>): Promise<ProjectionStatisticsState> {
+export async function readProjectionStatistics(engine: Pick<BrainEngine, 'executeRaw'>): Promise<ProjectionStatisticsState> {
   const rows = await engine.executeRaw<ProjectionStatisticsRow>(projectionStatisticsSql(1), [PROJECTION_STATISTICS_NAME]);
   return projectionStatisticsState(rows[0]);
 }
@@ -228,7 +231,8 @@ export async function canAnalyzePages(engine: Pick<BrainEngine, 'executeRaw'>): 
  * with rows, the statistics this refresh collects exist, and the pass changed fewer than 50 + 10% of the sampled
  * pages (autovacuum's analyze threshold, as the projection-recovery debt in page-state/projections.ts). Such a pass
  * barely moves them, and the refresh cost ~650 ms per one-page sync at 50k pages on Postgres and a full ANALYZE of
- * every table on PGLite.
+ * every table on PGLite. Projection statistics this role cannot inspect are no evidence of staleness, so such a pass
+ * leaves them to the owner and autovacuum.
  */
 async function statisticsStillCurrent(engine: BrainEngine, changedPages: number): Promise<boolean> {
   if (!Number.isFinite(changedPages)) return false;
@@ -245,7 +249,8 @@ async function statisticsStillCurrent(engine: BrainEngine, changedPages: number)
   const rows = Number(state?.reltuples ?? -1);
   if (!state?.columns || rows <= (engine.kind === 'pglite' ? 500 : 0) || changedPages >= 50 + 0.1 * rows) return false;
   if ((await missingSearchStatistics(engine)).length > 0) return false;
-  return verifyProjectionStatistics(engine).then(() => true, () => false);
+  const projection = await readProjectionStatistics(engine).catch(() => null);
+  return projection === 'collected' || projection === 'uninspectable';
 }
 
 /**

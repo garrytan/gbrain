@@ -395,12 +395,11 @@ export function checkResolvable(
     else unreachable++;
   }
 
-  // `cwd_walk_up` (tier 1b of autoDetectSkillsDir) accepts ANY ancestor
-  // `skills/` dir with no signal that it is a gbrain skillpack, so a foreign
-  // tool's directory where one skill coincidentally ships `triggers:` would
-  // otherwise score every sibling as a hard unreachable error. Downgrade to a
-  // warning only when ALL hold: found via cwd_walk_up; no resolver file
-  // contributes rows (RESOLVER.md is gbrain-native, so its mere presence stays
+  // `cwd_walk_up` (tier 1b of autoDetectSkillsDir) accepts ANY ancestor `skills/` dir
+  // with no gbrain signal, and an OpenClaw workspace's `skills/` (`openclaw_workspace_*`)
+  // holds skills other tools install, so a foreign skill would otherwise score as a hard
+  // unreachable error. Downgrade to a warning only when ALL hold: found via one of
+  // those; no resolver file contributes rows (RESOLVER.md is gbrain-native, so its mere presence stays
   // strict, but a generic prose AGENTS.md with zero table rows is no signal);
   // unreachable outnumber reachable (a mostly-migrated real skillpack that
   // lost its resolver file still fails loudly); and no manifest.json on disk
@@ -416,7 +415,7 @@ export function checkResolvable(
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- skillsDir is the caller-resolved local skills/ dir, never remote input
   const manifestJsonAbsent = !existsSync(join(skillsDir, 'manifest.json'));
   const lowConfidenceForeignDir =
-    opts?.skillsDirSource === 'cwd_walk_up' &&
+    (opts?.skillsDirSource === 'cwd_walk_up' || !!opts?.skillsDirSource?.startsWith('openclaw_workspace_')) &&
     (!resolverPathOrNull || foundOnlyEmptyAgentsMd) &&
     unreachable > reachable &&
     manifestJsonAbsent;
@@ -430,7 +429,7 @@ export function checkResolvable(
       severity: lowConfidenceForeignDir ? 'warning' : 'error',
       skill: skill.name,
       message: lowConfidenceForeignDir
-        ? `Skill '${skill.name}' is in manifest but has no trigger row in ${RESOLVER_FILENAMES_LABEL} (this skills/ dir was found by walking up from cwd with no resolver rows -- if it belongs to a different tool, this can be ignored)`
+        ? `Skill '${skill.name}' is in manifest but has no trigger row in ${RESOLVER_FILENAMES_LABEL} (this skills/ dir was auto-detected with no resolver rows -- if it belongs to a different tool, this can be ignored)`
         : `Skill '${skill.name}' is in manifest but has no trigger row in ${RESOLVER_FILENAMES_LABEL}`,
       action: `Add a trigger row for 'skills/${skill.path}' in RESOLVER.md under ${section}`,
       fix: {

@@ -30,6 +30,7 @@ import {
   addTypeToPack,
   invalidatePackCache,
   loadActivePack,
+  loadActivePackForEngine,
   loadResolvedPackByName,
   removeAliasFromType,
   removeLinkTypeFromPack,
@@ -120,7 +121,8 @@ function printHelp(): void {
 Inspection:
   active                  Show resolved pack + which tier provided it
   list                    List installed packs (bundled + ~/.gbrain/schema-packs/)
-  show [<pack>]           Pretty-print a manifest (default: active pack)
+  show [<pack>] [--source <id>]
+                          Pretty-print a manifest (default: active pack, or that source's)
   validate [<pack>]       Validate manifest shape against the v1 schema
   graph                   Show type/primitive graph with link-verb edges
   lint [<pack>]           Lint a pack for duplicates, dangling refs, etc.
@@ -244,9 +246,9 @@ async function runShow(args: string[]): Promise<void> {
   // consumer migration + deletion deferred to v0.39.1 to avoid breaking
   // synthesize/patterns/filing-audit/check-resolvable mid-wave.
   const asFilingRules = args.includes('--as-filing-rules');
-  const jsonFlag = args.includes('--json') || asFilingRules;
-  const packArg = args.find((a) => !a.startsWith('--'));
-  const packName = packArg;
+  const { json, source, positional } = parseFlags(args);
+  const jsonFlag = json || asFilingRules;
+  const packName = positional.find((a) => !a.startsWith('--'));
   let manifest;
   if (packName) {
     const path = packPathByName(packName);
@@ -258,7 +260,9 @@ async function runShow(args: string[]): Promise<void> {
     manifest = loadPackFromFile(path);
   } else {
     const cfg = loadConfig();
-    const pack = await loadActivePack({ cfg, remote: false, dbConfig: await readDbSchemaPackConfig(cfg) });
+    const pack = source && cfg
+      ? await withConnectedEngine((engine) => loadActivePackForEngine(engine, { remote: false, sourceId: source }))
+      : await loadActivePack({ cfg, remote: false, dbConfig: await readDbSchemaPackConfig(cfg), sourceId: source });
     manifest = pack.manifest;
   }
   if (asFilingRules) {

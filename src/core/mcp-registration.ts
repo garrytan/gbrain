@@ -255,20 +255,24 @@ export const OAUTH_SECRET_NOTE =
   'short-lived, scoped access tokens; revoke with `gbrain auth revoke-client`.';
 
 /**
- * Paste-ready OpenClaw wiring block — HONEST v1. OpenClaw has no native
- * remote-MCP client yet, so the scoped path is a thin gbrain install on the
- * OpenClaw machine (`gbrain init` in mcp-only mode), which routes brain access
- * through the OAuth client minted for it. Deliberately NOT an mcpServers/
- * stdio JSON config: the stdio config in docs/mcp/OPENCLAW.md grants FULL
- * local DB access and does not use this client.
+ * Paste-ready OpenClaw wiring block, run on the OpenClaw machine (never the
+ * host that printed it, so it names no host path): a thin gbrain install for
+ * the OAuth client minted for it, then OpenClaw's own `mcp add` for that
+ * thin client's `gbrain serve`, which is a stdio bridge to the brain host
+ * with this client's grant (#8543). The launcher resolves on the OpenClaw
+ * machine. Deliberately NOT an mcpServers JSON entry: that key belongs to
+ * installed bundle manifests, and the bundle plugin already registers gbrain.
+ * A narrow home (`gbrainHome`) goes on both the init line and the entry.
  */
 export function openclawThinClientBlock(opts: {
   issuerUrl: string;
   mcpUrl: string;
   clientId: string;
   clientSecret: string;
+  gbrainHome?: string;
 }): string {
-  const init = cmdString('gbrain', [
+  const home = opts.gbrainHome ? `GBRAIN_HOME=${shellQuote(opts.gbrainHome)}` : '';
+  const init = (home ? `${home} ` : '') + cmdString('gbrain', [
     'init',
     '--mcp-only',
     '--issuer-url', opts.issuerUrl,
@@ -276,13 +280,20 @@ export function openclawThinClientBlock(opts: {
     '--oauth-client-id', opts.clientId,
     '--oauth-client-secret', opts.clientSecret,
   ]);
+  const add = 'openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs'
+    + (home ? ` --env ${home}` : '');
   return [
-    '# On the OpenClaw machine, install the gbrain CLI, then wire this scoped thin client:',
+    '# On the OpenClaw machine, install the gbrain CLI, then run:',
     init,
+    add,
     '',
-    'Your OpenClaw reaches the brain through the scoped gbrain CLI (search/query/recall/put);',
-    "native remote MCP isn't supported yet — the stdio config in docs/mcp/OPENCLAW.md grants",
-    'FULL local DB access and does not use this client.',
+    "On that thin client `gbrain serve` is a stdio bridge: OpenClaw's tool calls reach the brain host with this",
+    "client's grant and nothing more. If gbrain's OpenClaw bundle plugin is installed there, it already registers",
+    'gbrain: run only the init line.',
+    ...(home ? [] : ['To keep this client apart from another gbrain on that machine, put the same GBRAIN_HOME=<dir> before',
+      'the init line and add --env GBRAIN_HOME=<dir> to the mcp add line.']),
+    "OpenClaw's native remote MCP client (streamable HTTP + `openclaw mcp login`) is the other scoped",
+    'route, with its own OAuth login (docs/mcp/OPENCLAW.md).',
   ].join('\n');
 }
 

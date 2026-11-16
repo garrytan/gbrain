@@ -91,7 +91,7 @@ const FIXTURES: Array<[slug: string, source: string, body: string]> = [
   ['notes/heron-private', BOUND, `---\ntitle: heron private\ntype: note\nvisibility: private\n---\n\nheron PRIVATEPAGECANARY private memo.\n`],
   ['atoms/heron-atom', BOUND, `---\ntitle: heron atom\ntype: atom\nsource_slug: notes/heron\n---\n\nheron ATOMCANARY derived atom.\n`],
   ['notes/heron-edit', BOUND, `---\ntitle: heron edit\ntype: note\n---\n\nheron editable page. EDITSECRETCANARY line to be removed.\n\n${filler(6)}\n`],
-  ['notes/heron', FOREIGN, `---\ntitle: heron\ntype: note\n---\n\nheron FOREIGNSOURCECANARY other source page.\n\n${filler(4)}\n`],
+  ['notes/heron', FOREIGN, `---\ntitle: heron\ntype: note\n---\n\nheron FOREIGNSOURCECANARY other source page.\n\n${Array.from({ length: 4 }, (_, i) => `Harbor ledger entry ${i} lists ferry crossings, buoy repairs and dock fees for the quarter.`).join('\n\n')}\n`],
   ['conversations/sessions/heron-session', BOUND, heronSession()],
   ['notes/heron-code', BOUND, `---\ntitle: heron code\ntype: note\n---\n\nThe heron tracker module.\n\n\`\`\`ts\n${codeFn('heronAlpha')}\n\n${codeFn('heronBeta')}\n\n${codeFn('heronGamma')}\n\`\`\`\n\nheron tracker closing note.\n`],
 ];

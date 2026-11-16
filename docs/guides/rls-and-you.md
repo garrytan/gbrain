@@ -113,7 +113,7 @@ psql as a BYPASSRLS role (e.g. `postgres`):
 
 ```sql
 CREATE OR REPLACE FUNCTION auto_enable_rls()
-RETURNS event_trigger AS $$
+RETURNS event_trigger SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE
   obj record;
 BEGIN
@@ -133,8 +133,9 @@ CREATE EVENT TRIGGER auto_rls_on_create_table
   EXECUTE FUNCTION auto_enable_rls();
 ```
 
-(This is the same DDL migration v35 runs — the canonical copy lives in
-`src/core/schema-migrations/v035-auto-rls-event-trigger.ts`, one file per schema migration. There's no CLI shortcut:
+(This is the DDL migration v35 runs, with the `SET search_path` later migrations add: keep that clause when you
+paste it, or doctor's `function_search_path` check fails until you run the `ALTER FUNCTION` it prints. The
+original lives in `src/core/schema-migrations/v035-auto-rls-event-trigger.ts`, one file per schema migration. There's no CLI shortcut:
 `gbrain apply-migrations --force-retry` targets the vX.Y.Z orchestrator
 registry, not numeric schema migrations like v35.)
 

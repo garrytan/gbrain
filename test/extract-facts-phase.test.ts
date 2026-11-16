@@ -1589,6 +1589,57 @@ describe('runExtractFacts — v0.46 (#3014) supersession transport + heal', () =
     expect(healed.expired_at).not.toBeNull();
   });
 
+  // #9069: only a struck row may carry the link. A live row whose context
+  // cell happens to read "superseded by #N" stays live and unlinked.
+  const LIVE_NOTE_FENCE = FACT_FENCE(
+    `| 1 | Will close by Q2 | commitment | 0.6 | world | medium | 2026-01-01 |  | call | superseded by #2 |
+| 2 | Closed in Q3 | fact | 1.0 | world | high | 2026-07-01 |  | call |  |`,
+  );
+  const row1Of = async () => (await readSupersessionCols()).find(x => x.row_num === 1)!;
+
+  test('#9069: a live row with a "superseded by #2" context lands unlinked and stays out of supersessions', async () => {
+    await putPage('people/deal', LIVE_NOTE_FENCE);
+    const r = await runExtractFacts(engine, { slugs: ['people/deal'] });
+    expect(r.factsInserted).toBe(2);
+    expect(r.warnings.filter(w => w.includes('superseded'))).toEqual([]);
+    const row1 = await row1Of();
+    expect(row1.superseded_by).toBeNull();
+    expect(row1.expired_at).toBeNull();
+    expect((await engine.listSupersessions('default')).length).toBe(0);
+  });
+
+  test('#9069: removing the strikethrough from a superseded row clears its link', async () => {
+    await putPage('people/deal', SUPERSEDE_FENCE);
+    await runExtractFacts(engine, { slugs: ['people/deal'] });
+    expect((await row1Of()).superseded_by).not.toBeNull();
+
+    await putPage('people/deal', LIVE_NOTE_FENCE);
+    await runExtractFacts(engine, { slugs: ['people/deal'] });
+    const row1 = await row1Of();
+    expect(row1.superseded_by).toBeNull();
+    expect(row1.expired_at).toBeNull();
+  });
+
+  // Existing data: the full walk that `gbrain dream --phase extract_facts` runs clears it without a page edit.
+  test('#9069: a live row stored with a wrong link by an older build is cleared by a full reconcile, page unchanged', async () => {
+    await putPage('people/deal', LIVE_NOTE_FENCE);
+    await runExtractFacts(engine, { slugs: ['people/deal'] });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `UPDATE facts SET superseded_by = (SELECT id FROM facts WHERE source_markdown_slug = 'people/deal' AND row_num = 2)
+        WHERE source_markdown_slug = 'people/deal' AND row_num = 1`,
+    );
+    expect((await row1Of()).superseded_by).not.toBeNull();
+    const idsBefore = await readIds();
+
+    await runExtractFacts(engine, {});
+    const row1 = await row1Of();
+    expect(row1.superseded_by).toBeNull();
+    expect(row1.expired_at).toBeNull();
+    expect(await readIds()).toEqual(idsBefore);
+    expect((await engine.listSupersessions('default')).length).toBe(0);
+  });
+
   test('dangling reference (#N absent from fence) → warning, superseded_by NULL, expired_at set', async () => {
     await putPage('people/deal', FACT_FENCE(
       `| 1 | ~~Retired claim~~ | commitment | 0.6 | world | medium | 2026-01-01 |  | call | superseded by #9 |`,

@@ -172,6 +172,25 @@ describe('inferFactSubject reasons', () => {
   });
 });
 
+describe('capture-stream openers (#8656)', () => {
+  const cases: Case[] = [
+    { fact: 'Notes from the Acme Example call', expect: 'companies/acme-example' },
+    { fact: 'Watched the Acme Example demo with the team', expect: 'companies/acme-example' },
+    { fact: 'Captured Acme Example pricing for the renewal', expect: 'companies/acme-example' },
+    { fact: 'Logged a call with Alice Example about hiring', expect: 'people/alice-example' },
+    { fact: "Reviewed Alice Example's proposal", expect: 'people/alice-example' },
+    { fact: 'Review of the Acme Example contract', expect: 'companies/acme-example' },
+    { fact: 'Notes Example joined Acme Example', expect: null },
+  ];
+  for (const c of cases) {
+    test(`${c.fact} -> ${c.expect}`, async () => {
+      for (const mode of ['write', 'relink'] as const) {
+        expect((await inferFactSubject(engine, 'default', { fact: c.fact, mode })).slug).toBe(c.expect);
+      }
+    });
+  }
+});
+
 describe('literal Unicode subject slugs (#6620)', () => {
   for (const mode of ['write', 'relink'] as const) {
     test(`${mode}: resolves complete Unicode paths at punctuation boundaries`, async () => {

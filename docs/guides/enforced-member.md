@@ -58,6 +58,52 @@ one. `git commit-push` refuses a named
 file the member can't read, an access policy file (`.gbrain/`) and any label
 change against HEAD; `--pending`, `--push-only` and `--resolve` are refused.
 
+<a id="writes-off"></a>
+## Turn member writes off
+
+A brain owner who wants member CLIs to read and not write sets one key in the
+brain's config, from a direct session (one without `GBRAIN_ENFORCED_MEMBER`):
+
+```
+gbrain config set access.enforced_member_writes refuse
+```
+
+| Value | Page writes | `git commit-push` with named paths |
+|---|---|---|
+| `checked` (default, or no value) | checked as described above | checked as described above |
+| `refuse_pages` | refused | checked as described above |
+| `refuse` (and any other value) | refused | refused |
+
+Page writes are `put` (a new slug, a page the member reads and a page it can't
+read alike), `link`, `unlink`, `tag`, `untag`, `timeline-add`, `remember`, and
+`edit_page` and `append_page`. Use `refuse_pages` when a host's member turns
+still commit files on purpose. The refusal comes before any page, path or
+source lookup, so it reads the same for every target and names none:
+
+```
+gbrain: refused under GBRAIN_ENFORCED_MEMBER=alice-example: writes are off for members on this brain; nothing was saved [GBRAIN_ENFORCED_REFUSED]
+Why: This brain turned off member writes under this mode: its config access.enforced_member_writes is refuse (or a value other than checked and refuse_pages), or could not be read.
+Fix: ask the brain owner to save it in a direct session (one without GBRAIN_ENFORCED_MEMBER).
+Recovery: nothing was saved; the same call refuses every time, so do not retry here.
+Docs: docs/guides/enforced-member.md#refused
+```
+
+Under `refuse_pages` the Why line reads: `This brain turned off member page
+writes under this mode: its config access.enforced_member_writes is
+refuse_pages.`
+
+- The key lives in the brain's database, so it works on a brain with no
+  repository and no environment variable overrides it. `config` is refused
+  under the mode, so a member can't change it.
+- Any value other than `checked` and `refuse_pages`, or a config read that
+  fails, counts as `refuse` (fail closed).
+  `gbrain config set access.enforced_member_writes checked` turns writes back on.
+- Reads are never affected, and neither is a CLI without
+  `GBRAIN_ENFORCED_MEMBER`.
+- Under every value, `git commit-push --pull`, `git commit-push --dry-run`,
+  `sync`, `sources refresh` and `write-request` keep their behaviour: they
+  bring in or read what is already committed.
+
 <a id="refused"></a>
 ## Refused
 

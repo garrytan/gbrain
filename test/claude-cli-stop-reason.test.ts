@@ -77,3 +77,37 @@ describe('claude-cli replays earlier tool calls with their arguments (#6236)', (
     expect(sent).not.toContain('[object Object]');
   });
 });
+
+describe('claude-cli native tool-call markup without a <use_tools> block (#9085)', () => {
+  const generate = (result: string) => {
+    writeFileSync(responsePath, JSON.stringify({
+      type: 'result', subtype: 'success', is_error: false, result, stop_reason: 'end_turn',
+      session_id: 's', num_turns: 1, usage: { input_tokens: 1, output_tokens: 1 },
+    }));
+    return withEnv({ GBRAIN_CLAUDE_CLI_BIN: stubBin }, async () => {
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      return new ClaudeCliLanguageModel('claude-sonnet-4-6').doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        tools: [{ type: 'function', name: 'put_page', description: '', inputSchema: { type: 'object', properties: {} } }],
+      } as LanguageModelV2CallOptions);
+    });
+  };
+
+  test('native invoke markup and an orphan </use_tools> fail the turn instead of ending it clean', async () => {
+    const reply = 'Writing the pattern page now.\n<invoke name="put_page">\n<parameter name="slug">patterns/acme-example</parameter>\n</invoke>\n</use_tools>';
+    const error = await generate(reply).then(() => null, (e: unknown) => e);
+    expect(String(error)).toContain('no parsable <use_tools> block');
+    const { normalizeAIError, AITransientError } = await import('../src/core/ai/errors.ts');
+    expect(normalizeAIError(error)).toBeInstanceOf(AITransientError);
+  });
+
+  test('prose that only names the protocol still ends clean', async () => {
+    const out = await generate('No pattern meets the evidence bar, so I am not calling put_page or writing a <use_tools> block.');
+    expect(out.finishReason).toBe('stop');
+  });
+
+  test('markup quoted in a code span or fence is an answer, not a call', async () => {
+    const out = await generate('The model wrote `<function_calls>` here. An example:\n```xml\n<invoke name="search">\n</invoke>\n```\nNothing was called.');
+    expect(out.finishReason).toBe('stop');
+  });
+});

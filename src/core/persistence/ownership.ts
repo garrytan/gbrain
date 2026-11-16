@@ -18,7 +18,7 @@ import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from '
 import { acquireShared, deferToLease, exclusiveAcquired, foreignWaiterAhead, joinLease, noteWaiting, yieldLease } from './worktree-lease.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { assertPhysicalRoot, claimPhysicalRoot, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot } from './physical-root.ts';
-import { assertPhysicalRootReservation, readPhysicalRootStamp } from './physical-root-record.ts';
+import { assertPhysicalRootReservation, readPhysicalRootStamp, relocatedRootTransferFix } from './physical-root-record.ts';
 import { nativeFilesystemPath } from './root-registry.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
 import { readGraduationRow } from './graduation-schema.ts';
@@ -234,6 +234,7 @@ async function lockWorktree(binding: WorktreeBinding, waitMs: number, signal: Ab
           + `then gbrain sources writer transfer prepare ${binding.source_id} --self-transfer --confirm-relocated-root --admin-intent writer_transfer_prepare --expected-state <admin_state>, `
           + `then gbrain sources writer transfer accept ${binding.source_id} --path ${binding.local_path} --expected-epoch ${binding.owner_epoch} --manifest <manifest digest printed by prepare> `
           + `--self-transfer --confirm-relocated-root --admin-intent writer_transfer_accept --expected-state <admin_state from a fresh status>. Retry the original write with the same request_id afterwards; never remove the ownership markers.`;
+        error.fix = relocatedRootTransferFix(binding.source_id, { root: binding.local_path, epoch: String(binding.owner_epoch) });
         throw error;
       }
       if (!(error instanceof OperationError) || error.detail !== 'physical_root_device_changed') throw error;
@@ -258,9 +259,14 @@ async function lockWorktree(binding: WorktreeBinding, waitMs: number, signal: Ab
  */
 export const MANAGED_WRITER_PROBE_WAIT_MS = 1000;
 
-/** Acquire-and-release probe of the worktree lock within MANAGED_WRITER_PROBE_WAIT_MS; false when it stayed busy. */
-export async function probeWorktreeWriter(binding: WorktreeBinding, engine?: BrainEngine): Promise<boolean> {
-  const lock = await acquireWorktree(binding, MANAGED_WRITER_PROBE_WAIT_MS, undefined, engine);
+/**
+ * Acquire-and-release probe of the worktree lock within `waitMs` (MANAGED_WRITER_PROBE_WAIT_MS by default);
+ * false when it stayed busy. #7461: atom maintenance passes its longer publish wait, since the previous
+ * batch's Git effects can hold the lock past the default.
+ */
+export async function probeWorktreeWriter(binding: WorktreeBinding, engine?: BrainEngine,
+  waitMs = MANAGED_WRITER_PROBE_WAIT_MS, signal?: AbortSignal): Promise<boolean> {
+  const lock = await acquireWorktree(binding, waitMs, signal, engine);
   if (!lock) return false;
   await lock.release();
   return true;

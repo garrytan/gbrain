@@ -1,0 +1,73 @@
+/**
+ * Guest notes, slice 3 (GBRA-504): stamps the guest warning onto an op's output. Runs on every op that returns stored
+ * text, wrapped once at registration (operation-load.ts finalizeOperation), so every remote, stdio and enforced-member
+ * dispatch, the local CLI and in-process callers all get it. The shared page-item walker (access/page-items.ts) finds
+ * every page-bearing item; the batched trust load (eligibility/stamp.ts loadPageTrust) decides per row whether its
+ * source is a guest source and reads the marks; each guest item gains `trust_tier: external_untrusted`,
+ * `origin: "guest"` and its `guest` object, and a remote quote fence around its text names the guest. Only a page the
+ * caller's own read policy admits is stamped (guests/stamp-readable.ts); output redaction runs after the stamp
+ * (operation-load.ts). The stamp is on the handler's result, so dispatch's response-cap fallback, which drops room
+ * marks, never drops it.
+ */
+import type { OperationContext } from '../ops/contract.ts';
+import { currentCallerAccess } from '../search/private-visibility.ts';
+import { exemptGuestWriter } from '../search/output-redaction.ts';
+import { collectPageItems, refKey, type PageRef, type Ref } from '../access/page-items.ts';
+import { loadPageTrust } from '../eligibility/stamp.ts';
+import { relabelGuestQuote } from '../search/transcript-quote.ts';
+import { brainHasGuestSource, GUEST_ORIGIN, guestQuoteLabel } from './marker.ts';
+import { readableGuestRefs } from './stamp-readable.ts';
+
+/** An owner caller sees the guest note's writer: the trusted local CLI, or a credential bound to the owner speaking for no one else. */
+export function guestViewerIsOwner(ctx: Pick<OperationContext, 'remote'>): boolean {
+  if (ctx.remote === false) return true;
+  const access = currentCallerAccess();
+  return access.owner && !access.audience?.length;
+}
+
+/** A copy of `value` the stamp may mark; refuses the read when it cannot copy, so a handler's own (possibly cached) object is never marked. */
+function detachedCopy<T>(value: T): T {
+  let copy: T;
+  try { copy = structuredClone(value); } catch (e) {
+    throw new Error(`The guest-note stamp could not copy this result (${e instanceof Error ? e.message : String(e)}), so the read was refused rather than mark the handler's own object or return a guest note unmarked.`);
+  }
+  if (value && typeof value === 'object' && copy && typeof copy === 'object') {
+    for (const key of Object.getOwnPropertySymbols(value)) (copy as Record<symbol, unknown>)[key] = (value as Record<symbol, unknown>)[key];
+  }
+  return copy;
+}
+
+const refSlug = (r: Ref) => (r.kind === 'page' ? r.slug : undefined);
+
+/**
+ * `result` with every guest item stamped, on a detached copy (handlers may return cached objects), or `result` itself
+ * when nothing in it is a guest row the caller may read. The trust load is skipped only when no source is a guest source
+ * (marker.ts brainHasGuestSource, which answers yes when it cannot tell); a failed trust or readability load fails the
+ * read rather than return a guest note unmarked.
+ */
+export async function stampGuestNotes(ctx: OperationContext, result: unknown): Promise<unknown> {
+  if (!result || typeof result !== 'object') return result;
+  const found = collectPageItems(result, ctx.sourceId ?? 'default').filter(s => s.ref !== null && s.ref.kind !== 'fact');
+  if (!found.length || !(await brainHasGuestSource(ctx.engine))) return result;
+  const refs = found.map(s => s.ref!).map(r => r.kind === 'page' ? { source_id: r.source_id, slug: r.slug } : { page_id: (r as { id: number }).id, slug: '' });
+  const trust = await loadPageTrust(ctx.engine, refs, { guestWriter: guestViewerIsOwner(ctx), includeDeleted: true });
+  const markOf = (r: Ref) => (r.kind === 'page' ? trust.byKey.get(`${r.source_id}\u0000${r.slug}`) : r.kind === 'page_id' ? trust.byId.get(r.id) : undefined)?.guest;
+  const marked = found.map(s => s.ref as PageRef).filter(r => markOf(r));
+  if (!marked.length) return result;
+  const readable = await readableGuestRefs(ctx, marked);
+  const guestOf = (r: Ref) => (readable.has(refKey(r)) ? markOf(r) : undefined);
+  if (!marked.some(guestOf)) return result;
+  const copy = detachedCopy(result);
+  for (const slot of collectPageItems(copy, ctx.sourceId ?? 'default')) {
+    const guest = slot.ref ? guestOf(slot.ref) : undefined;
+    if (!guest) continue;
+    const h = slot.holder;
+    h.trust_tier = 'external_untrusted';
+    h.origin = GUEST_ORIGIN;
+    h.guest = exemptGuestWriter(guest);
+    const slug = refSlug(slot.ref!) ?? (typeof h.slug === 'string' ? h.slug : undefined);
+    if (!slug) continue;
+    for (const [k, v] of Object.entries(h)) if (typeof v === 'string') h[k] = relabelGuestQuote(v, slug, guestQuoteLabel(guest));
+  }
+  return copy;
+}

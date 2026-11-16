@@ -82,6 +82,8 @@ export interface TranscriptsIngestOpts {
   paths: string[];
   /** Explicit format wins over detection. */
   format?: TranscriptFormat;
+  /** Per-file format harness discovery already established; used when no explicit format is set. */
+  discoveredFormats?: ReadonlyMap<string, TranscriptFormat>;
   /** Parse + redact + render + report; ZERO engine writes. */
   dryRun?: boolean;
   /** Max sessions imported this run (session granularity; truncation ⇒ not a clean scan). */
@@ -265,7 +267,7 @@ export async function runTranscriptsIngest(
     result.files.push(fileOutcome);
 
     const detected = detectAdapter(path, {
-      explicitFormat: opts.format,
+      explicitFormat: opts.format ?? opts.discoveredFormats?.get(path),
       adapters: opts.adapters,
     });
     if (!detected.ok) {
@@ -548,7 +550,7 @@ async function importSession(engine: BrainEngine, opts: TranscriptsIngestOpts, r
  * still publishing waits on that write (transcriptPartRequest) instead of
  * admitting a second one.
  */
-async function submitTranscriptPart(
+export async function submitTranscriptPart(
   ctx: OperationContext,
   engine: BrainEngine,
   sourceId: string,
@@ -610,7 +612,7 @@ async function transcriptPartRequest(ctx: OperationContext, sourceId: string, sl
  * That refusal (owner_unavailable) pauses background work only, so it is this session's error, never the run's:
  * foreground parts of every other session are still admitted.
  */
-async function deleteStaleTranscriptPart(ctx: OperationContext, engine: BrainEngine, sourceId: string, slug: string): Promise<void> {
+export async function deleteStaleTranscriptPart(ctx: OperationContext, engine: BrainEngine, sourceId: string, slug: string): Promise<void> {
   const snapshot = await engine.readPageSnapshot(slug, { sourceId });
   if (!snapshot) return;
   const receipt = await submitPageMutation({ ...ctx, admissionOrigin: 'background' }, { operation: 'delete_page', params: { slug, source_id: sourceId, expected_revision: snapshot.revision, request_id: randomUUID() } })
@@ -659,7 +661,7 @@ function adoptExistingBaseSlug(rendered: RenderSessionResult, existingSlug: stri
  * line would land with embedding skipped), times PAGE_CEILING_FILL for the
  * frontmatter. Read once per run.
  */
-async function transcriptPageCeiling(engine: BrainEngine): Promise<number> {
+export async function transcriptPageCeiling(engine: BrainEngine): Promise<number> {
   const [policy, block] = await Promise.all([readPageBodyPolicy(engine), effectiveBytesBlock(engine)]);
   return Math.floor(Math.min(policy.maxBytes, block) * PAGE_CEILING_FILL);
 }

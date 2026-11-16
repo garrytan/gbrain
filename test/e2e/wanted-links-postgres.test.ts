@@ -7,7 +7,8 @@ import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { replaceWantedLinks } from '../../src/core/wanted-links.ts';
 import { bareNameReferenceSettles, disabledClearsRows, forwardReferenceHeals, impossibleTargetsNeverAbortTheSweep,
   impossibleTargetsStayOutOfWrites, onlyUnresolvedAuthoredReferences, privateOriginsStayPrivate,
-  restoredTargetHeals, topLevelSlugNamePageEditWakesOnce, topLevelSlugNameReferenceSettles } from '../helpers/wanted-links-scenarios.ts';
+  restoredTargetHeals, basenameRowPublishedAfterItsTargetWasWrittenWakesItsOrigin, nameRowPublishedAfterItsTargetWasWrittenWakesItsOrigin,
+  topLevelSlugNamePageEditWakesOnce, topLevelSlugNameReferenceSettles } from '../helpers/wanted-links-scenarios.ts';
 
 const url = process.env.DATABASE_URL;
 describe.skipIf(!url)('Postgres wanted pages', () => {
@@ -16,6 +17,8 @@ describe.skipIf(!url)('Postgres wanted pages', () => {
   test('a bare-name reference settles', () => bareNameReferenceSettles(url), 180_000);
   test('#9140: a bare-name reference equal to a top-level slug settles', () => topLevelSlugNameReferenceSettles(url), 180_000);
   test('#9140: editing the top-level page wakes that origin once', () => topLevelSlugNamePageEditWakesOnce(url), 180_000);
+  test('GST-2460: an exact-slug page first written during an extraction wakes its origin', () => nameRowPublishedAfterItsTargetWasWrittenWakesItsOrigin(url), 180_000);
+  test('GST-2460: a basename match first written during an extraction wakes its origin', () => basenameRowPublishedAfterItsTargetWasWrittenWakesItsOrigin(url), 180_000);
   test('private origins stay private', () => privateOriginsStayPrivate(url), 180_000);
   test('restoring a deleted target heals', () => restoredTargetHeals(url), 180_000);
   test('disabling clears rows', () => disabledClearsRows(url), 180_000);
@@ -37,7 +40,8 @@ describe.skipIf(!url)('Postgres wanted pages: source registration race (#6225)',
       let deleteError = null as { code?: string } | null;
       await engine.transaction(async tx => {
         await replaceWantedLinks(tx, { pageId: Number(origin.id), sourceId: 'default' }, { producers: ['body'], rows: [
-          { producer: 'body', ref_kind: 'name', target_source_id: 'archive', target_ref: 'erin-example', link_type: 'mentions', context: '' }] });
+          { producer: 'body', ref_kind: 'name', target_source_id: 'archive', target_ref: 'erin-example', link_type: 'mentions', context: '' }],
+          readAt: new Date().toISOString() });
         try {
           await other.begin(async sql => {
             await sql.unsafe("SET LOCAL lock_timeout = '300ms'");

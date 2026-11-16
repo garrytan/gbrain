@@ -39,7 +39,7 @@ import { BudgetTracker, type BudgetReservation } from '../budget/budget-tracker.
 import { failedCallUsage, recordOnTracker } from './budget-record.ts';
 import { estimateChatInputTokens } from './chat-input-estimate.ts';
 import { chatWithFallback, normalizeChatFallbackChain } from './chat-fallback.ts';
-import { applyThinkingOff, thinkingOffMaxOutputTokens } from './thinking-off.ts';
+import { applyThinkingOff, setThinkingOffBaseUrls, thinkingOffMaxOutputTokens } from './thinking-off.ts';
 import type {
   AIGatewayConfig,
   EmbedMultimodalOpts,
@@ -481,6 +481,7 @@ export function recipeSupportsStructuredOutputs(recipe: Recipe): boolean {
 export function configureGateway(config: AIGatewayConfig): void {
   processState.config = gatewayConfigOf(config);
   stashGatewayAnthropicKeyFromEnv(config.env ?? {}); // #2119: filter + rationale in anthropic-key.ts
+  setThinkingOffBaseUrls(config.base_urls);
   processState.modelCache.clear();
   clearQueryEmbedCache();
   processState.shrink.clear();
@@ -742,6 +743,7 @@ export function __setGatewayResetBaselineForTests(
 /** Clear every piece of module state. Shared by both reset flavors. */
 function clearGatewayState(): void {
   processState.config = null;
+  setThinkingOffBaseUrls(undefined);
   _discoveryEngine = null;
   _discovery = null;
   clearGatewayModelSources();
@@ -1886,7 +1888,8 @@ export async function embedQuery(
   const cfg = requireConfig();
   const { recipe, modelId } = await resolveEmbeddingProvider(opts?.embeddingModel ?? getEmbeddingModel());
   const dims = opts?.dimensions ?? cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
-  const key = queryEmbedCacheKey(recipe.id, modelId, gw().cacheTag + (cfg.base_urls?.[recipe.id] ?? ''), dims, input);
+  const state = gw();
+  const key = queryEmbedCacheKey(recipe.id, modelId, state.cacheTag + (cfg.base_urls?.[recipe.id] ?? ''), dims, input);
   const cached = hasAIInvocationGuard() ? undefined : cachedQueryEmbedding(key);
   if (cached) return cached;
   const generation = queryEmbedGeneration();
@@ -1899,7 +1902,7 @@ export async function embedQuery(
     // default via withDefaultTimeout (shorter wins).
     abortSignal: opts?.abortSignal,
   });
-  if (v) storeQueryEmbedding(key, v, generation);
+  if (v && !state.released) storeQueryEmbedding(key, v, generation);
   return v;
 }
 

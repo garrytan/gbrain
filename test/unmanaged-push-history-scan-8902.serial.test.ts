@@ -1,7 +1,8 @@
 /**
  * #8902: four pushes from an unmanaged checkout publish every local commit the remote lacks, so each scans that range,
  * not only what it just wrote: the access-policy commit, the durability-scaffolding commit, `gbrain sources push` and the
- * first push of `gbrain bootstrap repo`. Real git against local bare remotes (bootstrap's remote must be a GitHub URL,
+ * first push of `gbrain bootstrap repo`. The policy commit and sources push keep the commit and report the refusal
+ * (committed_not_pushed, blocked_history; GST-2456); the other two throw it. Real git against local bare remotes (bootstrap's remote must be a GitHub URL,
  * so its gh calls and its push are faked and recorded); synthetic credentials only. HOME, GBRAIN_HOME and the file
  * transport switch are process-wide.
  */
@@ -15,7 +16,7 @@ import { hardenBrainRepo } from '../src/core/brain-repo-durability.ts';
 import { createPrivateRepo, type ExecRunner, type RepoReceipt } from '../src/core/bootstrap/repo.ts';
 import { writeManifest, writeReceipt } from '../src/core/bootstrap/format.ts';
 import { defaultRunner } from '../src/core/repo-visibility.ts';
-import { workspacePush } from '../src/core/workspace-push.ts';
+import { workspacePush, type WorkspacePushResult } from '../src/core/workspace-push.ts';
 import { SCAN_ALLOW_FILENAME } from '../src/core/secret-scan.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 
@@ -42,6 +43,22 @@ const expectRedactedRefusal = (error: OperationError | null, code = 'publish_sec
 };
 const policy = () => commitPolicyFile(root, POLICY_FILE, () => 'version: 1\nrules: []\n', 'update folder policy');
 const sourcesPush = () => workspacePush({ dir: root, branch: 'main', allowUnverifiedRemote: true });
+/** A policy commit the range scan refused: committed here, reported committed_not_pushed with the refusal (never a value) in its note. */
+const keptLocal = async (p: ReturnType<typeof policy>, code = 'publish_secret_found') => {
+  const receipt = await p;
+  expect(receipt.outcome).toBe('committed_not_pushed');
+  expect(receipt.commit).toBe(git(root, 'rev-parse', 'HEAD'));
+  expect(receipt.note).toContain(code);
+  expect(JSON.stringify(receipt)).not.toContain(TOKEN);
+  return receipt;
+};
+/** A sources push the range scan refused: a blocked_history result naming the refusal, never a value. */
+const blocked = async (p: Promise<WorkspacePushResult>, code = 'publish_secret_found') => {
+  const result = await p;
+  expect(result).toMatchObject({ ok: false, status: 'blocked_history', code });
+  expect(JSON.stringify(result)).not.toContain(TOKEN);
+  return result;
+};
 
 beforeEach(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-8902-')));
@@ -67,10 +84,9 @@ afterEach(() => {
 describe('access-policy commit', () => {
   test('refuses a credential an earlier commit added and a later one removed; keeps the policy commit local', async () => {
     const secret = removedSecret();
-    const error = await refusal(policy());
-    expectRedactedRefusal(error);
-    expect(error?.message).toContain(`notes.md:1`);
-    expect(error?.message).toContain(secret.slice(0, 7));
+    const receipt = await keptLocal(policy());
+    expect(receipt.note).toContain(`notes.md:1`);
+    expect(receipt.note).toContain(secret.slice(0, 7));
     expect(remoteTip()).toBe(base);
     expect(git(root, 'show', `HEAD:${POLICY_FILE}`)).toBe('version: 1\nrules: []');
     expect(git(root, 'status', '--porcelain')).toBe('');
@@ -78,9 +94,7 @@ describe('access-policy commit', () => {
 
   test('refuses a credential in an earlier commit message', async () => {
     plainCommit('notes.md', 'safe\n', `rotate ${TOKEN}`);
-    const error = await refusal(policy());
-    expectRedactedRefusal(error);
-    expect(error?.message).toContain('(commit message)');
+    expect((await keptLocal(policy())).note).toContain('(commit message)');
     expect(remoteTip()).toBe(base);
   }, T);
 
@@ -96,7 +110,7 @@ describe('access-policy commit', () => {
     git(root, 'remote', 'set-url', 'origin', other);
     git(root, 'update-ref', '-d', 'refs/remotes/origin/main');
     git(root, 'commit', '-q', '--amend', '-m', `policy ${TOKEN}`);
-    expectRedactedRefusal(await refusal(commitPolicyFile(root, POLICY_FILE, () => 'version: 1\nrules: [] # again\n', 'policy again')));
+    await keptLocal(commitPolicyFile(root, POLICY_FILE, () => 'version: 1\nrules: [] # again\n', 'policy again'));
     expect(() => git(other, 'rev-parse', '--verify', 'refs/heads/main')).toThrow();
   }, T);
 
@@ -141,7 +155,7 @@ describe('durability scaffolding commit', () => {
 describe('gbrain sources push', () => {
   test('with nothing new to commit, refuses the earlier commits it would push and keeps them local', async () => {
     const head = (removedSecret(), git(root, 'rev-parse', 'HEAD'));
-    expectRedactedRefusal(await refusal(sourcesPush()));
+    await blocked(sourcesPush());
     expect(remoteTip()).toBe(base);
     expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
   }, T);
@@ -149,32 +163,27 @@ describe('gbrain sources push', () => {
   test('refuses when it also commits new clean work, and keeps that commit', async () => {
     removedSecret();
     writeFileSync(join(root, 'page.md'), 'new page\n');
-    expectRedactedRefusal(await refusal(sourcesPush()));
+    await blocked(sourcesPush());
     expect(remoteTip()).toBe(base);
     expect(git(root, 'show', 'HEAD:page.md')).toBe('new page');
   }, T);
 
   test('refuses a credential in an earlier commit message', async () => {
     plainCommit('notes.md', 'safe\n', `rotate ${TOKEN}`);
-    const error = await refusal(sourcesPush());
-    expectRedactedRefusal(error);
-    expect(error?.message).toContain('(commit message)');
+    expect((await blocked(sourcesPush())).reason).toContain('(commit message)');
     expect(remoteTip()).toBe(base);
   }, T);
 
   test('an allowlist edit it commits itself still publishes; one a script committed refuses', async () => {
     plainCommit('notes.md', `key ${TOKEN}\n`);
-    const first = await refusal(sourcesPush());
-    expectRedactedRefusal(first);
-    const fingerprint = (JSON.parse(String(first!.detail)) as { findings: Array<{ fingerprint: string }> }).findings[0]!.fingerprint;
+    const first = await blocked(sourcesPush());
+    const fingerprint = (JSON.parse(String(first.detail)) as { findings: Array<{ fingerprint: string }> }).findings[0]!.fingerprint;
     writeFileSync(join(root, SCAN_ALLOW_FILENAME), `${fingerprint}\n`);
     expect((await sourcesPush()).status).toBe('pushed');
     expect(remoteTip()).toBe(git(root, 'rev-parse', 'HEAD'));
     const published = remoteTip();
     plainCommit(SCAN_ALLOW_FILENAME, `${fingerprint}\n**/*.env\n`);
-    const gate = await refusal(sourcesPush());
-    expectRedactedRefusal(gate);
-    expect(gate?.message).toContain(SCAN_ALLOW_FILENAME);
+    expect((await blocked(sourcesPush())).reason).toContain(SCAN_ALLOW_FILENAME);
     expect(remoteTip()).toBe(published);
   }, T);
 
@@ -182,7 +191,7 @@ describe('gbrain sources push', () => {
     removedSecret();
     git(root, 'push', '-q');
     git(remote, 'update-ref', 'refs/heads/main', base);
-    expectRedactedRefusal(await refusal(sourcesPush()));
+    await blocked(sourcesPush());
     expect(remoteTip()).toBe(base);
   }, T);
 
@@ -247,7 +256,7 @@ describe('gbrain bootstrap repo, first push after the remote branch is gone', ()
   test('a clean history still completes the first push', async () => {
     plainCommit('notes.md', 'clean earlier work\n');
     expect((await bootstrap()).reused).toBe(true);
-    expect(pushes).toEqual([['git', '-C', root, 'push', '-u', 'origin', 'main']]);
+    expect(pushes).toEqual([['git', '-C', root, 'push', '-u', 'origin', 'main', '--no-follow-tags', '--recurse-submodules=no']]);
     expect(readFileSync(join(root, 'GITHUB.md'), 'utf8')).toContain(url);
   }, T);
 });

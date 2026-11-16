@@ -203,6 +203,29 @@ for (const kind of testBackends()) {
       expect(await row()).toEqual({ attest_actor: null, attest_ops: null, attest_sources: null });
     });
 
+    test('GST-2407: attestRead sets how named sources read over HTTP, as auth rescope --attest-read does; every CLI refusal holds', async () => {
+      const scope = 'scope-read-http-' + randomUUID().slice(0, 8);
+      await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1)', [scope]);
+      const qm = await register('qm-read', ['client_credentials']);
+      const row = async () => (await engine.executeRaw<Record<string, unknown>>('SELECT attest_actor, attest_read FROM oauth_clients WHERE client_id = $1', [qm.clientId]))[0];
+      expect((await call('POST', '/admin/api/access/attest', { clientId: qm.clientId, attestRead: 'person' })).json).toMatchObject({ code: 'invalid_params' });
+      expect(await row()).toEqual({ attest_actor: null, attest_read: null });
+      expect((await call('POST', '/admin/api/access/attest', { clientId: qm.clientId, attestActor: 'qm', attestRead: 'person', dryRun: true })).json)
+        .toMatchObject({ applied: false, changed: true, attest_actor: 'qm', attest_read: 'person' });
+      expect(await row()).toEqual({ attest_actor: null, attest_read: null });
+      expect((await call('POST', '/admin/api/access/attest', { clientId: qm.clientId, attestActor: 'qm', attestRead: 'person' })).json).toMatchObject({ applied: true, attest_read: 'person' });
+      expect(await row()).toEqual({ attest_actor: 'qm', attest_read: 'person' });
+      const auth = await provider().verifyAccessToken((await provider().exchangeClientCredentials(qm.clientId, qm.clientSecret!)).access_token) as unknown as { attest?: { read?: string } };
+      expect(auth.attest?.read).toBe('person');
+      expect((await call('POST', '/admin/api/access/attest', { clientId: qm.clientId, attestRead: 'scope' })).json).toMatchObject({ applied: true, attest_read: 'scope' });
+      expect((await call('POST', '/admin/api/access/attest', { clientId: qm.clientId, attestRead: 'room' })).status).toBe(400);
+      await bindCredential(engine, { kind: 'client', id: qm.clientId }, { attestSources: [scope] });
+      expect((await call('POST', '/admin/api/access/attest', { clientId: qm.clientId, attestRead: 'person' })).json).toMatchObject({ code: 'invalid_params' });
+      expect((await call('POST', '/admin/api/access/attest', { clientId: qm.clientId, attestRead: null })).json).toMatchObject({ applied: true, attest_read: null });
+      expect(await row()).toEqual({ attest_actor: 'qm', attest_read: null });
+      expect((await audits()).filter(a => a.action === 'client_attest' && a.client_id === qm.clientId).map(a => a.attest_read)).toEqual(['person', 'scope', null]);
+    });
+
     test('the audit rows an applied change writes are never read as client usage', async () => {
       expect((await call('POST', '/admin/api/access/members', { action: 'add', id: 'usage-example' })).json).toMatchObject({ applied: true });
       expect((await audits()).some(a => a.action === 'member_add' && a.member === 'usage-example')).toBe(true);

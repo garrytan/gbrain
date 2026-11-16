@@ -1,12 +1,9 @@
 import { registerPostgresTests } from '../helpers/test-backends.ts';
 
 // F0 `gbrain sources refresh` on Postgres: the same state machine, admission
-// fence, claim predicates and crash recovery as the PGLite unit files.
+// fence and claim predicates as the PGLite unit files. Crash recovery, orphans
+// and the diverged publish run in worktree-refresh-recovery-postgres.test.ts.
 await registerPostgresTests(
   () => import('../persistence-worktree-refresh.test.ts'),
-  () => import('../persistence-worktree-refresh-restart.test.ts'),
-  () => import('../worktree-refresh-orphan-7679.test.ts'),
-  () => import('../refresh-publish-diverged-7686.test.ts'),
   () => import('../refresh-source-changed-retry-8617.test.ts'),
-  () => import('../refresh-recovery-followups-gst1465.test.ts'),
 );

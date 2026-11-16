@@ -210,6 +210,14 @@ for (const kind of testBackends()) {
         } finally { Object.assign(e, { stageSegmentTexts: originals.texts, stageManifestRows: originals.manifest, stageSegmentChunks: originals.chunks }); }
       }, 600_000);
 
+      test('#7052: add_tag with a tag over the tag byte limit refuses tag_too_long on the segmented page and changes nothing', async () => {
+        const before = await counts();
+        const refused = await call('add_tag', { slug: HUGE, tag: 'x'.repeat(3000) });
+        expect(refused.code ?? refused.error).toBe('tag_too_long');
+        expect(await counts()).toEqual(before);
+        expect((await brain.engine.readPageSnapshot(HUGE, { sourceId: brain.sourceId }))!.tags).toEqual([]);
+      }, 600_000);
+
       test('timeline, takes and facts writes refuse page_body_segmented naming the 24 MiB limit and change nothing', async () => {
         const before = await counts();
         const fileBefore = fileBody();

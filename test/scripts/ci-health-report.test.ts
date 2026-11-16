@@ -10,7 +10,7 @@ import { describe, expect, test } from 'bun:test';
 import type { GitHubClient } from '../../scripts/lib/gh-issue.ts';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CAPS, collectHealth, firstAttempt, parseWindow, renderHealth, shardRatio, topFailingFiles, type Annotation, type Job, type Run } from '../../scripts/ci-health-report.ts';
+import { CAPS, classify, collectHealth, firstAttempt, parseWindow, renderHealth, shardRatio, topFailingFiles, type Annotation, type Job, type Run } from '../../scripts/ci-health-report.ts';
 
 const repo = { full_name: 'garrytan/gbrain' };
 const run = (id: number, conclusion: string, attempt = 1, fork = false): Run => ({
@@ -24,6 +24,19 @@ const shard = (id: number, name: string, secs: number, conclusion = 'success'): 
 describe('ci-health-report', () => {
   test('first-attempt pass counts only runs that passed without a re-run; cancelled runs are ignored', () => {
     expect(firstAttempt([run(1, 'success'), run(2, 'success', 2), run(3, 'failure'), run(4, 'cancelled')])).toEqual({ runs: 3, pass: 1, rate: 1 / 3 });
+  });
+
+  test('a job whose checkout retry also failed is infrastructure, and a test failure after a recovered checkout is a test', () => {
+    const stalledTwice: Job = { id: 1, name: 'test (1, 2)', conclusion: 'failure', steps: [
+      { name: 'Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262', conclusion: 'success' },
+      { name: 'Check out again after a stalled first attempt', conclusion: 'failure' },
+    ] };
+    const recovered: Job = { ...stalledTwice, steps: [
+      { name: 'Check out again after a stalled first attempt', conclusion: 'success' },
+      { name: 'Run unit shard', conclusion: 'failure' },
+    ] };
+    expect(classify([stalledTwice])).toBe('infrastructure');
+    expect(classify([recovered])).toBe('test');
   });
 
   test('shard ratio is slowest over mean among matching jobs', () => {

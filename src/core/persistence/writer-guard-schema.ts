@@ -6,7 +6,7 @@ export const GUARDED_TABLES = ['pages', 'tags', 'slug_aliases', 'page_aliases', 
 const sqlList = (names: string[]) => names.map(name => `'${name}'`).join(',');
 /** The guard function alone: replacing it takes no table lock (v197). */
 export const MANAGED_WRITER_GUARD_FUNCTION_SQL = `
-CREATE OR REPLACE FUNCTION gbrain_require_managed_writer() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+CREATE OR REPLACE FUNCTION gbrain_require_managed_writer() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 DECLARE managed boolean; strict_count integer; seen integer; git boolean; unreadable text; target_source text; old_source text; row_data jsonb; old_data jsonb; allowed jsonb;
 BEGIN
   -- #7636: init always writes the singleton, so a missing row means this role cannot read it (RLS), never "unmanaged".

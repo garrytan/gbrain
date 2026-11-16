@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { gitChildEnv } from '../git-env.ts';
+import { gitChildEnv, literalPathspecs } from '../git-env.ts';
 import { HARDENED_GIT_ARGS, noLazyFetchEnv } from '../hardened-git.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 
@@ -22,7 +22,7 @@ export const SYNC_READ_BOUND = PAGE_MAX_BYTES;
 export interface TreeBlob { oid: string; size: number }
 
 function git(gitRoot: string, args: string[], input?: string, maxBuffer = 32 * 1024 ** 2, env: NodeJS.ProcessEnv = {}): Buffer {
-  return execFileSync('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '--literal-pathspecs', '-C', gitRoot, ...args],
+  return execFileSync('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', gitRoot, ...args],
     { env: gitChildEnv({ ...noLazyFetchEnv(), ...env }), timeout: 60_000, maxBuffer, stdio: ['pipe', 'pipe', 'pipe'], ...(input !== undefined ? { input } : {}) });
 }
 
@@ -34,7 +34,7 @@ export function readTreeBlobs(gitRoot: string, target: string, gitPaths: string[
   const whole = gitPaths.length >= WHOLE_TREE_AT, wanted = whole ? new Set(gitPaths) : null;
   for (let i = 0; i < gitPaths.length; i += 500) {
     const rows = (whole ? git(gitRoot, ['ls-tree', '-r', '-l', '-z', target], undefined, 512 * 1024 ** 2)
-      : git(gitRoot, ['ls-tree', '-l', '-z', target, '--', ...gitPaths.slice(i, i + 500)])).toString('utf8').split('\0');
+      : git(gitRoot, ['ls-tree', '-l', '-z', target, '--', ...literalPathspecs(gitPaths.slice(i, i + 500))])).toString('utf8').split('\0');
     for (const row of rows) {
       const tab = row.indexOf('\t');
       if (tab < 0 || wanted && !wanted.has(row.slice(tab + 1))) continue;

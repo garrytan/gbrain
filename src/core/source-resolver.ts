@@ -311,7 +311,7 @@ export function resolveSourceIdEngineFree(
  *     GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE=1) so the reroute is diagnosable.
  *
  * Excludes archived sources (`archived = false`) so a soft-deleted source
- * doesn't auto-resolve. Shared by `resolveSourceId` and `resolveSourceWithTier`
+ * doesn't auto-resolve, and the storage manifest (GST-1943), which only the storage verbs write. Shared by `resolveSourceId` and `resolveSourceWithTier`
  * so the heuristic can't drift between the two entry points.
  *
  * NOTE (#2928): this tier deliberately does NOT consult config.federated —
@@ -376,11 +376,11 @@ async function pickSoleNonDefaultSource(
       `SELECT 1 AS one FROM pages WHERE source_id = 'default' AND deleted_at IS NULL LIMIT 1`,
     ).then(found => found.length > 0);
   defaultHasPages.catch(() => {});
-  let rows: Array<{ id: string }> = request ? request.filter(row => row.local_path !== null && row.id !== 'default' && row.archived === false) : [];
+  let rows: Array<{ id: string; config?: unknown }> = request ? request.filter(row => row.local_path !== null && row.id !== 'default' && row.archived === false && parseSourceConfig(row.config).role !== 'storage_manifest') : [];
   if (!request) {
     try {
-      rows = await engine.executeRaw<{ id: string }>(
-        `SELECT id FROM sources WHERE local_path IS NOT NULL AND id != 'default' AND archived = false`,
+      rows = await engine.executeRaw<{ id: string; config: unknown }>(
+        `SELECT id, config FROM sources WHERE local_path IS NOT NULL AND id != 'default' AND archived = false AND config->>'role' IS DISTINCT FROM 'storage_manifest'`,
       );
     } catch {
       rows = await engine.executeRaw<{ id: string }>(
@@ -396,7 +396,9 @@ async function pickSoleNonDefaultSource(
       // every bare command away from the sole side-source, and the user
       // hunts for "lost" writes. One stderr line names both sides so the
       // misroute is diagnosable; same suppression knob as the routing nudge.
-      if (!opts.quiet && process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE !== '1') {
+      // GST-2732: a federated side source is in default search already, so the routing loses nothing and stays quiet.
+      const federated = (parseSourceConfig(rows[0].config) as { federated?: unknown }).federated === true;
+      if (!opts.quiet && !federated && process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE !== '1') {
         console.error(
           `[gbrain] sole non-default source '${rows[0].id}' exists, but 'default' is non-empty — routing to 'default' (#3070 emptiness guard). Pass --source ${rows[0].id} or set sources.default to target it.`,
         );

@@ -17,7 +17,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { isFactsExtractionEnabled } from '../facts/extract.ts';
-import { BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
+import { BudgetTracker, loadPricingOverrides, type BudgetReason } from '../budget/budget-tracker.ts';
 import { withBudgetTracker } from '../ai/gateway.ts';
 import { conversationFactsCostCap } from '../facts/conversation-budget.ts';
 import {
@@ -30,6 +30,10 @@ export interface IngestFactsResult {
   pagesFailed: number;
   spentUsd?: number;
   skippedDisabled?: boolean;
+  budgetExhausted?: boolean;
+  budgetReason?: BudgetReason;
+  pagesSkippedTooLarge?: number;
+  pagesLockSkipped?: number;
 }
 
 export async function runIngestFacts(
@@ -59,5 +63,7 @@ export async function runIngestFacts(
       budgetTracker: tracker,
     }),
   );
-  return { pages: opts.slugs.length, pagesFailed: result.pages_failed, spentUsd: tracker.totalSpent };
+  return { pages: opts.slugs.length, pagesFailed: result.pages_failed, spentUsd: tracker.totalSpent,
+    budgetExhausted: result.budget_exhausted === true, ...(result.budget_reason ? { budgetReason: result.budget_reason } : {}),
+    pagesSkippedTooLarge: result.pages_skipped_too_large, pagesLockSkipped: result.pages_lock_skipped };
 }

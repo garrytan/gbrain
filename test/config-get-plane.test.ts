@@ -182,3 +182,50 @@ describe('#5358 — config get resolves publish-gate keys the way the runtime ga
     expect(logs).toEqual([String(runtime)]);
   });
 });
+
+describe('#7346 — config get and show redact secrets nested in an object value', () => {
+  // Value: protects=object-storage credentials never reach scrollback or agent transcripts through config get/show;
+  // fails_when=a nested camelCase secret (storage.secretAccessKey) prints in the clear; why_new=the #3943 pins cover
+  // only flat snake_case keys; seam=runConfig with a file-plane storage object; no_claim=redaction of --raw output.
+  const SECRET = 'minio-test7346-secret-value';
+  const KEY_ID = 'minio-test7346-key-id';
+  const storage = { backend: 's3', bucket: 'brain-files', endpoint: 'http://127.0.0.1:9000', accessKeyId: KEY_ID, secretAccessKey: SECRET };
+
+  async function runShow(): Promise<string> {
+    const logs: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { logs.push(a.join(' ')); });
+    const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await withEnv({ GBRAIN_HOME: home }, () => runConfig(stubEngine({}), ['show']));
+    } finally {
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+    }
+    return logs.join('\n');
+  }
+
+  test('get storage masks the nested credentials and keeps the other fields', async () => {
+    writeFileConfig({ engine: 'pglite', storage });
+    const { logs, errs, exit } = await runGet({}, 'storage');
+    expect(exit).toBeNull();
+    const out = logs.join('\n');
+    expect(out).not.toContain(SECRET);
+    expect(out).not.toContain(KEY_ID);
+    expect(errs.join('\n')).not.toContain(SECRET);
+    expect(JSON.parse(out)).toEqual({ ...storage, accessKeyId: '***', secretAccessKey: '***' });
+  });
+
+  test('get storage.secretAccessKey prints ***; --raw still prints the value', async () => {
+    writeFileConfig({ engine: 'pglite', storage });
+    expect((await runGet({}, 'storage.secretAccessKey')).logs).toEqual(['***']);
+    expect((await runGet({}, 'storage.secretAccessKey', { after: ['--raw'] })).logs).toEqual([SECRET]);
+  });
+
+  test('show masks the nested credentials', async () => {
+    writeFileConfig({ engine: 'pglite', storage });
+    const out = await runShow();
+    expect(out).toContain('brain-files');
+    expect(out).not.toContain(SECRET);
+    expect(out).not.toContain(KEY_ID);
+  });
+});

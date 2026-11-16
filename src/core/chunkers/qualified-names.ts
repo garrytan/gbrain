@@ -56,6 +56,7 @@ const LANG_CONFIG: Partial<Record<SupportedCodeLanguage, QualifiedNameConfig>> =
   go:         { segmentDelim: '.' },
   rust:       { segmentDelim: '::' },
   java:       { segmentDelim: '.' },
+  elixir:     { segmentDelim: '.' },
   ruby:       {
     segmentDelim: '::',
     methodDelim: '#',

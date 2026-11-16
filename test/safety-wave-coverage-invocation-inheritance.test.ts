@@ -22,7 +22,7 @@ test('inherited fact authorization admits and settles both budgets for one provi
   expect(events).toEqual([['migration:admit', null], ['facts:admit', null], ['migration:settle', usage], ['facts:settle', usage]]);
 });
 
-test('inner authorization refusal retains the outer debit without dispatching', async () => {
+test('inner authorization refusal releases the outer debit at zero usage without dispatching', async () => {
   const events: Array<[string, AIInvocationUsage | null]> = [];
   const refused = new Error('synthetic inner cap exhausted');
   let dispatched = false;
@@ -31,7 +31,7 @@ test('inner authorization refusal retains the outer debit without dispatching', 
       invokeAI(call, async () => { dispatched = true; }, () => usage), { inherit: true }))).rejects.toBe(refused);
   expect(dispatched).toBe(false);
   expect(isAIInvocationPolicyError(refused)).toBe(true);
-  expect(events).toEqual([['migration:admit', null], ['migration:settle', null]]);
+  expect(events).toEqual([['migration:admit', null], ['migration:settle', { inputTokens: 0, outputTokens: 0 }]]);
 });
 
 test('outer authorization refusal prevents inner admission and provider dispatch', async () => {

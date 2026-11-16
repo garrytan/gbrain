@@ -54,8 +54,10 @@ export interface WriteReceipt {
     mode: 'filesystem' | 'database';
     file_written?: boolean;
     git_state?: string;
-    /** G2: the commit a strict (canonical: git) source's write was committed in before its row. */
+    /** G2: the commit a strict (canonical: git) source's write was committed in before its row; #9227: a classic write's Git effect commit. */
     git_commit?: string;
+    /** #9227: why a classic write's Git effect is superseded, skipped, failed or retrying. */
+    git_reason?: string;
   };
   created_at?: string;
   updated_at?: string;
@@ -129,6 +131,7 @@ export function isWriteReceipt(value: unknown): value is WriteReceipt {
     if (value.persistence.file_written !== undefined && typeof value.persistence.file_written !== 'boolean') return false;
     if (value.persistence.git_state !== undefined && typeof value.persistence.git_state !== 'string') return false;
     if (value.persistence.git_commit !== undefined && typeof value.persistence.git_commit !== 'string') return false;
+    if (value.persistence.git_reason !== undefined && typeof value.persistence.git_reason !== 'string') return false;
   }
   return true;
 }
@@ -160,6 +163,7 @@ export function publicWriteReceipt(receipt: WriteReceipt): WriteReceipt {
       ...(receipt.persistence.file_written !== undefined ? { file_written: receipt.persistence.file_written } : {}),
       ...(receipt.persistence.git_state !== undefined ? { git_state: receipt.persistence.git_state } : {}),
       ...(receipt.persistence.git_commit !== undefined ? { git_commit: receipt.persistence.git_commit } : {}),
+      ...(receipt.persistence.git_reason !== undefined ? { git_reason: receipt.persistence.git_reason } : {}),
     } } : {}),
     ...(receipt.created_at !== undefined ? { created_at: receipt.created_at } : {}),
     ...(receipt.updated_at !== undefined ? { updated_at: receipt.updated_at } : {}),

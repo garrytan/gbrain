@@ -19,7 +19,8 @@
  *   - Per-metric cap (default 20) + total cap (default 100) bound the
  *     prompt budget. 100 points × ~75 tokens/point ≈ 7.5K tokens — fits
  *     comfortably alongside calibration + retrieval blocks.
- *   - `knowledge_update` intent annotates value-change rows with
+ *   - `knowledge_update` intent annotates value-change rows (against the
+ *     prior comparable observation, `comparablePairs`) with
  *     `(superseded prior)` — the explicit signal Codex flagged was
  *     missing from default RRF-ordered retrieval. Other intents skip
  *     the annotation to keep the block compact.
@@ -31,6 +32,7 @@
 
 import type { TrajectoryPoint } from './engine.ts';
 import { INJECTION_PATTERNS } from './think/sanitize.ts';
+import { comparablePairs } from './trajectory.ts';
 
 export type TrajectoryIntent = 'temporal' | 'knowledge_update' | 'other';
 
@@ -124,8 +126,9 @@ function formatGroup(
 
   const lines: string[] = [];
   let sanitizedCount = 0;
-  let priorValue: number | null = null;
-  const annotateSupersession = opts.intent === 'knowledge_update' && isMetric;
+  const superseding = opts.intent === 'knowledge_update' && isMetric
+    ? new Set(comparablePairs(points).filter(([older, newer]) => older.value !== newer.value).map(([, newer]) => newer))
+    : new Set<TrajectoryPoint>();
 
   for (const p of points) {
     const { text, matched } = sanitizeRowText(p.text);
@@ -135,18 +138,13 @@ function formatGroup(
     const provenance = p.source_session ?? p.source_markdown_slug ?? null;
     const provSuffix = provenance ? ` (source: ${provenance})` : '';
 
-    let suffix = '';
-    if (annotateSupersession && p.value !== null && priorValue !== null && p.value !== priorValue) {
-      suffix = ' (superseded prior)';
-    }
+    const suffix = superseding.has(p) ? ' (superseded prior)' : '';
 
     lines.push(
       isMetric
         ? `  as of ${date}: ${valueStr} — ${text}${suffix}${provSuffix}`
         : `  as of ${date}: ${text}${suffix}${provSuffix}`,
     );
-
-    if (p.value !== null) priorValue = p.value;
   }
 
   const block = `<trajectory entity="${entitySlug}" ${attr}>\n${lines.join('\n')}\n</trajectory>`;
@@ -172,11 +170,11 @@ export function formatTrajectoryBlock(
   const perMetricCap = opts.perMetricCap ?? DEFAULT_PER_METRIC_CAP;
   const totalCap = opts.totalCap ?? DEFAULT_TOTAL_CAP;
 
-  // Group by metric/event_type. Points with neither are silently dropped.
+  // Group by metric/event_type. Points with neither, or with no finite valid_from, are silently dropped.
   const groups = new Map<string, TrajectoryPoint[]>();
   for (const p of points) {
     const key = groupKey(p);
-    if (key === null) continue;
+    if (key === null || !Number.isFinite(p.valid_from.getTime())) continue;
     const arr = groups.get(key);
     if (arr) arr.push(p);
     else groups.set(key, [p]);

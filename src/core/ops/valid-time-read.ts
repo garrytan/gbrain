@@ -20,7 +20,7 @@ import { pageTrustForRead, readQuarantined } from './get-page-projection.ts';
 import { admitsTrust, type TrustTier } from '../trust/tier.ts';
 import { isCalendarDate } from '../link-validity.ts';
 import { replacedBecauseSql } from '../engine-sql/pages.ts';
-import { callerReadersAllowedSql, privacyForCaller, privateLinkOriginFilterFragment, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { callerReadersAllowedSql, privacyForCaller, privateLinkOriginFilterFragment, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment, remoteReadFloorSql, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { fenceTranscriptText, isQuotedPageType, neutralizeToolCalls, quotesStored } from '../search/transcript-quote.ts';
 import { quotedPageMeta } from './get-page-projection.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -176,7 +176,7 @@ function verdictOf(asOf: string, picked: PickResult): ValidTimeVerdict {
 async function amendmentsNotApplied(tx: BrainEngine, pageId: number, editionFrom: string, asOf: string, excludePrivate: boolean, scope: { sourceId?: string; sourceIds?: string[] }) {
   const sources = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : null);
   const rows = await tx.executeRaw<{ slug: string; source_id: string; since: string | null }>(`SELECT f.slug, f.source_id, min(to_char(r.first_start, 'YYYY-MM-DD')) AS since
-      FROM links l JOIN pages f ON f.id = l.from_page_id AND f.deleted_at IS NULL${excludePrivate ? ` AND ${privatePagesFilterFragment('f')}` : ''}
+      FROM links l JOIN pages f ON f.id = l.from_page_id AND f.deleted_at IS NULL${excludePrivate ? ` AND ${remoteReadFloorSql('f')}` : ''}
       LEFT JOIN link_relationships r ON r.from_page_id = l.from_page_id AND r.to_page_id = l.to_page_id AND r.link_type = l.link_type AND r.scope = $4
      WHERE l.to_page_id = $1 AND l.link_type = 'amends'${excludePrivate ? ` AND ${privateLinkOriginFilterFragment('l')}` : ''}
        AND ($5::text[] IS NULL OR f.source_id = ANY($5::text[]))

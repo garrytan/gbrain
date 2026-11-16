@@ -29,10 +29,16 @@ import {
 // history + scrollback. This helper is the single source of truth so the
 // two surfaces can't drift again. Match on word-segments to avoid
 // false-positives (e.g. `monkey` doesn't match `key`).
+// #8920: plurals (apiKeys, tokens), acronyms (APIKey, apikey) and credential, authorization and passphrase match too,
+// except after a count word (max_tokens, max_output_tokens, budget_tokens, max_pending_per_credential), which names
+// a limit rather than a secret.
+const SECRET_WORD = /^(key|secret|token|password|pwd|passwd|auth)$/;
+const SECRET_WORD_8920 = /^(keys|secrets|tokens|passwords|credentials?|authorization|passphrases?|apikeys?)$/;
+const COUNT_WORDS = new Set(['max', 'min', 'budget', 'limit', 'avg', 'total', 'count', 'num', 'input', 'output', 'prompt', 'context', 'completion', 'reasoning', 'per']);
 export function isSensitiveConfigKey(key: string): boolean {
-  const lower = key.toLowerCase();
-  // Word-boundary matches: foo_key, foo.key, key_foo, key, api_key, ...
-  return /(^|[._-])(key|secret|token|password|pwd|passwd|auth)([._-]|$)/.test(lower);
+  const words = key.replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2').replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().split(/[._-]+/);
+  // Whole-word matches: foo_key, foo.key, key_foo, key, api_key, secretAccessKey, ...
+  return words.some((word, i) => SECRET_WORD.test(word) || (SECRET_WORD_8920.test(word) && !words.slice(0, i).some(w => COUNT_WORDS.has(w))));
 }
 
 /**
@@ -280,7 +286,16 @@ export function redactConfigValue(key: string, value: string): string {
   // canonical single home (drops the whole userinfo, both schemes).
   if (/postgres(ql)?:\/\//.test(value)) return redactPgUrl(value);
   if (isSensitiveConfigKey(key)) return '***';
-  return value;
+  // #8920: userinfo (user:pass@) in a URL of any other scheme; an `@` after the host (a path, query or fragment) is not userinfo.
+  return value.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/?#\s]*@/gi, '$1***@');
+}
+
+/** An object config value with every sensitive field masked at any depth (#7346: storage.secretAccessKey). */
+function redactNestedConfig(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactNestedConfig);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k,
+    typeof v === 'string' ? redactConfigValue(k, v) : v !== null && v !== undefined && isSensitiveConfigKey(k) ? '***' : redactNestedConfig(v)]));
 }
 
 // #3661: the flags `config set` actually honors. Everything else that looks
@@ -414,6 +429,7 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
   if (key === 'sync.slug_conflicts.auto_remove') { const err = (await import('../core/repair/slug-autoheal.ts')).slugAutoRemoveValueRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
   if (key === 'sync.origin_twins.auto_resolve') { const err = (await import('../core/repair/origin-twins-heal.ts')).originAutoResolveValueRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
   if (key === 'sync.repo_path') { const err = (await import('../core/sync-config-keys.ts')).syncRepoPathRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
+  if (key === 'cycle.purge.mcp_request_log_retention_days') { const err = (await import('../core/mcp-request-log-retention.ts')).mcpLogRetentionRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
   if (key.startsWith('search.')) (await import('./config/keyword-timeout-value.ts')).refuseInvalidKeywordTimeoutValue(key, value);
   if (key === 'persistence.max_claim_ms') {
     const { validateMaxClaimConfigValue } = await import('../core/persistence/claim-phase.ts');
@@ -681,7 +697,7 @@ async function showConfig(engine: BrainEngine): Promise<void> {
     const display = typeof v === 'string'
       ? redactConfigValue(k, v)
       : v !== null && typeof v === 'object'
-        ? (isSensitiveConfigKey(k) ? '***' : JSON.stringify(v))
+        ? (isSensitiveConfigKey(k) ? '***' : JSON.stringify(redactNestedConfig(v)))
         : v;
     console.log(`  ${k}: ${display}`);
   }
@@ -955,7 +971,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     if (val !== null && val !== undefined) {
       // #3943: redact by default like `show`/`set` — `get` output lands in
       // agent transcripts and shell history; scripts opt out with the flag.
-      const out = typeof val === 'string' ? val : JSON.stringify(val);
+      const out = typeof val === 'string' ? val : JSON.stringify(rawFlag ? val : redactNestedConfig(val));
       console.log(rawFlag ? out : redactConfigValue(key, out));
       if (dbAuthoritative) {
         console.error(`[config] source: ${dbVal !== null && dbVal !== undefined ? 'db plane (authoritative for this key)' : 'file mirror (no DB row)'}${await writebackLanesNote(engine, key)}`);
@@ -1475,8 +1491,8 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
           newMode: value,
           engine,
           isTty: Boolean(process.stdout.isTTY && process.stdin.isTTY),
-          // CLI doesn't thread --yes here today; reserved for /ship-style
-          // automation paths that can opt into auto-submit.
+          // CLI doesn't thread --yes here today; --yes would skip the
+          // prompt and print the preview command (it never spends).
           yesFlag: false,
         });
       } catch (err) {

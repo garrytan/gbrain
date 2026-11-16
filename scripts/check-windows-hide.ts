@@ -42,7 +42,6 @@ const ALLOWLIST: Record<string, string> = {
  */
 const NOT_YET_MIGRATED: Record<string, string> = {
   'src/commands/bootstrap.ts': 'not yet migrated: open PR #6283, #6319 edits this file',
-  'src/commands/serve.ts': 'not yet migrated: open PR #6437 edits this file',
   'src/commands/setup.ts': 'not yet migrated: open PR #6406 edits this file',
   'src/commands/takes.ts': 'not yet migrated: open PR #6505 edits this file',
   'src/core/harness/install.ts': 'not yet migrated: open PR #6319, #6406 edits this file',

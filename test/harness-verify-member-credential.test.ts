@@ -14,6 +14,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { setOwner } from '../src/core/access/owner.ts';
@@ -64,6 +65,7 @@ for (const kind of testBackends()) {
         const minted = await mintLegacyToken(engine, { name, scopes: ['read', 'write'], takesHolders: ['world'] });
         tokens[name] = minted.token;
         if (member) await engine.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id = $1::uuid', [minted.id, member]);
+        else await readsUnscopedOnPurpose(engine, minted.id);
       }
     }, 240_000);
     afterAll(async () => { await close?.(); }, 60_000);

@@ -138,6 +138,62 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       expect(await row(queue, lone)).toMatchObject({ status: 'waiting', marked: false });
     }, 60_000);
 
+    test('GST-2529: a marked job past its wait makes a busy worker claim nothing and an idle one take it first; before it, claims are unchanged', async () => {
+      await engine.executeRaw('DELETE FROM minion_jobs');
+      const queue = new MinionQueue(engine);
+      const other = await queue.add('sleeper', {}, { max_attempts: 2, priority: 0 }, { allowProtectedSubmit: true });
+      const marked = await queue.add('hog', {}, { max_attempts: 2, priority: 10 }, { allowProtectedSubmit: true });
+      await engine.executeRaw(`UPDATE minion_jobs SET stacktrace = COALESCE(stacktrace, '[]'::jsonb) || to_jsonb($2::text), updated_at = now() - interval '2 minutes' WHERE id = $1`,
+        [marked.id, WATCHDOG_SUSPECT_MARK]);
+      const claim = async (busy: boolean, suspectWaitMs: number) => {
+        const job = await queue.claim(`gst2529:${crypto.randomUUID()}`, 60_000, 'default', ['hog', 'sleeper'], { excludeWatchdogSuspects: busy, suspectWaitMs });
+        if (job) await engine.executeRaw(`UPDATE minion_jobs SET status = 'waiting', lock_token = NULL, lock_until = NULL, started_at = NULL WHERE id = $1`, [job.id]);
+        return job?.id ?? null;
+      };
+      // Waiting 2 minutes, under a 3-minute bound: a busy worker takes the other job, and an idle one keeps priority order.
+      expect([await claim(true, 180_000), await claim(false, 180_000)]).toEqual([other.id, other.id]);
+      // Past a 1-minute bound: a busy worker claims nothing, so it drains, and an idle one takes the marked job first.
+      expect([await claim(true, 60_000), await claim(false, 60_000)]).toEqual([null, marked.id]);
+    }, 60_000);
+
+    test('GST-2529: a marked job requeued while a relay of short jobs keeps a concurrency-2 worker busy runs alone once the worker drains', async () => {
+      await engine.executeRaw('DELETE FROM minion_jobs');
+      const queue = new MinionQueue(engine);
+      const target = await queue.add('solo', {}, { max_attempts: 3 }, { allowProtectedSubmit: true });
+      const coRunner = await queue.add('solo', {}, { max_attempts: 3 }, { allowProtectedSubmit: true });
+      // A kill -9 of a worker that held both claims: both rows active under its token prefix, leases expired.
+      for (const [id, n] of [[target.id, 1], [coRunner.id, 2]] as const) {
+        await engine.executeRaw(`UPDATE minion_jobs SET status = 'active', lock_token = $2, lock_until = now() - interval '1 minute', started_at = now(),
+          claim_generation = claim_generation + 1 WHERE id = $1`, [id, `dead-worker:${n}`]);
+      }
+      let chainRuns = 0, started = 0, running = 0, besideTarget = -1, chainRunsAtTarget = -1;
+      // A relay keeps a job in flight at every claim: each job queues its successor and returns only once that successor
+      // runs (or after 2 s, when the worker has stopped claiming), so the worker never has nothing in flight on its own.
+      const worker = new MinionWorker(engine, { concurrency: 2, pollInterval: 10, lockDuration: 60_000, healthCheckInterval: 0, stalledInterval: 600_000, watchdogSuspectWaitMs: 0 });
+      worker.register('sleeper', async () => {
+        const me = ++started;
+        running++;
+        try {
+          await queue.add('sleeper', {}, { max_attempts: 1 }, { allowProtectedSubmit: true });
+          for (let i = 0; i < 200 && started === me; i++) await Bun.sleep(10);
+          chainRuns++;
+          return { ok: true };
+        } finally { running--; }
+      });
+      worker.register('solo', async () => { besideTarget = running; chainRunsAtTarget = chainRuns; return { ok: true }; });
+      await queue.add('sleeper', {}, { max_attempts: 1 }, { allowProtectedSubmit: true });
+      const done = worker.start();
+      await waitFor(() => chainRuns >= 3, 'the relay running');
+      await queue.handleStalled(0);
+      expect(await row(queue, target.id)).toMatchObject({ status: 'waiting', attempts: 0, marked: true });
+      await engine.executeRaw('DELETE FROM minion_jobs WHERE id = $1', [coRunner.id]);
+      await waitFor(async () => (await row(queue, target.id)).status === 'completed', 'the marked job to run');
+      await waitFor(() => chainRuns > chainRunsAtTarget + 2, 'the chains to resume after it');
+      worker.stop();
+      await done;
+      expect(besideTarget).toBe(0);
+    }, 60_000);
+
     for (const injected of runScopedErrors().filter(e => e.name === 'connection lost' || e.name === 'failed transaction (25P02)')) {
       test(`A-30 run: a run-scoped error (${injected.name}) releasing a co-runner leaves its claim to the stall sweep, unmarked and uncharged`, async () => {
         await engine.executeRaw('DELETE FROM minion_jobs');

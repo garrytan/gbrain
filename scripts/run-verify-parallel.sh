@@ -107,10 +107,14 @@ CHECKS=(
   "check:skill-brain-first"
   # A-NEW-3: bundled SKILL.md files pass the shared-skill publication parser.
   "check:skill-publication"
+  # GBRA-225: skill drift against the live CLI surface, and per-skill size ceilings.
+  "check:skill-health"
   "check:conversation-parser"
   "check:resolver"
   "check:privacy"
   "check:test-names"
+  # A test that opens a changelog.d fragment by name breaks on the release commit.
+  "check:test-fragment-reads"
   "check:test-isolation"
   # D7: a test that gates execution on a GBRAIN_* opt-in the operator-env
   # preload strips is a silent skip; TS AST scan, ~2s.
@@ -139,12 +143,17 @@ CHECKS=(
   "check:eval-glossary"
   "check:tool-catalog"
   "check:skills-manifest"
+  # GBRA-225: skills.lock.history.json covers the lock and only grows.
+  "check:skills-lock-history"
   "check:no-pii-agent-voice"
   "check:synthetic-corpus-privacy"
   "check:operations-filter-bypass"
   "check:gateway-routed"
   "check:worker-pool-atomicity"
   "check:doc-history"
+  # GST-2548: documented scripts/ and test/ paths exist. The unit and census
+  # lanes skip a doc-only pull request; verify does not.
+  "check:docs-repo-paths"
   "check:fixture-privacy"
   "check:source-scope-onboard"
   "check:getpage-scope"
@@ -293,7 +302,7 @@ if [ -n "${GBRAIN_VERIFY_LOG_DIR:-}" ]; then
   LOG_DIR="$GBRAIN_VERIFY_LOG_DIR"
   mkdir -p "$LOG_DIR" || { echo "ERROR: cannot create $LOG_DIR" >&2; exit 2; }
 else
-  LOG_DIR="$(mktemp -d /tmp/gbrain-verify-XXXXXX)"
+  LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gbrain-verify-XXXXXX")"
   KEEP_LOGS=0
   trap '[ "$KEEP_LOGS" = "1" ] || rm -rf "$LOG_DIR"' EXIT
 fi

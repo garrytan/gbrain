@@ -320,7 +320,7 @@ export function segmentSynopsisWindows<C extends { chunk_text: string; chunk_sou
 }
 
 /** Input chars of a synopsis call outside its document and chunk: the system prompt and the prompt's tags. */
-const SYNOPSIS_PROMPT_OVERHEAD_CHARS = SYNOPSIS_SYSTEM_PROMPT.length + 256;
+export const SYNOPSIS_PROMPT_OVERHEAD_CHARS = SYNOPSIS_SYSTEM_PROMPT.length + 256;
 /** The rate (USD per million tokens) an unpriced synopsis model reserves at. */
 const UNPRICED_SYNOPSIS_RATE = { input: 15, output: 75 };
 

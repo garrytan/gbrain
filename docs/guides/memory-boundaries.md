@@ -21,13 +21,23 @@ instructions. Do not put secrets in memory pages. A durable decision about a
 setup can be recorded without copying its credentials or assuming that setup is
 active in another harness.
 
-Automatic capture is opt-in. Installing the harness hooks opts into the
+Automatic capture is opt-in, except the [conversation archive](conversation-archive.md): on a
+personal brain it is on by default and keeps one redacted page per conversation
+per day from the harness sessions on this machine (nothing leaves a keyless
+machine; `gbrain transcripts archive off` stops it, and a shared brain is only
+offered it). It extracts no facts. Installing the harness hooks opts into the
 compaction and SessionEnd capture lanes; `gbrain config set
 memory.auto_writeback off` stops every capture lane, and `gbrain bootstrap
 harness --remove` stops the hooks from banking session text at all (see
 [ambient writeback](ambient-writeback.md#capture-lanes-and-the-off-switch)).
 Time-limited facts need an explicit TTL; ordinary
 saved facts do not expire just because they describe a temporary situation.
+
+In a shared chat, the owner's own questions are answered at the owner's full
+scope, with every item marked by whether the people in the room could have
+read it ([rooms](rooms.md)). The marks are for the agent's judgment about what
+to say; they do not keep the raw results out of a group transcript, so the
+harness must.
 `forget` withdraws a fact from active recall, not from all source material,
 history, or private backups. To remove the text itself from live stores, the
 owner runs a [purge](#purge) on the brain host. See [ambient writeback](ambient-writeback.md).
@@ -388,7 +398,8 @@ receive the relevant retrieved content or source text. Self-hosted providers hav
 their own deployment boundary. The connected agent's own model also receives
 whatever memory its harness includes in context, even on a keyless GBrain setup.
 Reporting back through Wakeshift (off by default, owner opt-in) sends a watched
-job's id, kind, status and times, never page text, titles or slugs; see
+job's, write request's or cron's id, status and times (and a removed member's
+hashed id to forget), never page text, titles or slugs; see
 [what leaves the machine](wakeshift.md#what-leaves-the-machine).
 
 Enable paid capabilities and automatic capture only with consent, using the
@@ -404,6 +415,14 @@ files or database credentials. Stdio is local access, not an HTTP client grant.
 Read [brains and sources](../architecture/brains-and-sources.md#what-confines-remote-callers-and-what-does-not)
 before choosing a sharing topology. Tests cover specific boundaries, not a
 universal security guarantee.
+
+A brain that serves several people (two or more enabled members, or config
+`access.serves = several`) refuses remote reads from a connection bound to no
+member (`requester_scope_required`, after a 14-day grace for connections that
+already existed), so a shared bot cannot read everyone's unmarked notes for
+whoever is asking. That covers reads only: writes keep their own rules, and a
+page that names no readers is still read by every member.
+[The refusal and its fix](write-refusals.md#requester_scope_required).
 
 <a id="fence-markers-in-code"></a>
 **Fence markers quoted in code.** Since 0.60.97.0 the readers (the fence
@@ -423,7 +442,7 @@ mention after the real fence. Pinned by `test/fence-marker-code-context.test.ts`
 ("remote privacy boundary" and "remote page replacement").
 
 Markdown export is a portable view of pages, **not a full database backup**.
-DB-only facts and pages, revision history, the belief ledger (what the brain
+DB-only facts and pages (extract receipts included), revision history, the belief ledger (what the brain
 had recorded, and when; `gbrain beliefs`), withdrawal state, jobs, settings,
 and authentication records may not be recoverable from Markdown. Use the engine's
 full backup/restore path and verify a restore into a separate location. Treat
@@ -491,9 +510,10 @@ What one purge does, in one transaction:
   stored page body and from every saved page version, then rebuilds that page's
   chunks; the canonical file is rewritten by the owner and committed as
   `gbrain: purge fact <hash8>` (no claim text in the commit). A purge of a
-  fact held on `memory/unattributed` for an entity with no page also drops
-  every copy of the same claim text on that page, whether it is held for
-  another entity or has no entity;
+  fact held on a holding page (`memory/unattributed`, or a folder's
+  `<folder>/memory/unattributed`) for an entity with no page also drops every
+  copy of the same claim text on that page, whether it is held for another
+  entity or has no entity;
 - redacts stored write intents that carry the claim (a write that is running
   or recovering blocks the purge with `purge_blocked_pending_recovery` until it
   finishes; retry with the same request id; a write still queued, or deferred

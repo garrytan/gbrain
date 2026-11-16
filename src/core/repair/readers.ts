@@ -21,7 +21,7 @@ import type { BrainEngine } from '../engine.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { opError } from '../ops/contract.ts';
 import { getMember, listGroups } from '../access/members.ts';
-import { ownerView } from '../access/owner.ts';
+import { readersOmitOwnerError, readersOwner } from '../access/owner.ts';
 import { normalizePrincipal, normalizeReaders } from '../access/principals.ts';
 import { READERS_KEY, type LabelEdit } from '../persistence/label-edit.ts';
 import { digest } from '../persistence/digest.ts';
@@ -30,6 +30,7 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { raisePageLabelGuard } from '../trust/page-write.ts';
+import { openTwins, openTwinsWarning } from '../access/open-twins.ts';
 import { afterCursor, type RepairCursor, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope } from './core.ts';
 
 /** The operator's request: `--readers` as typed (`none` removes), the owner flag, and the `--slugs-file` path with its slugs. */
@@ -58,9 +59,7 @@ const same = (a: string[] | null, b: string[] | null) => JSON.stringify(a) === J
  * group, and a list without the owner unless the flag is passed; nothing is written before this passes.
  */
 async function checkedReaders(engine: BrainEngine, request: ReadersRequest): Promise<{ readers: string[] | null; owner: string | null }> {
-  const view = await ownerView(engine);
-  const inactive = view.inactive ? normalizePrincipal(view.inactive.value) : null;
-  const owner = view.owner ?? (inactive?.startsWith('member:') ? shown(inactive) : null);
+  const { owner, live } = await readersOwner(engine);
   if (request.readers.trim() === 'none') return { readers: null, owner };
   const entries = request.readers.split(',').map(entry => entry.trim()).filter(Boolean);
   if (!entries.length) throw invalid('--readers names no reader.', 'Pass member ids and group:<id>, comma-separated (e.g. --readers alice-example,group:team-a), or none to remove the readers.');
@@ -83,11 +82,7 @@ async function checkedReaders(engine: BrainEngine, request: ReadersRequest): Pro
         member ? member.status : 'unknown');
     }
   }
-  if (owner && !principals.includes('member:' + owner) && !request.allowWithoutOwner) {
-    throw invalid('These readers leave out the brain owner "' + owner + '"' + (view.owner ? '' : ' (configured, not enabled now)') + ', so the owner\'s own keys could no longer read the page; nothing was written. Name the owner, or pass --allow-without-owner.',
-      'Add the owner to the list (--readers ' + [...principals.map(shown), owner].join(',') + '), or pass --allow-without-owner if the owner should not read it. A group that holds the owner does not count.',
-      'readers_omit_owner');
-  }
+  if (owner && !principals.includes('member:' + owner) && !request.allowWithoutOwner) throw readersOmitOwnerError(owner, live, principals, 'the page');
   return { readers: principals.map(shown), owner };
 }
 
@@ -181,11 +176,14 @@ export async function planReaders(engine: BrainEngine, scope: RepairScope, after
   if (opts.apply) return { items: await approvedItems(engine, scope, selection, opts.expect!, command, after), preview_hash: opts.expect, residuals: {} };
   const { items, residuals } = await planPages(engine, selection);
   const hash = previewHash(hashParts(scope, selection, items));
+  const twins = await openTwins(engine, readers?.length ? items : [], readers ?? [],
+    (source, named) => `gbrain repair visibility --source ${source}${named.map(slug => ` --slug ${slug}`).join('')} --readers ${request.readers}`);
   const selectionDigest = digest(selection);
   if (items.length) await saveApprovedSet<ApprovedReaders>(engine, { command: 'visibility', hash },
     items.map(item => ({ target: item.target, source_id: item.source_id, slug: item.slug, chars: item.chars, action: item.action, readers: item.readers, selection_digest: selectionDigest })));
-  return { items: items.map((item, index) => ({ ...item, cursor: { phase: 0, id: index } })), preview_hash: hash, residuals,
-    ...(residuals.named_not_found ? { warnings: [residuals.named_not_found + ' named page(s) were not found in ' + scope.source_ids.join(', ') + ' and are not listed.'] } : {}),
+  const warnings = [...(residuals.named_not_found ? [residuals.named_not_found + ' named page(s) were not found in ' + scope.source_ids.join(', ') + ' and are not listed.'] : []), ...openTwinsWarning(twins)];
+  return { items: items.map((item, index) => ({ ...item, cursor: { phase: 0, id: index } })), preview_hash: hash, residuals: { ...residuals, ...(twins.count ? { open_twins: twins.count } : {}) },
+    ...(warnings.length ? { warnings } : {}), ...(twins.count ? { details: { open_twins: twins } } : {}),
     listing: items.map(item => ({ item: item.source_id + ':' + item.slug, class: 'readers', detail: item.action })) };
 }
 

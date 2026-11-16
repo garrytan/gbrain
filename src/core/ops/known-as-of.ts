@@ -12,7 +12,7 @@ import { inlineBodyBytes } from './get-page-body.ts';
 import { historyQuarantine, pageTrustForRead, type QuarantinedView } from './get-page-projection.ts';
 import { parseKnownAsOf, readPageAtTime, remoteMayRead, type PageAtTime, type PageInterval } from '../belief/page-at-time.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { remoteReadFloorSql } from '../search/private-visibility.ts';
 import { unifiedDiff } from '../skillpack/diff-text.ts';
 import { fenceTranscriptText, quotesStored } from '../search/transcript-quote.ts';
 
@@ -38,7 +38,7 @@ async function targetSource(ctx: OperationContext, p: Record<string, unknown>, o
   await assertExplicitSourceLive(ctx, sourceIdParam);
   if (scope.sourceId) return scope.sourceId;
   const visible = ctx.remote === false ? '' : `AND e.visibility = 'world' AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = e.source_id AND p.slug = e.slug
-      AND p.deleted_at IS NULL AND ${privatePagesFilterFragment('p')})`;
+      AND p.deleted_at IS NULL AND ${remoteReadFloorSql('p')})`;
   const rows = await ctx.engine.executeRaw<{ source_id: string }>(`SELECT DISTINCT e.source_id FROM belief_events e
     JOIN sources s ON s.id = e.source_id AND s.incarnation = e.source_incarnation
     WHERE e.slug = $1 AND e.subject_kind = 'page' AND ($2::text[] IS NULL OR e.source_id = ANY($2::text[])) ${visible} ORDER BY e.source_id`, [p.slug, scope.sourceIds ?? null]);
@@ -59,7 +59,7 @@ async function readAsCaller(ctx: OperationContext, q: Parameters<typeof readPage
     return await readPageAtTime(ctx.engine, q);
   } catch (error) {
     if (ctx.remote === false || !PAGE_REFUSALS.has(String((error as { code?: unknown }).code))) throw error;
-    const [row] = await ctx.engine.executeRaw<{ visible: boolean }>(`SELECT ${privatePagesFilterFragment('p')} AS visible FROM pages p
+    const [row] = await ctx.engine.executeRaw<{ visible: boolean }>(`SELECT ${remoteReadFloorSql('p')} AS visible FROM pages p
       WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL`, [q.sourceId, q.slug]);
     if (row?.visible === true) throw error;
     throw pageNotFoundError(ctx, q.slug, { includeDeleted, sourceIdParam: q.sourceId });

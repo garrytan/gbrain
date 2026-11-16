@@ -9,6 +9,7 @@
  * - `GitHubClient` is the one seam both scripts call; tests pass a recorded
  *   fake, production uses `restClient()` (fetch + GH_TOKEN/GITHUB_TOKEN in
  *   Actions, or the authenticated `gh api` CLI for local dry runs).
+ * - `createIssue` adds `AGENT_FILED_LABEL` to every issue it opens.
  * - `findIssueByTitle` looks an issue up through the list API by label and
  *   exact title (open first, else the most recently updated closed one, so a
  *   flapping workflow reopens its own issue).
@@ -169,8 +170,11 @@ export async function findIssueByTitle(client: GitHubClient, label: string, titl
 
 export const labelNames = (issue: Issue): string[] => (issue.labels ?? []).map(l => (typeof l === 'string' ? l : l.name));
 
+/** On every issue our own automation opens, so the community's reports can be listed without it (CONTRIBUTING.md, "How an outside pull request is handled"). */
+export const AGENT_FILED_LABEL = 'agent-filed';
+
 export async function createIssue(client: GitHubClient, title: string, body: string, labels: string[]): Promise<Issue> {
-  return client.request<Issue>('POST', 'repos/{repo}/issues', { title, body, labels });
+  return client.request<Issue>('POST', 'repos/{repo}/issues', { title, body, labels: [...new Set([...labels, AGENT_FILED_LABEL])] });
 }
 
 export async function updateIssue(client: GitHubClient, number: number, patch: { body?: string; state?: 'open' | 'closed'; labels?: string[] }): Promise<Issue> {

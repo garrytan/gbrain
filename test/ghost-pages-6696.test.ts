@@ -317,6 +317,22 @@ for (const backend of testBackends()) describe(`#6696 B5 ghost pages (${backend}
     }, { managed }));
   }
 
+  test('#7967: a code page whose recorded JSON file is restored at consumer:prepared is refused at publication and kept', () => fixture(async f => {
+    await seedCodePage(f);
+    const bytes = readFileSync(join(f.root, CODE_PATH), 'utf8');
+    unlinkSync(join(f.root, CODE_PATH));
+    const preview = await repair(f.sourceId);
+    expect(preview.sample).toEqual([`${f.sourceId}:${CODE_SLUG}`]);
+    installFaultHook((at, detail) => {
+      if (at === 'consumer:prepared' && detail.operation === 'submit_job') writeFileSync(join(f.root, CODE_PATH), bytes);
+    });
+    const applied = await repair(f.sourceId, { apply: true, expect: preview.preview_hash });
+    expect(applied).toMatchObject({ applied: 0, outcomes: { file_restored: 1 } });
+    expect(await live(f.sourceId, CODE_SLUG)).toBe(true);
+    expect(readFileSync(join(f.root, CODE_PATH), 'utf8')).toBe(bytes);
+    expect(existsSync(join(f.root, `${CODE_SLUG}.md`))).toBe(false);
+  }));
+
   test('#7736: a code page whose recorded path names no file inside the source is reported unresolvable and never removed', () => fixture(async f => {
     await seed(f);
     await seedCodePage(f);

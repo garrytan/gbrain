@@ -1,0 +1,1 @@
+`gbrain repair url-clone-fences` lists a held file (for example `visibility_noncanonical`) once, as an apply item, and no longer also counts it as a residual; its preview says the restored file equals HEAD, so sync does not screen it again and the page changes once an upstream fix is pulled and synced (it no longer claims sync holds the file) (#7910).

@@ -32,10 +32,11 @@ import { gcSessionsAsync, resetSession, sessionKey } from './session.ts';
  * --dir bodies, Claude Code plugin catalogs, the warm handle (openCatalog),
  * the worker-thread build (buildSkillIndexOffThread), gcSkillSessions, the
  * hook lane for Hermes (`hook user-prompt --harness hermes`, answering
- * {"context"}) and the lane's Codex project catalog (codex-project-<hash>,
- * the .agents/skills dirs from the project root to cwd).
+ * {"context"}), the lane's Codex project catalog (codex-project-<hash>,
+ * the .agents/skills dirs from the project root to cwd) and top_gate in the
+ * turn input (block_reason weak_top_match).
  */
-export const RESOLVER_FEATURES: readonly string[] = ['min_match_strength', 'exclude_1024', 'mismatch_catalog_hash', 'named_past_budget', 'previous_user_message', 'harness_pi', 'harness_cursor', 'openclaw_skills_list', 'from_json_with_dirs', 'from_json_when_to_use', 'claude_plugins', 'open_catalog', 'build_off_thread', 'gc_sessions', 'harness_hermes_lane', 'codex_project_catalog'];
+export const RESOLVER_FEATURES: readonly string[] = ['min_match_strength', 'exclude_1024', 'mismatch_catalog_hash', 'named_past_budget', 'previous_user_message', 'harness_pi', 'harness_cursor', 'openclaw_skills_list', 'from_json_with_dirs', 'from_json_when_to_use', 'claude_plugins', 'open_catalog', 'build_off_thread', 'gc_sessions', 'harness_hermes_lane', 'codex_project_catalog', 'top_gate'];
 
 /** One bounded pass (at most 1,000 files, async I/O) deleting session files idle for 7 days; returns how many it deleted. Commits already run one at most every 10 minutes. */
 export async function gcSkillSessions(opts: { home?: string; now?: number } = {}): Promise<number> {

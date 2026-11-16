@@ -4,14 +4,15 @@
  * Protects: a writer that read a file at blob X and commits with --base path=X is refused `commit_base_moved` when another
  * writer committed that file since (nothing staged, index unchanged, the other writer's bytes win); a matching base (and
  * `absent` for a new file) commits; a --base path that is not committed, a malformed base, and --base with --push-only
- * are refused before anything runs. Real git against a local bare remote.
+ * are refused before anything runs; the dry run refuses a moved base too, and a moved base refuses before another
+ * writer's staged file under a named directory. Real git against a local bare remote.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { commitAndPush } from '../src/core/git/commit-push.ts';
+import { commitAndPush, previewPaths } from '../src/core/git/commit-push.ts';
 import { runGit } from '../src/commands/git.ts';
 
 let root: string;
@@ -73,4 +74,26 @@ test('CLI: --base must name a committed path, take a full object id or absent, a
   expect(git(a, 'rev-parse', 'HEAD:note.md')).toBe(blob);
   expect(await quiet(['commit-push', '--path', a, '--base', `note.md=${blob}`, '-m', 'bound', '--', 'note.md'])).toBe(0);
   expect(git(a, 'rev-parse', 'HEAD:note.md')).not.toBe(blob);
+});
+
+test('the dry run refuses a moved base like the real run, and a moved base refuses before another writer\'s staged file', async () => {
+  const { a } = setup('dryrun');
+  const read = git(a, 'rev-parse', 'HEAD:note.md');
+  writeFileSync(join(a, 'note.md'), 'v2 from another writer\n');
+  commitAndPush({ repo: a, cwd: a, paths: ['note.md'], message: 'other writer' });
+  writeFileSync(join(a, 'note.md'), 'v1 plus my stale edit\n');
+  expect(refusal(() => previewPaths(a, ['note.md'], { bases: new Map([['note.md', read]]), cwd: a })).code).toBe('commit_base_moved');
+  const out: string[] = [];
+  const w = process.stdout.write; const e = process.stderr.write;
+  process.stdout.write = ((s: string) => { out.push(String(s)); return true; }) as never; process.stderr.write = ((s: string) => { out.push(String(s)); return true; }) as never;
+  let code: number;
+  try { code = await runGit(['commit-push', '--path', a, '--dry-run', '--json', '--base', `note.md=${read}`, '-m', 'x', '--', 'note.md']); } finally { process.stdout.write = w; process.stderr.write = e; }
+  expect(code).toBe(1);
+  expect(out.join('')).toContain('commit_base_moved');
+  mkdirSync(join(a, 'dir'));
+  writeFileSync(join(a, 'dir', 'theirs.md'), 'staged by another writer\n');
+  git(a, 'add', 'dir/theirs.md');
+  writeFileSync(join(a, 'dir', 'mine.md'), 'mine\n');
+  expect(refusal(() => commitAndPush({ repo: a, cwd: a, paths: ['dir', 'note.md'], message: 'stale', bases: new Map([['note.md', read]]) })).code).toBe('commit_base_moved');
+  expect(git(a, 'diff', '--cached', '--name-only')).toBe('dir/theirs.md');
 });

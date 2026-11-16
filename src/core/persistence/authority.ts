@@ -12,7 +12,7 @@ import { authorizedSlug, type Principal, type SqlEngine, type WriteAuthority, ty
 import { authorizePageVisibility, excludesPrivateWritesAtAdmission } from './page-visibility.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { parseStoredActor, storedActorIdentity } from '../access/actor.ts';
-import { sameAttestedActor } from '../access/member-facts.ts';
+import { ownerSpeaksForItself, sameAttestedActor } from '../access/member-facts.ts';
 import { perCallWriteSource, storedPerCallWriteSource } from '../access/attest-sources.ts';
 import { pipelined, transactionMemo } from '../page-state/transactions.ts';
 
@@ -37,6 +37,8 @@ function liveDelegation(row: Record<string, unknown>, jobId: unknown): readonly 
   const key = jobNamespaceKey(jobId);
   return mode === 'job' && listed === null && key !== undefined ? [`wiki/agents/${key}/*`] : [];
 }
+/** GST-2091: the page writes the brain owner's own credential may make to a private page it reads. */
+const OWNER_PRIVATE_WRITES = new Set(['put_page', 'edit_page', 'append_page']);
 function skillWrite(operation: string): boolean {
   return ['put_skill', 'delete_skill', 'adopt_skillpack'].includes(operation);
 }
@@ -85,6 +87,8 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
       delegatedPrefixes: ctx.allowedSlugPrefixes?.length ? [...ctx.allowedSlugPrefixes]
         : typeof ctx.subagentId === 'number' ? [`wiki/agents/${ctx.subagentId}/*`] : [] } : {}),
   };
+  const owner = access?.remotePolicy?.ownerMember;
+  if (owner && OWNER_PRIVATE_WRITES.has(operation) && hasScope(a.scopes, 'write') && ownerSpeaksForItself(ctx)) a.ownerWrite = `member:${owner}`;
   if (ctx.auth?.sourceId != null && ctx.auth.sourceId !== sourceId && !a.attestedSource) deny('The source is outside this writer grant.');
   if (!prefixAllowed(a.slugPrefixes, slug)) deny('The target is outside this writer grant.');
   await authorizeWrite(ctx.engine, a, operation, slug);

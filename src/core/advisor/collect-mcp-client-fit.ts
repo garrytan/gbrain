@@ -42,7 +42,7 @@
 
 import { gbrainPath } from '../config.ts';
 import { operations } from '../operations.ts';
-import { readClientOpUsage, type ClientOpUsage } from '../mcp-usage.ts';
+import { readClientOpUsage, readClientOpUsageWithCoverage, type ClientOpUsage } from '../mcp-usage.ts';
 import {
   STARTER_OPS,
   ALWAYS_INCLUDED_STARTER_OPS,
@@ -208,7 +208,7 @@ export const collectMcpClientFit: AdvisorCollector = {
       const localOnlyOps = new Set(operations.filter((o) => o.localOnly).map((o) => o.name));
       const missingFromStarter = topOps.filter((op) => !STARTER_OPS.has(op) && !localOnlyOps.has(op));
 
-      const usage90 = await readClientOpUsage(ctx.engine, { days: DRIFT_UNUSED_WINDOW_DAYS });
+      const { clients: usage90, coverage: coverage90 } = await readClientOpUsageWithCoverage(ctx.engine, { days: DRIFT_UNUSED_WINDOW_DAYS });
       const seen90 = new Set<string>();
       for (const u of usage90) {
         if (u.likely_automation) continue;
@@ -216,8 +216,9 @@ export const collectMcpClientFit: AdvisorCollector = {
       }
       // Always-included-by-construction members (shared with surface.ts +
       // derive-starter-ops) never count as drift — including the agent lane,
-      // whose usage would otherwise flag it "unused" forever.
-      const unusedStarter = [...STARTER_OPS]
+      // whose usage would otherwise flag it "unused" forever. A 90-day window
+      // cut short by request-log retention cannot show a member unused.
+      const unusedStarter = coverage90.truncated ? [] : [...STARTER_OPS]
         .filter((op) => !ALWAYS_INCLUDED_STARTER_OPS.has(op) && !seen90.has(op))
         .sort();
 
@@ -244,6 +245,9 @@ export const collectMcpClientFit: AdvisorCollector = {
             title: `STARTER_OPS has drifted from production usage (${parts.length === 2 ? 'both directions' : parts[0]!.split(':')[0]}).`,
             detail:
               parts.join('; ') +
+              (coverage90.truncated
+                ? `. The unused-member check was skipped: request-log history before ${coverage90.pruned_before} was pruned, so the last ${DRIFT_UNUSED_WINDOW_DAYS} days are incomplete`
+                : '') +
               '. Re-derive with `bun run scripts/derive-starter-ops.ts` and paste the proposed ' +
               'block into src/mcp/surface.ts (the monotonicity test pins verbs ⊆ starter ⊆ full). ' +
               'Automation-shaped clients are excluded from these stats.',

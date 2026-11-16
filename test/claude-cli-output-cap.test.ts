@@ -60,7 +60,7 @@ async function withCli<T>(
 ): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), 'claude-output-cap-'));
   const capsPath = join(dir, 'caps');
-  const lines = ['#!/bin/sh', 'cat > /dev/null', `printf '%s\\n' "$CLAUDE_CODE_MAX_OUTPUT_TOKENS" >> "${capsPath}"`];
+  const lines = ['#!/bin/sh', 'if [ "$1" = "--version" ]; then echo "2.1.316 (Claude Code)"; exit 0; fi', 'cat > /dev/null', `printf '%s\\n' "$CLAUDE_CODE_MAX_OUTPUT_TOKENS" >> "${capsPath}"`];
   for (const [cap, { body, exit }] of Object.entries(responses)) {
     const file = join(dir, `response-${cap === '*' ? 'default' : cap}.txt`);
     writeFileSync(file, typeof body === 'string' ? body : JSON.stringify(body));
@@ -146,6 +146,29 @@ describe('claude-cli output-cap envelope finishes as length (#6523)', () => {
           expect(error, `${label} (exit ${exit})`).toBeInstanceOf(ClaudeCliProcessError);
           expect((error as ClaudeCliProcessError).apiErrorStatus, label).toBe(body.api_error_status as number | undefined);
           expect((error as ClaudeCliProcessError).exitCode, label).toBe(exit);
+        });
+      }
+    }
+  });
+
+  // #7273: Claude Code 2.1.305 writes the key as JSON null instead of leaving it out.
+  test('a null api_error_status counts as no status: the cap is length, anything else stays a typed failure', async () => {
+    const nullStatus = { api_error_status: null };
+    for (const exit of [0, 1]) {
+      for (const body of [envelope(capMessage(2048), { ...nullStatus, subtype: 'success', stop_reason: 'stop_sequence' }),
+        [{ type: 'system', subtype: 'init' }, envelope(capMessage(2048), nullStatus)]]) {
+        await withCli({ '*': { body, exit } }, async () => {
+          const out = await generate();
+          expect(out.finishReason, `exit ${exit}`).toBe('length');
+          expect(out.content).toEqual([{ type: 'text', text: '' }]);
+        });
+      }
+      for (const result of ['API Error: overloaded', `See the docs: ${capMessage(2048)}`]) {
+        await withCli({ '*': { body: envelope(result, nullStatus), exit } }, async () => {
+          const error = await rejection(generate);
+          expect(error, `${result} (exit ${exit})`).toBeInstanceOf(ClaudeCliProcessError);
+          expect((error as ClaudeCliProcessError).apiErrorStatus).toBeUndefined();
+          expect((error as ClaudeCliProcessError).exitCode).toBe(exit);
         });
       }
     }

@@ -24,9 +24,13 @@ import {
   ResolverError, HARNESSES, errorTurnOutput, GBRAIN_VERSION, type BuildInput, type TurnInput,
 } from '../core/skills/resolver/index.ts';
 import { validCatalogName } from '../core/skills/resolver/paths.ts';
-import { readResolverConfig } from '../core/setup/skill-resolver-config.ts';
+import { readResolverConfig, resolverHarnesses, resolverSection } from '../core/setup/skill-resolver-config.ts';
+import { configuredTopGate } from '../core/skills/resolver/config.ts';
 import { catalogSkillIds, pinProblem, PINS_MAX, readPins, renderPinnedBlock, writePins } from '../core/setup/skill-pins.ts';
 import { refreshOpenclawPins } from '../core/setup/openclaw-skill-plugin.ts';
+import { PI_SKILL_CATALOG, refreshPiPins } from '../core/setup/pi-skill-extension.ts';
+import { HERMES_PINS_CATALOG, syncHermesPins } from '../core/setup/hermes-skill-pins.ts';
+import { CURSOR_PINS_CATALOG_PREFIX, cursorPinnedBlock, refreshCursorPins } from '../core/setup/cursor-skill-pins.ts';
 
 const HELP_INDEX = `Usage: gbrain skills index <build|status|remove> [options]
 
@@ -55,7 +59,7 @@ Guide: docs/guides/skill-resolver.md
 `;
 
 const HELP_RESOLVE = `Usage: gbrain skills resolve [--catalog <name>]... (--text <t> [--previous <t>] | --input-json -)
-        [--session <id>] [--harness <h>] [--exclude a,b] [--top-k n] [--min-match <strength>] [--shadow [--shadow-log <file>]]
+        [--session <id>] [--harness <h>] [--exclude a,b] [--top-k n] [--min-match <strength>] [--top-gate <x>] [--shadow [--shadow-log <file>]]
         [--expect-catalog <hash>] [--reset-session] [--names-only] [--load-hint <text>]
         [--explain-target <id>] [--fail-open] [--json]
 
@@ -70,8 +74,13 @@ and no brain connection is needed.
   --harness <h>        picks the load line: openclaw, claude-code, codex, hermes, qm, pi or cursor
   --top-k <n>          at most n suggestions (1-8, default 5)
   --exclude <ids>      comma-separated skill ids to leave out
-  --min-match <s>      the weakest match to suggest: named, name, triggers, routing,
-                       description or body (default: every match)
+  --min-match <s>      drop candidates weaker than this match: named, name, triggers,
+                       routing, description or body (default: every match). It filters;
+                       stronger matches still fill the block, so it never empties it
+  --top-gate <x>       empty the block when the best skill it would show (after
+                       --exclude, --min-match and session dedupe) scores below x over its catalog's
+                       maximum word weight (0-100; default skills.resolver.top_gate, else 0.6;
+                       0 turns it off); a skill named in the turn bypasses it
   --shadow             compute the block without injecting it (block "" on stdout);
                        --shadow-log <file> appends what would have been injected
   --expect-catalog <h> refuse with skill_catalog_mismatch unless the catalog hash is h
@@ -225,7 +234,7 @@ async function runIndex(args: string[]): Promise<void> {
 }
 
 async function runResolve(args: string[]): Promise<void> {
-  const p = parseFlags(args, ['--catalog', '--text', '--previous', '--input-json', '--session', '--harness', '--exclude', '--top-k', '--min-match', '--shadow-log', '--explain-target', '--expect-catalog', '--load-hint'],
+  const p = parseFlags(args, ['--catalog', '--text', '--previous', '--input-json', '--session', '--harness', '--exclude', '--top-k', '--min-match', '--top-gate', '--shadow-log', '--explain-target', '--expect-catalog', '--load-hint'],
     ['--shadow', '--json', '--fail-open', '--reset-session', '--names-only'], HELP_RESOLVE);
   if (p.positionals.length) usage(`Unexpected argument "${p.positionals[0]}".`, 'Pass the message with --text "<message>" or turn JSON with --input-json -.');
   const json = p.bools.has('--json');
@@ -251,6 +260,19 @@ async function runResolve(args: string[]): Promise<void> {
     const topK = one(p, '--top-k');
     if (topK !== undefined) { if (!/^\d+$/.test(topK)) throw new ResolverError('skill_resolve_invalid_input', '--top-k takes an integer from 1 to 8.', { suggestion: 'Example: --top-k 3' }); input.top_k = Number(topK); }
     const minMatch = one(p, '--min-match'); if (minMatch !== undefined) input.min_match_strength = minMatch;
+    const topGate = one(p, '--top-gate');
+    if (topGate !== undefined) { if (!/^\d+(\.\d+)?$/.test(topGate)) throw new ResolverError('skill_resolve_invalid_input', '--top-gate takes a number from 0 to 100.', { suggestion: 'Example: --top-gate 1.5' }); input.top_gate = Number(topGate); }
+    if (input.top_gate === undefined) {
+      const read = readResolverConfig(resolverHome());
+      const section = read.state === 'ok' ? resolverSection(read.doc) : {};
+      try {
+        const configured = configuredTopGate(section, typeof input.harness === 'string' ? input.harness : '');
+        if (configured !== undefined) input.top_gate = configured;
+      } catch (err) {
+        if (!failOpen) throw err;
+        console.error(`gbrain skills resolve: ${(err as Error).message}; using the default top_gate.`);
+      }
+    }
     if (p.bools.has('--shadow')) input.shadow = true;
     if (p.bools.has('--reset-session')) input.reset_session = true;
     const expect = one(p, '--expect-catalog'); if (expect !== undefined) input.expected_catalog_hash = expect;
@@ -345,14 +367,22 @@ async function runPin(args: string[]): Promise<void> {
     }
     writePins(read, catalog, pins);
   }
-  const rendered = renderPinnedBlock(pins, { harness: catalog.startsWith('openclaw-') ? 'openclaw' : undefined, known: catalogSkillIds(home, catalog) });
+  const cursor = catalog.startsWith(CURSOR_PINS_CATALOG_PREFIX);
+  const rendered = cursor ? cursorPinnedBlock(home, catalog) : renderPinnedBlock(pins, { harness: catalog.startsWith('openclaw-') ? 'openclaw' : catalog === HERMES_PINS_CATALOG ? 'hermes' : catalog === PI_SKILL_CATALOG ? 'pi' : undefined, known: catalogSkillIds(home, catalog) });
   const agents = sub === 'list' ? [] : refreshOpenclawPins(home);
-  const doc = { catalog, pins, rendered: rendered.ids, unknown: rendered.unknown, cut: rendered.cut, block_tokens: rendered.tokens, ...(agents.length ? { openclaw_agents_updated: agents } : {}) };
+  const piUpdated = sub !== 'list' && catalog === PI_SKILL_CATALOG && refreshPiPins(home);
+  const hermesOn = catalog === HERMES_PINS_CATALOG && sub !== 'list' && resolverHarnesses(read.state === 'ok' ? read.doc : null).includes('hermes');
+  const soul = hermesOn ? syncHermesPins({ home, hermesHome: (await import('../core/setup/skill-resolver-hook.ts')).hermesHomeDir(), dryRun: false }) : null;
+  const cursorRule = cursor && sub !== 'list' ? refreshCursorPins(home, catalog) : null;
+  const doc = { catalog, pins, rendered: rendered.ids, unknown: rendered.unknown, cut: rendered.cut, block_tokens: rendered.tokens, ...(agents.length ? { openclaw_agents_updated: agents } : {}), ...(soul ? { hermes_soul: soul } : {}), ...(piUpdated ? { pi_state_updated: true } : {}), ...(cursorRule ? { cursor_rule: { project: cursorRule.project, steps: cursorRule.steps, ...(cursorRule.error ? { error: cursorRule.error } : {}) } } : {}) };
   if (json) { await write(`${JSON.stringify(doc)}\n`); return; }
   await write([
     pins.length ? `${catalog}: ${pins.length} pin(s)` : `${catalog}: no pins`,
     ...pins.map((x) => `  ${x.name}${x.line ? ` — ${x.line}` : ''}${rendered.unknown.includes(x.name) ? ' (not in the catalog: left out, skill_resolver_pin_unknown)' : rendered.cut.includes(x.name) ? ' (over the token cap: left out)' : ''}`),
     agents.length ? `OpenClaw agent(s) ${agents.join(', ')} use the new pins from their next turn.` : '',
+    piUpdated ? 'Pi uses the new pins from its next run.' : '',
+    soul ? `Hermes: ${soul.action} ${soul.detail}${soul.action === 'skip' ? '' : '; Hermes reads SOUL.md at session start'}.` : '',
+    cursorRule ? (cursorRule.error ? `Cursor: ${cursorRule.error.message}` : `Cursor (${cursorRule.project}): ${cursorRule.steps.filter((x) => x.step === 'rule').map((x) => `${x.action} ${x.detail}`).join('; ')}; Cursor applies the rule from its next request.`) : '',
   ].filter(Boolean).join('\n') + '\n');
 }
 

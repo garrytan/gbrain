@@ -17,6 +17,7 @@ import { gbrainPath } from '../config.ts';
 import { registerCleanup } from '../process-cleanup.ts';
 import { SYNC_ON_COMMIT_KEY } from '../sync-config-keys.ts';
 import { hostIdFor } from '../persistence/identity.ts';
+import { isSyncDisabledConfig } from '../sync-policy.ts';
 import {
   notifierDisabledByEnv, parseExcludedSources, parseOnCommit, startCommitNotifier,
   type CommitNotifier, type CommitNotifierOptions, type NotifierSource, type NotifierStore, type ResidentKind, type SkippedSource,
@@ -66,8 +67,8 @@ export function classicBinding(env: Record<string, string | undefined> = process
 export async function listHostSources(engine: BrainEngine, hostId: string, env: Record<string, string | undefined> = process.env): Promise<{ sources: NotifierSource[]; skipped: SkippedSource[] }> {
   const { readManagedMode } = await import('../persistence/managed-mode.ts');
   const managed = await readManagedMode(engine).catch(() => false);
-  const rows = await engine.executeRaw<{ id: string; local_path: string | null; last_commit: string | null; bound: boolean; owner: string | null; root: string | null; syncer: string | null }>(
-    `SELECT s.id, s.local_path, s.last_commit, (b.source_id IS NOT NULL) AS bound, w.owner_host_id::text AS owner, h.local_path AS root, n.syncer_host_id AS syncer
+  const rows = await engine.executeRaw<{ id: string; local_path: string | null; last_commit: string | null; bound: boolean; owner: string | null; root: string | null; syncer: string | null; config: unknown }>(
+    `SELECT s.id, s.local_path, s.last_commit, (b.source_id IS NOT NULL) AS bound, w.owner_host_id::text AS owner, h.local_path AS root, n.syncer_host_id AS syncer, s.config
        FROM sources s
        LEFT JOIN persistence_source_bindings b ON b.source_id = s.id AND b.source_incarnation = s.incarnation
        LEFT JOIN persistence_worktrees w ON w.id = b.worktree_id
@@ -103,7 +104,7 @@ export async function listHostSources(engine: BrainEngine, hostId: string, env: 
     if (!dirs.has(root)) dirs.set(root, await resolveGitDirs(root));
     const d = dirs.get(root) ?? null;
     if (!d) { skipped.push({ sourceId: row.id, reason: `${root} is not a git checkout on this host` }); continue; }
-    sources.push({ sourceId: row.id, root, gitDir: d.gitDir, commonDir: d.commonDir, lastCommit: row.last_commit, kind });
+    sources.push({ sourceId: row.id, root, gitDir: d.gitDir, commonDir: d.commonDir, lastCommit: row.last_commit, kind, ...(isSyncDisabledConfig(row.config) ? { syncDisabled: true } : {}) });
   }
   return { sources, skipped };
 }

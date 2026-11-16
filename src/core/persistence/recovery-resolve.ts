@@ -146,6 +146,8 @@ interface Journal {
 export interface ResolutionResult {
   outcome: 'resolved' | 'still_blocked'; keep: KeepChoice; request_state: string; blocked_reason: string | null;
   finished_by: 'this_run' | 'another_pass'; backup_dir: string; next: string;
+  /** #7715: a strict source's `--keep disk` page: commit the kept edit (the user decides: publish or discard), then sync. */
+  fix?: Action;
 }
 interface EffectRow { id: string; request_ref: string; request_id: string | null; kind: string; state: string; error_code: string | null; worktree_id: string;
   recovery: EffectRecovery | null }
@@ -649,6 +651,29 @@ const sameIdentity = (row: WriteRequest | null, item: StuckRecovery) => {
   return !!files && digest(identityOf(files, row!.recovery!)) === digest(item.identity);
 };
 
+/**
+ * #7715: on a strict (git-canonical) source the kept bytes are an ordinary uncommitted edit and Git is the parent, so the
+ * follow-up is to commit it (or restore it) and then sync, never a database-side reconcile of content Git does not hold.
+ */
+function strictKeptEdit(item: StuckRecovery, request: WriteRequest, checkout: string): { next: string; fix: Action } {
+  const paths = item.files.map(file => file.relative);
+  const sync = ['gbrain', 'sync', '--source', item.source_id, '--no-pull'];
+  const shown = paths.join(' ');
+  const next = `The bytes on disk are kept and the write's publication was abandoned (request ${request.state}). Source ${item.source_id} is git-canonical, so Git is the parent: `
+    + `the kept bytes are an uncommitted edit at ${shown} in ${checkout}, and the page keeps its committed version until Git holds the edit. This command does not mark the page repaired. `
+    + `To publish the edit: gbrain git commit-push --path ${checkout} -m "<message>" -- ${shown}, then ${sync.join(' ')}. `
+    + `To discard it: git -C ${checkout} restore -- ${shown}, then ${sync.join(' ')}. `
+    + `Verify with git -C ${checkout} status --porcelain -- ${shown} (empty once it is committed or restored), then gbrain sync status --source ${item.source_id} --json.`;
+  return { next, fix: { ask_user: true, argv: ['gbrain', 'git', 'commit-push', '--path', checkout, '-m', '<MESSAGE>', '--', ...paths],
+    inputs: [{ name: 'MESSAGE', how: `A one-line commit message for the kept edit, once the user chooses to publish it. To discard it instead: git -C ${checkout} restore -- ${shown}, then ${sync.join(' ')}.` }],
+    consent: [], actor: 'agent', requires_exclusive: false,
+    why: 'Commits the kept edit, so Git holds it and the next sync imports it; whether to publish or discard it is the user\'s call.',
+    user_message: `The edit to ${item.slug} in source ${item.source_id} is kept on disk but is not in Git yet. Publish it (commit it, then sync) or discard it (restore the committed version, then sync)?`,
+    verify: { argv: ['git', '-C', checkout, 'status', '--porcelain', '--', ...paths] },
+    then: { argv: sync, consent: [], actor: 'agent', requires_exclusive: false, why: 'Imports the committed edit, or settles the restored file, so the writes waiting on the source resume.',
+      verify: { argv: ['gbrain', 'sync', 'status', '--source', item.source_id, '--json'] } } } };
+}
+
 function nextStep(item: StuckRecovery, keep: KeepChoice, request: WriteRequest): string {
   const state = request.state;
   const sync = `gbrain sync --source ${item.source_id} --no-pull`;
@@ -766,7 +791,8 @@ Promise<ResolutionResult & { replayed: boolean }> {
     const result: ResolutionResult = { outcome: blocked ? 'still_blocked' : 'resolved', keep: opts.keep, request_state: recovered.state,
       blocked_reason: blocked ? recovered.blocked_reason ?? null : null, finished_by: ours ? 'this_run' : 'another_pass', backup_dir: journal.backup_dir,
       next: blocked ? `The recovery is still blocked (${recovered.blocked_reason ?? 'recovering'}); rerun the same apply, or inspect it with gbrain sources writer status --source ${item.source_id} --json.`
-        : nextStep(item, opts.keep, recovered) };
+        : nextStep(item, opts.keep, recovered),
+      ...(!blocked && opts.keep === 'disk' && item.target === 'page' && binding.canonical_git && binding.local_path ? strictKeptEdit(item, recovered, binding.local_path) : {}) };
     if (!blocked) await writeJournal(engine, key, { ...journal, phase: 'done', result });
     return { ...result, replayed: false };
   } finally { await lock.release(); }

@@ -5,7 +5,11 @@
  * write, after that receipt already reads committed. The facts preflight, the
  * atom-maintenance session and the connector-sync preflight all use it. A
  * holder that releases within the bound is waited out; one held past it is
- * still busy (the atom session refuses with writer_lock_unavailable).
+ * still busy. #7461: the atom session waits the longer of that bound and its
+ * maintenance publish wait, because the previous batch's Git effects can hold
+ * the lock past one second; past its deadline it refuses with
+ * writer_lock_unavailable, and a job whose publish is already pending (wait
+ * 0) still gets the one-second probe.
  *
  * Synthetic data only. PGLite.
  */
@@ -16,6 +20,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { managedAtomSession } from '../src/core/persistence/atom-maintenance.ts';
+import { MaintenanceWriteWait } from '../src/core/persistence/maintenance-wait.ts';
+import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { acquireWorktree, claimWorktree, getWorktreeBinding, MANAGED_WRITER_PROBE_WAIT_MS, probeWorktreeWriter, type WorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -82,10 +88,51 @@ describe('managedAtomSession preflight', () => {
     await released;
   }), 30_000);
 
-  test('a holder kept past the bound still refuses with writer_lock_unavailable', () => run(async () => {
+  test('a holder that outlasts a job near its deadline refuses with writer_lock_unavailable after the probe', () => run(async () => {
     const binding = await managedSource();
-    const { released } = await hold(binding, MANAGED_WRITER_PROBE_WAIT_MS + 1500);
-    await expect(managedAtomSession(engine, sourceId)).rejects.toMatchObject({ code: 'writer_lock_unavailable' });
+    const nearDeadline = new MaintenanceWriteWait(Date.now() + 200);
+    const busy = await hold(binding, MANAGED_WRITER_PROBE_WAIT_MS + 2000);
+    const started = performance.now();
+    await expect(managedAtomSession(engine, sourceId, undefined, nearDeadline)).rejects.toMatchObject({ code: 'writer_lock_unavailable' });
+    const waited = performance.now() - started;
+    expect(waited).toBeGreaterThanOrEqual(MANAGED_WRITER_PROBE_WAIT_MS - 50);
+    expect(waited).toBeLessThan(MANAGED_WRITER_PROBE_WAIT_MS + 1500);
+    await busy.released;
+  }), 30_000);
+
+  test('a holder that releases after the one-second probe but within the publish wait is waited out', () => run(async () => {
+    const binding = await managedSource();
+    const busy = await hold(binding, MANAGED_WRITER_PROBE_WAIT_MS + 800);
+    const started = performance.now();
+    const session = await managedAtomSession(engine, sourceId);
+    expect(session).toMatchObject({ sourceId });
+    expect(performance.now() - started).toBeGreaterThanOrEqual(MANAGED_WRITER_PROBE_WAIT_MS + 700);
+    await busy.released;
+  }), 30_000);
+
+  test('a job whose publish is pending (wait 0) still waits the one-second probe', () => run(async () => {
+    const binding = await managedSource();
+    const wait = new MaintenanceWriteWait();
+    wait.observe({ state: 'queued' } as WriteRequest);
+    expect(wait.ms()).toBe(0);
+    const { released } = await hold(binding, 400);
+    expect(await managedAtomSession(engine, sourceId, undefined, wait)).not.toBeNull();
+    await released;
+    const busy = await hold(binding, MANAGED_WRITER_PROBE_WAIT_MS + 1500);
+    const started = performance.now();
+    await expect(managedAtomSession(engine, sourceId, undefined, wait)).rejects.toMatchObject({ code: 'writer_lock_unavailable' });
+    expect(performance.now() - started).toBeGreaterThanOrEqual(MANAGED_WRITER_PROBE_WAIT_MS - 50);
+    await busy.released;
+  }), 30_000);
+
+  test('an abort ends the wait before the publish budget', () => run(async () => {
+    const binding = await managedSource();
+    const { released } = await hold(binding, 4000);
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new Error('stopped')), 300);
+    const started = performance.now();
+    await expect(managedAtomSession(engine, sourceId, undefined, new MaintenanceWriteWait(), controller.signal)).rejects.toBeDefined();
+    expect(performance.now() - started).toBeLessThan(MANAGED_WRITER_PROBE_WAIT_MS);
     await released;
   }), 30_000);
 });

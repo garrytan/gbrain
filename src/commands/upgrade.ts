@@ -50,7 +50,7 @@ export function assessUpgradeOutcome(
 
 export async function runUpgrade(args: string[], opts: { targetVersion?: string } = {}) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain upgrade [--channel stable|alpha] [--dry-run] [--stop-mcp] [--no-restart] [--swap-only] [--no-autopilot-install] [--no-bun-floor-check]\n       gbrain upgrade --restart-only [--stop-mcp] [--dry-run] [--json]\n\nSelf-update the CLI, then restart every gbrain process on this host onto the new build.\n\nDetects install method (bun, bun-link, binary) and runs the appropriate update.\nAfter upgrading, shows what\'s new and offers to set up new features.\n\n--channel <name>        stable (weekly, promoted after its gates passed on the exact release; the default) or alpha\n                       (every published release; latest is an alias). Precedence: --channel, GBRAIN_RELEASE_CHANNEL,\n                       self_upgrade.channel, stable. Persist it as self_upgrade.channel in config.\n--stop-mcp              Stop MCP stdio servers agent harnesses started, instead of refusing; reconnect gbrain\n                       in each harness afterwards.\n--no-restart            Install without restarting anything (doctor reports runtime_build_skew until\n                       \'gbrain upgrade --restart-only\' runs).\n--restart-only          Restart serve, autopilot, the jobs supervisor and its worker (and, with --stop-mcp, MCP\n                       servers) onto the installed build, then verify every process reports it and the warm\n                       CLI socket accepts it. A process it cannot restart refuses with the exact step (exit 3).\n--dry-run               Print the effective channel, where it came from and what would install; change nothing.\n                       With --restart-only: print the restart plan instead.\n--no-autopilot-install  Skip autopilot installation and service rewrites, including package postinstall.\n                       Also supported as GBRAIN_NO_AUTOPILOT_INSTALL=1.\n--no-bun-floor-check    Upgrade even when the target release\'s Bun floor cannot be read or is above\n                       this host\'s Bun (manual upgrades only). Docs: docs/guides/upgrades-auto-update.md#bun-floor.\n--swap-only  Perform ONLY the binary/source swap and skip post-upgrade\n             (migrations run on the next launch). Used by the autopilot\n             silent self-upgrade channel so the daemon can swap + relaunch\n             without a 30-min blocking post-upgrade inside its tick.');
+    console.log('Usage: gbrain upgrade [--channel stable|alpha] [--dry-run] [--stop-mcp] [--no-restart] [--swap-only] [--no-autopilot-install] [--no-bun-floor-check]\n       gbrain upgrade --restart-only [--stop-mcp] [--dry-run] [--json]\n\nSelf-update the CLI, then restart every gbrain process on this host onto the new build.\n\nDetects install method (bun, bun-link, binary) and runs the appropriate update.\nAfter upgrading, shows what\'s new and offers to set up new features.\n\n--channel <name>        stable (the default: weekly, sooner only for security, data-loss and stable-regression fixes,\n                       and only to a release whose gates passed on its exact code) or alpha (every published\n                       release; latest is an alias). Precedence: --channel, GBRAIN_RELEASE_CHANNEL,\n                       self_upgrade.channel, stable. Persist it as self_upgrade.channel in config.\n--stop-mcp              Stop MCP stdio servers agent harnesses started, instead of refusing; reconnect gbrain\n                       in each harness afterwards.\n--no-restart            Install without restarting anything (doctor reports runtime_build_skew until\n                       \'gbrain upgrade --restart-only\' runs).\n--restart-only          Restart serve, autopilot, the jobs supervisor and its worker (and, with --stop-mcp, MCP\n                       servers) onto the installed build, then verify every process reports it and the warm\n                       CLI socket accepts it. A process it cannot restart refuses with the exact step (exit 3).\n--dry-run               Print the effective channel, where it came from and what would install; change nothing.\n                       With --restart-only: print the restart plan instead.\n--no-autopilot-install  Skip autopilot installation and service rewrites.\n                       Also supported as GBRAIN_NO_AUTOPILOT_INSTALL=1.\n--no-bun-floor-check    Upgrade even when the target release\'s Bun floor cannot be read or is above\n                       this host\'s Bun (manual upgrades only). Docs: docs/guides/upgrades-auto-update.md#bun-floor.\n--swap-only  Perform ONLY the binary/source swap and skip post-upgrade\n             (migrations run on the next launch). Used by the autopilot\n             silent self-upgrade channel so the daemon can swap + relaunch\n             without a 30-min blocking post-upgrade inside its tick.');
     return;
   }
 
@@ -59,7 +59,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   const swapOnly = args.includes('--swap-only');
   const noAutopilotInstall = args.includes('--no-autopilot-install') || process.env.GBRAIN_NO_AUTOPILOT_INSTALL === '1';
   const checkBunFloor = !args.includes('--no-bun-floor-check');
-  // #5693: post-upgrade owns migrations, so package postinstall skips them.
+  // #5693: post-upgrade owns migrations. gbrain ships no postinstall now; the flag still tells an older release's postinstall to skip them.
   const upgradeEnv = { ...process.env, GBRAIN_UPGRADE_OWNS_MIGRATIONS: '1', ...(noAutopilotInstall ? { GBRAIN_NO_AUTOPILOT_INSTALL: '1' } : {}) };
 
   const json = jsonRequested(args);
@@ -120,13 +120,13 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
       if (pinned) { if (pinned === 'refused') return; upgraded = pinned === 'installed'; break; }
       if (checkBunFloor && refuseForBunFloor(await readPackageTarget(globalGbrainSpec(bunGlobalRoot)), opts.targetVersion)) return;
       try {
-        execFileSync('bun', ['update', 'gbrain'], { cwd: bunGlobalRoot, env: upgradeEnv, stdio: 'inherit', timeout: 120_000 });
+        execFileSync('bun', ['update', BUN_BACKEND, 'gbrain'], { cwd: bunGlobalRoot, env: upgradeEnv, stdio: 'inherit', timeout: 120_000 });
         upgraded = true;
       } catch {
         if (installedDespiteFailure(oldVersion)) upgraded = true;
         else {
           console.error('Upgrade failed. Try running manually:');
-          console.error(`  cd ${bunGlobalRoot} && bun update gbrain`);
+          console.error(`  cd ${bunGlobalRoot} && bun update ${BUN_BACKEND} gbrain`);
         }
       }
       break;
@@ -189,7 +189,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
     default:
       console.error('Could not detect installation method.');
       console.log('Try one of:');
-      console.log('  bun update gbrain');
+      console.log(`  bun update ${BUN_BACKEND} gbrain`);
       console.log('  Download from https://github.com/garrytan/gbrain/releases');
   }
 
@@ -416,14 +416,14 @@ async function installStableRelease(method: string, target: { version: string; c
   const bun = (bunArgs: string[]) => execFileSync('bun', bunArgs, { env: ctx.upgradeEnv, stdio: cliChildStdio(), timeout: 300_000 });
   try {
     bun(['remove', '-g', 'gbrain']);
-    bun(['add', '-g', spec]);
+    bun(['add', '-g', BUN_BACKEND, spec]);
     return 'installed';
   } catch {
     if (installedDespiteFailure(ctx.oldVersion)) return 'installed';
     console.error(`Installing ${spec} failed. Restoring gbrain ${ctx.oldVersion}...`);
-    try { bun(['add', '-g', `github:${GBRAIN_GITHUB_REPO}#v${ctx.oldVersion}`]); console.error(`Restored gbrain ${ctx.oldVersion}.`); }
+    try { bun(['add', '-g', BUN_BACKEND, `github:${GBRAIN_GITHUB_REPO}#v${ctx.oldVersion}`]); console.error(`Restored gbrain ${ctx.oldVersion}.`); }
     catch { console.error(`Restore failed. Reinstall by hand: ${bunReinstallCommand(`#v${target.version}`)}`); }
-    recordUpgradeError({ phase: ctx.phase ?? 'stable-reinstall', fromVersion: ctx.oldVersion, toVersion: target.version, error: `bun add -g ${spec} failed`, recover: bunReinstallCommand(`#v${target.version}`) });
+    recordUpgradeError({ phase: ctx.phase ?? 'stable-reinstall', fromVersion: ctx.oldVersion, toVersion: target.version, error: `bun add -g ${BUN_BACKEND} ${spec} failed`, recover: bunReinstallCommand(`#v${target.version}`) });
     setCliExitVerdict(1);
     return 'failed';
   }
@@ -547,6 +547,13 @@ export function resolveBunGlobalRoot(): string {
 }
 
 /**
+ * #8659: Bun's default backend hardlinks package files from its cache on Linux, and OpenClaw refuses a hardlinked
+ * plugin manifest, so a global install OpenClaw loads as a plugin stopped loading after every upgrade. Every global
+ * reinstall, and each hint that repeats one, copies the files instead.
+ */
+const BUN_BACKEND = '--backend=copyfile';
+
+/**
  * #5034 / B-NEW-5: reinstall the global Bun package at `ref` by removing it
  * first. An in-place `bun add -g` / `bun install --global` tag swap over an
  * existing global install fails with DependencyLoop on Bun 1.3 and, on Bun
@@ -555,7 +562,7 @@ export function resolveBunGlobalRoot(): string {
  */
 export function bunReinstallCommand(ref: string): string {
   const tag = /^#(v\d[\w.]*)$/.exec(ref)?.[1];
-  const remove = `bun remove -g gbrain && bun add -g github:${GBRAIN_GITHUB_REPO}${ref}`;
+  const remove = `bun remove -g gbrain && bun add -g ${BUN_BACKEND} github:${GBRAIN_GITHUB_REPO}${ref}`;
   return tag ? `${releaseTagProbeCommand(tag)} && ${remove}` : remove;
 }
 
@@ -621,13 +628,13 @@ export function planPinnedReinstall(requested: string | null, oldVersion: string
  */
 export function reinstallHintLines(version: string, oldVersion: string, platform: NodeJS.Platform = process.platform): string[] {
   const tag = `v${version}`;
-  const restore = `If the add fails, restore ${oldVersion} with: bun add -g github:${GBRAIN_GITHUB_REPO}#v${oldVersion}`;
+  const restore = `If the add fails, restore ${oldVersion} with: bun add -g ${BUN_BACKEND} github:${GBRAIN_GITHUB_REPO}#v${oldVersion}`;
   if (platform !== 'win32') return [bunReinstallCommand(`#${tag}`), restore];
   return [
     'Run these one at a time, and stop if the first one fails (the tag is not published yet):',
     releaseTagProbeCommand(tag),
     'bun remove -g gbrain',
-    `bun add -g github:${GBRAIN_GITHUB_REPO}#${tag}`,
+    `bun add -g ${BUN_BACKEND} github:${GBRAIN_GITHUB_REPO}#${tag}`,
     restore,
   ];
 }
@@ -959,6 +966,8 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         await (await import('../core/temporal-edges-upgrade-notice.ts')).printTemporalEdgesUpgradeNotice(engine);
         // #5575 memory trust: [AGENT] ask_user while unclaimed sources hold legacy rows; never claims or scans (best-effort).
         await (await import('../core/trust/claim-notice.ts')).printTrustClaimUpgradeNotice(engine);
+        await (await import('../core/access/requester-scope.ts')).printUnscopedReadsUpgradeNotice(engine); // GST-363: credentials bound to nobody on a several-people brain
+        await (await import('../core/access/open-pages.ts')).printOpenPagesUpgradeNotice(engine); // GST-2670: open DM, chat and mail pages on a several-people brain
 
         // Ambient-writeback consent ask (WP8): one-shot for EXISTING installs
         // upgrading into the feature. Personal brains only; double-gated on
@@ -1092,7 +1101,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     console.warn(`\nSchema auto-apply skipped: ${msg}`);
     report.schema = 'skipped';
     report.warnings.push(`schema auto-apply skipped: ${msg}`);
-    console.warn('Run `gbrain init --migrate-only` manually if your brain is wedged.');
+    if ((e as { code?: unknown }).code !== 'client_behind') console.warn('Run `gbrain init --migrate-only` manually if your brain is wedged.');
   }
 
   // v0.25.1: agent-readable advisory listing recommended skills the

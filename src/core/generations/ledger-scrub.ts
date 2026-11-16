@@ -7,12 +7,18 @@
  * a purge of the page, or of a claim those blocks carry, drops them, and that restore then refuses `no_preimage` too.
  */
 import type { BrainEngine } from '../engine.ts';
+import { FENCE_GENERATION_KINDS } from './fence.ts';
 
 export interface LedgerScrub { derived_generation_items: number; derived_generations: number }
 
-/** Nulls the preimages and held proposals that carry the purged page (`slug`) or text (`needles`) in `sourceId`. */
+/**
+ * Nulls the preimages and held proposals that carry the purged page (`slug`) or text (`needles`) in `sourceId`. A page
+ * purge also drops the page's fence holds: it deletes every row they would retire, so no fence write can settle them.
+ */
 export async function scrubGenerationLedger(tx: BrainEngine, sourceId: string, target: { slug: string } | { needles: readonly string[] }): Promise<LedgerScrub> {
   if ('slug' in target) {
+    const fenceHolds = await tx.executeRaw(`DELETE FROM derived_generations WHERE source_id=$1 AND kind=ANY($2::text[]) AND owner_key='page:' || $3::text
+      AND state='held' RETURNING 1`, [sourceId, [...FENCE_GENERATION_KINDS], target.slug]);
     const items = await tx.executeRaw(`UPDATE derived_generation_items i SET preimage=NULL FROM derived_generations g
       WHERE g.id=i.generation_id AND g.source_id=$1 AND i.item_key=$2 AND i.preimage IS NOT NULL RETURNING 1`, [sourceId, target.slug]);
     const held = await tx.executeRaw(`UPDATE derived_generations SET proposal=NULL, updated_at=now()
@@ -20,7 +26,7 @@ export async function scrubGenerationLedger(tx: BrainEngine, sourceId: string, t
       RETURNING 1`, [sourceId, target.slug]);
     const fences = await tx.executeRaw(`UPDATE derived_generations SET completeness=completeness - 'fence'::text, updated_at=now()
       WHERE source_id=$1 AND owner_key='page:' || $2::text AND completeness->'fence' IS NOT NULL RETURNING 1`, [sourceId, target.slug]);
-    return { derived_generation_items: items.length, derived_generations: held.length + fences.length };
+    return { derived_generation_items: items.length, derived_generations: fenceHolds.length + held.length + fences.length };
   }
   const needles = target.needles.filter(Boolean).flatMap(needle => [needle.toLowerCase(), JSON.stringify(needle).slice(1, -1).toLowerCase()]);
   if (!needles.length) return { derived_generation_items: 0, derived_generations: 0 };

@@ -25,6 +25,7 @@
  */
 import { OperationError } from '../ops/contract.ts';
 import { isStalePlanError } from '../retry-matcher.ts';
+import { classifyPgAccessError } from '../pg-access-classify.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { publicationDeadlinePassed } from './publication-deadline.ts';
@@ -57,6 +58,17 @@ export function transientInterruption(error: unknown): TransientInterruption | n
   return code === '57014' ? { cause: 'statement_cancel', sqlstate: '57014' } : null;
 }
 
+export function transientDatabaseFailure(error: unknown): boolean {
+  return ['40001','40P01','55P03','57014','53300','57P01','57P02','57P03','08000','08003','08006','08001','08004',
+    'ECONNRESET','ECONNREFUSED','ETIMEDOUT','CONNECTION_CLOSED','CONNECTION_ENDED'].includes(String((error as {code?:string})?.code)) || connectionCapFailure(error) || isStalePlanError(error);
+}
+/**
+ * GBRA-133: a pooler's client cap (Supavisor `EMAXCONNSESSION`, "too many clients already") is the same contention as
+ * SQLSTATE 53300 whatever code the pooler sends with it, so a write that meets it is released, never failed terminally.
+ */
+export function connectionCapFailure(error: unknown): boolean {
+  return classifyPgAccessError(error).reason === 'pool_exhausted';
+}
 /** The `*_interruption_charged` fault-point detail: the charge and the error it was charged for. */
 export function chargedInterruptionDetail(interruption: TransientInterruption | null, error: unknown) {
   const e = error as { name?: unknown; code?: unknown; message?: unknown } | null;

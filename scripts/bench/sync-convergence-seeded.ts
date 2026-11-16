@@ -35,7 +35,7 @@ import { preparePageAdmission, submitPageMutation } from '../../src/core/persist
 import { declarePersistenceProtocol } from '../../src/core/persistence/protocol.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { performManagedSync } from '../../src/core/persistence/sync-run.ts';
-import { clearGitHold, readGitSourceHolds, SYNC_IMPORT_PROVENANCE_OP, writeGitHold } from '../../src/core/persistence/sync-holds.ts';
+import { clearGitHold, FILE_DRIFT_VERSION, readGitSourceHolds, SYNC_IMPORT_PROVENANCE_OP, writeGitHold } from '../../src/core/persistence/sync-holds.ts';
 import { readShadowLevel, SYNC_ORIGIN_DELETED_OP, type ShadowLevel } from '../../src/core/persistence/sync-pass.ts';
 import { buildConvergenceReceipt, type ConvergenceClassKey, type ConvergenceReceipt } from '../../src/core/persistence/sync-convergence.ts';
 import type { SyncPathAction } from '../../src/core/persistence/sync-classify.ts';
@@ -285,7 +285,7 @@ export async function seedMix(brain: MixBrain): Promise<SeededCase[]> {
     await engine.transaction(tx => writeGitHold(tx, { source_id: 'default', incarnation, path, source_path: path, slug: page.page.slug, page_id: Number(page.page.id), code,
       message: `Synthetic ${code} hold.`, upstream_version: sha256(Buffer.from(note(titleOf(path), `A committed edit of ${titleOf(path)}.`))),
       observed_at: new Date().toISOString(), run_id: null, mode: 'managed',
-      meta: { recovery_version: RECOVERY_VERSION, blob_oid: oidAt(path), page_revision: page.revision, ...(code === 'file_drift' ? { sides: 'both' as const } : {}) } }));
+      meta: { recovery_version: RECOVERY_VERSION, blob_oid: oidAt(path), page_revision: page.revision, ...(code === 'file_drift' ? { sides: 'both' as const, drift_version: FILE_DRIFT_VERSION } : {}) } }));
   }
 
   // Stage 3f: open work. With the consumer stopped an admitted request stays queued (nothing after this awaits a write).

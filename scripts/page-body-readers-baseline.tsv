@@ -253,18 +253,18 @@ src/core/facts/proposal-supersede.ts	prepareProposalMutation	field	SEGW	segmente
 src/core/facts/proposal-supersede.ts	undoUnmanaged	field	SEGW	segmented page: getter throws page_body_segmented
 src/core/facts/purge-verify.ts	carriesClaimSql	sql	STREAM	strpos over NULL never matches a segmented page; withSegmentedProse probes its segment texts
 src/core/facts/purge-verify.ts	verifyPagePurge	sql	STREAM	segmented pages probed through their segment texts (withSegmentedProse)
-src/core/facts/purge.ts	redactPageVersions	field	SEGW	lane 1e: segmented versions carry no body
-src/core/facts/purge.ts	redactPageVersions	sql	SEGW	lane 1e: segmented versions carry no body
 src/core/facts/purge.ts	rewritePageBodies	call:contentHash	META	inline pages only (see sql row)
 src/core/facts/purge.ts	rewritePageBodies	field	SEGW	segmented page: getter throws page_body_segmented
 src/core/facts/purge.ts	rewritePageBodies	sql	SEGW	refuses a segmented target with page_body_segmented before rewriting (segment purge in PR 2)
+src/core/facts/purge.ts	rewriteVersionBodies	field	SEGW	lane 1e: segmented versions carry no body
+src/core/facts/purge.ts	rewriteVersionBodies	sql	SEGW	lane 1e: segmented versions carry no body
 src/core/facts/reconcile-watermark.ts	readFactsReconcileBacklog	sql	STREAM	
 src/core/facts/reconcile-watermark.ts	selectFactsReconcileDrain	sql	STREAM	
 src/core/facts/relink-publish.ts	prepareRelinkMutation	call:serializePageToMarkdown	SEGW	
 src/core/facts/relink-publish.ts	prepareRelinkMutation	field	SEGW	
 src/core/facts/retire.ts	retireFactsFromPage	call:serializePageToMarkdown	INLINE	a segmented page is skipped (its rows counted failed) before its body is read
 src/core/facts/retire.ts	retireFactsFromPage	field	INLINE	a segmented page is skipped (its rows counted failed) before its body is read
-src/core/facts/subject-infer-write.ts	linkAllowed	field	STREAM	
+src/core/facts/subject-infer-write.ts	targetFenceClean	field	INLINE	the body materializedSnapshot read back within PAGE_MAX_BYTES on the managed path; a segmented page over the ceiling or on the unmanaged path is refused before any read
 src/core/facts/unfenced-facts.ts	auditUnadoptableFacts	call:serializePageToMarkdown	SEGW	
 src/core/facts/unfenced-facts.ts	fenceDatabaseOnlyPage	call:serializePageToMarkdown	SEGW	
 src/core/facts/unfenced-facts.ts	planFence	field	NONE	reads compiled_truth from the object withHeldFactsFence returns for the body string its caller passed; no stored page body is read here
@@ -493,7 +493,7 @@ src/core/persistence/page-input.ts	normalizeSubagentPageInput	call:serializeMark
 src/core/persistence/page-input.ts	normalizeSubagentPageInput	field	SEGW	
 src/core/persistence/page-mutations.ts	unquotedPutContent	field	SEGW	counts the stored inline body's literal tool-call summaries through readStoredBody; a segmented page reads NULL, so a summarized remote round trip is refused and nothing is written
 src/core/persistence/page-prepare.ts	canonical	field	SEGW	lane 1d file; segmented page: getter throws page_body_segmented
-src/core/persistence/page-prepare.ts	fileMatchesSnapshot	field	SEGW	lane 1d file; segmented page: getter throws page_body_segmented
+src/core/persistence/page-prepare.ts	fileSnapshotDifference	field	SEGW	lane 1d file; segmented page: getter throws page_body_segmented
 src/core/persistence/page-prepare.ts	frontmatterDriftWrite	field	SEGW	#8109: called only for an inline page (bodyUnread excluded at the call site); compares the file's parsed body with the snapshot body
 src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	call:serializePageToMarkdown	SEGW	lane 1d file
 src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	field	SEGW	lane 1d file: preserveProtectedTakes reads the snapshot body; segmented page: getter throws page_body_segmented
@@ -570,6 +570,8 @@ src/core/repair/extractor-facts.ts	restorePageFacts	sql	STREAM
 src/core/repair/fact-claim-dates.ts	movePage	call:serializePageToMarkdown	SEGW	refuses a segmented page: the plan lists it segmented_page and movePage keeps one as changed_since_preview
 src/core/repair/fences.ts	afterBytes	field	STREAM	
 src/core/repair/fences.ts	fencesRepair	field	STREAM	
+src/core/repair/file-drift-compare.ts	driftDifference	field	NONE	compares the compiled_truth and timeline of the reconcile reading (readReconcileState materializes a segmented page), never a stored body string
+src/core/repair/file-drift.ts	prepareDriftPage	call:serializePageToMarkdown	NONE	renders the reconcile reading of both sides and of the result (readReconcileState materializes a segmented page) to count lost lines; no stored page body is read here
 src/core/repair/frontmatter.ts	analyzeFile	field	LEAD	
 src/core/repair/frontmatter.ts	pagesByOrigin	sql	LEAD	
 src/core/repair/lost-fence-rows.ts	lostIn	field	NONE	walks the history scanLostFenceRows built (inline page_versions bodies and a materialized snapshot); no stored page body is read here
@@ -577,6 +579,7 @@ src/core/repair/lost-fence-rows.ts	plannedPage	call:serializePageToMarkdown	SEGW
 src/core/repair/lost-fence-rows.ts	plannedPage	field	SEGW	materializedSnapshot within the single-string ceiling; over it counts as fence_unreadable (segmentedOverCeiling, checked before the read)
 src/core/repair/lost-fence-rows.ts	scanLostFenceRows	field	SEGW	materializedSnapshot within the single-string ceiling; over it counts as fence_unreadable (segmentedOverCeiling, checked before the read)
 src/core/repair/lost-fence-rows.ts	scanLostFenceRows	sql	INLINE	page_versions rows that hold a body copy (compiled_truth IS NOT NULL); a segmented version has none and is not read
+src/core/repair/origin-carry.ts	stamp	call:serializePageToMarkdown	SEGW	a segmented page fails before the read (segmented_page) and parks its origin
 src/core/repair/orphan-children.ts	PROBE_SQL	sql	META	
 src/core/repair/overwritten-edits.ts	previewEdit	call:serializePageToMarkdown	SEGW	only high-confidence edits (live page and version both inline at scan time) are previewed; a page whose revision moved since the scan is skipped before it is serialized
 src/core/repair/overwritten-edits.ts	versionMarkdown	call:serializePageToMarkdown	SEGW	inline versions only: a segmented version has no lost_digest and is never previewed; the restore goes through revert_version, which refuses a segmented page or version
@@ -621,7 +624,7 @@ src/core/repair/visibility.ts	applyFactItem	field	INLINE	inline pages only: a se
 src/core/repair/visibility.ts	planAliases	sql	META	
 src/core/repair/visibility.ts	planEvents	sql	META	
 src/core/repair/visibility.ts	planLineage	sql	META	
-src/core/repair/visibility.ts	visibilityRepair	call:serializePageToMarkdown	SEGW	
+src/core/repair/visibility.ts	visibilityWrite	call:serializePageToMarkdown	SEGW	
 src/core/schema-migrations/v091-pages-generation-trigger-and-bookmark.ts	v091	sql	NONE	not the page body: historical generation trigger
 src/core/schema-migrations/v123-configurable-fts-language.ts	v123	sql	NONE	not the page body: historical
 src/core/schema-migrations/v124-page-search-vector-drop-compiled-truth.ts	v124	sql	NONE	not the page body: historical search-vector trigger
@@ -703,3 +706,8 @@ src/cli/enforced-member.ts	checkEnforcedWrite	field	INLINE	the stored page comes
 src/cli/enforced-member.ts	markdownLabels	field	NONE	not a stored page body: the parsed markdown a put or a committed file submits
 src/cli/enforced-member.ts	pageLabels	field	INLINE	reads a page from storedPage (segmented refused by assertInlineBody) or parsed submitted markdown
 src/cli/enforced-member.ts	storedPage	sql	INLINE	refuses a segmented page with assertInlineBody before its body is read
+src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	call:contentHash	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body
+src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	field	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body
+src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	sql	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body
+src/core/guests/promote.ts	promoteGuestNote	call:serializeMarkdown	INLINE	assertInlineBody refuses a guest note stored in segments (page_body_segmented) before its body is copied into the owner page
+src/core/guests/promote.ts	promoteGuestNote	field	INLINE	assertInlineBody before the body is read

@@ -6,7 +6,7 @@
  * recovers the distinction from the stored message alone (no schema change).
  */
 import { opError, type OperationError } from '../ops/contract.ts';
-import { UNATTRIBUTED_MEMORY_SLUG } from '../facts/extract-from-fence.ts';
+import { isHoldingSlug } from '../facts-fence.ts';
 import type { WriteRequest } from './model.ts';
 
 export const PAGE_MISSING_MESSAGE = 'The accepted page no longer exists.';
@@ -48,5 +48,5 @@ export function rememberAcceptsPageCreatedSince(row: Pick<WriteRequest, 'operati
   snapshot: { page: { deleted_at?: Date | string | null } } | null): boolean {
   const p = row.intent;
   return row.operation === 'remember' && row.page_id === null && snapshot !== null && !snapshot.page.deleted_at && !!p
-    && (p.member_page === true || p.scope_page === true || (row.slug === UNATTRIBUTED_MEMORY_SLUG && (p.entity_slug == null || row.authority.heldFor === p.entity_slug)));
+    && (p.member_page === true || p.scope_page === true || (isHoldingSlug(row.slug) && (p.entity_slug == null || row.authority.heldFor === p.entity_slug)));
 }

@@ -340,6 +340,20 @@ describe('release:restamp end to end', () => {
     expect(splitChangelog(read(fx.work, 'CHANGELOG.md')).sections.map((s) => s.header)[0]).toBe('## [0.1.2.0] - 2026-10-05');
   }, 120_000);
 
+  test('--continue refuses a hand resolution that puts a master-edited published migration back to the branch text', () => {
+    const fx = fixture();
+    const seed = migrationFile(208, 'seed_two');
+    branchWork(fx, '0.1.1.0', { 'src/shared.ts': 'export const GREETING = "hi from the branch";\n' });
+    landOnMaster(fx, '0.1.1.0', null, { 'src/shared.ts': 'export const GREETING = "hi from master";\n', [seed]: migration(208, 'seed_two', 'CREATE TABLE IF NOT EXISTS seed_two (id BIGINT);') });
+    expect(restamp(fx.work).code).toBe(1);
+    put(fx.work, { 'src/shared.ts': 'export const GREETING = "hi from both";\n' });
+    git(fx.work, 'checkout', 'HEAD', '--', seed);
+    git(fx.work, 'add', 'src/shared.ts', seed);
+    const r = restamp(fx.work, ['--continue']);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(`${seed} is published on origin/master but this branch changes its payload`);
+  }, 120_000);
+
   test('--abort returns to the pre-run commit', () => {
     const fx = fixture();
     branchWork(fx, '0.1.1.0', { 'src/shared.ts': 'export const GREETING = "hi from the branch";\n' });
@@ -508,4 +522,198 @@ describe('release:restamp helpers', () => {
       expect(headings, `${ref} does not resolve`).toContain(id!);
     }
   });
+});
+
+const NOTICE = 'src/core/behavior-change-notice.ts';
+const LIMITS = 'scripts/module-size-limits.tsv';
+const POLICY_DIRECT = { '.gstack/ship-policy.json': JSON.stringify({ merge: 'direct' }) + '\n' };
+const SEED_ROW = "  { since: '0.0.9.0', id: 'seed_row_abc', text: 'Seed.' },";
+const BRANCH_ROW = "  { since: '0.1.1.0', id: 'faster_sync_abc', text: 'Sync is faster now.' },";
+const MASTER_ROW = "  { since: '0.1.1.0', id: 'master_row_abc', text: 'Master change.' },";
+const noticeFile = (...rows: string[]) => ['export const BEHAVIOR_CHANGES: Array<{ since: string; id?: string; text: string | (() => string) }> = [', SEED_ROW, ...rows, '];', ''].join('\n');
+const limitsFile = (n: number) => `path\tlimit\tkind\tnote\nsrc/shared.ts\t10\tratchet\tshared\n${NOTICE}\t${n}\tratchet\tthe notice table\n`;
+const QUIET = { GBRAIN_RESTAMP_STEPS: '[]', GBRAIN_RESTAMP_CHECKS: '[]' };
+
+/** fixture() plus the BEHAVIOR_CHANGES table and its size row on master, fast-forwarded into the feature branch. */
+function noticeFixture(): Fixture {
+  const fx = fixture();
+  put(fx.master, { [NOTICE]: noticeFile(), [LIMITS]: limitsFile(10) });
+  commit(fx.master, 'notice table');
+  git(fx.master, 'push', '-q', 'origin', 'master');
+  git(fx.work, 'fetch', '-q', 'origin');
+  git(fx.work, 'merge', '-q', '--ff-only', 'origin/master');
+  return fx;
+}
+
+describe('release-restamp --stamp-only', () => {
+  function stampTree(): string {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-stamp-only-'));
+    roots.push(root);
+    put(root, {
+      ...stamps('0.1.0.0'),
+      'CHANGELOG.md': changelog(release('0.1.0.0', '2026-01-01', 'First release 0.1.0.0.')),
+      [NOTICE]: "export const BEHAVIOR_CHANGES = [\n  { since: '0.1.0.0', id: 'seed_row_abc', text: 'Seed.' },\n];\n",
+      'docs/notes.md': '"version": "0.1.0.0"\n<!-- gbrain-plugin-tree-stamp: 0.1.0.0 -->\n',
+      'plugin/README.md': '<!-- gbrain-plugin-tree-stamp: 0.1.0.0 -->\n# Plugin\n\nSince v0.1.0.0.\n',
+      'plugin/skills/rules.json': '{\n  "version": "0.1.0.0",\n  "since": "0.1.0.0"\n}\n',
+      'plugin/skills/other.json': '{\n  "version": "2.0.0"\n}\n',
+      'plugin/skills/helper.ts': 'export const v = { "version": "0.1.0.0" };\n',
+      'plugin-variants/daily/README.md': '<!-- gbrain-plugin-tree-stamp: 0.1.0.0 -->\n',
+      'plugin-variants/daily/.claude-plugin/plugin.json': '{\n  "name": "daily",\n  "version": "0.1.0.0"\n}\n',
+      'plugin-variants/daily/.codex-plugin/plugin.json': '{\n  "name": "daily",\n  "version": "0.1.0.0"\n}\n',
+      'templates/bootstrap/template-repo/README.md': '# Brain\n\n<!-- gbrain-template-stamp: 0.1.0.0 -->\nBuilt with 0.1.0.0.\n',
+    });
+    return root;
+  }
+
+  test('moves every STAMPS file and the plugin, plugin-variants and template stamp lines, nothing else', () => {
+    const root = stampTree();
+    const before = (p: string) => readFileSync(join(root, p), 'utf8');
+    const untouched = ['CHANGELOG.md', NOTICE, 'docs/notes.md', 'plugin/skills/other.json', 'plugin/skills/helper.ts'];
+    const snapshot = Object.fromEntries(untouched.map((p) => [p, before(p)]));
+    const r = restamp(root, ['--stamp-only', '0.1.1.0']);
+    expect(r.code).toBe(0);
+    const written = r.out.replace(/^.*file\(s\): /, '').split(', ').sort();
+    expect(written).toEqual([
+      '.claude-plugin/plugin.json', '.codex-plugin/plugin.json', 'BOOTSTRAP_FOR_AGENTS.md', 'VERSION', 'openclaw.plugin.json', 'package.json',
+      'plugin-variants/daily/.claude-plugin/plugin.json', 'plugin-variants/daily/.codex-plugin/plugin.json', 'plugin-variants/daily/README.md',
+      'plugin/README.md', 'plugin/skills/rules.json', 'templates/bootstrap/template-repo/README.md',
+    ].sort());
+    for (const s of STAMPS) expect(s.read(read(root, s.file))).toBe('0.1.1.0');
+    expect(read(root, 'plugin/README.md')).toBe('<!-- gbrain-plugin-tree-stamp: 0.1.1.0 -->\n# Plugin\n\nSince v0.1.0.0.\n');
+    expect(read(root, 'plugin/skills/rules.json')).toBe('{\n  "version": "0.1.1.0",\n  "since": "0.1.0.0"\n}\n');
+    expect(read(root, 'plugin-variants/daily/.codex-plugin/plugin.json')).toContain('"version": "0.1.1.0"');
+    expect(read(root, 'templates/bootstrap/template-repo/README.md')).toBe('# Brain\n\n<!-- gbrain-template-stamp: 0.1.1.0 -->\nBuilt with 0.1.0.0.\n');
+    for (const p of untouched) expect(read(root, p)).toBe(snapshot[p]!);
+
+    const again = restamp(root, ['--stamp-only', '0.1.1.0']);
+    expect(again.code).toBe(0);
+    expect(again.out).toContain('written to 0 file(s)');
+  });
+
+  test('refuses a version that is not four-part and a missing argument', () => {
+    const root = stampTree();
+    const bad = restamp(root, ['--stamp-only', 'banana']);
+    expect(bad.code).toBe(1);
+    expect(bad.out).toContain('--stamp-only needs a four-part version');
+    expect(read(root, 'VERSION')).toBe('0.1.0.0\n');
+    for (const v of ['0.1.1', '0.1.1.0-x']) expect(restamp(root, ['--stamp-only', v]).code).toBe(1);
+    expect(read(root, 'VERSION')).toBe('0.1.0.0\n');
+    expect(restamp(root, ['--stamp-only']).code).toBe(2);
+  });
+});
+
+describe('release:unstamp and merge: direct', () => {
+  test('a stamped branch with one CHANGELOG entry and one appended row converts in one commit after the merge', () => {
+    const fx = noticeFixture();
+    branchWork(fx, '0.1.1.0', { [NOTICE]: noticeFile(BRANCH_ROW), [LIMITS]: limitsFile(11), 'src/widgets.ts': 'export const W = 1;\n' });
+    landOnMaster(fx, '0.1.1.0', null, { [NOTICE]: noticeFile(MASTER_ROW), [LIMITS]: limitsFile(12) });
+    landOnMaster(fx, '0.1.2.0', null, POLICY_DIRECT);
+    const pre = head(fx.work);
+
+    const r = restamp(fx.work, ['--unstamp'], QUIET);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("unstamp: 0.1.1.0 -> master's 0.1.2.0; the entry is in changelog.d/feature.md and 1 row(s) in behavior-changes.d/ (faster_sync_abc)");
+    expect(subject(fx.work)).toBe('chore(release): unstamp onto master v0.1.2.0; versions are written at release');
+    expect(parents(fx.work, 'HEAD')).toBe(1);
+    expect(parents(fx.work, 'HEAD^')).toBe(2);
+    expect(git(fx.work, 'rev-parse', 'HEAD^^').trim()).toBe(pre);
+    expect(git(fx.work, 'rev-parse', 'HEAD^^2').trim()).toBe(git(fx.work, 'rev-parse', 'origin/master').trim());
+    expect(status(fx.work)).toBe('');
+    expect(existsSync(stateFile(fx.work))).toBe(false);
+
+    expect(read(fx.work, 'changelog.d/feature.md')).toBe('Widgets now sync twice as fast. Upgrade to v0.1.1.0.\n\n<!-- behavior-change: faster_sync_abc -->\n');
+    expect(read(fx.work, 'behavior-changes.d/faster_sync_abc.md')).toBe('Sync is faster now.\n');
+    for (const s of STAMPS) expect(s.read(read(fx.work, s.file))).toBe('0.1.2.0');
+    for (const p of ['VERSION', 'CHANGELOG.md', NOTICE, LIMITS]) expect(read(fx.work, p), p).toBe(git(fx.work, 'show', `origin/master:${p}`));
+    expect(git(fx.work, 'diff', '--name-only', 'origin/master', 'HEAD').trim().split('\n').sort()).toEqual(['behavior-changes.d/faster_sync_abc.md', 'changelog.d/feature.md', 'src/widgets.ts']);
+    expect(git(fx.work, 'diff', '--name-only', 'HEAD^', 'HEAD').trim().split('\n')).toContain('changelog.d/feature.md');
+  }, 120_000);
+
+  test('a branch that also edits a released CHANGELOG section is refused before any merge', () => {
+    const fx = noticeFixture();
+    const { preamble, sections } = splitChangelog(read(fx.work, 'CHANGELOG.md'));
+    put(fx.work, {
+      ...stamps('0.1.1.0'),
+      'CHANGELOG.md': [preamble, release('0.1.1.0', '2026-10-03', 'Widgets.'), ...sections.map((s) => s.text.replace('First release.', 'First release, reworded.'))].join('\n'),
+    });
+    commit(fx.work, 'v0.1.1.0 feat: widgets');
+    landOnMaster(fx, '0.1.1.0', null, POLICY_DIRECT);
+    const pre = head(fx.work);
+    const r = restamp(fx.work, ['--unstamp'], QUIET);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('FAIL: this branch also edits released CHANGELOG sections');
+    expect(head(fx.work)).toBe(pre);
+    expect(status(fx.work)).toBe('');
+    expect(existsSync(stateFile(fx.work))).toBe(false);
+    expect(git(fx.work, 'rev-list', '--count', 'HEAD..origin/master').trim()).not.toBe('0');
+  }, 120_000);
+
+  test('refuses a branch with no entry, a function row, a row without an id and a non-append notice edit', () => {
+    const cases: Array<[string, Record<string, string>, string]> = [
+      ['no entry', { 'src/widgets.ts': 'export const W = 1;\n' }, "this branch has no CHANGELOG entry above origin/master's"],
+      ['function row', { [NOTICE]: noticeFile("  { since: '0.1.1.0', id: 'fn_row_abc', text: () => 'computed' },") }, 'appended row(s) compute their text (fn_row_abc)'],
+      ['row without id', { [NOTICE]: noticeFile("  { since: '0.1.1.0', text: 'No id.' },") }, 'have no id (line 3)'],
+      ['non-append edit', { [NOTICE]: noticeFile().replace("'Seed.'", "'Seed, reworded.'") }, 'beyond appending BEHAVIOR_CHANGES rows'],
+    ];
+    for (const [name, files, message] of cases) {
+      const fx = noticeFixture();
+      if (name === 'no entry') {
+        put(fx.work, files);
+        commit(fx.work, 'feat: widgets');
+      } else branchWork(fx, '0.1.1.0', files);
+      landOnMaster(fx, '0.1.1.0', null, POLICY_DIRECT);
+      const pre = head(fx.work);
+      const r = restamp(fx.work, ['--unstamp'], QUIET);
+      expect({ name, code: r.code, refused: r.out.includes(message) }).toEqual({ name, code: 1, refused: true });
+      expect(head(fx.work)).toBe(pre);
+    }
+  }, 120_000);
+
+  test('refuses a changelog fragment the branch already had, before touching a stamp', () => {
+    const fx = noticeFixture();
+    branchWork(fx, '0.1.1.0', { 'changelog.d/feature.md': 'Already written.\n' });
+    landOnMaster(fx, '0.1.1.0', null);
+    landOnMaster(fx, '0.1.2.0', null, POLICY_DIRECT);
+    const r = restamp(fx.work, ['--unstamp'], QUIET);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('changelog.d/feature.md already exists');
+    expect(read(fx.work, 'VERSION')).toBe('0.1.1.0\n');
+    expect(read(fx.work, 'changelog.d/feature.md')).toBe('Already written.\n');
+  }, 120_000);
+
+  test('refuses a changelog fragment for this slug that master brings in, and keeps master\'s text', () => {
+    const fx = noticeFixture();
+    branchWork(fx, '0.1.1.0', {});
+    landOnMaster(fx, '0.1.1.0', null);
+    landOnMaster(fx, '0.1.2.0', null, { ...POLICY_DIRECT, 'changelog.d/feature.md': 'Another PR.\n' });
+    const r = restamp(fx.work, ['--unstamp'], QUIET);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('changelog.d/feature.md already exists');
+    expect(read(fx.work, 'changelog.d/feature.md')).toBe('Another PR.\n');
+  }, 120_000);
+
+  test('a published migration that only master changed after the merge base does not refuse the branch', () => {
+    const fx = noticeFixture();
+    branchWork(fx, '0.1.1.0', { 'src/widgets.ts': 'export const W = 1;\n' });
+    landOnMaster(fx, '0.1.1.0', null, { ...POLICY_DIRECT, [migrationFile(208, 'seed_two')]: migration(208, 'seed_two', 'CREATE TABLE IF NOT EXISTS seed_two (id BIGINT);') });
+    const r = restamp(fx.work, ['--unstamp'], QUIET);
+    expect(r.out).not.toContain('is published on origin/master but this branch changes its payload');
+    expect(r.code).toBe(0);
+    expect(read(fx.work, migrationFile(208, 'seed_two'))).toBe(git(fx.work, 'show', `origin/master:${migrationFile(208, 'seed_two')}`));
+    expect(read(fx.work, 'changelog.d/feature.md')).toContain('Widgets now sync twice as fast.');
+  }, 120_000);
+
+  test('plain restamp is refused when origin/master says merge: direct', () => {
+    const fx = noticeFixture();
+    branchWork(fx, '0.1.1.0', {});
+    landOnMaster(fx, '0.1.1.0', null, POLICY_DIRECT);
+    const pre = head(fx.work);
+    const r = restamp(fx.work);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('FAIL: origin/master lands PRs directly and writes versions at release (.gstack/ship-policy.json merge: direct)');
+    expect(r.out).toContain('bun run release:unstamp');
+    expect(head(fx.work)).toBe(pre);
+    expect(existsSync(stateFile(fx.work))).toBe(false);
+  }, 120_000);
 });

@@ -1,9 +1,8 @@
 /**
  * scripts/release-gate.ts + release.yml wiring: publication and the
  * latest-stable move wait for Test and E2E Tests success on the release
- * commit; a failed run publishes nothing with the next step; a run cancelled
- * by a newer push is followed to the next master commit with the same
- * VERSION (or marks the version superseded); dispatch backfills through the
+ * commit; a failed or cancelled run publishes nothing with the next step (no
+ * later commit is published in its place); dispatch backfills through the
  * same gate; non-master refs are refused.
  */
 import { describe, expect, test } from 'bun:test';
@@ -11,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { load } from 'js-yaml';
-import { apiDeps, evaluate, gate, GATED, reuseOutputs, type GateDeps, type GateRun, type Provenance } from '../../scripts/release-gate.ts';
+import { apiDeps, dispatchTarget, evaluate, gate, GATED, reuseOutputs, type CommitDeps, type GateDeps, type GateRun, type Provenance } from '../../scripts/release-gate.ts';
 import type { GitHubClient } from '../../scripts/lib/gh-issue.ts';
 
 const A = 'a'.repeat(40);
@@ -19,14 +18,11 @@ const B = 'b'.repeat(40);
 const C = 'c'.repeat(40);
 const run = (id: number, n: number, sha: string, status: string, conclusion: string | null, attempt = 1): GateRun => ({ id, run_number: n, run_attempt: attempt, status, conclusion, head_sha: sha, head_branch: 'master', event: 'push' });
 
-function deps(runs: Record<string, GateRun[]>, versions: Record<string, string> = {}, outside: string[] = [], reused: Record<number, Provenance> = {}): GateDeps & { calls: string[] } {
+function deps(runs: Record<string, GateRun[]>, reused: Record<number, Provenance> = {}): GateDeps & { calls: string[] } {
   const calls: string[] = [];
   return {
     calls,
     async runsFor(file, sha) { calls.push(`runs ${file} ${sha.slice(0, 1)}`); return (runs[file] ?? []).filter(r => r.head_sha === sha); },
-    async newerRuns(file, after) { return (runs[file] ?? []).filter(r => r.run_number > after); },
-    async versionAt(sha) { return versions[sha] ?? '0.60.70.0'; },
-    async contains(_base, head) { return !outside.includes(head); },
     async provenance(_file, r) { return reused[r.id] ?? { reused: false }; },
   };
 }
@@ -42,41 +38,36 @@ describe('release gate', () => {
     expect((await evaluate(missing, A, '0.60.70.0')).why).toContain('Test has no push run yet');
   });
 
-  test('a failed run publishes nothing and names the repair and the backfill command', async () => {
+  test('a failed run publishes nothing and names the repair and the re-run of the Release run', async () => {
     const red = deps({ 'test.yml': [run(1, 10, A, 'completed', 'failure')], 'e2e.yml': [run(2, 20, A, 'completed', 'success')] });
     const v = await evaluate(red, A, '0.60.70.0');
     expect(v.kind).toBe('fail');
     if (v.kind !== 'fail') return;
     expect(v.why).toContain('v0.60.70.0 is not published and latest-stable does not move');
     expect(v.next).toContain('Master red: Test');
-    expect(v.next).toContain('gh workflow run release.yml --ref master');
+    expect(v.next).toContain('gh run rerun 1');
+    expect(v.next).toContain('re-run this Release run');
+    expect(v.next).not.toContain('gh workflow run release.yml');
     const rerunGreen = deps({ 'test.yml': [run(1, 10, A, 'completed', 'failure'), run(1, 10, A, 'completed', 'success', 2)], 'e2e.yml': [run(2, 20, A, 'completed', 'success')] });
     expect((await evaluate(rerunGreen, A, '0.60.70.0')).kind).toBe('publish');
   });
 
-  test('a run cancelled by a newer push is followed to the next master commit with the same VERSION, which is published', async () => {
-    const d = deps({
-      'test.yml': [run(1, 10, A, 'completed', 'cancelled'), run(3, 11, B, 'completed', 'success')],
-      'e2e.yml': [run(2, 20, A, 'completed', 'success'), run(4, 21, B, 'completed', 'success')],
-    });
-    const v = await evaluate(d, A, '0.60.70.0');
-    expect(v).toMatchObject({ kind: 'publish', sha: B });
-    expect(v.why).toContain('same VERSION');
-    const notYet = deps({ 'test.yml': [run(1, 10, A, 'completed', 'cancelled')], 'e2e.yml': [run(2, 20, A, 'completed', 'success')] });
-    expect((await evaluate(notYet, A, '0.60.70.0')).why).toContain('waiting for the newer push-to-master run');
-    const redSuccessor = deps({ 'test.yml': [run(1, 10, A, 'completed', 'cancelled'), run(3, 11, B, 'completed', 'failure')], 'e2e.yml': [run(4, 21, B, 'completed', 'success')] });
-    expect(await evaluate(redSuccessor, A, '0.60.70.0')).toMatchObject({ kind: 'fail', sha: B });
-  });
-
-  test('a cancellation by a push that moved VERSION marks this version superseded; a successor that lacks the release commit fails', async () => {
-    const moved = deps({ 'test.yml': [run(1, 10, A, 'completed', 'cancelled'), run(3, 11, B, 'in_progress', null)], 'e2e.yml': [] }, { [B]: '0.60.71.0' });
-    expect(await evaluate(moved, A, '0.60.70.0')).toMatchObject({ kind: 'superseded', sha: B });
-    const stray = deps({ 'test.yml': [run(1, 10, A, 'completed', 'cancelled'), run(3, 11, C, 'completed', 'success')], 'e2e.yml': [] }, {}, [C]);
-    expect((await evaluate(stray, A, '0.60.70.0')).kind).toBe('fail');
+  test('a cancelled or skipped run publishes nothing, and no later master commit is published in its place', async () => {
+    for (const conclusion of ['cancelled', 'skipped']) {
+      const d = deps({
+        'test.yml': [run(1, 10, A, 'completed', conclusion), run(3, 11, B, 'completed', 'success')],
+        'e2e.yml': [run(2, 20, A, 'completed', 'success'), run(4, 21, B, 'completed', 'success')],
+      });
+      const v = await evaluate(d, A, '0.60.70.0');
+      expect(v).toMatchObject({ kind: 'fail', sha: A });
+      expect(v.kind === 'fail' && v.next).toContain('gh run rerun 1');
+      expect(v.kind === 'fail' && v.next).not.toContain('gh workflow run release.yml');
+      expect(d.calls.some(c => c.endsWith(' b'))).toBe(false);
+    }
   });
 
   test('a publish names the full-suite run each workflow reused, and writes both ids', async () => {
-    const d = deps({ 'test.yml': [run(1, 10, A, 'completed', 'success')], 'e2e.yml': [run(2, 20, A, 'completed', 'success')] }, {}, [], { 1: { reused: true, run_id: 900, run_attempt: 2, sha: B } });
+    const d = deps({ 'test.yml': [run(1, 10, A, 'completed', 'success')], 'e2e.yml': [run(2, 20, A, 'completed', 'success')] }, { 1: { reused: true, run_id: 900, run_attempt: 2, sha: B } });
     const v = await evaluate(d, A, '0.60.70.0');
     expect(v).toMatchObject({ kind: 'publish', sha: A, sources: [{ workflow: 'Test', run_id: 1, reused: { run_id: 900, run_attempt: 2, sha: B } }, { workflow: 'E2E Tests', run_id: 2 }] });
     expect(v.why).toContain('Test reused full-suite run 900 attempt 2');
@@ -86,7 +77,7 @@ describe('release gate', () => {
   });
 
   test('a reused push run whose reuse record cannot be read publishes nothing and names the re-run', async () => {
-    const d = deps({ 'test.yml': [run(1, 10, A, 'completed', 'success')], 'e2e.yml': [run(2, 20, A, 'completed', 'success')] }, {}, [], { 2: { problem: "run 2 has no 'reused-full-suite' artifact" } });
+    const d = deps({ 'test.yml': [run(1, 10, A, 'completed', 'success')], 'e2e.yml': [run(2, 20, A, 'completed', 'success')] }, { 2: { problem: "run 2 has no 'reused-full-suite' artifact" } });
     const v = await evaluate(d, A, '0.60.70.0');
     expect(v.kind).toBe('fail');
     if (v.kind !== 'fail') return;
@@ -94,17 +85,17 @@ describe('release gate', () => {
     expect(v.why).toContain("no 'reused-full-suite' artifact");
     expect(v.why).toContain('v0.60.70.0 is not published');
     expect(v.next).toContain('gh run rerun 2');
-    expect(v.next).toContain('gh workflow run release.yml --ref master');
+    expect(v.next).toContain('re-run this Release run');
+    expect(v.next).not.toContain('gh workflow run release.yml');
   });
 
-  test('the poller waits while CI runs and fails with the backfill command at its deadline (dispatch backfill uses the same gate)', async () => {
+  test('the poller waits while CI runs and fails naming the re-run of the Release run at its deadline', async () => {
     let t = 0;
     const lines: string[] = [];
     const states = [run(1, 10, A, 'queued', null), run(1, 10, A, 'in_progress', null), run(1, 10, A, 'completed', 'success')];
     let i = 0;
     const d: GateDeps = {
       async runsFor(file) { return file === 'test.yml' ? [states[Math.min(i++, 2)]!] : [run(2, 20, A, 'completed', 'success')]; },
-      async newerRuns() { return []; }, async versionAt() { return '0.60.70.0'; }, async contains() { return true; },
       async provenance() { return { reused: false }; },
     };
     const v = await gate(d, { sha: A, version: '0.60.70.0', timeoutMs: 10 * 60_000, pollMs: 60_000, log: l => lines.push(l), sleep: async ms => { t += ms; }, now: () => t });
@@ -114,7 +105,53 @@ describe('release gate', () => {
     t = 0;
     const late = await gate(stuck, { sha: A, version: '0.60.70.0', timeoutMs: 3 * 60_000, pollMs: 60_000, log: () => {}, sleep: async ms => { t += ms; }, now: () => t });
     expect(late.kind).toBe('fail');
-    if (late.kind === 'fail') expect(late.next).toContain('gh workflow run release.yml --ref master');
+    if (late.kind === 'fail') expect(late.next).toContain('re-run this Release run');
+  });
+});
+
+describe('a workflow_dispatch gates only the release commit', () => {
+  const D = 'd'.repeat(40);
+  const E = 'e'.repeat(40);
+  /** Master's first-parent line, newest first: C and B landed after the release commit A of 0.60.71.0; D is 0.60.70.0. */
+  const history = (): CommitDeps & { reads: string[] } => {
+    const parent: Record<string, string | null> = { [C]: B, [B]: A, [A]: D, [D]: E, [E]: null };
+    const version: Record<string, string> = { [C]: '0.60.71.0', [B]: '0.60.71.0', [A]: '0.60.71.0', [D]: '0.60.70.0', [E]: '0.60.69.0' };
+    const reads: string[] = [];
+    return { reads, async firstParent(sha) { reads.push(sha.slice(0, 1)); return parent[sha]!; }, async versionAt(sha) { return version[sha]!; } };
+  };
+
+  test('a dispatch whose HEAD is the commit that last changed VERSION gates that commit', async () => {
+    expect(await dispatchTarget(history(), A, '0.60.71.0')).toEqual({ kind: 'gate', sha: A });
+  });
+
+  test('a dispatch on a later master HEAD resolves the release commit and refuses with the re-run of its Release run', async () => {
+    const h = history();
+    const v = await dispatchTarget(h, C, '0.60.71.0');
+    expect(v).toMatchObject({ kind: 'fail', sha: A });
+    expect(h.reads).toEqual(['c', 'b', 'a']);
+    if (v.kind !== 'fail') return;
+    expect(v.why).toContain(`master HEAD ${C.slice(0, 12)}`);
+    expect(v.why).toContain(`v0.60.71.0's release commit is ${A.slice(0, 12)}`);
+    expect(v.next).toContain(`gh run list --workflow release.yml --commit ${A} --event push`);
+    expect(v.next).toContain('gh run rerun');
+    expect(v.next).not.toContain('gh workflow run release.yml');
+  });
+
+  test('the API deps read the first parent and VERSION at a commit', async () => {
+    const paths: string[] = [];
+    const client: GitHubClient = {
+      async request<T>(_m: string, path: string): Promise<T> {
+        paths.push(path);
+        if (path === `repos/{repo}/commits/${C}`) return { parents: [{ sha: B }, { sha: D }] } as T;
+        if (path === `repos/{repo}/commits/${E}`) return { parents: [] } as T;
+        if (path === `repos/{repo}/contents/VERSION?ref=${B}`) return { encoding: 'base64', content: Buffer.from('0.60.71.0\n').toString('base64') } as T;
+        throw new Error(`unexpected ${path}`);
+      },
+    };
+    const api = apiDeps(client);
+    expect(await api.firstParent(C)).toBe(B);
+    expect(await api.firstParent(E)).toBeNull();
+    expect(await api.versionAt(B)).toBe('0.60.71.0');
   });
 });
 
@@ -178,7 +215,7 @@ describe('release.yml waits for the CI gate', () => {
     expect(wf.on.workflow_dispatch).toBeDefined();
     const gateJob = wf.jobs['ci-gate']!;
     expect(gateJob.permissions).toEqual({ contents: 'read', actions: 'read' });
-    expect(gateJob.steps.some(s => s.run?.includes('bun scripts/release-gate.ts --sha "$GITHUB_SHA"') && s.run.includes('--ref "$GITHUB_REF"'))).toBe(true);
+    expect(gateJob.steps.some(s => s.run?.includes('bun scripts/release-gate.ts --sha "$GITHUB_SHA"') && s.run.includes('--ref "$GITHUB_REF"') && s.run.includes('--event "$GITHUB_EVENT_NAME"'))).toBe(true);
     for (const job of ['build', 'release', 'publish-template', 'publish-codex-plugin']) {
       expect(wf.jobs[job]!.needs).toContain('ci-gate');
       expect(wf.jobs[job]!.if).toContain("needs.ci-gate.outputs.publish == 'true'");

@@ -49,7 +49,7 @@ export function pageCapLine(retrieval: unknown, how = 'limit'): string | null {
 }
 
 function hasLexicalEvidence(r: SearchResult): boolean {
-  return r.keyword_hit === true || r.alias_hit === true || r.exact_lookup !== undefined || r.relational_pinned === true;
+  return r.keyword_hit === true || r.alias_hit === true || r.qualified_alias_hit === true || r.exact_lookup !== undefined || r.relational_pinned === true;
 }
 
 /** Keeps every lexically matched page and the top vector-only pages up to `cap` distinct pages. */

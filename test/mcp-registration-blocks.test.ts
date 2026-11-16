@@ -1,9 +1,10 @@
 /**
  * mcp-registration-blocks.test.ts — cathedral-6 lane B pins:
- * - openclawThinClientBlock is the HONEST v1 OpenClaw path: the scoped
- *   `gbrain init` thin-client command with all four connection args, plus the
- *   FULL-local-DB-access honesty sentence — and NOT an mcpServers/stdio JSON
- *   config.
+ * - openclawThinClientBlock is run on the OpenClaw machine: the scoped
+ *   `gbrain init` thin-client command with all four connection args, then
+ *   OpenClaw's own `mcp add` for that thin client's stdio bridge (#8543),
+ *   with the launcher resolved there, no host path, no mcpServers key, and
+ *   one GBRAIN_HOME on both lines when a narrow home is chosen.
  * - OAUTH_SECRET_NOTE moved to core with its text unchanged; connect.ts
  *   re-exports the identical value (surface unchanged).
  */
@@ -29,19 +30,28 @@ describe('openclawThinClientBlock', () => {
     expect(block).toContain('--oauth-client-secret sekret_xyz789');
   });
 
-  test('states the honesty note: scoped-CLI path, no native remote MCP, stdio grants FULL local DB access', () => {
+  test('registers the thin client\'s stdio bridge with OpenClaw, launcher resolved on the OpenClaw machine', () => {
     const block = openclawThinClientBlock(OPTS);
-    expect(block).toContain(
-      'Your OpenClaw reaches the brain through the scoped gbrain CLI (search/query/recall/put);',
-    );
-    expect(block).toContain("native remote MCP isn't supported yet");
-    expect(block).toContain('the stdio config in docs/mcp/OPENCLAW.md grants');
-    expect(block).toContain('FULL local DB access and does not use this client.');
+    expect(block).toContain('# On the OpenClaw machine, install the gbrain CLI, then run:');
+    expect(block).toContain('openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs');
+    expect(block).toContain("If gbrain's OpenClaw bundle plugin is installed there, it already registers");
+    expect(block).toContain("OpenClaw's native remote MCP client (streamable HTTP + `openclaw mcp login`) is the other scoped");
+    expect(block).not.toContain('FULL local DB access');
   });
 
-  test('is NOT an mcpServers/stdio JSON config', () => {
+  test('names no path from the machine that printed it and no mcpServers key', () => {
     const block = openclawThinClientBlock(OPTS);
     expect(block).not.toMatch(/mcpServers|"command"\s*:/);
+    expect(block).not.toContain(process.execPath);
+    expect(block).not.toMatch(/(^|\s)\/(usr|home|Users|opt|root)\//m);
+  });
+
+  test('a narrow home rides on both the init line and the entry', () => {
+    const block = openclawThinClientBlock({ ...OPTS, gbrainHome: '/home/alice-example/.gbrain-openclaw' });
+    const lines = block.split('\n');
+    expect(lines.find(l => l.includes('gbrain init'))).toStartWith('GBRAIN_HOME=/home/alice-example/.gbrain-openclaw gbrain init --mcp-only');
+    expect(lines.find(l => l.startsWith('openclaw mcp add'))).toEndWith(' --env GBRAIN_HOME=/home/alice-example/.gbrain-openclaw');
+    expect(block).not.toContain('GBRAIN_HOME=<dir>');
   });
 
   test('shell-quotes unsafe values so a pasted block cannot command-substitute', () => {

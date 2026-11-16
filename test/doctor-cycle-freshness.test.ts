@@ -9,6 +9,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { checkCycleFreshness } from '../src/commands/doctor.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
@@ -124,9 +125,14 @@ describe('doctor checkCycleFreshness', () => {
   test('E2: a never-cycled source with old pages still warns, with a dream fix that asks first', async () => {
     await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
     await seed('old-vault');
-    const result = await checkCycleFreshness(engine, { nowMs: NOW });
-    expect(result.status).toBe('warn');
-    expect(result.fix).toMatchObject({ argv: ['gbrain', 'dream', '--source', 'old-vault'], consent: ['paid'], actor: 'agent' });
+    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, env: { OPENAI_API_KEY: 'test' } });
+    try {
+      const result = await checkCycleFreshness(engine, { nowMs: NOW });
+      expect(result.status).toBe('warn');
+      expect(result.fix).toMatchObject({ argv: ['gbrain', 'dream', '--source', 'old-vault'], consent: ['paid'], actor: 'agent' });
+    } finally {
+      resetGateway();
+    }
   });
 
   test('reporter case (#2540): one cycled vault + never-cycled siblings is warn, not permanent fail', async () => {

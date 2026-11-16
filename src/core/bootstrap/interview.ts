@@ -501,14 +501,15 @@ export function show(workspaceDir: string):
 // Config sink routing [CX2-13]
 // ---------------------------------------------------------------------------
 
-/** Provider detection by key shape. Order matters: `sk-ant-` before `sk-`. */
+/** Provider detection by key shape. Order matters: `sk-ant-` and `sk-or-v1-` before `sk-`. */
 const PROVIDER_KEY_SHAPES: Array<{ prefix: string; configKey: ProviderConfigKey; label: string }> = [
   { prefix: 'sk-ant-', configKey: 'anthropic_api_key', label: 'Anthropic (sk-ant-…)' },
+  { prefix: 'sk-or-v1-', configKey: 'openrouter_api_key', label: 'OpenRouter (sk-or-v1-…)' },
   { prefix: 'sk-', configKey: 'openai_api_key', label: 'OpenAI (sk-…)' },
   { prefix: 'pa-', configKey: 'voyage_api_key', label: 'Voyage (pa-…)' },
 ];
 
-export type ProviderConfigKey = 'anthropic_api_key' | 'openai_api_key' | 'voyage_api_key';
+export type ProviderConfigKey = 'anthropic_api_key' | 'openrouter_api_key' | 'openai_api_key' | 'voyage_api_key';
 
 /**
  * Route an interview-provided provider key to the 0600 config file — the ONLY

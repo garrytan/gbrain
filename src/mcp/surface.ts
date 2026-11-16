@@ -336,9 +336,10 @@ export function resolveClientRowSurface(
 /**
  * Dual-plane resolution for `mcp.default_surface_dcr` — the surface applied
  * to clients whose row surface is NULL (oauth_clients carries no DCR-origin
- * marker, so the default applies to ALL null-surface clients; operators
+ * marker, so the default applies to ALL null-surface OAuth clients; operators
  * pre-seed important clients with `gbrain auth rescope-client <id> --surface
- * full`). DB plane wins, file plane falls back, absent/unparseable on both =
+ * full`). Legacy bearer tokens have no client row and keep the server ceiling
+ * (#9266). DB plane wins, file plane falls back, absent/unparseable on both =
  * null (caller falls back to the server ceiling — pre-WP4 behavior). A
  * failed DB read falls to the file plane; surface resolution must never take
  * a request down.

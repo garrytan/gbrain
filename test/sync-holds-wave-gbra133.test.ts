@@ -51,10 +51,10 @@ const origin = async (engine: BrainEngine, slug: string) => (await engine.execut
   "SELECT source_path, source_uri FROM pages WHERE source_id='default' AND slug=$1", [slug]))[0];
 const commitAll = (root: string, message: string) => { git(root, 'add', '-A'); git(root, 'commit', '-qm', message); };
 
-async function heldPreview(engine: BrainEngine, prefer: 'file' | 'database', expectHash?: string) {
+async function heldPreview(engine: BrainEngine, prefer: 'file' | 'database', expectHash?: string, slugs?: string[]) {
   return withVerifiedLocalRegistration(engine, await registerLocalWriter(engine, 'cli'), async () =>
     (await repairRunner(engine, { apply: expectHash !== undefined, logger })).run('file-drift', await resolveRepairScope(engine, 'default'),
-      { explicit: true, sourceFlag: 'default', held: true, side: 'unknown', prefer, ...(expectHash ? { expect: expectHash } : {}) }));
+      { explicit: true, sourceFlag: 'default', ...(slugs ? { slugs } : { held: true, side: 'unknown' }), prefer, ...(expectHash ? { expect: expectHash } : {}) }));
 }
 const listing = (plan: Awaited<ReturnType<typeof heldPreview>>) => (plan as { listing?: Array<{ item: string; class: string }> }).listing?.map(row => `${row.item} ${row.class}`);
 
@@ -116,7 +116,8 @@ for (const backend of testBackends()) {
     writeFileSync(join(root, 'people/alice-example.md'), note('people/alice-example', 'The full page of people/alice-example.')); commitAll(root, 'add alice');
     await performManagedSync(engine, OPTS);
     expect(await holds(engine)).toEqual(['people/alice-example.md file_drift unknown']);
-    expect(listing(await heldPreview(engine, 'database'))).toEqual(['default:people/alice-example prefer_database']);
+    // GST-2579: sync never imported the file, so a held database-wins run keeps it.
+    expect(listing(await heldPreview(engine, 'database'))).toEqual(['default:people/alice-example kept_newer_file']);
     const preview = await heldPreview(engine, 'file');
     expect(listing(preview)).toEqual(['default:people/alice-example prefer_file']);
     expect(preview.details!.pages).toEqual([expect.objectContaining({ slug: 'people/alice-example', adopt_slug_path: true })]);
@@ -133,7 +134,7 @@ for (const backend of testBackends()) {
     writeFileSync(join(root, 'projects/README.md'), note('Projects', 'The projects index.')); commitAll(root, 'add readme');
     await performManagedSync(engine, OPTS);
     expect(await holds(engine)).toEqual(['projects/README.md file_drift unknown']);
-    expect(listing(await heldPreview(engine, 'database'))).toEqual(['default:projects/readme prefer_database']);
+    expect(listing(await heldPreview(engine, 'database'))).toEqual(['default:projects/readme kept_newer_file']);
     const preview = await heldPreview(engine, 'file');
     expect(listing(preview)).toEqual(['default:projects/readme prefer_file']);
     expect((await heldPreview(engine, 'file', preview.preview_hash!)).outcomes).toEqual({ repaired: 1 });
@@ -226,9 +227,11 @@ for (const backend of testBackends()) {
     await engine.executeRaw(`UPDATE sources SET config = config || '{"mirror_read_only": true}'::jsonb WHERE id='default'`);
     expect(listing(await heldPreview(engine, 'database'))).toEqual(['default:notes/mirror-page no_drift']);
     await engine.executeRaw(`UPDATE sources SET config = config - 'mirror_read_only' WHERE id='default'`);
-    const preview = await heldPreview(engine, 'database');
+    // GST-2579: the upstream file was never imported, so the held run keeps it and only naming the page takes the database copy.
+    expect(listing(await heldPreview(engine, 'database'))).toEqual(['default:notes/mirror-page kept_newer_file']);
+    const preview = await heldPreview(engine, 'database', undefined, ['notes/mirror-page']);
     expect(listing(preview)).toEqual(['default:notes/mirror-page prefer_database']);
-    expect((await heldPreview(engine, 'database', preview.preview_hash!)).outcomes).toEqual({ repaired: 1 });
+    expect((await heldPreview(engine, 'database', preview.preview_hash!, ['notes/mirror-page'])).outcomes).toEqual({ repaired: 1 });
     expect(readFileSync(join(root, 'notes/mirror-page.md'), 'utf8')).toContain('The database copy, written while the source was a mirror.');
     expect(await engine.executeRaw("SELECT source_path, database_only_reason FROM pages WHERE source_id='default' AND slug='notes/mirror-page'"))
       .toEqual([{ source_path: 'notes/mirror-page.md', database_only_reason: null }]);

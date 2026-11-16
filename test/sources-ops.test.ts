@@ -4,7 +4,7 @@
  * coverage lives in test/e2e/sources-remote-mcp.test.ts.
  */
 
-import { test, expect, describe, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { test, expect, describe, beforeAll, afterAll, beforeEach, spyOn } from 'bun:test';
 import {
   mkdirSync,
   writeFileSync,
@@ -840,9 +840,32 @@ describe('addSource --path — #2707 git-repo validation', () => {
     rmSync(SANDBOX, { recursive: true, force: true });
   });
 
-  test('rejects an existing non-git directory with an actionable error', async () => {
+  test('registers an existing plain directory outside any git repository without --force (GST-2732)', async () => {
+    const plainDir = join(SANDBOX, 'plain-ok');
+    mkdirSync(plainDir, { recursive: true });
+    writeFileSync(join(plainDir, 'notes.md'), 'a plain folder');
+    const row = await addSource(engine, { id: 'plain-ok-src', localPath: plainDir });
+    expect(row.local_path).toBe(plainDir);
+  });
+
+  test('a folder with a .git entry that git cannot read is not a plain folder: refused like sync would treat it (GST-2732)', async () => {
+    const brokenDir = join(SANDBOX, 'broken-gitlink');
+    mkdirSync(brokenDir, { recursive: true });
+    writeFileSync(join(brokenDir, '.git'), 'gitdir: /nonexistent/gbrain-gst2732\n');
+    writeFileSync(join(brokenDir, 'notes.md'), 'inside a checkout git cannot open');
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'broken-gitlink-src', localPath: brokenDir });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw?.code).toBe('not_a_git_repo');
+  });
+
+  test('rejects a git repository with untracked files only, with an actionable error', async () => {
     const plainDir = join(SANDBOX, 'plain');
     mkdirSync(plainDir, { recursive: true });
+    execFileSync('git', ['-C', plainDir, 'init', '-q']);
     writeFileSync(join(plainDir, 'notes.md'), 'not committed anywhere');
 
     let threw: SourceOpError | undefined;
@@ -1006,6 +1029,7 @@ describe('addSource --path — #2707 git-repo validation', () => {
   test('quotes a path with a space in the remediation command (codex round 1)', async () => {
     const spacedDir = join(SANDBOX, 'has space here');
     mkdirSync(spacedDir, { recursive: true });
+    execFileSync('git', ['-C', spacedDir, 'init', '-q']);
 
     let threw: SourceOpError | undefined;
     try {
@@ -1143,6 +1167,7 @@ describe('addSource --path — #3903 attach to existing path-less source', () =>
     );
     const plainDir = join(SANDBOX, 'plain-attach');
     mkdirSync(plainDir, { recursive: true });
+    execFileSync('git', ['-C', plainDir, 'init', '-q']);
 
     let threw: SourceOpError | undefined;
     try {
@@ -1343,6 +1368,24 @@ describe('#7630 — a relative clone local_path never names the current director
       expect(threw?.message).toContain('gbrain sources set-path rel-reclone');
       expect(existsSync(join(dir, 'KEEP_ME.md'))).toBe(true);
       expect(readdirSync(dir)).toEqual(['KEEP_ME.md']);
+    });
+  });
+
+  // #7646: the skipped cleanup is reported in the result (remote sources_remove sees only that) and the warning names gbrain's
+  // own clone directory, which a later sources add <id> --url refuses while it holds files.
+  test('removeSource reports clone_skipped_reason and names the clone directory it left', async () => {
+    await insideRelativeClone('rel-orphan', { remote_url: 'https://github.com/example/repo', managed_clone: true }, async dir => {
+      const cloneDir = defaultCloneDir('rel-orphan');
+      mkdirSync(cloneDir, { recursive: true });
+      writeFileSync(join(cloneDir, 'README.md'), 'the clone gbrain made');
+      const errors: string[] = [];
+      const spy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errors.push(a.map(String).join(' ')); });
+      let result: Awaited<ReturnType<typeof removeSource>>;
+      try { result = await removeSource(engine, { id: 'rel-orphan', confirmDestructive: true }); } finally { spy.mockRestore(); }
+      expect(result).toMatchObject({ clone_removed: false, clone_skipped_reason: 'relative_path' });
+      expect(errors.join('\n')).toContain(`gbrain's clone directory for this source is ${cloneDir}`);
+      expect(existsSync(join(cloneDir, 'README.md'))).toBe(true);
+      expect(existsSync(join(dir, 'KEEP_ME.md'))).toBe(true);
     });
   });
 });

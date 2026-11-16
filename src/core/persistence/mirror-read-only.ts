@@ -29,6 +29,18 @@ export async function sourceMirrorReadOnly(engine: SqlEngine, sourceId: string, 
   return row.read_only === true || await urlCloneReadOnly(engine, sourceId, row);
 }
 
+/**
+ * Why the source's checkout is never written, or null: `mirror_read_only` (the flag) or `url_clone` (#6946). #7098: the
+ * legacy disk writers (write-through, fact fences, timeline, forget, unfenced facts) skip on it as managed publication does.
+ */
+export async function readOnlyCheckout(engine: SqlEngine, sourceId: string): Promise<'mirror_read_only' | 'url_clone' | null> {
+  const [row] = await engine.executeRaw<{ local_path: string | null; config: unknown }>('SELECT local_path, config FROM sources WHERE id = $1', [sourceId]);
+  if (!row) return null;
+  const config = typeof row.config === 'string' ? JSON.parse(row.config) as Record<string, unknown> : (row.config ?? {}) as Record<string, unknown>;
+  if (String(config.mirror_read_only) === 'true') return 'mirror_read_only';
+  return await urlCloneReadOnly(engine, sourceId, row) ? 'url_clone' : null;
+}
+
 /** Marks a page this publication stored database-only because its source is a read-only mirror and it has no recorded file. */
 export async function classifyMirrorPage(tx: SqlEngine, row: { source_id: string; slug: string }): Promise<void> {
   await tx.executeRaw(`UPDATE pages SET database_only_reason='mirror_read_only'

@@ -15,6 +15,7 @@ import { assertInlineBody, isSegmentedPage, pageBodySegmentedError } from '../pa
 import { serializeMarkdown, parseMarkdown } from '../markdown.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, replaceOrInsertFactsFence, stripFactsFence } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence, stripTakesFence } from '../takes-fence.ts';
+import { countOutsideCode, locateOutsideCode } from '../fence-scan.ts';
 import { isDbOnly, loadStorageConfig } from '../storage-config.ts';
 import { publishMaintenancePages, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
@@ -198,8 +199,8 @@ export function conceptPreservationHold(page: Pick<Page, 'compiled_truth' | 'tim
   const body = page.compiled_truth ?? '';
   const timeline = page.timeline ?? '';
   for (const [name, begin, end] of [['FACTS', FACTS_FENCE_BEGIN, FACTS_FENCE_END], ['TAKES', TAKES_FENCE_BEGIN, TAKES_FENCE_END]] as const) {
-    if (timeline.includes(begin) || timeline.includes(end)) return `CONCEPT_${name}_FENCE_BELOW_SENTINEL: a ${name.toLowerCase()} fence marker sits in the timeline`;
-    const begins = body.split(begin).length - 1, ends = body.split(end).length - 1;
+    if (countOutsideCode(timeline, begin) || countOutsideCode(timeline, end)) return `CONCEPT_${name}_FENCE_BELOW_SENTINEL: a ${name.toLowerCase()} fence marker sits in the timeline`;
+    const begins = countOutsideCode(body, begin), ends = countOutsideCode(body, end);
     if (begins > 1 || ends > 1) return `CONCEPT_${name}_FENCE_DUPLICATE: more than one ${name.toLowerCase()} fence`;
     if (begins !== ends) return `CONCEPT_${name}_FENCE_UNBALANCED: ${name.toLowerCase()} fence begin/end markers do not pair`;
   }
@@ -220,10 +221,8 @@ export function conceptPublicationHold(page: Pick<Page, 'compiled_truth' | 'time
 }
 
 function fenceBlock(body: string, begin: string, end: string): string | null {
-  const start = body.indexOf(begin);
-  if (start === -1) return null;
-  const stop = body.indexOf(end, start + begin.length);
-  return stop === -1 ? null : body.slice(start, stop + end.length);
+  const { beginIdx: start, endIdx: stop } = locateOutsideCode(body, begin, end);
+  return start === -1 || stop === -1 ? null : body.slice(start, stop + end.length);
 }
 
 /**

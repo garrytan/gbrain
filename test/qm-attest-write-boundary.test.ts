@@ -50,6 +50,9 @@ const NOT_PAGE_WRITES: Record<string, string> = {
   request_tools: "the calling client's own MCP tool surface",
   think: 'read-only for remote callers; only a local --save writes',
   submit_agent: "queues a job; every tool call it makes is re-resolved against the deferred operations",
+  watch_write_request: 'a Wakeshift watch row, no page; an attested call is refused (ops/wakeshift.ts refuseAttested)',
+  unwatch: 'ends Wakeshift watch rows, no page; an attested call is refused (ops/wakeshift.ts refuseAttested)',
+  accept_wakeshift_terms: 'a Wakeshift terms acceptance row, no page; an attested call is refused (ops/wakeshift.ts refuseAttested)',
 };
 
 describe('W1: the attested write boundary is built from the registry', () => {

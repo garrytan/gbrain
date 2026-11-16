@@ -7,7 +7,8 @@
  *     not a channel ref, and is left alone) must name INSTALL_REF; `#master` is never an install ref;
  *   - raw fetches of the install artifacts (BOOTSTRAP_FOR_AGENTS.md, scripts/setup-in-agent.sh) must use INSTALL_REF;
  *   - the setup helper's `gbrain_install_ref=` must equal INSTALL_REF;
- *   - TypeScript sources never spell the ref: they import INSTALL_PIN / INSTALL_RAW_BASE.
+ *   - TypeScript sources never spell the ref: they import INSTALL_PIN / INSTALL_RAW_BASE. behavior-changes.d rows
+ *     count as TypeScript, because the release folds their text into src/core/behavior-change-notice.ts.
  *
  * `--write` rewrites the text surfaces to INSTALL_REF (the flip after a stable promotion); TypeScript violations are
  * listed, never rewritten. Exit 1 on drift.
@@ -26,13 +27,14 @@ const EXACT_PIN = /^v|^[0-9]|^[0-9a-f]{7,40}$/;
 const OWNER = 'src/core/install-ref.ts';
 
 const skipped = (file: string) => file === 'CHANGELOG.md' || file.startsWith('test/') || file === OWNER;
+const foldedIntoTs = (file: string) => file.endsWith('.ts') || (/^behavior-changes\.d\/[^/]+\.md$/.test(file) && file !== 'behavior-changes.d/README.md');
 
 /** Drift in one file's text; `ref` is the sanctioned install ref. */
 export function driftIn(file: string, text: string, ref: string = INSTALL_REF): InstallRefDrift[] {
   if (skipped(file)) return [];
   const out: InstallRefDrift[] = [];
   const at = (index: number) => text.slice(0, index).split('\n').length;
-  const ts = file.endsWith('.ts');
+  const ts = foldedIntoTs(file);
   for (const m of text.matchAll(PIN)) {
     if (EXACT_PIN.test(m[1]!)) continue;
     if (ts) out.push({ file, line: at(m.index!), found: m[0], why: `TypeScript names install refs through INSTALL_PIN (${OWNER})` });
@@ -51,7 +53,7 @@ export function driftIn(file: string, text: string, ref: string = INSTALL_REF): 
 
 /** The text surface rewritten to `ref` (TypeScript is left for a human). */
 export function rewriteText(file: string, text: string, ref: string = INSTALL_REF): string {
-  if (skipped(file) || file.endsWith('.ts')) return text;
+  if (skipped(file) || foldedIntoTs(file)) return text;
   return text
     .replace(PIN, (all, r: string) => (EXACT_PIN.test(r) ? all : `github:garrytan/gbrain#${ref}`))
     .replace(ARTIFACT, (all, r: string, path: string) => (/^[0-9a-f]{40}$/.test(r) ? all : `raw.githubusercontent.com/garrytan/gbrain/${ref}/${path}`))

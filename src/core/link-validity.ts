@@ -398,6 +398,8 @@ export interface LinkReadPage {
   relationship?: { policy: EdgeTemporalOpts; keep: 'match' | 'hidden' };
   /** Context longer than this is cut, ending in an ellipsis. */
   contextChars?: number;
+  /** Count the rows in SQL instead of returning them: the read returns one row whose `link_total` is the count. */
+  count?: boolean;
 }
 
 export interface EdgeTemporalOpts {

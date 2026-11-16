@@ -45,6 +45,8 @@ export const SECTIONS: DocSection[] = [
       { title: "Grok Bot", path: "docs/guides/grok-bot.md", description: "Recommended: keep the brain on your computer, publish it with `gbrain mcp expose --funnel`, grant the Bot a client and install the thin CLI; local in-Bot memory as the no-host alternative. Native skill activation, shared-computer trust and dated evidence.", includeInFull: false },
       { title: "Muse personal agent", path: "docs/guides/muse.md", description: "Verify durable storage first; connect Muse to your published brain (`gbrain mcp expose --funnel` + thin CLI) or add local explicit memory with provenance alongside Muse's native memory; distinguish Muse Code and unverified native MCP.", includeInFull: false },
       { title: "Inside an existing agent", path: "docs/guides/in-agent-setup.md", description: "Isolated setup, absolute launcher, receipts, keyless maintenance, complete private backup and safe restoration.", includeInFull: false },
+      { title: "Owner turns in a shared room", path: "docs/guides/rooms.md", description: "Declare the group chat an answer goes into (X-Gbrain-Room, _meta.room, a room argument): the owner's read is unchanged and every page and fact is marked room_access with whether the room could have read it; reasons, notices, who may ask, and keeping raw results out of the group transcript.", includeInFull: false },
+      { title: "Guest notes", path: "docs/guides/guest-notes.md", description: "Keep what outside guests in a group chat say apart from your own pages: a database-only guest source (`gbrain guests init`), the writer list, how the broker saves a note with its sender and group, the warning every read shows, `gbrain guests promote`, `gbrain guests grant-owner-clients` and the guest_source doctor check.", includeInFull: false },
       { title: "Memory boundaries", path: "docs/guides/memory-boundaries.md", description: "Durable shared preferences versus harness state; remote graph maintenance, provider text disclosure, authorization and full-backup limits; large pages (segmented storage up to 256 MiB on Postgres, append_page / gbrain append, upload sessions, windowed reads, limits per entry point).", includeInFull: false },
       { title: "Page history", path: "docs/guides/page-history.md", description: "Why a page changed: an optional reason on page writes, replaced_because in get_versions, the gbrain-reason commit trailer, remote visibility and repo-less brains.", includeInFull: false },
       { title: "Brain versus session memory", path: "docs/guides/brain-vs-memory.md", description: "Route durable facts and preferences to shared memory, configuration to the harness, and temporary work to session state.", includeInFull: false },
@@ -93,6 +95,11 @@ export const SECTIONS: DocSection[] = [
         title: "INSTALL_FOR_AGENTS.md",
         description: "Step-by-step agent installation (steps 0-9): install, keyless init, the first-run decision bundle, harness wiring, verification and upgrades.",
         path: "INSTALL_FOR_AGENTS.md",
+      },
+      {
+        title: "docs/STABILITY.md",
+        description: "Which release the default install follows (the stable channel), how a release becomes stable, how often stable moves, staying on stable, pinning a version, going back, where behaviour changes are announced, and what the alpha channel is for.",
+        path: "docs/STABILITY.md",
       },
       {
         title: "docs/protocol/AGENT_OPERATOR_v1.md",
@@ -180,6 +187,7 @@ export const SECTIONS: DocSection[] = [
         path: "docs/schema-author-tutorial.md",
         // GBRA-199: an optional walkthrough; dropped from the single-fetch
         // bundle so the memory-verb listing docs fit FULL_SIZE_BUDGET.
+        // Linked, not inlined: the doctor --alert guide (troubleshooting, exit codes, cron) put llms-full.txt over FULL_SIZE_BUDGET.
         includeInFull: false,
       },
       {
@@ -411,6 +419,8 @@ export const SECTIONS: DocSection[] = [
         description:
           "Post-setup verification checks for the capabilities you enabled. When a gbrain call fails or something feels off, start with docs/protocol/AGENT_OPERATOR_v1.md, then run these checks.",
         path: "docs/GBRAIN_VERIFY.md",
+        // Linked, not inlined: the GBRA-224 doctor --alert guide (troubleshooting rows and the Doctor alert section, train T #8302) put llms-full.txt over FULL_SIZE_BUDGET at the v0.60.620.0 merge.
+        includeInFull: false,
       },
       {
         title: "docs/guides/troubleshooting.md",
@@ -464,6 +474,8 @@ export const SECTIONS: DocSection[] = [
         description: "Data integrity recovery.",
         path: "docs/integrations/reliability-repair.md",
         // Linked, not inlined: the GBRA-200 degraded-stamp section in AGENT_OPERATOR_v1.md put llms-full.txt over FULL_SIZE_BUDGET.
+        // Linked, not inlined: the GBRA-224 W3 troubleshooting rows put llms-full.txt over FULL_SIZE_BUDGET.
+        // Linked, not inlined: the INSTALL_FOR_AGENTS.md Opt-ins list (GBRA-224 W5) put llms-full.txt over FULL_SIZE_BUDGET.
         includeInFull: false,
       },
     ],

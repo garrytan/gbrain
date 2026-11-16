@@ -34,6 +34,7 @@ instead of the CLI (one connection, no per-call startup).
 | Save a fact the user stated | `gbrain remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
 | Why a page didn't rank | `gbrain query "<q>" --explain-target <slug>` | `query` |
 | Which installed skill fits a request | `gbrain skills resolve --text "<request>" --json` (after `gbrain skills index build`) | none (CLI only) |
+| Find something archived to B2, Supabase or S3 | `gbrain storage-find "<phrase>"` | `storage_find` |
 
 Parse `--json` output instead of matching the text; notices go to stderr. Never
 send stderr to `/dev/null`: a refusal there (`no_brain`, `GBRAIN_DB_ACCESS`)
@@ -70,6 +71,7 @@ off until the user opts in, and paid enrichment is a separate choice.
 | "citation audit", "check citations", "fix citations" | `skills/citation-fixer/SKILL.md` (focused fix). For broader brain health, chain into `skills/maintain/SKILL.md` |
 | "Research", "track", "extract from email", "investor updates", "donations" | `skills/data-research/SKILL.md` |
 | Share a brain page as a link | `skills/publish/SKILL.md` |
+| "bring back", "restore the archived", "where did X go", "what's in B2", "what did we archive", "register this archive" | `skills/storage-manifest/SKILL.md` |
 | "validate frontmatter", "check frontmatter", "fix frontmatter", "frontmatter audit", "brain lint" | `skills/frontmatter-guard/SKILL.md` |
 | "what search mode", "is my cache hot", "tune my retrieval", "compare search modes", "clear search overrides" | `gbrain search modes/stats/tune` directly. See `skills/conventions/search-modes.md` |
 | "turn on System One", "enable Jev", "TypeSafe decide", "why is the evidence gate inactive", "turn System One off" | `gbrain decide probe/status/enable/disable` directly (brain host only). See `docs/guides/system-one.md` |
@@ -180,7 +182,7 @@ off until the user opts in, and paid enrichment is a separate choice.
 | "Extract links", "build link graph", "populate timeline" | `skills/maintain/SKILL.md` (extraction sections) |
 | "Run dream", "process today's session", "synthesize my conversations", "consolidate yesterday's conversations", "what patterns did you see", "did the dream cycle run", "retriage the backlog", "re-score the triage" | `skills/maintain/SKILL.md` (dream cycle section) |
 | "Brain health", "what features am I missing", "brain score" | Run `gbrain features --json` |
-| "Set up autopilot", "run brain maintenance", "keep brain updated" | Run `gbrain autopilot --install --repo ~/brain` |
+| "Set up autopilot", "run brain maintenance", "keep brain updated" | Run `gbrain maintain --status`. An open `gbrain serve` runs free upkeep while idle. For a brain no agent opens most days, offer `gbrain maintain --schedule` (asks consent). A Postgres brain with a repo can use `gbrain autopilot --install --repo ~/brain` |
 | "Upgrade gbrain", "update gbrain", "gbrain update available", `UPGRADE_AVAILABLE`, "is gbrain up to date" | `skills/gbrain-upgrade/SKILL.md` |
 | Agent identity, "who am I", customize agent | `skills/soul-audit/SKILL.md` |
 | "Populate links", "extract links", "backfill graph" | `skills/maintain/SKILL.md` (graph population phase) |

@@ -30,6 +30,7 @@
  *
  * A remote caller (`remote: true`) writes nothing here: no hold, marker, record, withheld record or keep_db write.
  */
+import { committedSymlinks, danglingLink, keepCommittedLinks } from './sync-entry-fault.ts';
 import { VERSION } from '../../version.ts';
 import type { BrainEngine } from '../engine.ts';
 import { resolveSlugForPath } from '../sync.ts';
@@ -46,7 +47,7 @@ import { sha256 } from './digest.ts';
 import { readBlobs } from './sync-git-stream.ts';
 import { faultPoint } from './fault-points.ts';
 import { RECOVERY_VERSION } from '../markdown.ts';
-import { readSyncImportProvenances, recordSyncImportProvenances, syncImportParserFor, writeGitHold,
+import { clearGitHold, GIT_HOLD_OP, gitHoldFingerprint, readSyncImportProvenances, recordSyncImportProvenances, syncImportParserFor, writeGitHold,
   type GitHoldCode, type GitHoldMeta, type SyncImportProvenance } from './sync-holds.ts';
 import { assertDrainLease, inFencedSlices } from './sync-lease.ts';
 import { clearDeletesWithheld, deleteSetHash, readDeletesWithheld, readOriginDeletedMarker, retireOriginDeletedMarker, writeDeletesWithheld, type DeletesWithheld } from './sync-markers.ts';
@@ -102,11 +103,13 @@ export interface PassApplyState {
   recorded: Set<number>;
   /** GBRA-133: the held committed deletions `sync.apply_held_deletions` screened this pass (sync-held-deletions.ts). */
   heldDeletions: HeldDeletionState;
+  /** GBRA-542: dangling symlinks this pass skipped (no live page at their path), and their file_unreadable holds it released. */
+  dangling: { skipped: Set<string>; released: number };
 }
 
 export function newPassApplyState(): PassApplyState {
   return { markersRetired: 0, holds: { file_gone: 0, tombstone_edited: 0, purged_differs: 0, settle_mismatch: 0, origin_conflict: 0, page_identity_changed: 0, uncommitted: 0 }, settleMismatch: [], adopted: 0,
-    swept: { screened: 0, recorded: 0, paths: new Set() }, sweptAll: false, withheld: null, withheldCount: 0, keepDb: { admitted: 0, pending: 0, paused: 0, refused: {} }, keepDbTaken: [], originHeld: new Set(), matchedSlugs: new Set(), classes: {}, summary: null, recorded: new Set(), heldDeletions: newHeldDeletionState() };
+    swept: { screened: 0, recorded: 0, paths: new Set() }, sweptAll: false, withheld: null, withheldCount: 0, keepDb: { admitted: 0, pending: 0, paused: 0, refused: {} }, keepDbTaken: [], originHeld: new Set(), matchedSlugs: new Set(), classes: {}, summary: null, recorded: new Set(), heldDeletions: newHeldDeletionState(), dangling: { skipped: new Set(), released: 0 } };
 }
 
 export interface PassApplyInput {
@@ -165,6 +168,7 @@ export async function applyPassRound(engine: BrainEngine, level: ShadowLevel, in
     summarizeRound(level, state);
     return;
   }
+  await skipDanglingLinks(engine, level, input, state);
   await writePassHolds(engine, level, input, state);
   await adoptRecords(engine, level, state);
   // #7338: a round with imports or deletes sweeps after its batches drain (the pass calls sweepLegacy), so the bounded
@@ -268,6 +272,41 @@ async function applyDeleteValve(engine: BrainEngine, level: ShadowLevel, input: 
   state.withheld = null;
 }
 
+/**
+ * GBRA-542: a dangling symlink has nothing to import and nothing for a person to decide, so a path that is one is skipped
+ * (settled, counted, no hold) unless a live page sits at that path (its origin, or its slug), whose only copy it may have
+ * replaced; that one still holds `file_unreadable` at the freeze. A held dangling link with no live page is released (the
+ * hold row only; no page is touched). Each pass checks the link again, so one whose target appears is imported.
+ */
+async function skipDanglingLinks(engine: BrainEngine, level: ShadowLevel, input: PassApplyInput, state: PassApplyState): Promise<void> {
+  const step = loopYield();
+  let links: Array<{ entry: ShadowPath; path: string; slug: string | null }> = [];
+  for (const entry of level.paths) {
+    if (step.due()) await step.pause();
+    const r = entry.result, held = entry.state.hold !== null;
+    if (r.inFlight || entry.state.page?.live || entry.state.level === null || (!held && (r.settled || (r.action !== 'import' && r.action !== 'hold')))) continue;
+    if (!danglingLink(level.gitRoot, entry.path, level.mode === 'committed' ? entry.state.level : undefined)) continue;
+    const { path, sourcePath } = passEntryPaths(level, entry.path);
+    links.push({ entry, path, slug: resolveSlugForPath(sourcePath) });
+  }
+  if (level.mode === 'committed' && links.length) links = keepCommittedLinks(links, committedSymlinks(level.gitRoot, level.head, links.map(link => link.entry.path)));
+  if (!links.length) return;
+  const slugs = [...new Set(links.flatMap(link => link.slug ? [link.slug] : []))];
+  const live = new Set(slugs.length ? (await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND slug=ANY($2::text[])',
+    [level.sourceId, slugs])).map(row => row.slug) : []);
+  const skipped = links.filter(link => !link.slug || !live.has(link.slug));
+  const holds = new Set((await engine.executeRaw<{ path: string }>(`SELECT completed_keys->0->>'path' AS path FROM op_checkpoints WHERE op=$1 AND fingerprint=ANY($2::text[])
+    AND completed_keys->0->>'code'='file_unreadable'`, [GIT_HOLD_OP, skipped.filter(link => link.entry.state.hold).map(link => gitHoldFingerprint(level.sourceId, level.incarnation, link.path))])).map(row => row.path));
+  const settled = skipped.filter(link => !link.entry.state.hold || holds.has(link.path));
+  await inFencedSlices(engine, level.sourceId, settled.filter(link => holds.has(link.path)), async (tx, link) => {
+    if (await clearGitHold(tx, { sourceId: level.sourceId, incarnation: level.incarnation, path: link.path, observedAt: input.observedAt })) state.dangling.released++;
+  });
+  for (const link of settled) {
+    settleAs(link.entry, { settled: true, action: 'none', classAction: 'none' });
+    state.dangling.skipped.add(link.path);
+  }
+}
+
 /** Rows 6 and 9 and the settle-mismatch streak (§3.1): holds at level `L`, written under the drain lease. */
 async function writePassHolds(engine: BrainEngine, level: ShadowLevel, input: PassApplyInput, state: PassApplyState): Promise<void> {
   const pending: PendingHold[] = [];
@@ -317,9 +356,11 @@ async function writePassHolds(engine: BrainEngine, level: ShadowLevel, input: Pa
       pending.push({ entry, code: 'file_drift', slug: entry.slug, kind: 'uncommitted', meta: { side: 'deleted', state: 'file_gone', reason: r.uncommitted, ...(entry.revision ? { page_revision: entry.revision } : {}) },
         message: `${path}: the file is gone, but ${why}, so its absence is no evidence that page ${entry.slug} was deleted; sync held it and kept the page instead of deleting it (#7130); the rest of the source synced.` });
     } else if (r.cls === 'delete_drift') {
+      const unrecorded = entry.state.record?.revision == null;
       pending.push({ entry, code: 'file_drift', slug: entry.slug, kind: 'file_gone', meta: { side: 'deleted', state: 'file_gone', ...(entry.revision ? { page_revision: entry.revision } : {}),
-        ...(r.heldDeletionRefused && entry.revision ? { held_deletion: { refused: r.heldDeletionRefused, page_revision: entry.revision } } : {}) },
-        message: `${path}: the file is gone, but page ${entry.slug} changed in the database since the file was last imported, so sync held the deletion instead of deleting the page; the rest of the source synced.` });
+        ...(r.heldDeletionRefused && entry.revision ? { held_deletion: { refused: r.heldDeletionRefused, page_revision: entry.revision } } : {}), ...(unrecorded ? { no_import_record: true as const } : {}) },
+        message: unrecorded ? `${path}: the file is gone, and page ${entry.slug} has no import record that says whether it changed in the database since the file was imported, so sync held the deletion instead of deleting the page; the rest of the source synced.`
+          : `${path}: the file is gone, but page ${entry.slug} changed in the database since the file was last imported, so sync held the deletion instead of deleting the page; the rest of the source synced.` });
     } else if (r.cls === 'deleted_edited') {
       const purged = r.state === 'purged_differs';
       const slug = purged ? (await readStoredMarker(engine, level, passEntryPaths(level, entry.path).sourcePath))?.slug ?? resolveSlugForPath(passEntryPaths(level, entry.path).sourcePath) ?? null : entry.slug;
@@ -566,5 +607,6 @@ export function passApplyCounts(state: PassApplyState): Record<string, number> {
   return { markers_retired: state.markersRetired, holds_file_gone: state.holds.file_gone, holds_tombstone_edited: state.holds.tombstone_edited,
     holds_purged_differs: state.holds.purged_differs, holds_settle_mismatch: state.holds.settle_mismatch, holds_origin_conflict: state.holds.origin_conflict, holds_page_identity_changed: state.holds.page_identity_changed, holds_uncommitted: state.holds.uncommitted, adopted: state.adopted, legacy_swept: state.swept.screened,
     legacy_recorded: state.swept.recorded, deletes_withheld: state.withheldCount, keep_db_admitted: state.keepDb.admitted, keep_db_pending: state.keepDb.pending,
-    paused_keep_db: state.keepDb.paused, keep_db_refused: refused, held_deletions_applied: state.heldDeletions.applied, held_deletions_refused: state.heldDeletions.refused };
+    paused_keep_db: state.keepDb.paused, keep_db_refused: refused, held_deletions_applied: state.heldDeletions.applied, held_deletions_refused: state.heldDeletions.refused,
+    skipped_symlink_dangling: state.dangling.skipped.size, released_symlink_dangling: state.dangling.released };
 }

@@ -32,9 +32,9 @@ const SKILLS = [
 ];
 
 describe('turn input', () => {
-  const good = [{ message: 'deploy' }, { message: '', top_k: 8, exclude: [], shadow: false, reset_session: true }, { message: 'x', session_id: 'a'.repeat(256), harness: 'codex', expected_catalog_hash: 'a'.repeat(64), previous_user_message: 'y' }, { message: 'x', exclude: Array(1024).fill('a'), min_match_strength: 'description', harness: 'pi' }];
+  const good = [{ message: 'deploy' }, { message: '', top_k: 8, exclude: [], shadow: false, reset_session: true }, { message: 'x', session_id: 'a'.repeat(256), harness: 'codex', expected_catalog_hash: 'a'.repeat(64), previous_user_message: 'y' }, { message: 'x', exclude: Array(1024).fill('a'), min_match_strength: 'description', harness: 'pi' }, { message: 'x', top_gate: 1.5 }, { message: 'x', top_gate: 0 }];
   const bad = [{}, { message: 1 }, { message: 'x', top_k: 0 }, { message: 'x', top_k: 9 }, { message: 'x', top_k: 2.5 }, { message: 'x', extra: true }, { message: 'x', harness: 'vim' },
-    { message: 'x', session_id: '' }, { message: 'x', session_id: 'a b' }, { message: 'x', exclude: Array(1025).fill('a') }, { message: 'x', min_match_strength: 'weak' }, { message: 'x', exclude: [1] }, { message: 'x', expected_catalog_hash: 'ABC' }, { message: 'x', shadow: 'yes' }];
+    { message: 'x', session_id: '' }, { message: 'x', session_id: 'a b' }, { message: 'x', exclude: Array(1025).fill('a') }, { message: 'x', min_match_strength: 'weak' }, { message: 'x', top_gate: 101 }, { message: 'x', top_gate: -0.5 }, { message: 'x', exclude: [1] }, { message: 'x', expected_catalog_hash: 'ABC' }, { message: 'x', shadow: 'yes' }];
   test('the schema and the resolver accept and refuse the same inputs', () => {
     for (const g of good) { expect(validate(INPUT, g)).toEqual([]); expect(() => normalizeTurnInput(g)).not.toThrow(); }
     for (const b of bad) {

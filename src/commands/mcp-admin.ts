@@ -17,7 +17,7 @@ gbrain mcp admin client ID
 gbrain mcp admin register NAME --redirect-uri URI [--redirect-uri URI ...]
 gbrain mcp admin setup ID --harness ID [--flow authorization-code|client-credentials]
 gbrain mcp admin invalidate-tokens|revoke|delete ID [--yes --if-version N]
-gbrain mcp admin attest CLIENT_ID --attest-actor qm|none [--attest-ops LIST] [--dry-run]
+gbrain mcp admin attest CLIENT_ID --attest-actor qm|none [--attest-ops LIST] [--attest-read person|scope|none] [--dry-run]
 gbrain mcp admin members [--all]
 gbrain mcp admin member-add ID [--name NAME] [--email ADDR] [--groups G1,G2]
 gbrain mcp admin member-set ID --email ADDR|none
@@ -47,6 +47,7 @@ gbrain mcp admin memory-proposals deny REQUEST_ID --reason TEXT [--dry-run]
 --yes --if-version N               Apply reviewed lifecycle action; otherwise preview only
 --attest-actor qm|none             Grant or clear the right to name the person a call serves (x-qm-actor)
 --attest-ops LIST                  Operations an attested call may run (default get_write_request,memory_recall,memory_write)
+--attest-read person|scope|none    How a call that names sources reads them: as the person, or as their audience (none: the default, scope)
 --qm ID                            A canonical person id from the trusted system
 --email ADDR                       A member's declared email (case-folded, unique); link finds the member by it
 --timeout-ms N                     Request timeout, 100..300000 (default: 30000)
@@ -73,7 +74,7 @@ const commandValues: Record<string, string[]> = {
   register: ['--redirect-uri', '--token-endpoint-auth-method', '--source', '--federated-read', '--scopes', '--profile', '--credentials-out', '--harness'],
   setup: ['--harness', '--flow', '--credentials-out'],
   'invalidate-tokens': ['--if-version'], revoke: ['--if-version'], delete: ['--if-version'],
-  attest: ['--attest-actor', '--attest-ops'], members: [], 'member-add': ['--name', '--groups', '--email'], 'member-set': ['--email'], 'member-disable': [], 'member-enable': [],
+  attest: ['--attest-actor', '--attest-ops', '--attest-read'], members: [], 'member-add': ['--name', '--groups', '--email'], 'member-set': ['--email'], 'member-disable': [], 'member-enable': [],
   links: ['--member'], link: ['--qm', '--email'], unlink: ['--qm'], 'memory-proposals': [],
 };
 /** GST-2407: memory-proposals takes a subcommand; show, approve and deny take exactly one request id. */
@@ -123,10 +124,11 @@ const ACCESS_COMMANDS: Record<string, (client: AdminClient, parsed: AdminArgs, v
   attest: (client, parsed, value) => {
     const actor = value('--attest-actor');
     const ops = value('--attest-ops');
-    if (actor === undefined && ops === undefined) throw new McpAdminError('invalid_arguments', 'attest needs --attest-actor qm|none and/or --attest-ops <list>.');
+    const read = value('--attest-read');
+    if (actor === undefined && ops === undefined && read === undefined) throw new McpAdminError('invalid_arguments', 'attest needs --attest-actor qm|none, --attest-ops <list> and/or --attest-read person|scope|none.');
     const dryRun = parsed.flags.has('--dry-run');
     return client.request('/admin/api/access/attest', { method: 'POST', mutation: !dryRun, nextAction: `gbrain mcp admin client ${parsed.target} --url ${client.base}`, body: {
-      clientId: parsed.target, dryRun, ...(actor === undefined ? {} : { attestActor: actor === 'none' ? null : actor }), ...(ops === undefined ? {} : { attestOps: list(ops) }) } });
+      clientId: parsed.target, dryRun, ...(actor === undefined ? {} : { attestActor: actor === 'none' ? null : actor }), ...(ops === undefined ? {} : { attestOps: list(ops) }), ...(read === undefined ? {} : { attestRead: read === 'none' ? null : read }) } });
   },
   members: (client, parsed) => client.request(`/admin/api/access/members${parsed.flags.has('--all') ? '?all=1' : ''}`),
   'member-add': (client, parsed, value) => client.request('/admin/api/access/members', { method: 'POST', mutation: true, nextAction: `gbrain mcp admin members --url ${client.base}`,

@@ -122,7 +122,9 @@ table with its `trusted_hash`, otherwise Codex lists it and silently skips it.
   `env GBRAIN_HOOK_LANE=setup … <hook launcher> <launcher> hook session-start|user-prompt --harness codex`
   (the hook launcher, `<gbrain config dir>/hook-launcher/gbrain-hook`, starts
   gbrain from its own directory so the session directory's `bunfig.toml` and
-  `.env` never load; SECURITY.md)
+  `.env` never load, and on a `bun install -g` install puts the Bun setup ran
+  under first on PATH, so the Codex app starts gbrain without bun on its PATH;
+  SECURITY.md)
   (15 s), plus the detached `hook session-end --harness codex` capture command
   (3 s) only after `--capture`;
 - one trust table per group.
@@ -172,7 +174,11 @@ receipt prints the path, never the key). It sets `access.serves = several` last,
 then proves the labels by reading every other member's folder as each member
 (`gbrain find people/<other>/ --as <member>`): none may return a page.
 The receipt also lists any other `people/<name>/` folder that no rule covers, since
-every member reads it, and the run is not OK until it has a rule.
+every member reads it, and the run is not OK until it has a rule. It then counts the
+other pages no rule or `readable_by` restricts, which every member's key still reads,
+by folder, with the commands that label them; `--labelled-only` keeps each member to
+the pages labelled for it instead (never the owner). See
+[pages every member's key can read](access-designations.md#pages-every-members-key-can-read).
 Setup leaves the stdio server unbound: stdio sessions read only pages no rule
 restricts, and the harness's instructions keep the one-person scoping lines.
 For a Claude Code or Codex install only one person uses, bind that harness alone:
@@ -207,6 +213,35 @@ a brain setup cannot read refuses (`setup_serves_unreadable`).
 `people/<name>/` folder with pages and no rule naming its readers.
 `gbrain access serves several --members ...` does the labelling alone (preview, then
 `--yes`).
+
+On such a brain every remote read must say whom it reads for. A token, OAuth
+client or stdio server bound to no member is refused with
+[`requester_scope_required`](write-refusals.md#requester_scope_required) before
+any work, and `gbrain auth create` / `register-client` refuse to create one
+(`credential_scope_required`). A connection that existed when the brain started
+serving several people (config `access.serves_since`, or the upgrade that added
+the refusal) keeps reading for 14 days, with `_meta.access.requester_scope` on
+every answer naming the date and the fix; `gbrain doctor` fails
+`unscoped_shared_reads` and `gbrain post-upgrade` lists each one with its
+command. Bind each connection to its person
+(`gbrain auth rescope --token <name> --member <id>`). A stdio harness only one
+person uses is bound with `gbrain setup claude-code|codex --stdio-member <id>`,
+which writes the member into that one harness entry on that machine, on PGLite
+or Postgres. For a harness several people talk to, give each person a key over
+HTTP instead (`gbrain serve --http` with `gbrain auth create <name> --member <id>`
+keys). A brain pinned `access.serves one` never refuses, however many members
+it has.
+Nothing binds stdio on its own: upgrade, post-upgrade and doctor never write
+`mcp.stdio_member`, and `gbrain doctor` fails `shared_stdio_binding` when it is
+set on a host where OpenClaw or Hermes is installed and the brain serves several
+people (its fix is
+`gbrain config unset mcp.stdio_member`). A team that shares everything may
+mark one credential `gbrain auth rescope --token <name> --reads-unscoped --yes`
+(`--reads-unscoped none` takes it back); every change is recorded in the
+`access-reads-unscoped` audit file. Hosted brains keep
+`access.requester_scope_enforce false` until their control plane binds each
+connection to a member, so they see the notice and no refusal. Writes are not
+affected, and a one-person brain sees no change.
 
 ## Brain-first instructions
 

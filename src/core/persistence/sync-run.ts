@@ -48,7 +48,7 @@ import { laneApplyMsPerMember, lanePolicy, openLanes } from './sync-lanes.ts';
 import { SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { readDryRunWriterState } from './sync-dry-run-writer.ts';
 import { fileMatchesSnapshot } from './page-prepare.ts';
-import { pageHoldsDriftBaseline, dryRunScreen, heldImageEntry, isSyncReadBound, loadSyncScreenRun, originConflictHold, oversizeHold, pinnedBlob, pinnedContent, pinnedFilterDriver, pinnedImageBytes, preparationStalledHold, prepareTimeFenceHold, screenFrozenImport, streamedRefusalHold, unreadableFileHold, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
+import { onlyDerivedKeysAdded, pageHoldsDriftBaseline, dryRunScreen, heldImageEntry, isSyncReadBound, loadSyncScreenRun, originConflictHold, oversizeHold, pinnedBlob, pinnedContent, pinnedFilterDriver, pinnedImageBytes, preparationStalledHold, prepareTimeFenceHold, screenFrozenImport, streamedRefusalHold, unreadableFileHold, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
 import { frozenImageIntent, sameImageBytes } from './sync-image.ts';
 import { fenceReceiptLocation } from '../fence-repair/refusal.ts';
 import { managedSyncWriteDiagnostic, writeWaitOf } from './sync-write-diagnostic.ts';
@@ -64,7 +64,7 @@ import { withManagedReasonNotices } from './sync-reasons.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { principalAttribution } from './attribution.ts';
 import { recordSyncRunTrend } from '../fence-repair/census-store.ts';
-import { outOfAttemptsHold, addFencesNormalized, addRecovered, buildHoldReport, clearGitHold, clearGitHoldRetryPaths, heldGitPaths, fencesNormalizedReport, holdsEscalated, readSyncHoldPolicy, recordSyncConversion, releaseDiscoveredHolds, recoveredReport, writeGitHold, type FencesTally, type GitHoldCode, type SyncHoldPolicy } from './sync-holds.ts';
+import { outOfAttemptsHold, addFencesNormalized, addRecovered, buildHoldReport, clearGitHold, clearGitHoldRetryPaths, heldGitPaths, fencesNormalizedReport, holdsEscalated, readSyncHoldPolicy, recordSyncConversion, releaseDiscoveredHolds, recoveredReport, releasedHoldCount, sourceHoldFingerprints, writeGitHold, type FencesTally, type GitHoldCode, type SyncHoldPolicy } from './sync-holds.ts';
 import { withScreeningPaths } from './screening-paths.ts';
 import { withBoundedReadSession } from './bounded-reads.ts';
 import { receiptClass, recordedStop, replaysContentRefusal, resumableStop, stopRecorded, unrecordedStop } from './sync-stop-class.ts';
@@ -480,10 +480,12 @@ async function freezeEntryOnce(engine: BrainEngine, cursor: Cursor, key: string,
       }
     }
     // #6712 PR 1: an import whose page moved since its file was last imported runs only as a proven no-op (sync-prescreen.ts).
-    // #7931: a file that holds the page as prepareFileTarget and repair file-drift read it (format-insensitive) is one too.
+    // #7931: a file that holds the page as prepareFileTarget and repair file-drift read it (format-insensitive) is one too;
+    // GST-2568: and so is a page that holds its file's baseline (or an earlier committed version) in that same reading.
     if (entry.drift && !occupantRebound && content !== null && snapshot && !(image ? sameImageBytes(imageBytes, snapshot.page)
       : await sameContentAtOrigin(engine, cursor, entry, key, snapshot, content, rawHash, lineEndingOnly, run.signal)
-        || await fileMatchesSnapshot(engine, slug, content, snapshot, entry.sourcePath).catch(() => false) || await pageHoldsDriftBaseline(cursor.gitRoot, entry, baseline => sameContentAtOrigin(engine, cursor, entry, key, snapshot, baseline, null, false, run.signal, true)))) {
+        || await fileMatchesSnapshot(engine, slug, content, snapshot, entry.sourcePath).catch(() => false) || await pageHoldsDriftBaseline(cursor.gitRoot, entry, async baseline => await sameContentAtOrigin(engine, cursor, entry, key, snapshot, baseline, null, false, run.signal, true)
+        || baseline !== null && onlyDerivedKeysAdded(baseline, snapshot.page.frontmatter) && await fileMatchesSnapshot(engine, slug, baseline, snapshot, entry.sourcePath).catch(() => false)))) {
       if (!holdsOn) throw syncRunRefusal('file_drift', 'An import would overwrite a database version of the page that sync never saw.', retry, `Page ${slug} in source ${cursor.sourceId} ${entry.drift === 'unknown' ? `differs from ${entry.path} and has no import record to tell whether the file or the database changed` : `changed in the database since ${entry.path} was last imported, and the file differs from it`}, so the run stopped before admitting it (sync.holds=fail).`);
       const proof = await pageChangeProof(engine, { sourceId: cursor.sourceId, incarnation: cursor.incarnation, pageId, expectedRevision: null }); assertActive();
       return { hold: fileDriftHold(entry, slug, pageId, frozenIntent, { sides: entry.drift, revision: snapshot.revision, proof, sharedOrigin: await sharedOriginSurvivor(engine, cursor.sourceId, entry.sourcePath), baseline: entry.driftBaseline ?? null }) };
@@ -1294,6 +1296,7 @@ async function performLeasedPass(engine: BrainEngine, opts: SyncOpts, slice?: { 
 }
 async function performManagedPass(engine: BrainEngine, opts: SyncOpts, slice?: { maxPages: number; maxMs: number }): Promise<SyncResult> {
   const state: HoldRunState = {};
+  const holdsBefore = opts.dryRun ? null : await sourceHoldFingerprints(engine, opts.sourceId ?? 'default').catch(() => null);
   // #6729: every managed entry point (CLI, drain, owner slice, worktree refresh) records the renames whose identity it did not keep.
   const synced = await withManagedReasonNotices(engine, opts.sourceId ?? 'default', await noteIdentityDowngrades(engine, opts.sourceId ?? 'default', await runManagedSync(engine, opts, slice, state), serr));
   if (!state.sourceId || !state.incarnation || synced.status === 'dry_run' || currentDrainLease(state.sourceId)?.idleClear) return synced;
@@ -1306,7 +1309,8 @@ async function performManagedPass(engine: BrainEngine, opts: SyncOpts, slice?: {
     const fences = fencesNormalizedReport(state.sourceId, cursor?.counts.fences, state.remote === true);
     // #7199: a pass that synced but held files a person must decide does not read as plain synced.
     const humanHeld = report.held_needs_human && !synced.reason && ['synced', 'first_sync', 'up_to_date'].includes(synced.status);
-    return { ...synced, ...report, ...(humanHeld ? { reason: 'held_needs_human' as const } : {}), ...(!state.remote && cursor?.convertedFromFailed?.length ? { converted_from_failed: cursor.convertedFromFailed } : {}),
+    const released = await releasedHoldCount(engine, state.sourceId, holdsBefore).catch(() => 0);
+    return { ...synced, ...report, ...(released ? { holds_released: released } : {}), ...(humanHeld ? { reason: 'held_needs_human' as const } : {}), ...(!state.remote && cursor?.convertedFromFailed?.length ? { converted_from_failed: cursor.convertedFromFailed } : {}),
       ...(recovered ? { recovered_frontmatter: recovered } : {}), ...(fences ? { fences_normalized: fences } : {}) };
   } catch {
     return synced;
@@ -1456,7 +1460,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
   /** One cursor's drain (or, #6712 PR 4b, one round batch of a live pass): the freeze, screen, waive, group, admit, await and settle loop. */
   const live: { cursor: Cursor | null } = { cursor: null };
   const drainCursor = async (from: Cursor, startupConfig: Awaited<ReturnType<typeof preparationConfigView>>,
-    sliceBase?: { started: number; pages: number }): Promise<SyncResult | Cursor> => {
+    sliceBase?: { started: number; pages: number; committed?: (index: number) => void }): Promise<SyncResult | Cursor> => {
     let cursor = from;
     try {
       frozenRun.screen = company ? null : await loadSyncScreenRun(startupConfig, cursor.sourceId, cursor.processingOptions ?? processingOptions, authority.writer.remote);
@@ -1504,7 +1508,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
           const next = await freezeNext(engine, cursor, key, assertActive, frozenRun, observedAt);
           if ('saved' in next) {
             cursor = next.saved;
-            opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, ...(next.held ? {} : { total: cursor.entries.length, waived: true }) }); assertActive();
+            opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, ...(next.held ? {} : { total: cursor.entries.length, waived: true }) }); sliceBase?.committed?.(cursor.index); assertActive();
             if (next.held && slice && (cursor.index - sliceFirstIndex >= slice.maxPages || performance.now() - sliceStarted >= slice.maxMs)) return result(cursor, 'partial', 'writer_yield');
             continue;
           }
@@ -1530,7 +1534,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
             holdClear(screened, pending.intent.path, observedAt)), tx => currentCursor(tx, key, screened), signal);
         if (waived) {
           cursor = waived;
-          opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length, waived: true });
+          opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length, waived: true }); sliceBase?.committed?.(cursor.index);
           assertActive();
           // A skipped entry still counts toward the caller's slice, so a sliced run yields at the same positions.
           if (slice && (cursor.index - sliceFirstIndex >= slice.maxPages || performance.now() - sliceStarted >= slice.maxMs)) return result(cursor, 'partial', 'writer_yield');
@@ -1581,7 +1585,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
             remote: authority.writer.remote, waitMs: opts.drainStartedAt ? syncReceiptWait().drain : syncReceiptWait().pass, signal });
           if ('result' in settled) return settled.result;
           cursor = settled.cursor;
-          opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length });
+          opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length }); sliceBase?.committed?.(cursor.index);
           continue;
         }
         if (pending.intent.kind === 'managed_sync_checkpoint' && cursor.passId) return { ...cursor, pending: undefined, done: true };
@@ -1596,7 +1600,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         const next: Cursor = committedPast({ ...cursor, ...committedBreaker(cursor), counts: { ...cursor.counts }, progress: stampProgress(cursor.progress, cursor.index, cursor.index + 1, drainStartedAt) }, pending);
         countCommitted(next.counts, pending, done.outcome);
         cursor = await saveCursor(engine, key, cursor, next);
-        opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length }); if (next.counts.folded) return cursor;
+        opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length }); if (next.counts.folded) return cursor; sliceBase?.committed?.(cursor.index);
         // F4b: PGLite plans the rest of a large sync against fresh statistics (spec Addendum A item 2).
         if (analyzeEvery > 0 && cursor.index % analyzeEvery === 0) await maybeRefreshPlannerStats(engine, 'managed_sync', { throttle: false }).catch(() => undefined);
         assertActive();

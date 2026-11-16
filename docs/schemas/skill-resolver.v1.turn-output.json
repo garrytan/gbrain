@@ -189,7 +189,7 @@
     },
     "block_reason": {
       "description": "Why the block is empty; null when it has a suggestion.",
-      "enum": ["ack", "no_match", "filtered", "deduped", "paced", "budget_exhausted", "shadow", "error", null]
+      "enum": ["ack", "no_match", "filtered", "weak_top_match", "deduped", "paced", "budget_exhausted", "shadow", "error", null]
     },
     "suggestions": {
       "type": "array",

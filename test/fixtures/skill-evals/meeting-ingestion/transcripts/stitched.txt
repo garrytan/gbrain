@@ -1,0 +1,18 @@
+Recorder: notetaker-b
+Recording ID: rec-1015-b
+Title: Tuesday afternoon
+Date: 2026-10-15 14:00 ET
+Duration: 58m
+
+[00:00] Speaker 1: Bob, thanks for making time. I want to walk through the hiring budget for the platform team.
+[00:20] Speaker 2: Sure, Alice. We approved two senior hires for Q4 and that's the ceiling.
+[01:45] Speaker 1: Then I'd rather take one senior and two mid-level engineers for the same money.
+[02:30] Speaker 2: That works if the total stays under the approved number. Send me the plan by Friday.
+[03:10] Speaker 1: Will do. That's all I had.
+[03:15] Speaker 2: Great, talk soon.
+[29:50] Speaker 3: Hi, is this the design partnership call? I'm Erin from zeta-example.
+[30:02] Speaker 4: Yes, hi Erin, Carol here from acme-example. Welcome. Let's do quick intros.
+[30:40] Speaker 3: We build design-tooling for hardware teams and we'd love Acme as a design partner.
+[31:30] Speaker 4: We could pilot it with the design system team for six weeks starting in November.
+[32:15] Speaker 3: Perfect. I'll send a pilot agreement by October 22.
+[33:00] Speaker 4: And I'll pick three designers for the pilot.

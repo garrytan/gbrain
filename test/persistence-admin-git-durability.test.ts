@@ -12,8 +12,8 @@
  *        `--pat-file` refuses a readable token file before writing anything.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { randomUUID } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -33,6 +33,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { v234 } from '../src/core/schema-migrations/v234-persistence-git-durability.ts';
 import { PERSISTENCE_GIT_DURABILITY_COLUMN_SQL, PERSISTENCE_SCHEMA_STATEMENTS } from '../src/core/persistence/schema.ts';
 import { gitAsync } from './helpers/git-publication.ts';
+import { runCli } from './helpers/cli-spawn.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 
@@ -101,6 +102,15 @@ async function gitOutcome(requestId: string) {
   const [row] = await engine.executeRaw<{ state: string; outcome: Record<string, unknown> | null; data: Record<string, unknown> }>(
     "SELECT state,outcome,data FROM persistence_effects WHERE request_id=$1::uuid AND kind='git'", [requestId]);
   return row;
+}
+/** Every file under the private home: the checkout, its .git (config, index, refs) and the credential store. */
+function treeBytes(dir: string, files: Record<string, string> = {}): Record<string, string> {
+  for (const name of readdirSync(dir).sort()) {
+    const path = join(dir, name);
+    if (statSync(path).isDirectory()) treeBytes(path, files);
+    else files[path] = createHash('sha256').update(readFileSync(path)).digest('hex');
+  }
+  return files;
 }
 async function runEffects() {
   await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now() WHERE kind='git'");
@@ -227,6 +237,31 @@ describe('[R7ii] writer git-durability verb', () => {
     expect(again).toMatchObject({ catch_up: { planned: 0 }, why: expect.stringContaining('already as requested') });
   }), 120_000);
 
+  for (const refusal of ['missing', 'wrong', 'stale'] as const) {
+    test(`#7634 a refused apply (${refusal} approval) leaves the checkout, the credential store and the parked push unchanged`, () => isolated(async home => {
+      const root = await gitRoot(home, { remote: true });
+      writeFileSync(join(root, 'AGENTS.md'), '# Operator instructions\n');
+      await gitAsync(root, 'add', 'AGENTS.md'); await gitAsync(root, 'commit', '-q', '-m', 'Instructions'); await gitAsync(root, 'push', '-q');
+      const { sourceId } = await claimedSource(root);
+      const id = await committedWrite(root, sourceId, 'parked7634');
+      await engine.executeRaw(`UPDATE persistence_effects SET state='failed',error_code='targets_parked',data=data || $2::text::jsonb
+        WHERE request_id=$1::uuid AND kind='git'`, [id, JSON.stringify({ parked: [{ slug: 'parked7634', error_code: 'git_push_unavailable' }], target_failures: 5 })]);
+      const token = join(home, 'synthetic-token');
+      writeFileSync(token, 'synthetic-test-only-token\n', { mode: 0o600 });
+      const reviewed = await reviewedWriterIntent(engine, 'writer_git_durability');
+      if (refusal === 'stale') await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [`other-${randomUUID().slice(0, 8)}`]);
+      const params = { source_id: sourceId, enable: true, pat_file: token,
+        ...(refusal === 'missing' ? {} : refusal === 'wrong' ? { ...reviewed, admin_intent: 'writer_activate' } : reviewed) };
+      const before = treeBytes(home);
+      const effect = await gitOutcome(id);
+      const error = await runPersistenceAdministration(engine, 'writer_git_durability', params).catch(caught => caught);
+      expect(error).toMatchObject({ code: refusal === 'stale' ? 'writer_admin_state_changed' : 'writer_admin_intent_required' });
+      expect(treeBytes(home)).toEqual(before);
+      expect(await gitOutcome(id)).toEqual(effect);
+      expect((await getWorktreeBinding(engine, sourceId, localHostId()))!.git_durability).toBeNull();
+    }), 120_000);
+  }
+
   test('--disable wins over a legacy hook: the next Git effect completes as skipped; --pat-file refuses a readable token file first', () => isolated(async home => {
     const root = await gitRoot(home);
     const hook = join(root, '.git', 'hooks', 'post-commit');
@@ -250,3 +285,25 @@ describe('[R7ii] writer git-durability verb', () => {
       .rejects.toMatchObject({ code: 'invalid_params', message: expect.stringContaining('--pat-file cannot be combined with --disable') });
   }), 120_000);
 });
+
+
+describe('GST-2767 the durability block the verb writes is never left untracked without the exact commit command', () => {
+  test('enable names the door command for the AGENTS.md it writes and for an untracked copy an earlier run left; the command commits it', () => isolated(async home => {
+    const root = await gitRoot(home, { remote: true });
+    const { sourceId } = await claimedSource(root);
+    const argv = ['gbrain', 'git', 'commit-push', '--path', root, '-m', `gbrain: durability rules for source ${sourceId}`, '--', 'AGENTS.md'];
+    const head = (await gitAsync(root, 'rev-parse', 'HEAD')).trim();
+    const applied = await runPersistenceAdministration(engine, 'writer_git_durability', { source_id: sourceId, enable: true, ...await reviewedWriterIntent(engine, 'writer_git_durability') }) as Record<string, any>;
+    expect(applied.agents).toMatchObject({ status: 'fixed', file: 'AGENTS.md', commit_argv: argv });
+    expect((await gitAsync(root, 'rev-parse', 'HEAD')).trim()).toBe(head);
+    // The block is already current on the next run, and the untracked file still gets the command (it used to get nothing).
+    const again = await runPersistenceAdministration(engine, 'writer_git_durability', { source_id: sourceId, enable: true, ...await reviewedWriterIntent(engine, 'writer_git_durability') }) as Record<string, any>;
+    expect(again.agents).toMatchObject({ status: 'ok', commit_argv: argv, commit: expect.stringContaining('gbrain git commit-push') });
+    const run = await runCli(argv.slice(1), { home, cwd: root, timeoutMs: 120_000 });
+    expect(run.exitCode).toBe(0);
+    expect((await gitAsync(root, 'status', '--porcelain', '--untracked-files=all', '--', 'AGENTS.md')).trim()).toBe('');
+    const settled = await runPersistenceAdministration(engine, 'writer_git_durability', { source_id: sourceId, enable: true, ...await reviewedWriterIntent(engine, 'writer_git_durability') }) as Record<string, any>;
+    expect(settled.agents.commit_argv).toBeUndefined();
+  }), 180_000);
+});
+

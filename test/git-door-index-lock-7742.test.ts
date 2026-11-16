@@ -14,11 +14,11 @@
  *     cannot create for a reason other than an existing lock still reports the landed commit and names that cause.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { gitChildEnv } from '../src/core/git-env.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
@@ -26,9 +26,9 @@ import { submissionAuthority } from '../src/core/persistence/authority.ts';
 import { publishMutation, type PublicationHooks } from '../src/core/persistence/coordinator.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
 import { INDEX_LOCK_GRACE_FOR_TESTS } from '../src/core/persistence/effect-git.ts';
-import { commitThroughDoor, doorSeams } from '../src/core/persistence/git-door.ts';
+import { commitThroughDoor, doorSeams, indexCommitIo } from '../src/core/persistence/git-door.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
-import { proveIndexLockAbandoned } from '../src/core/persistence/index-lock-reclaim.ts';
+import { processTableBlind, proveIndexLockAbandoned, readIndexLockReclaims, type IndexLockVerdict } from '../src/core/persistence/index-lock-reclaim.ts';
 import { admitWrite, claimNextWrite } from '../src/core/persistence/journal.ts';
 import { tryAcquireNativeLock } from '../src/core/persistence/native-lock.ts';
 import { getWorktreeBinding } from '../src/core/persistence/ownership.ts';
@@ -50,7 +50,11 @@ const page = (title: string) => `---\ntype: note\ntitle: ${title}\n---\n\nA smal
 const setup = ({ root }: { root: string }) => { writeFileSync(join(root, '.gitignore'), '\n'); durableGitRepo(root, ['.gitignore']); };
 const putPage = operations.find(op => op.name === 'put_page')!;
 const dirs: string[] = [];
-afterEach(() => { delete doorSeams.beforeUpdateRef; for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+const io = { ...indexCommitIo };
+afterEach(() => {
+  delete doorSeams.beforeUpdateRef; delete doorSeams.indexLockHeld; Object.assign(indexCommitIo, io);
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 /**
  * A git on PATH that hands every call to the real git. Once armed, the first call whose arguments contain ` <trigger> `
@@ -107,6 +111,8 @@ const armAfterPublication = (root: string, shim: { dir: string; arm(): void }): 
 
 /** Index locks and door index copies left in the checkout's git directory. */
 const leftovers = (root: string) => readdirSync(join(root, '.git')).filter(name => name === 'index.lock' || name.startsWith('index.gbrain-'));
+/** Why the #6932 proof may keep a lock on a host it cannot fully see: another user's git, or one that stayed unreadable while it exited. */
+const HOST_DOUBT = /not reclaimed: git process \d+ \(.*\) (belongs to another user|could not be inspected|is this user's, but it stayed unreadable)/;
 
 for (const backend of testBackends()) describe(`[${backend}] the door's index refresh holds the index lock`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
@@ -278,7 +284,8 @@ describe('door plumbing: the index lock', () => {
   // Value: protects=the door, holding the writer lock, reclaims an index.lock no live process holds (#6932) and finishes its refresh,
   //   as it did when update-index ran through effect-git; fails_when=the door's own exclusive create answers any existing lock with the
   //   landed failure; why_new=the held-lock test uses a fresh lock no proof accepts; seam=none; no_claim=hosts where the proof cannot see
-  //   every process, where the lock must stay and the landed failure stands (the oracle is the same proof the door runs)
+  //   every process, or another user's git runs, where the lock must stay and the landed failure stands. The oracle is the door's own
+  //   verdict (its receipt, or the reason its refusal names), never a second proof that a git starting in between could flip (#7758)
   test('an abandoned index.lock is reclaimed under the writer lock and the refresh completes', async () => {
     const root = seeded(), lock = join(root, '.git', 'index.lock');
     const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-door-home-')));
@@ -290,18 +297,112 @@ describe('door plumbing: the index lock', () => {
     await withEnv({ GBRAIN_HOME: home }, async () => {
       const writer = (await tryAcquireNativeLock(join(home, 'writer.lock')))!;
       try {
-        const provable = proveIndexLockAbandoned(lock, root, INDEX_LOCK_GRACE_FOR_TESTS).abandoned;
         const error = await refusal(commitThroughDoor(root, [{ path: join(root, 'notes/a.md'), planned: sha256('door\n') }], writer));
         expect(git(root, 'show', 'HEAD:notes/a.md')).toBe('door');
-        if (!provable) {
-          expect(error).toMatchObject({ code: 'git_unavailable', message: expect.stringContaining('landed, but the index') });
+        const reclaims = readIndexLockReclaims().filter(receipt => receipt.lock === lock);
+        if (error) {
+          const blind = processTableBlind();
+          expect(error).toMatchObject({ code: 'git_unavailable', message: expect.stringContaining('landed, but the index'),
+            suggestion: blind ? expect.stringContaining(`not reclaimed: ${blind}`) : expect.stringMatching(HOST_DOUBT) });
           expect(existsSync(lock)).toBe(true);
+          expect(reclaims).toEqual([]);
           return;
         }
-        expect(error).toBeNull();
+        expect(reclaims).toHaveLength(1);
+        expect(existsSync(lock)).toBe(false);
         expect(git(root, 'rev-parse', ':notes/a.md')).toBe(git(root, 'rev-parse', 'HEAD:notes/a.md'));
         expect(leftovers(root)).toEqual([]);
       } finally { await writer.release(); }
     });
+  });
+  // Value: protects=index copies a refresh killed before its cleanup left in the git directory (and their Git locks) are removed by the next
+  //   refresh while it holds index.lock, once their process is gone, while a live process's copy stays (#7755); fails_when=nothing sweeps
+  //   index.gbrain-*, so each crash leaves an index-sized file; why_new=no test plants a stale copy; seam=none; no_claim=a reused pid
+  test('index copies a killed refresh left are removed under the lock once their process is gone; a live process\'s copy stays', async () => {
+    const root = seeded(), gitDir = join(root, '.git');
+    const dead = spawnSync('true').pid;
+    expect(() => process.kill(dead, 0)).toThrow();
+    const stale = [`index.gbrain-${dead}-0123456789ab`, `index.gbrain-${dead}-0123456789ab.lock`], live = `index.gbrain-${process.ppid}-ba9876543210`;
+    for (const name of [...stale, live]) writeFileSync(join(gitDir, name), 'a copy of the index');
+    writeFileSync(join(root, 'notes/a.md'), 'door\n');
+    expect(await commitThroughDoor(root, [{ path: join(root, 'notes/a.md'), planned: sha256('door\n') }])).toBe(git(root, 'rev-parse', 'HEAD'));
+    expect(git(root, 'rev-parse', ':notes/a.md')).toBe(git(root, 'rev-parse', 'HEAD:notes/a.md'));
+    expect(leftovers(root)).toEqual([live]);
+  });
+
+  // Value: protects=a dead process's leftover the sweep cannot remove (a directory here; EBUSY or EPERM on Windows) never fails the refresh
+  //   of a commit that landed (#7755 review); fails_when=the sweep's removal error ends the write with the landed git_unavailable failure and
+  //   leaves the index behind HEAD on every later write; why_new=the sweep test plants only removable files; seam=none; no_claim=a real EBUSY
+  test('a stale index copy the sweep cannot remove is left in place and the refresh still completes', async () => {
+    const root = seeded(), gitDir = join(root, '.git');
+    const dead = spawnSync('true').pid;
+    const stuck = `index.gbrain-${dead}-0123456789ab`;
+    mkdirSync(join(gitDir, stuck));
+    writeFileSync(join(gitDir, stuck, 'x'), 'x');
+    writeFileSync(join(root, 'notes/a.md'), 'door\n');
+    expect(await commitThroughDoor(root, [{ path: join(root, 'notes/a.md'), planned: sha256('door\n') }])).toBe(git(root, 'rev-parse', 'HEAD'));
+    expect(git(root, 'rev-parse', ':notes/a.md')).toBe(git(root, 'rev-parse', 'HEAD:notes/a.md'));
+    expect(leftovers(root)).toEqual([stuck]);
+  });
+
+  // Value: protects=on win32 a transient sharing violation (EPERM, EBUSY, EACCES) on the renames that commit the refreshed index is retried,
+  //   as Git for Windows retries its own, while other platforms fail at once as before (#7756); fails_when=one refused rename ends the write
+  //   with the landed failure on Windows, or a retry runs elsewhere; why_new=no Windows path was tested; seam=indexCommitIo (rename, platform);
+  //   no_claim=a real Windows sharing violation
+  for (const platform of ['win32', 'linux'] as const) test(`a transiently refused index rename is retried on win32 only (${platform})`, async () => {
+    const root = seeded(), before = git(root, 'rev-parse', ':notes/a.md');
+    const renames: string[] = [];
+    let refused = 0;
+    Object.assign(indexCommitIo, { platform, rename: (from: string, to: string) => {
+      renames.push(basename(to));
+      if (refused++ < 2) throw Object.assign(new Error(`EPERM: operation not permitted, rename '${from}' -> '${to}'`), { code: 'EPERM' });
+      renameSync(from, to);
+    } });
+    writeFileSync(join(root, 'notes/a.md'), 'door\n');
+    const error = await refusal(commitThroughDoor(root, [{ path: join(root, 'notes/a.md'), planned: sha256('door\n') }]));
+    expect(git(root, 'show', 'HEAD:notes/a.md')).toBe('door');
+    if (platform === 'win32') {
+      expect(error).toBeNull();
+      expect(renames).toEqual(['index.lock', 'index.lock', 'index.lock', 'index']);
+      expect(git(root, 'rev-parse', ':notes/a.md')).toBe(git(root, 'rev-parse', 'HEAD:notes/a.md'));
+    } else {
+      expect(error).toMatchObject({ code: 'git_unavailable', message: expect.stringContaining('landed, but the index'), suggestion: expect.stringContaining('EPERM') });
+      expect(renames).toEqual(['index.lock']);
+      expect(git(root, 'rev-parse', ':notes/a.md')).toBe(before);
+    }
+    expect(leftovers(root)).toEqual([]);
+  });
+
+  // Value: protects=the door keeps its index.lock descriptor open while it refreshes the index, so the #6932 abandoned-lock proof run at that
+  //   moment (an aged, empty lock, no git child running) names this process as the holder and never counts the lock abandoned (#7757);
+  //   fails_when=the descriptor is closed right after the create; why_new=every other door test passes with it closed early;
+  //   seam=doorSeams.indexLockHeld; no_claim=hosts where the proof cannot see every process (the test skips there)
+  test.skipIf(processTableBlind() !== null)('the door holds its index.lock open during the refresh, so the abandoned-lock proof finds it held', async () => {
+    const root = seeded(), lock = join(root, '.git', 'index.lock');
+    let verdict: IndexLockVerdict | undefined;
+    doorSeams.indexLockHeld = held => {
+      const old = new Date(Date.now() - 60_000);
+      utimesSync(held, old, old);
+      verdict = proveIndexLockAbandoned(held, root, INDEX_LOCK_GRACE_FOR_TESTS);
+    };
+    writeFileSync(join(root, 'notes/a.md'), 'door\n');
+    expect(await commitThroughDoor(root, [{ path: join(root, 'notes/a.md'), planned: sha256('door\n') }])).toBe(git(root, 'rev-parse', 'HEAD'));
+    expect(verdict).toEqual({ abandoned: false, reason: expect.stringMatching(new RegExp(`^process ${process.pid} \\(.*\\) has the lock open$`)) });
+    expect(existsSync(lock)).toBe(false);
+    expect(git(root, 'rev-parse', ':notes/a.md')).toBe(git(root, 'rev-parse', 'HEAD:notes/a.md'));
+  });
+
+  // Value: protects=a close of the held index.lock that fails (EIO on a network filesystem) still ends in the landed failure and removes the
+  //   lock and the index copy (#7758); fails_when=the finally closes the released descriptor again, its EBADF escapes the landed failure and
+  //   skips the cleanup; why_new=no close failure was tested; seam=indexCommitIo.close; no_claim=a real EIO
+  test('a failed close of the held index.lock still reports the landed commit and leaves no lock or index copy', async () => {
+    const root = seeded(), before = git(root, 'rev-parse', ':notes/a.md');
+    indexCommitIo.close = (fd: number) => { closeSync(fd); throw Object.assign(new Error('EIO: i/o error, close'), { code: 'EIO' }); };
+    writeFileSync(join(root, 'notes/a.md'), 'door\n');
+    const error = await refusal(commitThroughDoor(root, [{ path: join(root, 'notes/a.md'), planned: sha256('door\n') }]));
+    expect(error).toMatchObject({ code: 'git_unavailable', message: expect.stringContaining('landed, but the index'), suggestion: expect.stringContaining('EIO') });
+    expect(git(root, 'show', 'HEAD:notes/a.md')).toBe('door');
+    expect(git(root, 'rev-parse', ':notes/a.md')).toBe(before);
+    expect(leftovers(root)).toEqual([]);
   });
 });

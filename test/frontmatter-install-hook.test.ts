@@ -545,4 +545,21 @@ describe('frontmatter install-hook (B13)', () => {
       rmSync(bin, { recursive: true, force: true });
     }
   }, 60_000);
+
+  test('#7793: with the real CLI, a valid staged page passes when git runs the hook with --literal-pathspecs (GIT_LITERAL_PATHSPECS=1)', async () => {
+    await install(tmp);
+    const bin = mkdtempSync(join(tmpdir(), 'fm-hook-literal-'));
+    writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\nexec '${process.execPath}' '${join(import.meta.dir, '..', 'src', 'cli.ts')}' "$@"\n`, { mode: 0o755 });
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, GBRAIN_HOME: join(bin, 'home'), DATABASE_URL: '', GBRAIN_DATABASE_URL: '', GBRAIN_SKIP_STARTUP_HOOKS: '1', GIT_LITERAL_PATHSPECS: '1' };
+    try {
+      writeFileSync(join(tmp, 'note.md'), '---\ntitle: "a: b"\ntype: note\n---\n\nbody\n');
+      execFileSync('git', ['-C', tmp, 'add', 'note.md']);
+      let run = { status: 0, stderr: '' };
+      try { execFileSync('sh', [join(tmp, '.githooks', 'pre-commit')], { cwd: tmp, env, stdio: 'pipe' }); }
+      catch (e) { run = { status: (e as { status: number }).status, stderr: String((e as { stderr: Buffer }).stderr) }; }
+      expect(run).toEqual({ status: 0, stderr: '' });
+    } finally {
+      rmSync(bin, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

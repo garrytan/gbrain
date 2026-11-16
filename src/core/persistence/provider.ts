@@ -8,7 +8,8 @@ import { dispatchToolCall } from '../../mcp/dispatch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import { startPersistenceConsumer, assertPersistenceAccepting } from './service.ts';
 import { isWriteErrorCode, isWriteReceipt } from './types.ts';
-import { LOCAL_CLI_OWNER_OPERATIONS, restoreRecoveryContract, type PersistenceIpcProvider } from './ipc.ts';
+import { LOCAL_CLI_OWNER_OPERATIONS, PERSISTENCE_ROOM_MARKED_KEY, restoreRecoveryContract, type PersistenceIpcProvider } from './ipc.ts';
+import { currentCallerAccess } from '../search/private-visibility.ts';
 import { runPersistenceAdministration } from './administration.ts';
 import { boundedWriteWaitMs } from './write-wait.ts';
 export { residentPersistenceConfig } from './local-client.ts';
@@ -89,9 +90,19 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
       ...(unrestricted ? {} : { localFederatedSourceIds: verified.grant.sourceIds }),
     });
     const body = JSON.parse(result.content[0].text) as Record<string, unknown>;
-    if (!result.isError) return body;
+    // GBRA-498: the trusted local CLI's --room is marked here, where the brain is; any other lane's answer goes back
+    // unmarked and the CLI marks every item unknown.
+    const answer = async (): Promise<unknown> => {
+      if (request.room === undefined || verified.remote || verified.principal.kind !== 'local_cli') return body;
+      const { assessRoom, readRoomDeclaration } = await import('../access/room.ts');
+      const room = await assessRoom(engine, { op: request.operation, result: body, sourceId,
+        declaration: readRoomDeclaration({ requestMeta: { room: request.room } }, undefined).declaration!,
+        caller: { access: currentCallerAccess(), transport: 'cli', local: true } });
+      return { [PERSISTENCE_ROOM_MARKED_KEY]: { result: room.result, meta: room.meta, notices: room.stamped } };
+    };
+    if (!result.isError) return answer();
     // GST-1387: a remember batch with a failed item keeps every item's receipt; the CLI exits 1 on its status.
-    if (Array.isArray(body.items) && body.status === 'error') return body;
+    if (Array.isArray(body.items) && body.status === 'error') return answer();
     const error = new OperationError(typeof body.error === 'string' ? body.error : 'unavailable',
       typeof body.message === 'string' ? body.message : 'The local operation could not complete.',
       typeof body.suggestion === 'string' ? body.suggestion : undefined);

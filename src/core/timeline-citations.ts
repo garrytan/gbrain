@@ -1,3 +1,4 @@
+import { inlineCodeSpans } from './fence-scan.ts';
 import { stripCodeBlocks } from './markdown-code.ts';
 
 const CITATION_TIMELINE_RE = /\[Source:\s*([^\]]+?,\s*\d{4}-\d{2}-\d{2})\s*\]/g;
@@ -48,7 +49,37 @@ export interface InlineCitationTimelineCandidate {
 }
 
 interface CitationParagraph {
+  /** Code masked: where citations are found. */
   text: string;
+  /** The same lines with each inline code span as a placeholder for its text in `codes` (#8893). */
+  withCode: string;
+  codes: string[];
+}
+
+const CODE_PLACEHOLDER_RE = /\uE000(\d+)\uE001/g;
+
+/**
+ * #8893: `masked` (stripCodeBlocks of `raw`, same length) with each same-line
+ * inline span it blanked replaced by a placeholder for the span's text, so
+ * summary rewriting never touches code and fenced text never comes back. A
+ * span holding citation or comment markup stays blank: that is markup quoted
+ * as an example, never summary text. Placeholder characters already in the
+ * text become spaces, so only ours are restored. Linear in the line.
+ */
+function placeInlineCode(raw: string, masked: string, codes: string[]): string {
+  const plain = (text: string) => text.replace(/[\uE000\uE001]/g, ' ');
+  let out = '';
+  let at = 0;
+  for (const [start, end] of inlineCodeSpans(raw)) {
+    if (masked.slice(start, end).trim()) continue;
+    const run = /^`+/.exec(raw.slice(start, end))![0].length;
+    const inner = raw.slice(start + run, end - run);
+    if (/\[Source:|<!--|-->/.test(inner)) continue;
+    const padded = inner.length > 2 && inner.startsWith(' ') && inner.endsWith(' ') && inner.trim() !== '';
+    out += `${plain(masked.slice(at, start))}\uE000${codes.push(plain(padded ? inner.slice(1, -1) : inner)) - 1}\uE001`;
+    at = end;
+  }
+  return out + plain(masked.slice(at));
 }
 
 /** #6184: HTML comments (section markers, materialized-row markers) are markup, never summary text. */
@@ -87,18 +118,24 @@ function startsMarkdownBlock(line: string): boolean {
 function citationParagraphs(
   content: string,
   opts: { skipLine?: (line: string) => boolean } = {},
+  keepCode = false,
 ): CitationParagraph[] {
   const paragraphs: CitationParagraph[] = [];
   let lines: string[] = [];
+  let codeLines: string[] = [];
+  let codes: string[] = [];
   let skippedBlock = false;
 
   const flush = () => {
     if (lines.length === 0) return;
-    paragraphs.push({ text: lines.map((line) => line.trim()).join(' ') });
+    paragraphs.push({ text: lines.map((line) => line.trim()).join(' '), withCode: codeLines.map((line) => line.trim()).join(' '), codes });
     lines = [];
+    codeLines = [];
+    codes = [];
   };
 
-  for (const line of stripCodeBlocks(content).split(/\r?\n/)) {
+  const rawLines = keepCode ? content.split(/\r?\n/) : [];
+  for (const [index, line] of stripCodeBlocks(content).split(/\r?\n/).entries()) {
     if (line.trim().length === 0 || isCommentOnlyLine(line)) {
       flush();
       continue;
@@ -113,6 +150,7 @@ function citationParagraphs(
     skippedBlock = false;
     if (lines.length > 0 && startsMarkdownBlock(line)) flush();
     lines.push(line);
+    if (keepCode) codeLines.push(placeInlineCode(rawLines[index] ?? line, line, codes));
   }
   flush();
 
@@ -121,19 +159,28 @@ function citationParagraphs(
 
 type CitationOpts = { skipLine?: (line: string) => boolean };
 
-function readCitations(content: string, opts: CitationOpts, legacy: boolean): InlineCitationTimelineCandidate[] {
+/**
+ * `current` keeps inline code text (#8893); `code_masked` is the reading before
+ * it (inline code blanked); `legacy` the one before #6226 (code blanked, the
+ * whole citation body one source, emphasis kept).
+ */
+type CitationReading = 'current' | 'code_masked' | 'legacy';
+
+function readCitations(content: string, opts: CitationOpts, reading: CitationReading): InlineCitationTimelineCandidate[] {
+  const legacy = reading === 'legacy';
   const result: InlineCitationTimelineCandidate[] = [];
   if (!content.includes('[Source:')) return result;
-  for (const paragraph of citationParagraphs(content, opts)) {
+  const summaryOf = (text: string, codes?: string[]) => {
+    const stripped = stripHtmlComments(text).replace(/\[Source:[^\]]*\](?:\((?:[^()]|\([^()]*\))*\))?/g, '');
+    const lead = (legacy ? stripped : unwrapEmphasis(stripped)).replace(/^[-*>#\s]+/, '');
+    return (codes ? lead.replace(CODE_PLACEHOLDER_RE, (_, i: string) => codes[Number(i)]!) : lead).replace(/\s+/g, ' ').trim().slice(0, 300);
+  };
+  for (const paragraph of citationParagraphs(content, opts, reading === 'current')) {
     const matches = [...paragraph.text.matchAll(CITATION_TIMELINE_RE)];
     if (matches.length === 0) continue;
-    const text = stripHtmlComments(paragraph.text)
-      .replace(/\[Source:[^\]]*\](?:\((?:[^()]|\([^()]*\))*\))?/g, '');
-    const summary = (legacy ? text : unwrapEmphasis(text))
-      .replace(/^[-*>#\s]+/, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 300);
+    const withCode = reading === 'current' ? summaryOf(paragraph.withCode, paragraph.codes) : '';
+    // Restored code that completes citation or comment markup running outside its span reads as the masked text did.
+    const summary = withCode && !/\[Source:|<!--|-->/.test(withCode) ? withCode : summaryOf(paragraph.text);
     if (!summary) continue;
     const seen = new Set<string>();
     for (const m of matches) {
@@ -154,22 +201,27 @@ function readCitations(content: string, opts: CitationOpts, legacy: boolean): In
  * One entry per dated source of each `[Source: …, YYYY-MM-DD]` citation
  * (#6226: `[Source: A, 2026-10-06; B, 2026-09-28]` files A on 2026-10-06 and
  * B on 2026-09-28), summarized by the paragraph it annotates with citations,
- * HTML comments (#6184) and paired emphasis removed.
+ * HTML comments (#6184), paired emphasis and inline-code backticks removed.
  */
 export function parseInlineCitationTimelineEntries(content: string, opts: CitationOpts = {}): InlineCitationTimelineCandidate[] {
-  return readCitations(content, opts, false);
+  return readCitations(content, opts, 'current');
 }
 
 /**
- * The entries the reading before #6226 filed for `content` (a multi-source
- * citation as one source with its final date, emphasis kept) that the
- * current reading no longer produces. Stored rows equal to one of them are
+ * The entries the older readings filed for `content` (before #8893 inline
+ * code blanked; before #6226 also a multi-source citation as one source with
+ * its final date, emphasis kept) that the current reading no longer produces. Stored rows equal to one of them are
  * that older reading's output, so projection and retraction can retire them
  * instead of writing them back into the page.
  */
 export function supersededInlineCitationEntries(content: string, opts: CitationOpts = {}): InlineCitationTimelineCandidate[] {
-  const current = new Set(readCitations(content, opts, false).map(e => JSON.stringify([e.date, e.source, e.summary])));
-  return readCitations(content, opts, true).filter(e => !current.has(JSON.stringify([e.date, e.source, e.summary])));
+  const seen = new Set(readCitations(content, opts, 'current').map(e => JSON.stringify([e.date, e.source, e.summary])));
+  return [...readCitations(content, opts, 'code_masked'), ...readCitations(content, opts, 'legacy')].filter((e) => {
+    const key = JSON.stringify([e.date, e.source, e.summary]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export function isValidDate(s: string): boolean {

@@ -10,6 +10,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import type { DiscoveredTranscript } from './transcript-discovery.ts';
+import type { PhaseResult } from '../cycle.ts';
 
 /**
  * #5145: split transcripts into already-synthesized and candidates BEFORE the
@@ -144,6 +145,42 @@ async function loadSuccessfulSynthesisKeys(
 }
 
 /**
+ * #6753: the synth-v2 completions of the source recorded within the last `hours`, with when each finished: completed
+ * subagent jobs and the durable completion archive. Failed, cancelled and still-running jobs are not completions.
+ */
+export async function recentSynthesisCompletions(engine: BrainEngine, sourceId: string, hours: number): Promise<Array<{ key: string; at: number }>> {
+  if (hours <= 0) return [];
+  const rows = await engine.executeRaw<{ idempotency_key: string; at: string | Date }>(
+    `SELECT idempotency_key, finished_at AS at FROM minion_jobs
+      WHERE name = 'subagent' AND status = 'completed' AND finished_at > now() - ($3 || ' hours')::interval
+        AND COALESCE(NULLIF(data->>'source_id', ''), 'default') = $1 AND idempotency_key LIKE $2
+     UNION ALL
+     SELECT idempotency_key, completed_at FROM dream_synthesis_completions
+      WHERE source_id = $1 AND idempotency_key LIKE $2 AND completed_at > now() - ($3 || ' hours')::interval`,
+    [sourceId, 'dream:synth-v2:%', String(hours)],
+  );
+  return rows.map(row => ({ key: row.idempotency_key, at: new Date(row.at).getTime() }));
+}
+
+/**
+ * #6753: a growing transcript (a live session) has a new content hash on every pass, so its completion key never
+ * matches and it was synthesized again in full each time. When another version of the same file completed in full
+ * (single or a whole chunk set, as findSynthV2Completion counts it) within `hours`, the current version waits: the
+ * ISO time the hold ends, else null. The hold only delays; once it ends the current version synthesizes once, whole.
+ */
+export function resynthesisHoldUntil(recent: Array<{ key: string; at: number }>, filePath: string, hash16: string,
+  sourceId: string, hours: number): string | null {
+  const prefix = `dream:synth-v2:${encodeURIComponent(sourceId)}:filename:${encodeURIComponent(basename(filePath))}:`;
+  const mine = recent.filter(r => r.key.startsWith(prefix));
+  let latest = 0;
+  for (const other of new Set(mine.map(r => r.key.slice(prefix.length, prefix.length + 16)))) {
+    if (other === hash16 || !findSynthV2Completion(mine.map(r => r.key), filePath, other, sourceId)) continue;
+    for (const r of mine) if (r.key.startsWith(prefix + other)) latest = Math.max(latest, r.at);
+  }
+  return latest > 0 ? new Date(latest + hours * 3_600_000).toISOString() : null;
+}
+
+/**
  * Mirror of findLegacyCompletion for the synth-v2 key family (grammar as
  * produced by the submit loop / parsed by `parseSynthV2Key`): `'single'` when
  * the unchunked key completed, `'chunked'` when a FULL `:c0of<n>`..`:c<n-1>of<n>`
@@ -211,4 +248,46 @@ export function findLegacyCompletion(
     if (seen.size === n) return 'chunked';
   }
   return null;
+}
+
+/**
+ * #5848: the synthesize result for a window with zero candidates: no model call, no queue, no budget spend. Status
+ * stays ok (not skipped) so finishDeferredPostprocess still finishes outputs an earlier pass deferred (#6757).
+ */
+export function noCandidates(summary: string, details: Record<string, unknown>): PhaseResult {
+  return { phase: 'synthesize', status: 'ok', duration_ms: 0, summary, details: { reason: 'no_candidates', transcripts_processed: 0, pages_written: 0, ...details } };
+}
+
+/**
+ * #5848: a classic real run whose every discovered transcript is already synthesized returns here, before triage,
+ * the manifest context and the fan-out; it stamps the cooldown as a fully completed run would and reports each
+ * transcript's skip reason. A managed run never comes here: it re-attaches completed children for publication.
+ */
+export async function noNewTranscripts(engine: BrainEngine, transcripts: DiscoveredTranscript[],
+  partition: Pick<Awaited<ReturnType<typeof partitionCompletedSynthesis>>, 'retainedSkips' | 'successfulV2Keys' | 'synthesisIdentity'>): Promise<PhaseResult> {
+  await engine.setConfig('dream.synthesize.last_completion_ts', new Date().toISOString());
+  const skips = transcripts.map(t => ({ filePath: t.filePath, reason: partition.retainedSkips.get(t.filePath)
+    ?? (findSynthV2Completion(partition.successfulV2Keys, t.filePath, t.contentHash.slice(0, 16), partition.synthesisIdentity) === 'chunked'
+      ? 'already_synthesized_v2_chunked' : 'already_synthesized_v2_single_chunk') }));
+  return noCandidates(`no new transcripts to synthesize (${transcripts.length} already synthesized)`, { transcripts_discovered: transcripts.length,
+    synthesis_state: { candidates: 0, already_synthesized: transcripts.length }, children_submitted: 0, skips });
+}
+
+/**
+ * #6753: the per-transcript re-synthesis hold for one run, read once: a function giving the `resynthesis_cooldown`
+ * skip reason for a transcript an earlier version of which completed within `hours`, else null. Zero hours (an explicit
+ * --input/--date run, or a cooldown of 0) holds nothing.
+ */
+export async function resynthesisHold(engine: BrainEngine, sourceId: string, hours: number): Promise<(filePath: string, hash16: string, identity: string) => string | null> {
+  const recent = await recentSynthesisCompletions(engine, sourceId, hours);
+  return (filePath, hash16, identity) => {
+    const until = resynthesisHoldUntil(recent, filePath, hash16, identity, hours);
+    return until && `resynthesis_cooldown: an earlier version of this transcript was synthesized within ${hours}h; the current version synthesizes after ${until}`;
+  };
+}
+
+/** #6753: the summary's note of transcripts held by the per-transcript re-synthesis hold, empty when none. */
+export function resynthesisHoldSuffix(skips: Array<{ reason: string }>): string {
+  const held = skips.filter(s => s.reason.startsWith('resynthesis_cooldown')).length;
+  return held ? ` (${held} grown transcript(s) held by resynthesis_cooldown)` : '';
 }

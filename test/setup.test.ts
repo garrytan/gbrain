@@ -19,9 +19,9 @@
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { createServer, type Server } from 'node:net';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { runCli, type CliResult } from './helpers/cli-spawn.ts';
 import { hookEntryHash, removeClaudeHooksAt, writeClaudeHooksAt } from '../src/core/bootstrap/hooks.ts';
 import { GBRAIN_HOOK_MARKER_VALUE } from '../src/core/bootstrap/host-specs.ts';
@@ -38,6 +38,7 @@ import { hookLauncherFix, hookLauncherProblems } from '../src/commands/doctor/ch
 import { launcherLaneFindings, setupRerunArgv } from '../src/core/setup/launcher-lanes.ts';
 import { harnessWiringEntry } from '../src/core/readiness.ts';
 import { applyClaudeSetup, readSetupReceipt } from '../src/core/setup/claude-code.ts';
+import { CODEX_FORWARDED_PROVIDER_ENV } from '../src/core/setup/codex.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
 const roots: string[] = [];
@@ -99,6 +100,7 @@ describe('gbrain setup claude-code: install lifecycle', () => {
     expect(bundle).toMatchObject({ code: 'first_run_decisions', kind: 'ask' });
     expect(bundle.decisions.map((d: any) => d.id)).not.toContain('harness_wiring');
     expect(bundle.user_message).not.toContain("Reply 'defaults'");
+    expect(bundle.user_message).toContain('Report back (Wakeshift): off. gbrain wakeshift enable turns it on.');
 
     const before = [readFileSync(claudeJson(b), 'utf8'), readFileSync(settings(b), 'utf8'), readFileSync(receipt(b), 'utf8')];
     const second = await setup(b, ['claude-code', '--json']);
@@ -129,11 +131,16 @@ describe('gbrain setup claude-code: install lifecycle', () => {
     expect(next).toBeGreaterThan(-1);
     expect(block).toBeGreaterThan(next);
     expect(r.stdout.match(/\[AGENT\]/g)).toHaveLength(2);
+    const optIns = r.stdout.indexOf('Opt-ins (nothing is on until you turn it on)');
+    expect(optIns).toBeGreaterThan(next);
+    expect(optIns).toBeLessThan(block);
+    expect(r.stdout.match(/INSTALL_FOR_AGENTS\.md#opt-ins/g)).toHaveLength(1);
     const hosted = r.stdout.indexOf('[hosted_option]');
     expect(r.stdout.indexOf('[first_run_decisions]')).toBeGreaterThan(next);
     expect(hosted).toBeGreaterThan(r.stdout.indexOf('[first_run_decisions]'));
     expect(r.stdout.slice(block, hosted)).toContain('in the reply that reports this install');
     expect(r.stdout.slice(block, hosted)).toContain('(id: search_mode)');
+    expect(r.stdout.slice(block, hosted)).toContain('Report back (Wakeshift): off. gbrain wakeshift enable turns it on.');
     expect(r.stdout.slice(hosted)).toContain('https://gbrain.io/?ref=cli-setup');
     expect(r.stdout.trimEnd().endsWith('[/AGENT]')).toBe(true);
   });
@@ -557,8 +564,10 @@ describe('gbrain setup codex: install lifecycle', () => {
     expect(first.doc.states).toEqual(['configured', 'connection-verified', 'native-verified']);
     expect(first.doc.capability).toMatchObject({ harness: 'codex', setup: 'supported', push: 'native-verified', read_events: ['SessionStart', 'UserPromptSubmit'] });
     expect(first.doc.consent.capture).toMatchObject({ value: 'declined', source: 'default' });
+    expect(first.doc.notices.find((n: any) => n.code === 'first_run_decisions').user_message).toContain('Report back (Wakeshift): off. gbrain wakeshift enable turns it on.');
     expect(readJson(join(b.gbrainHome, '.gbrain', 'config.json')).embedding_disabled).toBe(true);
-    expect(toml(b).mcp_servers.gbrain).toEqual({ command: launcher(b), args: [b.bin, 'serve', '--surface', 'starter', '--advertise', 'verbs'], env: { GBRAIN_HOME: b.gbrainHome } });
+    expect(toml(b).mcp_servers.gbrain).toEqual({ command: launcher(b), args: [b.bin, 'serve', '--surface', 'starter', '--advertise', 'verbs'], env: { GBRAIN_HOME: b.gbrainHome },
+      env_vars: [...CODEX_FORWARDED_PROVIDER_ENV] });
     expect(Object.keys(readJson(hooksJson(b)).hooks).sort()).toEqual(['SessionStart', 'UserPromptSubmit']);
     expect(groups(b, 'UserPromptSubmit')).toEqual([{ hooks: [{ type: 'command', timeout: 15,
       command: `env GBRAIN_HOOK_LANE=setup GBRAIN_HOME=${b.gbrainHome} ${b.gbrainHome}/.gbrain/hook-launcher/gbrain-hook ${b.bin} hook user-prompt --harness codex` }] }]);
@@ -573,6 +582,23 @@ describe('gbrain setup codex: install lifecycle', () => {
     expect(second.exitCode).toBe(0);
     expect(second.doc.steps.map((s: any) => [s.step, s.action])).toEqual([['receipt', 'keep'], ['mcp', 'keep'], ['hooks', 'keep'], ['trust', 'keep']]);
     expect([codexToml(b), hooksJson(b), codexReceipt(b)].map((p) => readFileSync(p, 'utf8'))).toEqual(before);
+  });
+
+  test('an install that changes an existing config.toml or hooks.json keeps a timestamped .bak of each and names it', async () => {
+    const b = box();
+    mkdirSync(codexDir(b), { recursive: true });
+    const foreignToml = 'model = "o5"\n';
+    const foreignHooks = JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'echo user-hook', timeout: 2 }] }] } }, null, 2);
+    writeFileSync(codexToml(b), foreignToml);
+    writeFileSync(hooksJson(b), foreignHooks);
+    const installed = await setup(b, ['codex', '--json']);
+    expect(installed.exitCode, installed.stderr).toBe(0);
+    for (const [file, original] of [[codexToml(b), foreignToml], [hooksJson(b), foreignHooks]] as const) {
+      const backups = readdirSync(codexDir(b)).filter((n) => n.startsWith(`${basename(file)}.bak.`));
+      expect(backups).toHaveLength(1);
+      expect(readFileSync(join(codexDir(b), backups[0]!), 'utf8')).toBe(original);
+      expect(installed.doc.notes.join('\n')).toContain(join(codexDir(b), backups[0]!));
+    }
   });
 
   test('--remove deletes exactly the owned entries; foreign config, hooks, trust entries and the brain stay byte-for-byte', async () => {
@@ -725,7 +751,7 @@ describe('gbrain setup codex: install lifecycle', () => {
     expect(readFileSync(codexToml(b), 'utf8')).toBe(foreign);
     expect(existsSync(hooksJson(b))).toBe(false);
 
-    const same = `[mcp_servers.gbrain]\ncommand = ${JSON.stringify(launcher(b))}\nargs = [${JSON.stringify(b.bin)}, "serve", "--surface", "starter"]\nenv = { GBRAIN_HOME = ${JSON.stringify(b.gbrainHome)} }\n`;
+    const same = `[mcp_servers.gbrain]\ncommand = ${JSON.stringify(launcher(b))}\nargs = [${JSON.stringify(b.bin)}, "serve", "--surface", "starter"]\nenv = { GBRAIN_HOME = ${JSON.stringify(b.gbrainHome)} }\nenv_vars = [${CODEX_FORWARDED_PROVIDER_ENV.map(n => JSON.stringify(n)).join(', ')}]\n`;
     writeFileSync(codexToml(b), same);
     expect((await setup(b, ['codex'])).exitCode).toBe(0);
     expect(readJson(codexReceipt(b)).mcp_adopted).toBe(true);

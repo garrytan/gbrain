@@ -65,9 +65,10 @@ export function mountAdminAccess(app: Express, requireAdmin: RequestHandler, eng
   });
 
   app.post('/admin/api/access/attest', requireAdmin, express.json(), async (req, res) => {
-    const { clientId, attestActor, attestOps, dryRun } = req.body ?? {};
+    const { clientId, attestActor, attestOps, attestRead, dryRun } = req.body ?? {};
     if (typeof clientId !== 'string' || !clientId) return refuse(res, 'clientId required.');
-    if (attestActor === undefined && attestOps === undefined) return refuse(res, 'Pass attestActor (qm or null) and/or attestOps.');
+    if (attestActor === undefined && attestOps === undefined && attestRead === undefined) return refuse(res, 'Pass attestActor (qm or null), attestOps and/or attestRead.');
+    if (attestRead !== undefined && attestRead !== null && attestRead !== 'person' && attestRead !== 'scope') return refuse(res, 'attestRead must be person or scope, or null for the default (scope).');
     if (attestActor !== undefined && attestActor !== null && !ATTEST_SYSTEMS.includes(attestActor)) return refuse(res, `attestActor must be ${ATTEST_SYSTEMS.join(' or ')}, or null to clear the right.`);
     if (attestOps !== undefined && attestOps !== null && !(Array.isArray(attestOps) && attestOps.every((op: unknown) => typeof op === 'string'))) return refuse(res, 'attestOps must be an array of operation names, or null for the default.');
     if (dryRun !== undefined && typeof dryRun !== 'boolean') return refuse(res, 'dryRun must be a boolean.');
@@ -75,10 +76,11 @@ export function mountAdminAccess(app: Express, requireAdmin: RequestHandler, eng
       const patch: BindingPatch = {
         ...(attestActor !== undefined ? { attestActor } : {}),
         ...(attestOps !== undefined ? { attestOps: attestOps === null ? null : parseAttestOps(attestOps.join(','), name => operationsByName[name]) } : {}),
+        ...(attestRead !== undefined ? { attestRead } : {}),
       };
       const result = await bindCredential(engine, { kind: 'client', id: clientId }, patch, { dryRun });
-      if (result.changed && !dryRun) await audit(engine, 'client_attest', { client_id: clientId, attest_actor: result.attest_actor ?? null, attest_ops: result.attest_ops ?? null });
-      return { applied: result.changed && dryRun !== true, client_id: clientId, attest_actor: result.attest_actor ?? null, attest_ops: result.attest_ops ?? null, changed: result.changed,
+      if (result.changed && !dryRun) await audit(engine, 'client_attest', { client_id: clientId, attest_actor: result.attest_actor ?? null, attest_ops: result.attest_ops ?? null, attest_read: result.attest_read ?? null });
+      return { applied: result.changed && dryRun !== true, client_id: clientId, attest_actor: result.attest_actor ?? null, attest_ops: result.attest_ops ?? null, attest_read: result.attest_read ?? null, changed: result.changed,
         tokenImplications: 'Takes effect on the next request; a client that newly holds the right takes a new token with grant_type=client_credentials.' };
     });
   });

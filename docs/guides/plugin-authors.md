@@ -51,7 +51,7 @@ a 3-sentence summary.
 ```bash
 export GBRAIN_PLUGIN_PATH="/path/to/my-plugin"
 gbrain jobs work           # worker startup prints the plugin load line
-gbrain agent run "summarize meetings/2026-04-20" --subagent-def my-summarizer
+gbrain agent run --subagent-def my-summarizer "summarize meetings/2026-04-20"
 ```
 
 Multiple plugins: colon-separated, just like `$PATH`.

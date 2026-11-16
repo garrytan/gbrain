@@ -131,7 +131,7 @@ export function coverage(runs: Run[]): Coverage {
 export function classify(jobs: Job[]): keyof Omit<Classification, 'unread'> {
   const failing = jobs.filter(j => (j.conclusion === 'failure' || j.conclusion === 'timed_out' || j.conclusion === 'startup_failure') && !AGGREGATORS.has(j.name));
   if (failing.length && failing.every(j => j.name === STRESS_JOB)) return 'stress_gate';
-  const setup = /^(set up job|initialize containers|.*(install|checkout|setup-bun|cache|download|docker|service).*)$/i;
+  const setup = /^(set up job|initialize containers|.*(install|check ?out|setup-bun|cache|download|docker|service).*)$/i;
   if (failing.some(j => j.conclusion !== 'failure' || (j.steps ?? []).some(s => s.conclusion === 'failure' && setup.test(s.name)))) return 'infrastructure';
   return 'test';
 }

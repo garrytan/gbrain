@@ -522,8 +522,10 @@ rollout rather than one batch.
 ### Hermetic claude-cli rollouts (`CLAUDE_CONFIG_DIR` recipe)
 
 When the target model routes through the `claude-cli:` recipe, each rollout
-child inherits the operator's user-level `~/.claude` state — CLAUDE.md
-memory, `settings.json`, hooks. That contaminates measurements: a skill can
+child inherits the operator's user-level `~/.claude` state: on Claude Code
+older than 2.1.314 that includes CLAUDE.md memory and `settings.json` (newer
+CLIs get `--setting-sources ""`, which keeps those out), and on every version
+the rest of the config dir. That contaminates measurements: a skill can
 score well only because YOUR user-level instructions carried it. For hermetic
 runs, set:
 

@@ -27,6 +27,13 @@
         },
         {
           "handlers": [
+            "mcpForegroundMiddleware"
+          ],
+          "method": "use",
+          "path": "/mcp"
+        },
+        {
+          "handlers": [
             "corsMiddleware"
           ],
           "method": "use",
@@ -774,6 +781,13 @@
           ],
           "method": "use",
           "path": null
+        },
+        {
+          "handlers": [
+            "mcpForegroundMiddleware"
+          ],
+          "method": "use",
+          "path": "/mcp"
         },
         {
           "handlers": [

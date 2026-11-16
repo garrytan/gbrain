@@ -5,8 +5,10 @@ import type { BrainEngine } from '../engine.ts';
 import type { SqlEngine } from './model.ts';
 import { repairWedgedReservation, resolveCoordinationLock } from './coordination-lock.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
-import { adoptTransferredRootStamp, assertNoPhysicalRootOverlap, assertPhysicalRoot, assertPhysicalRootStamp, PHYSICAL_ROOT_MARKER, physicalRootDeviceChange, physicalRootError,
-  readPhysicalRootReservation, readPhysicalRootStamp, reservePhysicalRootRecord, restampPhysicalRootDevice, samePhysicalBirth, writePhysicalRootStamp, type PhysicalRootReservation } from './physical-root-record.ts';
+import type { OperationError } from '../ops/contract.ts';
+import { adoptTransferredRootStamp, assertNoPhysicalRootOverlap, assertPhysicalRoot, assertPhysicalRootStamp, describeMovedPhysicalRoot, PHYSICAL_ROOT_MARKER, physicalRootDeviceChange, physicalRootError,
+  physicalRootMovedError, physicalRootMovedRefusal, readPhysicalRootReservation, readPhysicalRootStamp, reservePhysicalRootRecord, restampPhysicalRootDevice, samePhysicalBirth, writePhysicalRootStamp,
+  type MovedPhysicalRoot, type PhysicalRootReservation } from './physical-root-record.ts';
 
 export { assertPhysicalRoot, isPhysicalRootMetadata, readPhysicalRootReservation } from './physical-root-record.ts';
 export interface PhysicalRootClaim { hostId: string; worktreeId?: string; coordinationPath?: string; }
@@ -26,14 +28,38 @@ export async function reservePhysicalRoot(tx: SqlEngine, path: string, opts: Phy
   const previous = readPhysicalRootReservation(root);
   const worktreeId = opts.worktreeId ?? previous?.worktreeId ?? randomUUID();
   const coordinationPath = opts.coordinationPath ?? resolveCoordinationLock(root, worktreeId, { reservation: previous?.coordinationPath }, opts.hostId).path;
-  // A copied marker without its original sibling reservation is not a new root.
-  if (!previous && existsSync(join(root, PHYSICAL_ROOT_MARKER))) throw physicalRootError();
+  // A copied marker without its original sibling reservation is not a new root; a moved checkout is named, path-free (#8625).
+  if (!previous && existsSync(join(root, PHYSICAL_ROOT_MARKER))) throw await movedPhysicalRoot(tx, root, opts.hostId) ? physicalRootMovedError() : physicalRootError();
   const reservation = previous ?? reservePhysicalRootRecord(root, { brainId, worktreeId, hostId: opts.hostId, coordinationPath });
   if (reservation.brainId !== brainId || reservation.worktreeId !== worktreeId || reservation.coordinationPath !== coordinationPath) throw physicalRootError();
   const [owner] = await tx.executeRaw<{ owner_host_id: string | null }>('SELECT owner_host_id FROM persistence_worktrees WHERE id=$1::uuid', [worktreeId]);
   if (owner ? owner.owner_host_id !== opts.hostId : reservation.hostId !== opts.hostId) throw physicalRootError('Another host owns or has prepared this physical checkout.');
   assertNoPhysicalRootOverlap(root);
   return reservation;
+}
+/**
+ * #8625: the file evidence of a moved checkout at `path`, accepted only when this brain recorded it: the stamp's brain,
+ * its worktree owned by `hostId`, and that worktree's host binding still at the recorded root. Read-only.
+ */
+export async function movedPhysicalRoot(tx: SqlEngine, path: string, hostId: string | null):
+  Promise<(MovedPhysicalRoot & { members: Array<{ sourceId: string; relativePath: string }> }) | null> {
+  const moved = describeMovedPhysicalRoot(canonicalFilesystemPath(path));
+  if (!moved || !hostId) return null;
+  const [row] = await tx.executeRaw<{ brain_id: string; owner_host_id: string | null; local_path: string | null }>(`SELECT brain_id::text AS brain_id,
+    (SELECT owner_host_id::text FROM persistence_worktrees WHERE id=$1::uuid) AS owner_host_id,
+    (SELECT local_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid) AS local_path
+    FROM persistence_brain WHERE singleton=1`, [moved.worktreeId, hostId]);
+  if (row?.brain_id !== moved.brainId || row.owner_host_id !== hostId || row.local_path !== moved.recorded) return null;
+  const members = await tx.executeRaw<{ source_id: string; relative_path: string }>(
+    'SELECT source_id,relative_path FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id', [moved.worktreeId]);
+  return { ...moved, members: members.map(member => ({ sourceId: member.source_id, relativePath: member.relative_path })) };
+}
+/** #8625: the full moved-checkout refusal for a trusted local caller (paths, worktree, exit); null when `root` is no moved checkout of this host, or not of `recorded`. */
+export async function movedPhysicalRootRefusal(tx: SqlEngine, root: string, exit: { sourceId: string; operation: 'add' | 'claim' | 'rebind' }, hostId: string | null,
+  recorded?: string): Promise<OperationError | null> {
+  const moved = await movedPhysicalRoot(tx, root, hostId);
+  if (!moved || recorded !== undefined && moved.recorded !== recorded) return null;
+  return physicalRootMovedRefusal(moved, { ...exit, members: moved.members });
 }
 /** Existing bindings require their stamp; only a never-committed original claim may finish creating it. */
 export async function claimPhysicalRoot(tx: SqlEngine, path: string, opts: PhysicalRootClaim): Promise<PhysicalRootReservation> {

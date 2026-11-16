@@ -305,6 +305,16 @@ page_types:
     extractable: false
     expert_routing: false
 
+  # Quotable facts page (GST-2731): one dated line per fact, with where it came
+  # from (me/facts, company/facts); agents quote only its dated lines, and
+  # doctor's facts_undated_lines names a line with no date. Set via frontmatter only.
+  - name: facts
+    primitive: annotation
+    path_prefixes: []
+    aliases: []
+    extractable: false
+    expert_routing: false
+
   # Pinned question page (C4): the question and the owner's notes; the answer
   # lives in pinned_questions. Owner-private and never evidence. Set via
   # frontmatter only, so an existing questions/ folder keeps its own types.

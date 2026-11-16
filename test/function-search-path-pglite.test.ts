@@ -5,7 +5,8 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { PINNED_FUNCTION_NAMES } from '../src/core/function-search-path.ts';
+import { FUNCTION_SEARCH_PATH_HARDENING_SQL, PINNED_FUNCTION_NAMES, legacySearchPathFunctions } from '../src/core/function-search-path.ts';
+import { getPGLiteSchema } from '../src/core/pglite-schema.generated.ts';
 
 const PURGED_CLAIM = 'alice-example joined acme-example as cto';
 const WITHDRAWN_CLAIM = 'alice-example lives in city-a';
@@ -82,5 +83,11 @@ describe('function search_path ends in pg_temp on PGLite (#7632)', () => {
     } finally {
       await engine.executeRaw('DROP PROCEDURE IF EXISTS public.proc_example()');
     }
+  }, 120_000);
+  test('a schema replay keeps pg_temp by itself: each definition pins it, not only the hardening statement after it (#7785)', async () => {
+    const schema = getPGLiteSchema();
+    expect(schema).toContain(FUNCTION_SEARCH_PATH_HARDENING_SQL);
+    await engine.runMigration(0, schema.replace(FUNCTION_SEARCH_PATH_HARDENING_SQL, ''));
+    expect(await legacySearchPathFunctions(engine)).toEqual([]);
   }, 120_000);
 });

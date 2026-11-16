@@ -49,8 +49,8 @@ describe('google connector database-only import holds a non-canonical private re
 
   test('visibility: private stores a private page, and a page that does not ask for private stores', async () => {
     const privateSlug = await run('calendar/kept-private.md', page('visibility: private'));
-    expect((await engine.getPage(privateSlug, { sourceId: 'default' }))?.frontmatter.visibility).toBe('private');
+    expect((await engine.getPage(privateSlug!, { sourceId: 'default' }))?.frontmatter.visibility).toBe('private');
     const plainSlug = await run('calendar/plain.md', page('owner: alice-example'));
-    expect((await engine.getPage(plainSlug, { sourceId: 'default' }))?.title).toBe('Example Event');
+    expect((await engine.getPage(plainSlug!, { sourceId: 'default' }))?.title).toBe('Example Event');
   }, 120_000);
 });

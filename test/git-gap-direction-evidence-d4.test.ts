@@ -226,6 +226,36 @@ for (const backend of testBackends()) describe(`git-gap direction evidence (d4):
     expect(pages.find(page => page.slug === 'notes/g')).toMatchObject({ evidence: { kind: 'both_moved', basis: 'conflicting_history' } });
   }, 120000);
 
+  test('GST-2568: a retyped page matches its file read either way, so a real retype adopts and a file set back under a stamped import is both_moved', async () => {
+    const root = tempDir('git-gap-retype-');
+    git(root, 'init', '-q');
+    await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'", [root]);
+    const person = (slug: string, text: string) => engine.putPage(slug, { type: 'person', title: 'T', compiled_truth: text, timeline: '' });
+    const retyped = (slug: string, text: string) => engine.putPage(slug, { type: 'concept', title: 'T', compiled_truth: text, timeline: '', frontmatter: { legacy_type: 'person' } });
+    // schema-pack/retype.ts changes the row in place and archives no version.
+    const retype = (slug: string) => engine.executeRaw("UPDATE pages SET type='concept', frontmatter = jsonb_set(frontmatter, ARRAY['legacy_type'], to_jsonb('person'::text), true) WHERE slug=$1", [slug]);
+    const fileOf = (text: string) => '---\ntype: person\ntitle: T\n---\n\n' + text + '\n';
+    for (const slug of ['people/retype-then-edit', 'people/archived-then-retyped']) { await person(slug, 'Body C0.'); put(root, slug + '.md', await rendered(slug)); }
+    commitAll(root, 'first');
+    // A real retype, then a database edit: the only archived version is the retyped page, which the file reads as with the stamp kept.
+    await retype('people/retype-then-edit');
+    await engine.createVersion('people/retype-then-edit'); await retyped('people/retype-then-edit', 'Edited in the database.');
+    // The pre-retype state archived, then retyped and edited in one write: the file equals that version as written.
+    await engine.createVersion('people/archived-then-retyped'); await retyped('people/archived-then-retyped', 'Edited in the database.');
+    // A database-only state, a file commit sync imported with the stamp kept, then the file set back to the database-only state.
+    await person('people/set-back', 'Body C0.');
+    await engine.createVersion('people/set-back'); await person('people/set-back', 'Body C0x.');
+    await retype('people/set-back');
+    put(root, 'people/set-back.md', fileOf('Body C1.')); commitAll(root, 'file C1');
+    await engine.createVersion('people/set-back'); await retyped('people/set-back', 'Body C1.');
+    put(root, 'people/set-back.md', fileOf('Body C0.')); commitAll(root, 'file back to C0');
+    await engine.createVersion('people/set-back'); await retyped('people/set-back', 'Body C2.');
+    const pages: GitGapPage[] = [];
+    await censusGitGap(engine, 'default', { sample: 0, evidence: true, collect: page => { pages.push(page); } });
+    const kind = (slug: string) => pages.find(page => page.slug === slug)?.evidence?.kind;
+    expect([kind('people/retype-then-edit'), kind('people/archived-then-retyped'), kind('people/set-back')]).toEqual(['adopt_db_moved', 'adopt_db_moved', 'both_moved']);
+  }, 120000);
+
   test('a version with no comparable content (a deletion, a segmented snapshot) counts as unread: no one-sided Git verdict', async () => {
     const root = await fixture();
     const [page] = await engine.executeRaw<{ id: string }>("SELECT id::text FROM pages WHERE slug='notes/file-moved'");

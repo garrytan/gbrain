@@ -10,7 +10,7 @@ import type { Operation, OperationContext } from './contract.ts';
 import { authTransport, opError } from './contract.ts';
 import { hostFix, hostOnlyError, paramUse } from './op-fix.ts';
 import { isValidSourceId } from '../source-id.ts';
-import { assertSourceInCallerScope, assertSourceInCallerWriteScope, sourceScopeOpts } from './context.ts';
+import { assertSourceInCallerScope, assertSourceInCallerWriteScope, readPolicyOpts, sourceScopeOpts } from './context.ts';
 import { resolveAuthCapabilities, resolveGrantDiagnosis } from '../harness/capabilities.ts';
 
 // --- v0.28: whoami + sources management ---
@@ -27,6 +27,9 @@ function managedLifecycleRefusal(ctx: OperationContext, args: string[]) {
     ['gbrain', ...args],
     'With managed persistence on, adding or removing a source changes the brain\'s writer topology, which only its owner CLI may do.');
 }
+
+/** GBRA-498: what this server supports, so a harness checks once per connection (room: room-aware results, access/room.ts). */
+const WHOAMI_FEATURES = { room: true } as const;
 
 const whoami: Operation = {
   name: 'whoami',
@@ -55,12 +58,14 @@ const whoami: Operation = {
     // while access.members_read_lineage is on, that members read the derived pages of pages listed to them.
     const withApplied = async <T extends object>(view: T) => ({ ...view, applied: await appliedAccessSummary(ctx.engine, ctx.auth, [ctx.sourceId, ...(ctx.localFederatedSourceIds ?? [])]),
       ...await (await import('../access/owner.ts')).ownerReadsRestrictedNotice(ctx.engine),
-      ...await (await import('../access/lineage.ts')).membersReadLineageNotice(ctx.engine) });
+      ...await (await import('../access/lineage.ts')).membersReadLineageNotice(ctx.engine),
+      // GST-363: and, remotely, what the requester-scope gate does with this connection's reads.
+      requester_scope: await (await import('../access/requester-scope.ts')).requesterScopeView(ctx.engine, (await import('../search/private-visibility.ts')).currentCallerAccess(), ctx.auth, ctx.transport) });
     if (ctx.remote === false) {
       // GBRA-218: a local --as <member> preview reports the member it reads as; the plain local CLI reads every page.
       const access = ctx.applyRemoteReadPolicy && ctx.accessIdentity?.length ? accessView(ctx.accessIdentity, 'as')
         : accessView([], 'none', null, 'The local CLI reads every page; pass --as <member> to preview what a member can read.');
-      return { transport: 'local', scopes: [], access, readiness: readiness('cli') };
+      return { transport: 'local', scopes: [], features: WHOAMI_FEATURES, access, readiness: readiness('cli') };
     }
     // #1061: stdio MCP is remote/untrusted by design but has no per-token
     // auth (local pipe) — a known transport, not a bug. Report it instead of
@@ -74,7 +79,7 @@ const whoami: Operation = {
         if (verified.remote) scopes = verified.grant.scopes;
       } catch { /* no registration: no scopes */ }
       const session = ctx.stdioSurface;
-      return { transport: 'stdio', scopes, ...(session ? { surface: session.surface, surface_source: session.source } : {}), access: await withApplied(await stdioAccessView(ctx.engine, ctx.stdioMember)), readiness: readiness('stdio') };
+      return { transport: 'stdio', scopes, features: WHOAMI_FEATURES, ...(session ? { surface: session.surface, surface_source: session.source } : {}), access: await withApplied(await stdioAccessView(ctx.engine, ctx.stdioMember)), readiness: readiness('stdio') };
     }
     if (!ctx.auth) {
       throw opError(
@@ -90,6 +95,7 @@ const whoami: Operation = {
     if (authTransport(ctx.auth) === 'oauth') {
       return {
         transport: 'oauth',
+        features: WHOAMI_FEATURES,
         client_id: ctx.auth.clientId,
         client_name: ctx.auth.clientName ?? ctx.auth.clientId,
         ...await resolveAuthCapabilities(ctx.auth, ctx.engine, ctx.config, { surfaceCeiling: ctx.surfaceCeiling }),
@@ -98,6 +104,7 @@ const whoami: Operation = {
     }
     return {
       transport: 'legacy',
+      features: WHOAMI_FEATURES,
       token_name: ctx.auth.clientName ?? ctx.auth.clientId,
       scopes: ctx.auth.scopes,
       expires_at: null,
@@ -372,7 +379,7 @@ const sources_resolve_path: Operation = {
   handler: async (ctx, p) => {
     assertSourceInCallerScope(ctx, p.id as string);
     const { resolveSourcePaths } = await import('../persistence/resolve-paths.ts');
-    return resolveSourcePaths(ctx.engine, p.id as string, (p.paths as unknown[] ?? []).map(String));
+    return resolveSourcePaths(ctx.engine, p.id as string, (p.paths as unknown[] ?? []).map(String), await readPolicyOpts(ctx, { sourceId: p.id as string }));
   },
   cliHints: { name: 'sources_resolve_path', hidden: true },
 };

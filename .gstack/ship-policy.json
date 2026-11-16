@@ -1,24 +1,28 @@
 {
   "bump": "patch",
-  "min_gstack_version": "1.94.16.0",
+  "min_gstack_version": "1.98.0.0",
   "queue_mode": "stamp-at-merge",
+  "history": "merge-only",
+  "merge": "direct",
   "changelog": "CHANGELOG.md",
+  "changelog_fragments": { "dir": "changelog.d" },
+  "restamp_command": "bun scripts/release-restamp.ts --stamp-only",
+  "release_tool": "bun scripts/build-behavior-changes.ts",
+  "release_outputs": ["src/core/behavior-changes.generated.ts"],
+  "land": { "merged_checks": ["bun run typecheck", "bun run verify"] },
   "stamp_files": [
     "VERSION", "package.json", "CHANGELOG.md", "openclaw.plugin.json",
     ".claude-plugin/plugin.json", ".codex-plugin/plugin.json",
     "plugin-variants/*/.claude-plugin/plugin.json", "plugin-variants/*/.codex-plugin/plugin.json",
     "plugin-variants/*/README.md", "plugin/README.md",
-    "BOOTSTRAP_FOR_AGENTS.md", "templates/bootstrap/template-repo/README.md",
-    "src/core/behavior-change-notice.ts"
+    "BOOTSTRAP_FOR_AGENTS.md", "templates/bootstrap/template-repo/README.md"
   ],
   "stamp_patterns": [
     "\"version\": \"{version}\"",
-    "since: '{version}'",
     "<!-- gbrain-plugin-tree-stamp: {version} -->",
     "<!-- gbrain-template-stamp: {version} -->",
     "<!-- gbrain-runbook-stamp: {version} -->"
   ],
-  "stamp_placeholders": ["TBD"],
   "review_exclude_paths": ["docs/**", "test/fixtures/goldens/**"],
   "migrations": { "dir": "src/core/schema-migrations", "id": "^v(\\d+)-" }
 }

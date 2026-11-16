@@ -17,7 +17,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
-import { resolveSourcePaths, RESOLVE_PATHS_MAX } from '../src/core/persistence/resolve-paths.ts';
+import { resolveSourcePaths, RESOLVE_PATHS_MAX, type ResolvedPath } from '../src/core/persistence/resolve-paths.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -172,5 +173,90 @@ test('a large page whose embedding budget is held reads pending_embedding with t
   expect(held!.page!.chunks).toBeGreaterThan(0);
   expect(held!.fix!.argv).toEqual(['gbrain', 'embed', '--held', '--dry-run', '--source', s.id]);
   expect(skipped).toMatchObject({ state: 'keyword_only', searchable: 'keyword', embedding_hold: null });
+}), 240_000);
+
+
+const RESTRICTED = (fm: string, title: string) => note(title).replace('---\n', `---\n${fm}\n`);
+
+test('a page the caller may not read answers exactly like a path with no file or page; the owner-bound caller reads it as the local operator does (#8761)', () => each(async engine => {
+  for (const id of ['owner-example', 'alice-example', 'bob-example']) await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1) ON CONFLICT DO NOTHING', [id]);
+  await engine.setConfig('access.owner_member', 'owner-example');
+  try {
+    const s = await source(engine, {
+      'team/kept.md': RESTRICTED('readable_by: [alice-example, owner-example]', 'Kept'),
+      'team/private.md': RESTRICTED('visibility: private', 'Private'),
+      'team/open.md': note('Open'),
+    });
+    await s.sync();
+    const columns = (await engine.executeRaw<{ name: string }>(
+      "SELECT column_name AS name FROM information_schema.columns WHERE table_name = 'pages' AND column_name NOT IN ('id', 'slug', 'source_path', 'deleted_at') AND is_generated = 'NEVER' ORDER BY ordinal_position"))
+      .map(c => c.name).join(', ');
+    await unmanaged(engine, () => engine.executeRaw(
+      `INSERT INTO pages (slug, source_path, deleted_at, ${columns}) SELECT 'team/old-kept', 'team/kept.md', now() - interval '1 day', ${columns} FROM pages WHERE source_id = $1 AND slug = 'team/open'`, [s.id]));
+    await s.legacy({ 'team/later-kept.md': RESTRICTED('readable_by: [alice-example, owner-example]', 'Kept later'), 'team/later-open.md': note('Open later') });
+    s.write('team/head-kept.md', RESTRICTED('readable_by: [alice-example, owner-example]', 'Kept at head'));
+    s.write('team/head-toml.md', '---toml\ntitle = "Odd"\n---\nBody.\n');
+    s.write('atoms/head-atom.md', 'An atom body with no frontmatter.\n');
+    s.write('team/head-large.md', note('Large') + 'x'.repeat(300 * 1024) + '\n');
+    commit(s.repo);
+    const paths = ['team/kept.md', 'team/private.md', 'team/open.md', 'team/KEPT.md', 'team/nothing-here.md', 'team/later-kept.md', 'team/later-open.md', 'team/head-kept.md', 'team/head-toml.md', 'atoms/head-atom.md', 'team/head-large.md'];
+    const call = async (stdioMember?: string) => {
+      const result = await dispatchToolCall(engine, 'sources_resolve_path', { id: s.id, paths },
+        { remote: true, transport: 'stdio', sourceId: s.id, ...(stdioMember ? { stdioMember } : {}) });
+      expect(result.isError).toBeFalsy();
+      return (JSON.parse(result.content[0]!.text) as Awaited<ReturnType<typeof resolveSourcePaths>>).paths;
+    };
+    const answer = ({ path: _p, source_path: _s, slug: _g, ...rest }: ResolvedPath) => rest;
+    for (const caller of ['bob-example', undefined]) {
+      const seen = await call(caller);
+      const nothing = answer(seen[4]!);
+      expect(nothing.state).toBe('deleted');
+      expect(answer(seen[0]!)).toEqual(nothing);
+      expect(answer(seen[1]!)).toEqual(nothing);
+      expect(answer(seen[3]!)).toEqual(nothing);
+      expect(seen[2]!.page?.slug).toBe('team/open');
+      expect(answer(seen[5]!)).toEqual(nothing);
+      expect(seen[6]).toMatchObject({ state: 'missing', in_synced_commit: true });
+      expect(answer(seen[7]!)).toEqual(nothing);
+      expect(answer(seen[8]!)).toEqual(nothing);
+      expect(answer(seen[9]!)).toEqual(nothing);
+      expect(answer(seen[10]!)).toEqual(nothing);
+      expect(JSON.stringify(seen)).not.toContain('Kept');
+    }
+    const alice = await call('alice-example');
+    expect(alice[0]!.page?.slug).toBe('team/kept');
+    expect(alice[5]).toMatchObject({ state: 'missing', in_synced_commit: true });
+    expect(alice[7]).toMatchObject({ at_head: true, in_synced_commit: false });
+    expect(alice[3]!.slug_owner).toEqual({ slug: 'team/kept', source_path: 'team/kept.md' });
+    expect(answer(alice[1]!)).toEqual(answer(alice[4]!));
+    const local = await s.resolve(...paths);
+    expect(local.paths[1]!.page?.slug).toBe('team/private');
+    expect(await call('owner-example')).toEqual(local.paths);
+  } finally {
+    await engine.executeRaw("DELETE FROM config WHERE key = 'access.owner_member'");
+  }
+}), 240_000);
+
+
+test('a plain directory with no Git anywhere above it refuses sync_not_applicable plain_directory; a broken .git above it or a source that expects Git keeps the Git error', () => each(async engine => {
+  const plain = mkdtempSync(join(tmpdir(), 'gbrain-resolve-plain-'));
+  const broken = join(home, `broken-${randomUUID().slice(0, 8)}`);
+  mkdirSync(join(broken, '.git'), { recursive: true }); mkdirSync(join(broken, 'notes'), { recursive: true });
+  const register = async (dir: string, config: Record<string, unknown> = {}) => {
+    const id = `rslv-plain-${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    await unmanaged(engine, () => engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::text::jsonb)', [id, dir, JSON.stringify(config)]));
+    return id;
+  };
+  try {
+    const id = await register(plain);
+    const refusal = await resolveSourcePaths(engine, id, ['notes/one.md']).then(() => null, (e: any) => e);
+    expect(refusal).toMatchObject({ code: 'sync_not_applicable', reason: 'plain_directory', fix: { argv: ['gbrain', 'sources', 'status', id, '--json'] } });
+    expect(refusal.message).not.toContain(plain);
+    for (const [dir, config] of [[join(broken, 'notes'), {}], [plain, { remote_url: 'https://example.invalid/repo.git' }], [plain, { managed_clone: true }]] as const) {
+      const other = await resolveSourcePaths(engine, await register(dir, config), ['one.md']).then(() => null, (e: any) => e);
+      expect(other?.code).not.toBe('sync_not_applicable');
+      expect(String(other?.stderr ?? other?.message)).toContain('not a git repository');
+    }
+  } finally { rmSync(plain, { recursive: true, force: true }); }
 }), 240_000);
 

@@ -6,7 +6,8 @@ import { withCompanyBrainSource } from './company-brain/profile.ts';
  */
 import { realpathSync } from 'fs';
 import { syncDispatchRow } from './sync-dispatch-read.ts';
-import { isAbsolute, resolve as pathResolve } from 'path';
+import { resolve as pathResolve } from 'path';
+import { isHostAbsolutePath } from './path-confine.ts';
 import type { BrainEngine } from './engine.ts';
 import type { SyncOpts } from '../commands/sync.ts';
 import { ownsGlobalSyncAnchor, sameRepoDir } from './sync.ts';
@@ -91,7 +92,7 @@ export async function isAnchorOwnedSyncPath(
   if (opts.srcSubpath) return false;
   if (opts.sourceId && opts.sourceId !== 'default') return false;
   const anchor = await readSyncAnchor(engine, opts.sourceId, 'repo_path');
-  if (anchor === null || !isAbsolute(anchor)) return false;
+  if (anchor === null || !isHostAbsolutePath(anchor)) return false;
   try {
     return realpathSync(anchor) === realpathSync(repoPath);
   } catch {
@@ -143,7 +144,7 @@ export async function ownsSourceSyncAnchor(
     );
     const configured = rows[0]?.local_path ?? null;
     if (configured === null) return { owns: true, configured: null };
-    if (!isAbsolute(configured)) return { owns: false, configured };
+    if (!isHostAbsolutePath(configured)) return { owns: false, configured };
     return { owns: sameRepoDir(configured, dir), configured };
   } catch {
     return { owns: true, configured: null };
@@ -195,8 +196,10 @@ function sameOrNestedRepoDir(a: string, b: string): boolean {
  * Identity resolution mirrors `ownsGlobalSyncAnchor` for `'default'` (global
  * `sync.repo_path` key first, else the row's `local_path`); other ids use the
  * row's `local_path`. A null identity bootstraps (first sync of a
- * freshly-registered source). Best-effort: a failed read fails OPEN — a
- * guard bug must never block anchor writes.
+ * freshly-registered source); #7646: a relative `sync.repo_path` behind a null
+ * `default` row is a stored identity that proves nothing, so it refuses rather
+ * than bootstraps. Best-effort: a failed read fails OPEN — a guard bug must
+ * never block anchor writes.
  */
 export async function sourceCommitAnchorAllowed(
   engine: BrainEngine,
@@ -205,19 +208,21 @@ export async function sourceCommitAnchorAllowed(
 ): Promise<SourceAnchorOwnership> {
   try {
     let configured: string | null = null;
+    let relativeGlobal: string | null = null;
     if (sourceId === 'default') {
       const globalPath = (await engine.getConfig('sync.repo_path')) || null;
-      configured = globalPath && isAbsolute(globalPath) ? globalPath : null;
+      if (globalPath && isHostAbsolutePath(globalPath)) configured = globalPath;
+      else relativeGlobal = globalPath;
     }
     if (configured === null) {
       const rows = await engine.executeRaw<{ local_path: string | null }>(
         `SELECT local_path FROM sources WHERE id = $1`,
         [sourceId],
       );
-      configured = rows[0]?.local_path ?? null;
+      configured = rows[0]?.local_path ?? relativeGlobal;
     }
     if (configured === null) return { owns: true, configured: null };
-    if (!isAbsolute(configured)) return { owns: false, configured };
+    if (!isHostAbsolutePath(configured)) return { owns: false, configured };
     return { owns: sameOrNestedRepoDir(configured, repoDir), configured };
   } catch {
     return { owns: true, configured: null };
@@ -258,11 +263,14 @@ export async function writeSyncAnchor(
       if (repoDir !== undefined) {
         const { owns, configured } = await sourceCommitAnchorAllowed(engine, sourceId, repoDir);
         if (!owns) {
-          serr(
-            `[sync] sources.last_commit for "${sourceId}" not advanced — syncing repo ` +
-            `"${repoDir}" is neither the registered directory ${configured ?? '(unset)'} nor ` +
-            `within the same tree. Sync from the registered directory, or re-register the ` +
-            `source to move it intentionally.`,
+          serr(configured !== null && !isHostAbsolutePath(configured)
+            ? `[sync] sources.last_commit for "${sourceId}" not advanced — its stored path "${configured}" is not an ` +
+              `absolute directory on this host, so it cannot prove "${repoDir}" is its tree. Ask the user which directory ` +
+              `holds it, then run: gbrain sources set-path ${sourceId} <absolute-directory>`
+            : `[sync] sources.last_commit for "${sourceId}" not advanced — syncing repo ` +
+              `"${repoDir}" is neither the registered directory ${configured ?? '(unset)'} nor ` +
+              `within the same tree. Sync from the registered directory, or re-register the ` +
+              `source to move it intentionally.`,
           );
           return;
         }

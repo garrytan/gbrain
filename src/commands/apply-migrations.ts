@@ -8,7 +8,7 @@
  *
  * Invoked from:
  *   - `gbrain upgrade` → runPostUpgrade() tail (Lane A-5)
- *   - package.json `postinstall` (Lane A-5)
+ *   - `gbrain setup <harness>` on the brain it just created
  *   - explicit user / host-agent after registering new handlers (Lane C-1)
  */
 
@@ -40,7 +40,7 @@ import {
   wedgedLedgerHint,
 } from '../core/migration-ledger.ts';
 import { clearRepoPathWedge } from './migrations/v0_11_0-install.ts';
-import { shellQuote, type Effect } from '../core/agent-output.ts';
+import { shellQuote, type Action, type Effect } from '../core/agent-output.ts';
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
 import { consentGate } from '../core/consent-cli.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
@@ -48,8 +48,10 @@ import { exitCliError, usageError, writeCliError } from '../cli/cli-error.ts';
 import {
   checkSchemaAfterOrchestrators,
   connectAtSchemaVersion,
+  connectForForcedSchema,
   redactDbError,
   reportDatabaseUnreachable,
+  schemaAheadRefusal,
   schemaBehindAtPreflight,
   schemaPendingError,
   type SchemaPending,
@@ -556,7 +558,7 @@ async function applyParsed(cli: ApplyMigrationsArgs, args: string[]): Promise<{ 
   const installed = VERSION.replace(/^v/, '').trim() || '0.0.0';
   const report: RunReport = { doc: { status: 'ok', installed } };
 
-  // First-install guard (postinstall hook calls us even on `bun add gbrain`
+  // First-install guard (an older release's postinstall calls us even on `bun add gbrain`
   // before the user has run `gbrain init`). No config = no brain = nothing
   // to migrate. Exit silently for --yes / --non-interactive so postinstall
   // stays quiet; mention the init step when invoked interactively.
@@ -696,7 +698,8 @@ async function runLockedMigrations(
         fail('failed', opError('no_brain', 'No brain configured for --force-schema.', 'Create a brain first: `gbrain init` (`gbrain init --help` lists the options).'));
         return 2;
       }
-      const { engine: eng, version } = await connectAtSchemaVersion(cfg);
+      const { engine: eng, version, behind } = await connectForForcedSchema(cfg);
+      if (behind) { fail('refused', behind); return 1; }
       console.log('Running schema migrations from current config.version...');
       const result = await migrateSchema(eng, version);
       console.log(`Applied ${result.applied} schema migration(s); now at v${result.current}.`);
@@ -708,8 +711,7 @@ async function runLockedMigrations(
         'Fix the database error above, then run `gbrain apply-migrations --force-schema` again.', { reason: 'schema_failed' }));
       return 1;
     }
-    if (cli.forceSchema && !cli.forceAll) return;
-    if (cli.forceAll) return; // both surfaces flushed
+    return; // --force-schema alone, or --force-all with both surfaces flushed
   }
 
   // Pre-flight: schema drift (#1530) and the DB probe (#4364); see preflightSchema.
@@ -1016,6 +1018,9 @@ async function preflightSchema(
       access: classifyPgAccessError(err, { url: cfg?.database_url ?? null }).reason,
     };
   }
+  // #7776: an older binary runs no orchestrator (or its schema replay) on a database a newer gbrain migrated.
+  const behind = cfg && !cli.list && !cli.dryRun ? await schemaAheadRefusal(cfg, dbProbe.status === 'connected' ? dbProbe.schemaVer : null) : null;
+  if (behind) throw behind;
   return { schemaBehind, dbProbe, schemaTimeout };
 }
 
@@ -1041,11 +1046,17 @@ function failWedged(report: RunReport): number | undefined {
   report.failure = opError('migrations_pending',
     `Migration ${versions} is wedged (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partial runs with no completion), so the run did not complete every migration.`,
     `Read ${wedgedLedgerHint()} for the last failure, fix its cause, then clear it with \`${shellQuote(forceRetryArgv(wedged[0]!.version))}\` and run \`gbrain apply-migrations --yes\` again. Ask the user first.`,
-    { reason: 'wedged', fix: { ask_user: true, argv: forceRetryArgv(wedged[0]!.version), consent: [], actor: 'agent', requires_exclusive: true,
-      why: `Writes a 'retry' marker so the next run re-attempts v${wedged[0]!.version}; without fixing the cause the run partials again.`,
-      user_message: `gbrain migration ${versions} failed ${MAX_CONSECUTIVE_PARTIALS} or more times in a row. Fix the cause recorded in ${wedgedLedgerHint()}, then clear it with ${shellQuote(forceRetryArgv(wedged[0]!.version))} and run gbrain apply-migrations --yes. Clear it now?`,
-      verify: { argv: ['gbrain', COMMAND, '--list', '--json'] } } });
+    { reason: 'wedged', fix: wedgedMigrationFix(wedged.map(m => m.version)) });
   return 1;
+}
+
+/** The ask-the-user step that clears the first wedged migration; also the fix of connect's pending-migrations notice (src/cli/migrations-notice.ts). */
+export function wedgedMigrationFix(wedged: readonly string[]): Action {
+  const versions = wedged.map(v => `v${v}`).join(', ');
+  return { ask_user: true, argv: forceRetryArgv(wedged[0]!), consent: [], actor: 'agent', requires_exclusive: true,
+    why: `Writes a 'retry' marker so the next run re-attempts v${wedged[0]!}; without fixing the cause the run partials again.`,
+    user_message: `gbrain migration ${versions} failed ${MAX_CONSECUTIVE_PARTIALS} or more times in a row. Fix the cause recorded in ${wedgedLedgerHint()}, then clear it with ${shellQuote(forceRetryArgv(wedged[0]!))} and run gbrain apply-migrations --yes. Clear it now?`,
+    verify: { argv: ['gbrain', COMMAND, '--list', '--json'] } };
 }
 
 /** Bug 3 — surface wedged migrations as a loud, actionable error; the run continues (applied/partial/pending are still reported and run). */

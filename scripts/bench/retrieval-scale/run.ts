@@ -8,7 +8,8 @@
  *     [--direct-url postgresql://...:5434/bench_retrieval_300k] [--n 20] [--warmup 3] \
  *     [--ops search,query,get,recall] [--modes cold,warm] [--search-mode tokenmax] \
  *     [--embed-ms 0] [--rerank-ms 0] [--toxiproxy http://127.0.0.1:8474 --rtt-ms 40] [--trace] [--serve-cpu-prof <dir>] \
- *     [--tree <checkout>] [--keep] [--label <name>] [--out results.jsonl] [--results calls.jsonl]
+ *     [--tree <checkout>] [--keep] [--label <name>] [--out results.jsonl] [--results calls.jsonl] \
+ *     [--queries 'a|b c'] [--no-query-cache]
  *
  * --toxiproxy adds --rtt-ms of round-trip latency to its `pooler` proxy (vm-setup.sh
  * creates it on 127.0.0.1:6544 in front of PgBouncer); point --url at 6544 to use it.
@@ -30,7 +31,9 @@
  *         the path a shell-out agent pays once a serve is running.
  *
  * Queries are 2-4 generated words from a random page body plus, for half of
- * them, a word of its title: synthetic text only. Rows carry timings and
+ * them, a word of its title: synthetic text only. --queries replaces them with
+ * your own (every op cycles through the list); --no-query-cache turns off the
+ * semantic query cache so a repeated query runs its statements again. Rows carry timings and
  * counts. Prints a Markdown table and appends JSONL rows to --out.
  */
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -97,6 +100,7 @@ async function main() {
   };
   const set = await runCli(['config', 'set', 'search.mode', searchMode]);
   if (set.code !== 0) log('config set search.mode failed: ' + set.stderr.slice(0, 300));
+  if (has('--no-query-cache')) await runCli(['config', 'set', 'search.cache.enabled', 'false']);
 
   // Query set and get targets, drawn deterministically from the corpus.
   const sql = postgres(directUrl, { max: 1, prepare: false, onnotice: () => {} });
@@ -108,7 +112,8 @@ async function main() {
     const titleWord = p.title.split(/\s+/).find(w => w.length > 3);
     return [...(i % 2 === 0 && titleWord ? [titleWord.toLowerCase()] : []), ...words.slice(at, at + k)].join(' ');
   });
-  const q = (i: number) => queries[i % queries.length]!;
+  const given = flag('--queries')?.split('|');
+  const q = (i: number) => given ? given[i % given.length]! : queries[i % queries.length]!;
   // Each op reads its own slice of the query set, so no op reuses another's per-process query embedding.
   const opBase = (op: string) => ops.indexOf(op) * 7 + 1;
   const pk = (i: number) => picks[i % picks.length]!;

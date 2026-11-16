@@ -36,7 +36,7 @@ import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
 import { maybeRefreshPlannerStats } from '../planner-stats.ts';
 import { refreshFenceClear } from './worktree-refresh-schema.ts';
 import { faultPoint } from './fault-points.ts';
-import { EFFECT_OWNER_KEY_SQL, releaseAbandonedClaims } from './effect-journal.ts';
+import { abandonedClaimCutoff, EFFECT_OWNER_KEY_SQL, PROCESS_STARTED_AT, releaseAbandonedClaims } from './effect-journal.ts';
 import { readWriteSwitchSnapshot, writeSwitchOn } from './switches.ts';
 import { consumerConnectionRoute, consumerStatementEngine, poolerExposureLine } from './consumer-lane.ts';
 import { isConnectionLoss } from '../retry-matcher.ts';
@@ -64,8 +64,6 @@ const DRAIN_NOTICE_EVERY_MS = 10_000;
 const CONNECTION_LOSS_RELEASE_MS = 30_000;
 /** #6650: how often a consumer looks for claims held by an owner it can prove dead. */
 export const DEAD_OWNER_SCAN_MS = 5_000;
-/** When this process started; on PGLite no claim written earlier can belong to a live owner. */
-const PROCESS_STARTED_AT = new Date(performance.timeOrigin);
 /** #5801: the phase a connection checkout belongs to, carried through its async chain. */
 const phaseScope = new AsyncLocalStorage<{ observation: PhaseObservation; startedAt: number }>();
 
@@ -414,6 +412,13 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     const cursor = residentProjectionCursor(this.engine);
     const params: unknown[] = [this.hostId, excluded, publicationConcurrency(this.engine) > 0, retryingTopologies, [...this.laneTasks.keys()]];
     const windowCtes = residentWindowCtes(cursor, params, PROJECTION_RETRY_READY_SQL);
+    // #9227: on PGLite, claims an earlier process left behind count until the scan below has released them, so a one-shot
+    // write queued behind such a head clears it at once instead of waiting out its lease (30 s, or 365 s while publishing).
+    const cutoff = this.abandonedReleased || this.opts.oneShot?.waiting() === false ? null : abandonedClaimCutoff(this.engine);
+    if (cutoff) params.push(cutoff.toISOString());
+    const abandoned = cutoff ? `
+      OR EXISTS (SELECT 1 FROM persistence_requests r WHERE r.state='running' AND r.recovery IS NULL AND r.publication_started=false AND r.updated_at<$${params.length}::timestamptz)
+      OR EXISTS (SELECT 1 FROM persistence_effects e WHERE e.state='running' AND e.recovery IS NULL AND e.updated_at<$${params.length}::timestamptz)` : '';
     const [row] = await this.phase('idle_probe', async signal => this.probeQuery<{ work: boolean; projection_work: boolean; projection_last: { source_incarnation: string; slug: string } | null; high_water: string | null }>(this.laneInUse || direct ? undefined : await this.acquireIdleLane(signal), `WITH ${windowCtes},
     pwork AS (SELECT EXISTS (SELECT 1 FROM (SELECT source_incarnation,slug FROM recent UNION ALL SELECT source_incarnation,slug FROM win) j
       CROSS JOIN LATERAL (SELECT s.id FROM sources s WHERE s.incarnation=j.source_incarnation AND NOT s.archived OFFSET 0) s
@@ -446,7 +451,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       OR EXISTS (SELECT 1 FROM persistence_topology_changes c
         JOIN persistence_worktrees w ON w.id=(c.recovery->>'worktreeId')::uuid
         WHERE c.recovery IS NOT NULL AND w.owner_host_id=$1::uuid AND NOT (c.id::text=ANY($4::text[])))
-      OR ${overdueDeferredWorkSql('$1')}
+      OR ${overdueDeferredWorkSql('$1')}${abandoned}
     ) AS work`, params, signal));
     // A window holding work stays put, so the tick it wakes reads the same rows.
     advanceProjectionCursor(cursor, row?.projection_work ? null : row?.projection_last, row?.high_water);
@@ -670,7 +675,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       .catch(error => this.report(error)).finally(() => { this.projectionWorker = undefined; });
     // Recover only our owner roots. Kernel exclusion, not elapsed heartbeat,
     // proves that a previous process can no longer be publishing this root.
-    if (scan && this.engine.kind === 'pglite' && !this.abandonedReleased) {
+    if (scan && abandonedClaimCutoff(this.engine) && !this.abandonedReleased) {
       await this.phase('abandoned_claims', () => releaseAbandonedClaims(this.engine, PROCESS_STARTED_AT, this.policy.deadlines));
       this.abandonedReleased = true;
     }

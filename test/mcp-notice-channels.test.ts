@@ -48,7 +48,7 @@ describe('DEGRADED_STAGE_GUIDANCE', () => {
 
   test('every Lane F notice code is registered with its kind', () => {
     expect(NOTICE_CODES.degraded_recall.kind).toBe('degraded');
-    for (const c of ['source_binding_narrowed', 'degraded_dedup', 'synthesis_keyless', 'think_not_saved', 'listing_truncated'] as const) {
+    for (const c of ['source_binding_narrowed', 'degraded_dedup', 'synthesis_keyless', 'think_not_saved', 'model_override_ignored', 'listing_truncated'] as const) {
       expect(NOTICE_CODES[c].kind).toBe('info');
     }
   });

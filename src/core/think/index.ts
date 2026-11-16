@@ -44,6 +44,7 @@ import { startThinkDecide, thinkAbstainResult, type ThinkAbstention } from './de
 import { classifyIntent } from './intent.ts';
 import { slugifyText } from '../cjk.ts';
 import { deriveTrust, type TaintRef } from '../trust/taint.ts';
+import { withGuestAnswer, type GuestStamp } from '../guests/marker.ts';
 import { publishSinglePage, THINK_SYNTHESIS_KIND } from '../generations/adapters/single-page.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
@@ -231,10 +232,17 @@ export interface ThinkResult {
    * `think.excerpt_ceiling_chars`) and soft; see think/pages-budget.ts.
    */
   evidence_truncated?: boolean;
+  /** GBRA-504: the outside-guest notes that reached the prompt; `answer` then ends with the fixed guest line gbrain appends. */
+  guest_evidence?: Array<{ source_id: string; slug: string; guest: GuestStamp }>;
   /** Gathered pages with the revision retrieved, for retrieval-feedback recording; the op layer strips it. */
   feedback_evidence?: Array<{ source_id: string; slug: string; content_hash: string | null }>;
   /** #5575 I2: every page, take and trajectory fact placed in the synthesis prompt; `persistSynthesis` taints from them. The op layer strips it. */
   taint_refs?: TaintRef[];
+  /**
+   * GBRA-498: what reaches the prompt beyond taint_refs, for room marks only: the anchor and the graph pages the prompt
+   * names, and a calibration profile (no page or fact id, so the answer is unknown). Never feeds trust derivation.
+   */
+  room_extra?: Array<{ table: 'pages'; sourceId: string; slug: string } | { table: 'calibration'; id: number }>;
   /** Only set when --save was true and the caller persisted a synthesis page. */
   savedSlug?: string;
   /**
@@ -889,9 +897,9 @@ export async function runThink(
       // Degrade gracefully: return the gather without synthesis. Better than throwing.
       return {
         question: opts.question,
-        answer: modelProblem
+        ...withGuestAnswer(gather.pages, { answer: modelProblem
           ? `(model "${modelUsed}" not usable — ${detail}${fix})`
-          : '(no LLM available — set ANTHROPIC_API_KEY or pass `client`)',
+          : '(no LLM available — set ANTHROPIC_API_KEY or pass `client`)' }),
         citations: [],
         gaps: [
           modelProblem
@@ -907,6 +915,9 @@ export async function runThink(
         synthesisOk: false,  // #1698: no LLM ran — never persist this
         synthesis_status: modelProblem ? 'model_unusable' : 'no_llm',
         ...(stubExtractive ? { extractive: stubExtractive } : {}),
+        // GBRA-498: the extractive digest quotes the gathered pages, so a room marks this answer from them too.
+        taint_refs: [...gather.pages.map(pg => ({ table: 'pages' as const, sourceId: pg.source_id ?? 'default', slug: pg.slug })),
+          ...gather.takes.map(t => ({ table: 'takes' as const, id: t.take_id }))],
         usage: null,         // [E2] no LLM ran — no accounting
         ...windowMeta,
         diagnostics: {
@@ -1028,7 +1039,7 @@ export async function runThink(
 
   return {
     question: opts.question,
-    answer: response.answer, ...(synthesisStatus === 'ok' ? await groundThinkAnswer(engine, response.answer, [opts.question, pagesBlock, takesBlock, graphBlock ?? '', trajectoryBlock], warnings) : {}),
+    ...withGuestAnswer(gather.pages, { answer: response.answer, ...(synthesisStatus === 'ok' ? await groundThinkAnswer(engine, response.answer, [opts.question, pagesBlock, takesBlock, graphBlock ?? '', trajectoryBlock], warnings) : {}) }),
     citations: resolved.citations,
     gaps: response.gaps,
     pagesGathered: gather.pages.length,
@@ -1046,6 +1057,9 @@ export async function runThink(
     feedback_evidence: gather.pages.map(pg => ({ source_id: pg.source_id ?? 'default', slug: pg.slug, content_hash: pg.content_hash ?? null })),
     taint_refs: [...gather.pages.map(pg => ({ table: 'pages' as const, sourceId: pg.source_id ?? 'default', slug: pg.slug })),
       ...gather.takes.map(t => ({ table: 'takes' as const, id: t.take_id })), ...trajectoryFactIds.map(id => ({ table: 'facts' as const, id }))],
+    room_extra: [...(graphBlock ? (gather.graphRefs ?? gather.graphSlugs.map(slug => ({ slug, sourceId: opts.sourceId ?? 'default' })))
+      .filter(r => gather.graphSlugs.slice(0, 30).includes(r.slug)).map(r => ({ table: 'pages' as const, sourceId: r.sourceId, slug: r.slug })) : []),
+      ...(calibrationBlockOpts ? [{ table: 'calibration' as const, id: 0 }] : [])],
     ...(extractive ? { extractive } : {}),
     usage, ...(evidenceDelivery ? { evidence_delivery: evidenceDelivery } : {}),
     diagnostics: {

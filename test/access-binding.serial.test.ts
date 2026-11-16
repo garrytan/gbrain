@@ -91,7 +91,7 @@ describe('access and auth binding CLI (repo-less PGLite)', () => {
   }, 120_000);
 
   test('auth rescope --member rebinds, --dry-run writes nothing, --member none unbinds, --may-act-for is stored normalized', async () => {
-    expect((await cli(['auth', 'create', 'shared-bot', '--scopes', 'read'])).exitCode).toBe(0);
+    expect((await cli(['auth', 'create', 'shared-bot', '--scopes', 'read', '--reads-unscoped', '--yes'])).exitCode).toBe(0);
     const preview = await cli(['auth', 'rescope', '--token', 'shared-bot', '--member', 'bob-example', '--dry-run']);
     expect(preview.exitCode).toBe(0);
     expect(preview.stdout).toContain('preview, not written');

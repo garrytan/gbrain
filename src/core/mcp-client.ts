@@ -21,6 +21,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { isPersistenceIpcMutation } from './persistence/ipc.ts';
 import { replayWhilePending } from './persistence/write-wait.ts';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { anySignal } from './abort-check.ts';
@@ -300,7 +301,7 @@ async function getAccessToken(config: GBrainConfig, force = false, signal?: Abor
  * The SDK replaces requestInit.signal with its own transport signal. Compose
  * them in fetch so cancellation covers HTTP bodies as well as SDK requests.
  */
-async function buildClient(mcpUrl: string, accessToken: string, signal?: AbortSignal): Promise<Client> {
+async function buildClient(mcpUrl: string, accessToken: string, signal?: AbortSignal, clientName: string = GBRAIN_THIN_CLIENT_NAME): Promise<Client> {
   const { Client, StreamableHTTPClientTransport } = await loadHttpClientSdk();
   const transport = new StreamableHTTPClientTransport(new URL(mcpUrl), {
     requestInit: {
@@ -308,7 +309,7 @@ async function buildClient(mcpUrl: string, accessToken: string, signal?: AbortSi
         'Authorization': `Bearer ${accessToken}`,
         // Hosts serve full search/query rows to gbrain's own CLI (renderers,
         // --explain). A row-shape hint only, never an authority claim.
-        [GBRAIN_CLIENT_HEADER]: `${GBRAIN_THIN_CLIENT_NAME}/${VERSION}`,
+        [GBRAIN_CLIENT_HEADER]: `${clientName}/${VERSION}`,
       },
     },
     fetch: (input, init) => fetch(input, {
@@ -317,7 +318,7 @@ async function buildClient(mcpUrl: string, accessToken: string, signal?: AbortSi
     }),
   });
   const client = new Client(
-    { name: GBRAIN_THIN_CLIENT_NAME, version: '1' },
+    { name: clientName, version: '1' },
     { capabilities: {} },
   );
   try {
@@ -348,6 +349,8 @@ export interface CallRemoteToolOptions {
    * pending. `timeoutMs` still bounds each exchange.
    */
   writeWaitMs?: number;
+  /** GBRA-498: request-level `_meta` sent with the tool call (the CLI's `--room` goes as `_meta.room`, never as an argument). */
+  meta?: Record<string, unknown>;
 }
 
 /**
@@ -438,7 +441,7 @@ export async function callRemoteTool(
       try {
         signal.throwIfAborted();
         submitted = true;
-        const res = await client.callTool({ name: toolName, arguments: args }, undefined, buildMcpRequestOptions(opts, signal));
+        const res = await client.callTool({ name: toolName, arguments: args, ...(opts.meta ? { _meta: opts.meta } : {}) }, undefined, buildMcpRequestOptions(opts, signal));
         if (res.isError) {
           // Agent contract v1: the envelope is content[0] alone. A notice
           // block from a newer server never joins the body.
@@ -529,6 +532,18 @@ export async function callRemoteTool(
 /** One tool a remote serve lists for this token: its name and the parameter names its input schema declares. */
 export interface RemoteToolListing { name: string; params: string[] }
 
+/** A remote serve's whole tools/list answer for this token, with what its initialize said about itself. */
+export interface RemoteToolDefs {
+  tools: Tool[];
+  /** The host's initialize instructions, when it sent any. */
+  instructions?: string;
+  /** The host's initialize serverInfo. */
+  server?: { name?: string; version?: string };
+}
+
+/** Which client the host sees: the thin client's own name by default (its header asks for full rows). */
+export interface RemoteClientOptions extends CallRemoteToolOptions { clientName?: string }
+
 /**
  * #6696 B2: the tools a remote serve lists for this client's token (tools/list
  * already filters by the token's scope and surface). Lets the thin client send
@@ -536,13 +551,21 @@ export interface RemoteToolListing { name: string; params: string[] }
  * `callRemoteTool`: a cached token, one refresh on an HTTP 401.
  */
 export async function listRemoteTools(config: GBrainConfig, opts: CallRemoteToolOptions = {}): Promise<RemoteToolListing[]> {
+  const { tools } = await listRemoteToolDefs(config, opts);
+  return tools.map((t) => ({ name: t.name, params: Object.keys((t.inputSchema as { properties?: Record<string, unknown> } | undefined)?.properties ?? {}) }));
+}
+
+/** The full tool definitions behind `listRemoteTools` (the stdio bridge lists them as-is). */
+export async function listRemoteToolDefs(config: GBrainConfig, opts: RemoteClientOptions = {}): Promise<RemoteToolDefs> {
   const remote = requireRemoteMcp(config);
   const { signal, cleanup } = buildAbortController(opts);
-  const list = async (token: string): Promise<RemoteToolListing[]> => {
-    const client = await buildClient(remote.mcp_url, token, signal);
+  const list = async (token: string): Promise<RemoteToolDefs> => {
+    const client = await buildClient(remote.mcp_url, token, signal, opts.clientName);
     try {
       const { tools } = await client.listTools(undefined, buildMcpRequestOptions(opts, signal));
-      return tools.map((t) => ({ name: t.name, params: Object.keys((t.inputSchema as { properties?: Record<string, unknown> } | undefined)?.properties ?? {}) }));
+      const instructions = client.getInstructions();
+      const server = client.getServerVersion();
+      return { tools, ...(instructions ? { instructions } : {}), ...(server ? { server: { name: server.name, version: server.version } } : {}) };
     } finally {
       try { await client.close(); } catch { /* best-effort */ }
     }
@@ -558,6 +581,89 @@ export async function listRemoteTools(config: GBrainConfig, opts: CallRemoteTool
     }
   } catch (e) {
     throw toRemoteMcpError(e, remote.mcp_url, signal);
+  } finally {
+    cleanup();
+  }
+}
+
+/** Options for `forwardRemoteToolCall`. */
+export interface ForwardRemoteToolOptions extends RemoteClientOptions {
+  /**
+   * Read after connecting, before anything is sent: a returned result answers
+   * the call instead and nothing reaches the host (the bridge refuses an
+   * audience a host cannot be shown to enforce).
+   */
+  admit?: (server: { name?: string; version?: string } | undefined) => CallToolResult | null;
+}
+
+/**
+ * The stdio bridge's call path: send one tool call to the remote serve and
+ * return its `CallToolResult` exactly as the host answered, `isError`
+ * envelopes and pending write receipts included (`callRemoteTool` turns those
+ * into thrown errors). Same token handling as `callRemoteTool`: a cached
+ * token, and one re-mint and resend only after an explicit HTTP 401, which
+ * refused the request; nothing else is ever replayed. A persistence mutation
+ * gets one `request_id` before the first send, kept across that resend.
+ * Only a transport failure throws: a RemoteMcpError carrying `request_id`
+ * (when one was sent) and `submission_status` (`unknown` once the request
+ * left, `not_sent` before).
+ */
+export async function forwardRemoteToolCall(
+  config: GBrainConfig,
+  toolName: string,
+  args: Record<string, unknown> = {},
+  opts: ForwardRemoteToolOptions = {},
+): Promise<CallToolResult> {
+  const remote = requireRemoteMcp(config);
+  const sent = isPersistenceIpcMutation(toolName) && args.request_id === undefined && args.dry_run !== true ? { ...args, request_id: randomUUID() } : args;
+  const requestId = isPersistenceIpcMutation(toolName) && isWriteRequestId(sent.request_id) ? sent.request_id : undefined;
+  let submitted = false;
+  const { signal, cleanup } = buildAbortController(opts);
+  const send = async (token: string): Promise<CallToolResult> => {
+    const client = await buildClient(remote.mcp_url, token, signal, opts.clientName);
+    try {
+      const refused = opts.admit?.(client.getServerVersion());
+      if (refused) return refused;
+      signal.throwIfAborted();
+      submitted = true;
+      return await client.callTool({ name: toolName, arguments: sent, ...(opts.meta ? { _meta: opts.meta } : {}) }, undefined, buildMcpRequestOptions(opts, signal)) as CallToolResult;
+    } finally {
+      try { await client.close(); } catch { /* best-effort */ }
+    }
+  };
+  try {
+    try {
+      return await send(await getAccessToken(config, false, signal));
+    } catch (e) {
+      signal.throwIfAborted();
+      if (!isStreamableHttpError(e) || e.code !== 401) throw e;
+      submitted = false; // The host refused this attempt; it was not accepted.
+      dropAccessToken(config);
+      let fresh: string;
+      try {
+        fresh = await getAccessToken(config, true, signal);
+      } catch (mintErr) {
+        if (mintErr instanceof RemoteMcpError && mintErr.reason === 'auth') {
+          throw new RemoteMcpError('auth_after_refresh', 'Auth failed after token refresh.', { mcp_url: remote.mcp_url, ...(mintErr.detail?.status ? { status: mintErr.detail.status } : {}) });
+        }
+        throw mintErr;
+      }
+      try {
+        return await send(fresh);
+      } catch (e2) {
+        signal.throwIfAborted();
+        if (!isStreamableHttpError(e2) || e2.code !== 401) throw e2;
+        submitted = false;
+        dropAccessToken(config);
+        throw new RemoteMcpError('auth_after_refresh', 'Auth failed after token refresh.', { mcp_url: remote.mcp_url, status: 401 });
+      }
+    }
+  } catch (e) {
+    const error = toRemoteMcpError(e, remote.mcp_url, signal);
+    throw new RemoteMcpError(error.reason, error.message, {
+      ...error.detail, ...(requestId ? { request_id: requestId } : {}),
+      submission_status: submitted ? 'unknown' : 'not_sent',
+    });
   } finally {
     cleanup();
   }

@@ -24,8 +24,10 @@ async function install(brain: { syncRepoPath?: string; defaultSourcePath?: strin
     const log = console.log;
     const error = console.error;
     const exit = process.exit;
+    const stderrWrite = process.stderr.write;
     console.log = () => {};
     console.error = (...p: unknown[]) => { stderr.push(p.map(String).join(' ')); };
+    process.stderr.write = ((chunk: string | Uint8Array) => { stderr.push(String(chunk)); return true; }) as typeof process.stderr.write;
     process.exit = ((code?: number) => { exitCode = code ?? 0; throw new Error('process.exit'); }) as typeof process.exit;
     _resetCliExitVerdictForTests();
     try {
@@ -40,6 +42,7 @@ async function install(brain: { syncRepoPath?: string; defaultSourcePath?: strin
     } finally {
       console.log = log;
       console.error = error;
+      process.stderr.write = stderrWrite;
       process.exit = exit;
     }
   });

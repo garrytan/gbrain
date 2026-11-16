@@ -111,7 +111,7 @@ for (const backend of testBackends()) describe(`#6712 wave: deleted-file repair 
     const preview = await run(sourceId, { slugs: ['notes/keep'], prefer: 'database' });
     expect(preview).toMatchObject({ mode: 'dry_run', affected: 1 });
     expect(preview.details!.pages).toEqual([expect.objectContaining({ slug: 'notes/keep', action: 'recreate_file' })]);
-    expect(preview.warnings).toEqual([expect.stringContaining('Git durability is off')]);
+    expect(preview.warnings).toEqual([expect.stringContaining('Git durability is off'), expect.stringContaining('the delete of notes/keep.md in commit ')]);
     expect(existsSync(file)).toBe(false);
 
     const applied = await run(sourceId, { slugs: ['notes/keep'], prefer: 'database', expect: preview.preview_hash! });

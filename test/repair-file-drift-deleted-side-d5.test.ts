@@ -67,9 +67,9 @@ for (const backend of testBackends()) describe(`[${backend}] PR A item 5: repair
     for (const name of NAMES) writeFileSync(join(root, `notes/${name}-example.md`), note(`notes/${name}-example`, `The committed body of notes/${name}-example.`));
     commit(root, 'notes');
   };
-  const run = async (engine: BrainEngine, opts: { state: string; prefer: 'file' | 'database'; provenance?: string; only?: string[]; expect?: string }) =>
+  const run = async (engine: BrainEngine, opts: { state?: string; slugs?: string[]; prefer: 'file' | 'database'; provenance?: string; only?: string[]; expect?: string }) =>
     (await repairRunner(engine, { apply: opts.expect !== undefined, logger })).run('file-drift', await resolveRepairScope(engine, 'default'),
-      { explicit: true, sourceFlag: 'default', held: true, side: 'deleted', state: opts.state, prefer: opts.prefer,
+      { explicit: true, sourceFlag: 'default', ...(opts.slugs ? { slugs: opts.slugs } : { held: true, side: 'deleted', state: opts.state }), prefer: opts.prefer,
         ...(opts.provenance ? { provenance: opts.provenance } : {}), ...(opts.only ? { only: opts.only } : {}), ...(opts.expect ? { expect: opts.expect } : {}) });
   type Page = { slug: string; action?: string; verb?: string; state?: string; path?: string; provenance?: { kind: string; subject?: string } };
   const pages = (result: Awaited<ReturnType<typeof run>>) => (result.details?.pages ?? []) as Page[];
@@ -86,18 +86,25 @@ for (const backend of testBackends()) describe(`[${backend}] PR A item 5: repair
     const before = await state(engine, root);
     const page = (await engine.readPageSnapshot('notes/alpha-example', { sourceId: 'default' }))!;
 
-    const preview = await run(engine, { state: 'file_gone', prefer: 'database', provenance: 'deleted_by_commit' });
+    // GST-2579: the delete is newer than what sync imported, so the bulk database-wins run keeps it and writes nothing;
+    // naming the page previews the recreate, and its detail and warning name the delete it undoes.
+    const bulk = await run(engine, { state: 'file_gone', prefer: 'database', provenance: 'deleted_by_commit' });
+    expect(bulk).toMatchObject({ mode: 'dry_run', affected: 0, residuals: { kept_newer_delete: 1 } });
+    expect(listed(bulk)).toEqual([['default:notes/alpha-example', 'kept_newer_delete']]);
+    expect(bulk.listing![0]!.detail).toContain(`commit ${git(root, 'rev-parse', 'HEAD').slice(0, 12)}`);
+    expect(await state(engine, root)).toEqual(before);
+    const preview = await run(engine, { slugs: ['notes/alpha-example'], prefer: 'database' });
     expect(preview).toMatchObject({ mode: 'dry_run', affected: 1 });
     expect(pages(preview)).toEqual([expect.objectContaining({ slug: 'notes/alpha-example', action: 'recreate_file', verb: 'recreate the file',
-      provenance: expect.objectContaining({ kind: 'deleted_by_commit', subject: 'cull alpha' }) })]);
+      discards: { path, reason: 'unimported_delete', commit: expect.objectContaining({ sha: git(root, 'rev-parse', 'HEAD'), author: 'Example' }) } })]);
     expect(listed(preview)).toEqual([['default:notes/alpha-example', 'prefer_database']]);
     expect(preview.listing![0]!.detail).toContain(`recreates its missing file ${path} from the page`);
-    expect(preview.listing![0]!.detail).toContain(`deleted by commit ${git(root, 'rev-parse', 'HEAD').slice(0, 12)}`);
-    expect(preview.apply_command).toContain('--provenance deleted_by_commit --prefer database --apply --expect');
+    expect(preview.listing![0]!.detail).toContain(`undoes the delete of ${path} in commit ${git(root, 'rev-parse', 'HEAD').slice(0, 12)}`);
+    expect(preview.apply_command).toContain('--slug notes/alpha-example --prefer database --apply --expect');
     expect(await state(engine, root)).toEqual(before);
     expect(existsSync(join(root, path))).toBe(false);
 
-    const applied = await run(engine, { state: 'file_gone', prefer: 'database', provenance: 'deleted_by_commit', expect: preview.preview_hash! });
+    const applied = await run(engine, { slugs: ['notes/alpha-example'], prefer: 'database', expect: preview.preview_hash! });
     expect(applied.outcomes).toEqual({ repaired: 1 });
     const parsed = parseMarkdown(readFileSync(join(root, path), 'utf8'), path);
     const after = (await engine.readPageSnapshot('notes/alpha-example', { sourceId: 'default' }))!;
@@ -109,7 +116,7 @@ for (const backend of testBackends()) describe(`[${backend}] PR A item 5: repair
     expect(parsed.type).toBe(page.page.type);
     // The apply recreates the file uncommitted (Git durability is off here, as the preview warns) and leaves the hold to the
     // sync that re-screens it: an uncommitted file keeps the hold and the page; committing it and syncing clears the hold.
-    expect(preview.warnings).toEqual([expect.stringContaining('unless the recreated files are committed')]);
+    expect(preview.warnings).toEqual([expect.stringContaining('unless the recreated files are committed'), expect.stringContaining(`the delete of ${path} in commit `)]);
     expect(preview.details!.undone_by_next_sync_unless_committed).toEqual({ recreated: 1, removed: 0 });
     expect(git(root, 'status', '--porcelain')).toBe(`?? ${path}`);
     expect((await holds(engine))[path]).toMatchObject({ code: 'file_drift', meta: { state: 'file_gone' } });

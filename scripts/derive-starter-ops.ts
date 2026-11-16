@@ -19,6 +19,10 @@
  * slices (VERB_NAMES spread + whoami + request_tools + the agent lane) are
  * composed in surface.ts itself and excluded from the proposal.
  *
+ * A window that reaches back past pruned request-log history (retention,
+ * src/core/mcp-request-log-retention.ts) is refused: exit 1, the truncation
+ * note on stderr naming the --days that is complete.
+ *
  * Caveats printed with the proposal:
  *   - HTTP clients only (stdio never writes mcp_request_log).
  *   - BRAIN_TOOL_ALLOWLIST cross-check (D12): allowlist members missing from
@@ -29,7 +33,7 @@
 
 import { loadConfig, toEngineConfig } from '../src/core/config.ts';
 import { createEngine } from '../src/core/engine-factory.ts';
-import { readClientOpUsage, MCP_USAGE_DEFAULT_WINDOW_DAYS } from '../src/core/mcp-usage.ts';
+import { readClientOpUsageWithCoverage, truncatedWindowNote, MCP_USAGE_DEFAULT_WINDOW_DAYS, type ClientOpUsage } from '../src/core/mcp-usage.ts';
 import { operations } from '../src/core/operations.ts';
 import { ALWAYS_INCLUDED_STARTER_OPS } from '../src/mcp/surface.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../src/core/minions/tools/brain-allowlist.ts';
@@ -80,9 +84,15 @@ const engine = await createEngine(engineConfig);
 await engine.connect(engineConfig);
 
 async function run(): Promise<number> {
-  let usage: Awaited<ReturnType<typeof readClientOpUsage>>;
+  let usage: ClientOpUsage[];
   try {
-    usage = await readClientOpUsage(engine, { days });
+    const read = await readClientOpUsageWithCoverage(engine, { days });
+    // Partial data must never derive the starter surface: refuse a window that reaches past pruned history.
+    if (read.coverage.truncated) {
+      console.error(truncatedWindowNote(read.coverage));
+      return 1;
+    }
+    usage = read.clients;
   } catch (e) {
     // A brain that never served remote MCP may lack the table entirely.
     console.error('Could not read mcp_request_log — has this brain ever served remote MCP?');

@@ -24,6 +24,7 @@ import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { parseRescopeTokenArgs, rescopeLegacyToken } from '../src/core/grants/legacy-token.ts';
 import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
@@ -80,6 +81,7 @@ function callers(engine: () => BrainEngine, source: string) {
       const minted = await mintLegacyToken(engine(), { name, scopes: ['read'], takesHolders: ['world'], sourceGrant: [source] });
       tokens[name] = minted.token;
       if (member) await engine().executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id = $1::uuid', [minted.id, member]);
+      else await readsUnscopedOnPurpose(engine(), minted.id);
     },
   };
 }

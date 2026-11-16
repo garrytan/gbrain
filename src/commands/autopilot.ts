@@ -19,6 +19,8 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, unlinkSync, chmodSync, statSync } from 'fs';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { exitCliError } from '../cli/cli-error.ts';
+import { autopilotNoRepoRefusal, autopilotPgliteRefusal } from './autopilot-refusals.ts';
 import { readGlobalMaintenanceVerdict } from '../core/minions/global-maintenance-stall.ts';
 import { readDaemonStaleAfter } from '../core/autopilot-heartbeat.ts';
 import { detectExecutionEnvironment } from '../core/execution-env.ts';
@@ -902,15 +904,9 @@ async function installDaemon(engine: BrainEngine, args: string[]) {
   // sweep, embed) then fails to connect. Refuse with guidance; --force for
   // operators who genuinely want a daemon-owned brain.
   const guardMsg = pgliteDaemonGuardMessage(engine.kind, args.includes('--force'));
-  if (guardMsg) {
-    console.error(guardMsg);
-    process.exit(1);
-  }
+  if (guardMsg) exitCliError(autopilotPgliteRefusal(guardMsg), 'autopilot');
   const rawRepoPath = parseArg(args, '--repo') || await installRepoFallback(engine);
-  if (!rawRepoPath) {
-    console.error('No repo path: sync.repo_path and the default source local_path are unset or relative. Use --repo <absolute-directory>.');
-    process.exit(1);
-  }
+  if (!rawRepoPath) exitCliError(autopilotNoRepoRefusal(engine.kind), 'autopilot');
   // #3696: the daemon runs with an arbitrary cwd (launchd: `/`), so a
   // relative `--repo .` baked into the wrapper script resolves to a phantom
   // path at daemon runtime. Resolve NOW, against the installer's cwd.
@@ -1018,7 +1014,7 @@ export function generateLaunchdPlist(wrapperPath: string, home: string, job?: Au
 <dict>
   <key>Label</key><string>${escapeXml(job?.launchdLabel ?? autopilotLaunchdLabel())}</string>
   <key>ProgramArguments</key><array>
-    <string>${escapeXml(wrapperPath)}</string>
+${(job?.launchdViaBash ? ['/bin/bash', wrapperPath] : [wrapperPath]).map(arg => `    <string>${escapeXml(arg)}</string>`).join('\n')}
   </array>
   <key>WorkingDirectory</key><string>${escapeXml(home)}</string>
   <key>RunAtLoad</key><true/>
@@ -1044,7 +1040,7 @@ function installLaunchd(wrapperPath: string, home: string, repoPath: string, job
 
   try {
     const agentsDir = join(home, 'Library', 'LaunchAgents');
-    mkdirSync(agentsDir, { recursive: true });
+    for (const dir of [agentsDir, dirname(job.logPath)]) mkdirSync(dir, { recursive: true });
     replaceLegacySharedJob(job, 'macos');
     writeFileSync(plistPath(job.launchdLabel), plist, { mode: 0o644 });
     // launchd rejects group/world-writable agent plists: bootstrap/load fails

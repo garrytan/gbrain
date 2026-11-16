@@ -1,8 +1,8 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { PGlite } from '@electric-sql/pglite';
 import { currentTextProjectionFilter } from '../src/core/search/safe-chunks.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { PROJECTION_STATISTICS_SQL, refreshProjectionStatistics, verifyProjectionStatistics } from '../src/core/search/projection-statistics.ts';
+import { missingSearchStatistics, PROJECTION_STATISTICS_SQL, refreshProjectionStatistics, verifyProjectionStatistics } from '../src/core/search/projection-statistics.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { LATEST_VERSION, runMigrations } from '../src/core/migrate.ts';
 
@@ -121,6 +121,37 @@ describe('projection statistics refresh after a write pass', () => {
       expect(await relpages('facts')).toBeGreaterThan(1);
       expect(await relpages('planner_stats_deltas')).toBeGreaterThan(sampled);
     } finally { await db.close(); }
+  }, 30_000);
+});
+
+describe('projection statistics read by a role that does not own pages (#8530)', () => {
+  test('owner-collected statistics hidden from a SELECT-only role are uninspectable, not uncollected, and a small pass stays quiet', async () => {
+    const db = new PGlite();
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const engine = { ...fixtureEngine(db), kind: 'postgres' } as BrainEngine;
+      await db.exec(`CREATE TABLE pages (id integer PRIMARY KEY, text_projection_revision uuid, knowledge_revision uuid,
+          deleted_at timestamptz, source_id text, type text, slug text, body_generation bigint);
+        INSERT INTO pages SELECT i, '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001',
+          NULL, 'source-a', 'note', 'page-' || i, 1 FROM generate_series(1, 1000) i;
+        CREATE STATISTICS pages_text_projection_current_stats ON ((text_projection_revision = knowledge_revision)) FROM pages;
+        ANALYZE pages;
+        CREATE ROLE app_reader;
+        GRANT SELECT ON pages TO app_reader;`);
+      await verifyProjectionStatistics(engine);
+      await db.exec('SET ROLE app_reader');
+      expect(await missingSearchStatistics(engine)).toEqual([]);
+      await expect(verifyProjectionStatistics(engine)).rejects.toThrow('cannot be inspected');
+      expect(await refreshProjectionStatistics(engine, 1)).toBe(true);
+      expect(await refreshProjectionStatistics(engine, 1)).toBe(true);
+      expect(warn).not.toHaveBeenCalled();
+      expect(await refreshProjectionStatistics(engine, 1000)).toBe(false);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain('database-owner maintenance is required');
+    } finally {
+      warn.mockRestore();
+      await db.close();
+    }
   }, 30_000);
 });
 

@@ -1,0 +1,16 @@
+Recorder: notetaker-a
+Recording ID: rec-1018-a
+Title: Zeta and Acme catch-up
+Date: 2026-10-18 16:00 ET
+Duration: 25m
+Attendees: Erin Example <erin@zeta-example.com>, Bob Example <bob@acme-example.com>
+
+AI summary (auto-generated):
+- Bob Example has joined zeta-example as a cofounder.
+- Zeta and Acme agreed on a paid pilot.
+
+[00:00] Erin Example: Bob, you've given us so much advice this year, you're basically our cofounder at this point, ha.
+[00:08] Bob Example: Ha, please, I have a day job. Acme keeps me plenty busy.
+[00:40] Erin Example: Fair. So, the pilot. Would Acme pay for it or is it free?
+[01:20] Bob Example: We'd pay a small fee if the pilot hits the usability bar Carol sets.
+[02:05] Erin Example: That works for us. I'll send the terms Monday.

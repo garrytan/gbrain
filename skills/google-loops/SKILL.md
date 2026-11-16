@@ -116,7 +116,8 @@ gbrain loops drop sender <email> --dry-run   # preview closing one sender's repl
   exact fix (`gbrain sync --source <id>`). Run the sync, then retry. Only
   use `--stale-ok` when the user explicitly accepts stale results.
 - `completeness: "partial"` means some mail in the last 14 days is held after
-  repeated import failures (listed in `held`). Present the answer as partial:
+  repeated import failures (listed in `held`), or, with `no_google_sources:
+  null`, the sources could not be read (retry). Present the answer as partial:
   name each held item (sender, and subject when shown) and its retry command
   (`gbrain sources retry-held <id>`). Never say "you are clean" on a partial
   answer.

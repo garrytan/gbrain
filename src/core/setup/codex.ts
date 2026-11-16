@@ -31,7 +31,7 @@
  * leaves pending fingerprints the next run treats as owned, so a resume never
  * duplicates an entry, and an untrusted hook never runs.
  */
-import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { ownedEntryFingerprint } from '../bootstrap/adopted-connections.ts';
@@ -140,12 +140,32 @@ export function readCodexSetupReceipt(receiptPath: string): { setup: CodexSetupR
 
 const writeReceipt = (path: string, receipt: CodexSetupReceipt) => atomicWriteTextFile(path, `${JSON.stringify(receipt, null, 2)}\n`, { forceMode: 0o600 });
 
+/**
+ * Provider key and endpoint names Codex forwards from its own environment to
+ * serve. Codex starts stdio servers with a scrubbed environment, so a key the
+ * user exported never reached serve and search stayed keyword-only. Names
+ * only: Codex reads each value from its own environment at launch and skips
+ * a name that is unset, so no value is ever written to config.toml. The
+ * provider subset of the plugin lane's .codex-plugin/mcp.json env_vars
+ * (test/setup-codex-env-vars.test.ts keeps them equal).
+ */
+export const CODEX_FORWARDED_PROVIDER_ENV: readonly string[] = [
+  'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'AZURE_OPENAI_API_KEY', 'DASHSCOPE_API_KEY', 'DEEPGRAM_API_KEY', 'DEEPSEEK_API_KEY',
+  'GEMINI_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY', 'GOOGLE_GENERATIVE_AI_BASE_URL', 'GROQ_API_KEY', 'JEV_TYPESAFE_API_KEY',
+  'LITELLM_API_KEY', 'LITELLM_BASE_URL', 'LLAMA_SERVER_API_KEY', 'LLAMA_SERVER_BASE_URL', 'LLAMA_SERVER_RERANKER_API_KEY',
+  'LLAMA_SERVER_RERANKER_BASE_URL', 'LMSTUDIO_API_KEY', 'LMSTUDIO_BASE_URL', 'MINIMAX_API_KEY', 'MISTRAL_API_KEY', 'MOONSHOT_API_KEY',
+  'NAN_API_KEY', 'NVIDIA_API_KEY', 'OLLAMA_API_KEY', 'OLLAMA_BASE_URL', 'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENROUTER_API_KEY',
+  'OPENROUTER_BASE_URL', 'PARTICLE_API_KEY', 'PERPLEXITY_API_KEY', 'PPLX_API_KEY', 'TOGETHER_API_KEY', 'TYPESAFE_API_KEY',
+  'VOYAGE_API_KEY', 'ZHIPUAI_API_KEY',
+];
+
 export function desiredCodexMcpEntry(plan: Pick<CodexSetupPlan, 'launcher' | 'brainHome' | 'surface' | 'advertise' | 'gbrainHomeEnv' | 'sourceId' | 'stdioMember'>): Record<string, CodexTomlValue> {
   const env: Record<string, string> = {};
   if (plan.gbrainHomeEnv) env.GBRAIN_HOME = plan.gbrainHomeEnv;
   if (plan.sourceId) env.GBRAIN_SOURCE = plan.sourceId;
   // Codex starts stdio servers in the session's directory, so serve starts through the launcher too (#8426).
-  return { command: hookLauncherPath(plan.brainHome), args: stdioServeArgv(plan.launcher, plan.surface, plan.advertise, plan.stdioMember), ...(Object.keys(env).length ? { env } : {}) };
+  return { command: hookLauncherPath(plan.brainHome), args: stdioServeArgv(plan.launcher, plan.surface, plan.advertise, plan.stdioMember), ...(Object.keys(env).length ? { env } : {}),
+    env_vars: [...CODEX_FORWARDED_PROVIDER_ENV] };
 }
 
 function desiredGroups(plan: CodexSetupPlan): Partial<Record<CodexSetupEvent, CodexHookGroup>> {
@@ -235,6 +255,21 @@ export interface CodexApplyResult { steps: CodexSetupStep[]; receipt: CodexSetup
  * `beforeMcp` runs after the receipt is prepared (the brain init step);
  * `abortAfter` is the crash-injection test seam.
  */
+/** The current text of each file setup may rewrite, read before it writes; absent files have nothing to back up. */
+function readOriginals(paths: string[]): Array<{ path: string; text: string }> {
+  return paths.filter((path) => existsSync(path)).map((path) => ({ path, text: readFileSync(path, 'utf8') }));
+}
+
+/** Keep `<file>.bak.<stamp>` of each file setup changed (the autopilot convention); one note per backup. */
+function keepBackups(originals: Array<{ path: string; text: string }>): string[] {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return originals.filter(({ path, text }) => !existsSync(path) || readFileSync(path, 'utf8') !== text).map(({ path, text }) => {
+    const bakPath = `${path}.bak.${stamp}`;
+    writeFileSync(bakPath, text, { mode: 0o600 });
+    return `${path} as it was before setup changed it: ${bakPath}`;
+  });
+}
+
 export async function applyCodexSetup(
   plan: CodexSetupPlan,
   consent: SetupConsent,
@@ -243,6 +278,7 @@ export async function applyCodexSetup(
   const paths = codexSetupPaths(plan.name);
   mkdirSync(dirname(paths.configPath), { recursive: true, mode: 0o700 });
   const lock = await acquireBootstrapLock(dirname(paths.configPath));
+  const originals = readOriginals([paths.configPath, paths.hooksPath]);
   try {
     // The MCP table and every hook command start gbrain through the launcher, so it goes down before anything names it (#8424, #8426).
     ensureHookLauncher(hookLauncherPath(plan.brainHome));
@@ -364,7 +400,11 @@ export async function applyCodexSetup(
     if (opts.abortAfter === 'trust') throw new SetupAbortInjected('trust');
     receipt.status = 'installed';
     save();
+    notes.push(...keepBackups(originals));
     return { steps, receipt, changed: true, preserved, notes };
+  } catch (e) {
+    keepBackups(originals);
+    throw e;
   } finally {
     lock.release();
   }
@@ -375,6 +415,7 @@ export interface CodexRemoveResult { steps: CodexSetupStep[]; preserved: CodexPr
 /** Remove exactly what the receipt owns by fingerprint (trust, hooks, MCP, receipt); edited entries survive and are reported. */
 export async function removeCodexSetup(receipt: CodexSetupReceipt, receiptPath: string, opts: { dryRun: boolean }): Promise<CodexRemoveResult> {
   const lock = await acquireBootstrapLock(dirname(receipt.config_path));
+  const originals = readOriginals([receipt.config_path, receipt.hooks_path]);
   try {
     const steps: CodexSetupStep[] = [];
     const preserved: CodexPreserved[] = [];
@@ -444,7 +485,11 @@ export async function removeCodexSetup(receipt: CodexSetupReceipt, receiptPath: 
         steps.push({ step: 'receipt', action: 'remove', detail: receiptPath });
       }
     }
+    notes.push(...keepBackups(originals));
     return { steps, preserved, notes, receiptRemoved };
+  } catch (e) {
+    keepBackups(originals);
+    throw e;
   } finally {
     lock.release();
   }

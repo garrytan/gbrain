@@ -158,6 +158,9 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   fetch: { id: WORLD_FENCE_SLUG },
   list_pages: {},
   find_pages: { pattern: '*' },
+  storage_find: { query: 'WORLDMARK' },
+  storage_get: { id: 'dataset-a' },
+  storage_list: {},
   search: { query: 'WORLDSWEEP' },
   // 'SWEEP_' is inside every PRIVATE sentinel too: the literal scan must still return only world text.
   search_exact: { phrase: 'SWEEP_' },
@@ -264,6 +267,10 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   fetch: 'data',
   list_pages: 'data',
   find_pages: 'data',
+  // GST-1943: this fixture has no storage shelf: find and list answer empty, get answers not_found.
+  storage_find: 'ok',
+  storage_get: 'error',
+  storage_list: 'ok',
   search: 'data',
   search_exact: 'data',
   query: 'data',
@@ -380,6 +387,8 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   unpurge_page: 'error',
   // Owner confirmation needs a memory_confirm grant; the sweep's connection has none (refused before any read).
   confirm_memory: 'error',
+  // GBRA-504: promoting a guest note is the brain owner's call; the sweep's connection is refused before any read.
+  promote_guest_note: 'error',
   // rate_answer with no answer_id is a validation error; a real answer id only
   // ever names pages that answer returned to the same client.
   rate_answer: 'error',
@@ -447,6 +456,9 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   watch_job: 'error',
   list_watches: 'error',
   unwatch: 'error',
+  watch_write_request: 'error',
+  watch_cron: 'error',
+  accept_wakeshift_terms: 'error',
   cancel_job: 'error',
   retry_job: 'error',
   get_job_progress: 'error',

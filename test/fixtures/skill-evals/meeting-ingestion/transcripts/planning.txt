@@ -1,0 +1,17 @@
+Recorder: notetaker-a
+Recording ID: rec-1014-a
+Title: Acme Q4 planning
+Date: 2026-10-14 10:00 ET
+Duration: 32m
+Attendees: Alice Example <alice@acme-example.com>, Bob Example <bob@acme-example.com>, Carol Example <carol@acme-example.com>
+
+[00:00] Bob Example: Okay, let's lock the Q4 plan. We have budget for one big launch, not two.
+[00:41] Alice Example: Then it has to be the ledger. The Zephyr migration is the thing customers keep asking about.
+[01:30] Carol Example: Design can be ready by mid November if we freeze the scope this week.
+[02:12] Bob Example: Fine. We ship Zephyr in Q4 and push the mobile refresh to Q1.
+[03:05] Alice Example: I'll own the cutover runbook and have a draft by October 24.
+[03:40] Carol Example: I'll send the final screens to Alice by November 7.
+[04:22] Bob Example: Honestly the ledger is the only thing that moves revenue this year.
+[05:10] Alice Example: One risk: the reconciliation job still takes six hours on the big accounts.
+[05:55] Bob Example: Then put the reconciliation fix ahead of everything else.
+[06:30] Carol Example: Agreed. Let's meet again on October 28 to check progress.

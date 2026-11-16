@@ -272,6 +272,12 @@ export async function ghostPageNow(engine: BrainEngine, sourceId: string, slug: 
   return result.kind === 'ghost' ? { ghost: result.ghost, owner: context.owner } : { ghost: null, reason: result.reason, owner: context.owner };
 }
 
+/** A named page, checked now: the ghost it is, as the scan classifies it (a shared skillpack member is never one, #6910), or null. */
+export async function ghostPageNamed(engine: BrainEngine, sourceId: string, slug: string): Promise<GhostPage | null> {
+  const now = await ghostPageNow(engine, sourceId, slug);
+  return now.ghost && !await sharedPackMemberGhost(engine, now.owner, now.ghost) ? now.ghost : null;
+}
+
 /** Every selected (default: every active) source's ghost count, bounded samples and coverage; the doctor and health reader. */
 export async function readGhostPages(engine: BrainEngine, opts: { sourceIds?: string[]; sampleLimit?: number }): Promise<GhostPagesSummary> {
   const sourceIds = opts.sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);

@@ -117,7 +117,7 @@ for (const kind of testBackends()) {
       const register = async (name: string, grant: string[], read?: 'person' | 'scope') => {
         const c = await provider().registerClientManual('personal-' + name + '-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], grant[0]!);
         await provider().rescopeClient(c.clientId, { federatedRead: grant });
-        await bindCredential(engine, { kind: 'client', id: c.clientId }, { attestActor: 'qm', attestOps: OPS, ...(read ? { attestRead: read } : {}) });
+        await bindCredential(engine, { kind: 'client', id: c.clientId }, { attestActor: 'qm', attestOps: OPS, ...(read ? { attestRead: read } : {}), readsUnscoped: true });
         clients[name] = (await provider().exchangeClientCredentials(c.clientId, c.clientSecret ?? '')).access_token;
       };
       await register('narrow', [SRC]);

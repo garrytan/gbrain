@@ -107,6 +107,7 @@
           "skillpack-check",
           "skillpack-harvest",
           "soul-audit",
+          "storage-manifest",
           "strategic-reading",
           "testing",
           "two-tier-extraction",
@@ -115,7 +116,7 @@
         ]
       },
       "elapsed_ms": "<volatile>",
-      "message": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+      "message": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
       "name": "skill_currency",
       "status": "warn"
     },
@@ -123,6 +124,23 @@
       "elapsed_ms": "<volatile>",
       "message": "skill preconditions not checked (no connected brain)",
       "name": "skill_preconditions",
+      "status": "ok"
+    },
+    {
+      "details": {
+        "scope": "managed",
+        "totals": {
+          "bytes": 100,
+          "drift": 0,
+          "invocations": 0,
+          "size": 0,
+          "skills": 1,
+          "subcommands_unverified": 0
+        }
+      },
+      "elapsed_ms": "<volatile>",
+      "message": "1 skill(s), 0 KB (commands and flags not checked outside the CLI); no findings",
+      "name": "skill_health",
       "status": "ok"
     },
     {

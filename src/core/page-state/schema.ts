@@ -70,7 +70,7 @@ export const PAGE_STATE_SCHEMA_STATEMENTS = [
     slug TEXT NOT NULL,
     PRIMARY KEY (source_incarnation, slug)
   )`,
-  `CREATE OR REPLACE FUNCTION gbrain_advance_page_revision() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+  `CREATE OR REPLACE FUNCTION gbrain_advance_page_revision() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
     DECLARE body_moved boolean := false;
     BEGIN
       IF OLD.knowledge_revision IS NULL THEN

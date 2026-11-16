@@ -29,7 +29,9 @@ import { jobRefusal } from '../src/core/minions/refusal.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import type { MinionJobContext } from '../src/core/minions/types.ts';
 import { prepareManagedFactsSession, publishManagedFacts, resumeManagedFacts } from '../src/core/persistence/facts-maintenance.ts';
+import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import { localHostId } from '../src/core/persistence/identity.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../src/core/persistence/prepared-maintenance.ts';
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
@@ -40,6 +42,7 @@ import { repairRunner } from '../src/core/repair/registry.ts';
 import type { ManagedBrain } from './helpers/managed-brain.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
+import { testWaitMs } from './helpers/wait-for.ts';
 
 const TARGET = 'people/alice-example';
 const CLAIM_B = 'Alice-example owns the synthetic onboarding checklist.';
@@ -107,11 +110,20 @@ const claimB = (engine: ManagedBrain['engine']) => engine.executeRaw<{ fact: str
   'SELECT fact, source_markdown_slug FROM facts WHERE fact=$1', [CLAIM_B]);
 
 /**
- * The page write's facts-absorb job, by its idempotency key. The facts-backstop effect queues it asynchronously, so a test
- * that reads or sets its status adds it first (an add with the same key returns the job the effect queued, if any).
+ * The page write's facts-absorb job, by its idempotency key. The facts-backstop effect queues it asynchronously, and its add
+ * releases the key of a job that is already dead and queues a fresh one (queue.ts coalesceOnIdempotencyKey), so the effect
+ * is settled first; the add then returns the job the effect queued, or queues it when the effect skipped.
  */
 async function factsAbsorbJob(engine: ManagedBrain['engine'], loser: Awaited<ReturnType<typeof extraction>>, status?: string) {
   const key = `facts-absorb:write:${loser.write}`;
+  const deadline = performance.now() + testWaitMs(30_000);
+  for (;;) {
+    await runPersistenceEffects(engine, { engine: engine.kind }, { hostId: localHostId(), limit: 10 });
+    const [effect] = await engine.executeRaw<{ state: string }>("SELECT state FROM persistence_effects WHERE request_id=$1::uuid AND kind='facts-backstop'", [loser.write]);
+    if (!effect || effect.state === 'committed' || effect.state === 'failed') break;
+    if (performance.now() > deadline) throw new Error(`the facts-backstop effect of ${loser.write} is still ${effect.state} after the wait`);
+    await Bun.sleep(50);
+  }
   const job = await new MinionQueue(engine).add('facts-absorb', { slug: loser.slug, sourceId: 'default', source: 'mcp:put_page', persistence_request_id: loser.write,
     page_id: loser.snapshot.page.id, revision: loser.snapshot.revision }, { queue: 'default', idempotency_key: key });
   if (status) expect(await engine.executeRaw('UPDATE minion_jobs SET status=$2 WHERE id=$1 RETURNING id', [job.id, status])).toHaveLength(1);

@@ -773,7 +773,7 @@ async function assembleDelta(
           overflow: pages.length > DELTA_PAGE_FETCH_LIMIT,
           rows: window.flatMap((p) => {
             const v = verdicts.get(pageKey({ source_id: opts.sourceId, slug: p.slug }));
-            return v && !v.belowFloor ? [{ p, trust: { ...trustFields(v.tier, v.origin), ...(v.unconfirmed ? { unconfirmed: true as const } : {}) } }] : [];
+            return v && !v.belowFloor ? [{ p, trust: { ...trustFields(v.tier, v.origin), ...(v.unconfirmed ? { unconfirmed: true as const } : {}), ...('guest' in v && v.guest ? { origin: 'guest', guest: v.guest } : {}) } }] : [];
           }).map(({ p, trust }) => ({
             slug: p.slug,
             source_id: opts.sourceId,
@@ -924,8 +924,8 @@ export const CHECKPOINT_LINKS_RENDER_CAP = 10;
 // emits, so `text` honors budget_tokens instead of overshooting it.
 // #5575 A6: an item carrying a trust tier renders its compact label (an
 // external item is wrapped inline as data); an unlabeled item renders as before.
-const labelOf = (item: { trust_tier?: TrustTier; origin?: string }): TrustFields =>
-  ({ trust_tier: item.trust_tier ?? 'unknown', origin: item.origin ?? 'legacy' });
+const labelOf = (item: { trust_tier?: TrustTier; origin?: string; guest?: TrustFields['guest'] }): TrustFields =>
+  ({ trust_tier: item.trust_tier ?? 'unknown', origin: item.origin ?? 'legacy', ...(item.guest ? { guest: item.guest } : {}) });
 const labeled = (item: { trust_tier?: TrustTier; origin?: string }, text: string): string =>
   item.trust_tier ? renderTrustedInline(text, labelOf(item)) : text;
 const cardSummary = (c: EntityCard, text: string): string =>

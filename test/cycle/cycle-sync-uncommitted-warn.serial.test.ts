@@ -14,9 +14,10 @@
 import { describe, test, expect, mock, beforeAll, afterAll } from 'bun:test';
 
 let uncommitted: { added: number; modified: number; deleted: number } | undefined;
+let onSync: ((opts: { signal?: AbortSignal }) => void) | undefined;
 
 mock.module('../../src/commands/sync.ts', () => ({
-  performSync: async () => ({
+  performSync: async (_engine: unknown, opts: { signal?: AbortSignal }) => (onSync?.(opts), {
     status: 'synced',
     fromCommit: 'abcd',
     toCommit: 'efgh',
@@ -68,5 +69,18 @@ describe('runCycle sync phase — uncommitted working-tree drift', () => {
     expect(dirtyPhase?.summary).toContain('3 uncommitted file(s)');
     expect(dirtyPhase?.summary).toContain('sync.include_working_tree');
     expect(dirtyPhase?.details.uncommitted).toEqual({ added: 2, modified: 1, deleted: 0 });
+  }, 60_000);
+
+  test('the cycle signal reaches performSync, so a tool call or the idle budget stops the import (GBRA-438)', async () => {
+    uncommitted = undefined;
+    const controller = new AbortController();
+    let seen: boolean | undefined;
+    onSync = (opts) => { controller.abort(); seen = opts.signal?.aborted; };
+    try {
+      await runCycle(engine, { brainDir: '/tmp/brain', phases: ['sync'], signal: controller.signal }).catch(() => null);
+    } finally {
+      onSync = undefined;
+    }
+    expect(seen).toBe(true);
   }, 60_000);
 });

@@ -21,9 +21,12 @@ import {
   SKILL_CHECK_NAMES,
   OPS_CHECK_NAMES,
   META_CHECK_NAMES,
+  PAGE_CHECK_LEVELS,
+  PAGE_CHECK_NAMES,
   categorizeCheck,
   _resetUnknownCheckWarningsForTest,
 } from '../src/core/doctor-categories.ts';
+import { doctorCheckNames } from '../src/commands/doctor/registry.ts';
 
 const ONBOARD_CHECKS_TS_PATH = join(import.meta.dir, '..', 'src', 'core', 'onboard', 'checks.ts');
 
@@ -188,5 +191,18 @@ describe('categorizeCheck', () => {
     } finally {
       (process.stderr as { write: typeof process.stderr.write }).write = originalWrite;
     }
+  });
+});
+
+describe('W4 page class drift guard', () => {
+  test('every page-class name is an emitted doctor check and a registry check name', () => {
+    const discovered = enumerateCheckNames();
+    const registry = doctorCheckNames();
+    expect([...PAGE_CHECK_NAMES].filter((n) => !discovered.has(n) || !registry.has(n))).toEqual([]);
+    expect(PAGE_CHECK_NAMES.size).toBe(PAGE_CHECK_LEVELS.size);
+  });
+
+  test('no skill-category check pages', () => {
+    expect([...PAGE_CHECK_NAMES].filter((n) => SKILL_CHECK_NAMES.has(n))).toEqual([]);
   });
 });

@@ -201,6 +201,17 @@ describe('parseFactsFence — strikethrough semantics (Codex R2-#3 contract)', (
     expect(r.facts[0].supersededBy).toBeUndefined();
   });
 
+  test('#9069: an unstruck row whose context cell says "superseded by #N" stays live with no supersededBy', () => {
+    const body = wrapFenceBody(
+      `| 1 | Renewal is due in March | fact | 0.9 | world | medium | 2026-01-01 |  | src | superseded by #2 |
+| 2 | Renewal moved to April | fact | 0.9 | world | medium | 2026-02-01 |  | src |  |`,
+    );
+    const r = parseFactsFence(body);
+    expect(r.warnings).toEqual([]);
+    expect(r.facts[0]).toMatchObject({ active: true, forgotten: false, context: 'superseded by #2' });
+    expect(r.facts[0].supersededBy).toBeUndefined();
+  });
+
   test('case-insensitive "Superseded By #N" still parses', () => {
     const body = wrapFenceBody(
       `| 1 | ~~Old~~ | fact | 0.8 | world | medium | 2026-01-01 |  | src | Superseded By #42 |`,

@@ -1,6 +1,7 @@
 
 import type { TrustTier } from '../trust/tier.ts';
-import { trustAttributes } from '../eligibility/labels.ts';/**
+import { trustAttributes } from '../eligibility/labels.ts';
+import { isValidHolder } from '../takes-fence.ts';/**
  * v0.28: prompt-injection defense for take claims fed into `gbrain think`.
  *
  * The threat: a claim row in the takes table contains attacker-supplied text.
@@ -201,9 +202,20 @@ export interface TakeForPrompt {
   weight: number;
   source?: string | null;
   since_date?: string | null;
+  until_date?: string | null;
   /** #5575 A6: the take's trust tier and short origin, rendered as attributes. */
   trust_tier?: TrustTier;
   origin?: string;
+}
+
+/**
+ * A take attribute value from page text, neutralized like the claim, then quoted with markup characters escaped so
+ * it cannot close or forge a <take> tag. `matched` lists the injection patterns it held.
+ */
+function takeAttr(value: string, matched: string[]): string {
+  const neutral = neutralizeForPrompt(value.replace(/\s+/g, ' ').slice(0, 80));
+  matched.push(...neutral.matched);
+  return `"${neutral.text.replace(/[<>"]/g, c => (c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;'))}"`;
 }
 
 export function renderTakesBlock(takes: TakeForPrompt[]): { rendered: string; sanitizedCount: number } {
@@ -211,10 +223,11 @@ export function renderTakesBlock(takes: TakeForPrompt[]): { rendered: string; sa
   let sanitizedCount = 0;
   for (const t of takes) {
     const { text, matched } = sanitizeTakeForPrompt(t.claim);
+    const meta = [`kind=${t.kind}`, `who=${isValidHolder(t.holder) ? t.holder : takeAttr(t.holder, matched)}`, `weight=${t.weight.toFixed(2)}`];
+    if (t.since_date) meta.push(`since=${takeAttr(t.since_date, matched)}`);
+    if (t.until_date) meta.push(`until=${takeAttr(t.until_date, matched)}`);
+    if (t.source) meta.push(`source=${takeAttr(t.source, matched)}`);
     if (matched.length > 0) sanitizedCount++;
-    const meta = [`kind=${t.kind}`, `who=${t.holder}`, `weight=${t.weight.toFixed(2)}`];
-    if (t.since_date) meta.push(`since=${t.since_date}`);
-    if (t.source) meta.push(`source="${String(t.source).replace(/"/g, '\\"').slice(0, 80)}"`);
     if (t.trust_tier) meta.push(trustAttributes({ trust_tier: t.trust_tier, origin: t.origin ?? 'legacy' }));
     lines.push(
       `<take id="${t.page_slug}#${t.row_num}" ${meta.join(' ')}>\n${text}\n</take>`,

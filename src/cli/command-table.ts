@@ -408,8 +408,9 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // selfHelp: connectors ships its own printHelp (commands/connectors/index.ts) with the
   // per-subcommand usage; keep the generic short-circuit from hiding it.
   { name: 'connectors', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/connectors.ts') },
-  // selfHelp: Wakeshift report-back switch (commands/wakeshift.ts HELP); host-only (it writes the file plane and the key), docs/guides/wakeshift.md.
-  { name: 'wakeshift', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/wakeshift.ts') },
+  // selfHelp: Wakeshift report-back switch (commands/wakeshift.ts HELP), docs/guides/wakeshift.md. Thin client: only
+  // `watch` routes (watch_job / watch_write_request / watch_cron over MCP); the rest writes the host file plane and key.
+  { name: 'wakeshift', phase: 'post-connect', thinClient: 'route-then-refuse', selfHelp: true, load: () => import('./commands/wakeshift.ts') },
   // selfHelp: #3502 sweep: pages + bench print their own usage (pages.ts printHelp, bench-publish.ts
   // printHelp). Both were documented but undispatchable — `pages` had a live handleCliOnly case but
   // was missing from CLI_ONLY (the #2035 calibration bug class); `bench` was never wired at all.
@@ -424,6 +425,9 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // #5575: memory trust. Observational startup: `trust backfill --dry-run` runs with no migrations and no writes.
   // W1 belief ledger coverage: enable, disable, status, reconcile, backfill (docs/designs/BELIEF_LEDGER.md section 7).
   { name: 'beliefs', phase: 'post-connect', thinClient: 'route-then-refuse', selfHelp: true, json: 'document', routes_source: true, load: () => import('./commands/beliefs.ts') },
+  // CLI_ONLY: guest notes (GBRA-504): sets up a database-only guest source; trusted local CLI only. selfHelp: a router
+  // (init, promote, grant-owner-clients); its usage prints before any engine is opened.
+  { name: 'guests', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/guests.ts') },
   { name: 'trust', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, json: 'document', skipStartupHooks: true, startup: 'observational', load: () => import('./commands/trust.ts') },
   // selfHelp: v0.43 (#2095): watch ships WATCH_HELP (flags + the stdin-turn protocol).
   // thin client: v0.43 (#2095): watch streams against a LOCAL engine; thin clients get the

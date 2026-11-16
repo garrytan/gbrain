@@ -6,7 +6,7 @@ import { buildBasenameIndex, extractPageLinks, isGlobalBasenameEnabled, makeReso
 import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
 import { DerivedLinkEndpointChangedError } from '../derived-links.ts';
 import { capturedLinkEndpoints, indexLinkSources, loadLinkSourcePolicy, makeLinkSourceResolver } from '../link-reconciliation.ts';
-import { collectWantedLinks, isWantedPagesEnabled, possibleWantedRows } from '../wanted-links.ts';
+import { collectWantedLinks, isWantedPagesEnabled, possibleWantedRows, wantedReadAt } from '../wanted-links.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { readLineGrammarSettings, type LineGrammarSettings } from '../line-grammar.ts';
 import { primeRelationSemantics } from '../link-semantics-pack.ts';
@@ -96,6 +96,7 @@ export const LINK_ENDPOINTS_SQL = `WITH own AS (
 export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
   page: Pick<ParsedPage, 'type' | 'compiled_truth' | 'timeline' | 'frontmatter'> & { id?: number }, sourceId: string, primeSemantics = false) {
   if (primeSemantics) await primeRelationSemantics(engine);
+  const readAt = await wantedReadAt(engine);
   const resolver = makeResolver(engine, { mode: 'live', sourceId, basenameIndex: () => sourceBasenameIndex(engine, sourceId) });
   // One settings snapshot for the whole extraction; publication validates it (derived-links.ts). An unreadable
   // setting leaves the page's links unpublished (stale) rather than extracted under defaults.
@@ -143,7 +144,7 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
         : metadata.get(`${resolved.toSourceId}\0${targetSlug}`)?.type) : undefined;
     } });
   // The rows the store keeps (#6228/#6225), so the receipt's wanted preview never names a target no page can have.
-  const wanted = { producers: ['body', 'frontmatter'] as const, rows: await isWantedPagesEnabled(engine)
+  const wanted = { producers: ['body', 'frontmatter'] as const, readAt, rows: await isWantedPagesEnabled(engine)
     ? await possibleWantedRows(engine, sourceId, collectWantedLinks({ candidates: candidates.map(retarget), frontmatterUnresolved: unresolved,
       originSourceId: sourceId, crossSourceAllowed: sources.crossSourceAllowed, resolve: sources.resolve }))
     : [] };

@@ -77,8 +77,9 @@ Connectors set it for content that is private at its source: private Slack chann
 calendar events, private meetings, and sources added with `--visibility private`.
 
 Who sets it: any writer of the page, local or remote. Who clears it: the owner or the brain operator, on purpose,
-on the brain host (an edit through `put_page`, a git edit, or `gbrain repair private-labels`). A remote writer
-cannot rewrite a page its write policy hides, so an agent cannot clear a label it cannot see. Clearing widens what
+on the brain host (an edit through `put_page`, a git edit, or `gbrain repair private-labels`), or the owner's own
+remote credential with write scope (see "The owner" below). Any other remote writer cannot rewrite a page its write
+policy hides, so an agent cannot clear a label it cannot see. Clearing widens what
 other members and public callers read; do it only on the owner's ask.
 
 ### Privacy aliases: `access` and `confidentiality`
@@ -113,7 +114,8 @@ add `visibility: private` to its frontmatter.
 These rules follow the origin, so nobody writes them by hand:
 - an extracted atom, a pinned-question page and a synthesized concept with no `visibility` read as private (their
   origin may be a private transcript);
-- an atom whose origin page is private, a concept with a private input, a chronicle event from a private meeting,
+- an atom whose origin page is private (also after a rename moved that page), a concept with a private input or an
+  input atom whose origin is private, a chronicle event from a private meeting,
   and any page whose `derived_from` names a private page are private whatever their own field says;
 - anything derived from a page that names `readable_by` or sits under a folder or page rule is hidden from every
   remote caller, except a credential bound to the owner: the owner reads a derived page or a fact when it reads every
@@ -123,6 +125,16 @@ These rules follow the origin, so nobody writes them by hand:
   rule (all below).
 
 `gbrain repair visibility` stamps the explicit value on derived pages (tighten-only). The owner reads them all.
+
+When you delete a page that keeps others private, gbrain gives each page whose only privacy came from it its own
+`visibility: private` label, so it stays hidden once the deleted page's row is gone (a page that names readers keeps its
+`readable_by` and gets the label too, so its listed readers don't gain it). The label stays after that: if you restore the deleted page and later make it world, the pages derived from it
+stay private until the owner relabels them.
+
+A file removed with `git rm` outside gbrain is covered only from the next cycle: the next sync soft-deletes its page and
+the cycle's purge labels the derived pages before it removes any row. If a label cannot be written, or a page derived from it is
+itself soft-deleted (a restore would bring it back unlabelled), the purge keeps the deleted page until that is resolved and
+`gbrain doctor` names it as `derived_origin_parked`, with the page that blocks it.
 
 ### `pinned_question`
 
@@ -135,10 +147,15 @@ add --prefix <folder>/ --readers <list>` does the same for a folder, and `--slug
 at the source root, or one whose file left git, which a `visibility` edit cannot reach; upgrade every host that shares
 the brain first, because an older one stops syncing a git-backed source that holds a page rule). This is the boundary between people in a
 shared brain, and it binds the owner too: the owner reads such a page only when listed, unless the brain operator
-turns on the owner opt-in (below). No grant or hatch relaxes it. Use it for a page that belongs to specific people in a shared brain; a single-user brain needs
+turns on the owner opt-in (below). So when an owner is set, `gbrain access rule add` and `repair visibility --readers`
+refuse a reader list that leaves the owner out (`readers_omit_owner`; a group that holds the owner does not count), and
+`--allow-without-owner` accepts it when that is what you want. No grant or hatch relaxes it. Use it for a page that belongs to specific people in a shared brain; a single-user brain needs
 none. The page's writers set it; on an existing page the brain host sets or removes it with
 `gbrain repair visibility --slug <page> --readers <list>` (or `--slugs-file`), which keeps the page's trust tier and
-changes only that line ([how](repair.md)). Widening a folder rule waits for `gbrain access apply`. A credential bound to a
+changes only that line ([how](repair.md)). Widening a folder rule waits for `gbrain access apply`. On a git-canonical
+source, a fact held for an entity that has no page yet sits on the holding page of the entity's folder
+(`<folder>/memory/unattributed`), which the folder's rules cover; a new rule's preview lists the held facts it would move
+there (`held_facts_moving`) and its apply moves them (`held_facts` in the result) ([details](git-canonical.md#how-writes-reach-a-strict-source)). A credential bound to a
 member with `default` or a federated source as its write source gets it on the pages it creates there (`readable_by: [member:<id>]`),
 except the owner's, whose new pages stay shared (`POST /ingest` still refuses both). See
 [company brain, Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape).
@@ -181,6 +198,17 @@ database, so a repo-less brain works the same. The owner relaxation applies to a
 when it speaks for itself (no audience, or an audience of the owner alone); never to a shared-room audience or an
 attested call. `gbrain access owner clear` turns it off.
 
+**The owner's writes.** The owner's own credential with write scope, speaking for itself (no audience, not an
+attested call, not a subagent job, no slug fence, checked again when the write is published), may change a private page
+it reads with `put_page`, `edit_page` or `append_page`, or with `put_pages` and staged uploads (`begin_page_upload`
+and `commit_page_upload`), which write the same pages, and relabel it (for example `visibility: world`). A `put_page`
+that leaves out `visibility` or `readable_by` keeps the stored ones, and an empty `visibility` counts as left out. A
+page private only by a privacy alias, a pinned question, a derived type or a private origin is stored as
+`visibility: private` by any of these writes that states no visibility, and a pinned question keeps its
+`pinned_question`. The revision and the journaled request (`ownerWrite`) name the owner's credential. Readers lists and
+folder rules that leave the owner out still refuse it, a soft-deleted private page stays refused, and every other caller
+is refused as before; to keep an owner agent from changing private pages, give it a credential without write scope (`gbrain auth create <name> --member <owner> --scopes read`; without `--scopes` the token gets full access).
+
 **The owner opt-in.** `gbrain access owner reads-restricted on` (config `access.owner_reads_restricted`, off by
 default and unchanged on upgrade) lets the owner's credentials read the pages that `readable_by` lists, folder rules
 and page rules keep to other members, and their derived pages and facts, on every read path: HTTP tokens, OAuth
@@ -221,6 +249,59 @@ member's lineage. It never widens a write, and leaves the owner opt-in to the ow
 operator on the brain host sets it; a remote caller is refused. While it is on, every remote caller's `whoami` says so
 (`members_read_lineage`), `gbrain access check` reports it, `who-can-read` names it on pages it opens, and doctor
 reports `access_members_read_lineage`. `gbrain access members-read-lineage off` is the undo.
+
+### Labelled-only members (`gbrain access member labelled-only`)
+
+Some credentials should see only what someone deliberately labelled for them: a group chat bot, a shared assistant, an
+audience of several people. `gbrain access member labelled-only <id> on` marks a member that way (off by default and
+unchanged on upgrade; `off` is the undo). Every token, OAuth client and stdio binding of that member then reads only
+pages that name it: its id or one of its groups in `readable_by`, or a folder or page rule that lists them. A page with
+no label, which its source grant would otherwise open, is hidden on every read path, `--as <member>` and the enforced
+member CLI included. So is every derived page and fact that names nobody (summaries, atoms, chronicle events,
+`derived_from` pages): they fail closed. With `access.members_read_lineage` on, a derived page or fact passes only when it
+has at least one origin and every origin names the member; one unlabelled origin keeps it hidden. An older version
+counts only if that version itself named the member or a rule over the page lists it, so adding `readable_by` to a
+page does not open its unlabelled history. The member's own memory stays readable: facts on its own member page (the
+ones its `remember` calls saved) pass with lineage on or off. Under a shared agent's audience, the label test uses the
+audience's identities, not the bound member's, so a page must name someone in the audience. An attested read for a
+labelled-only person that names sources would run as the scope, with no member identity and so without the grant, so it
+is refused (`permission_denied`); leave the sources out to read as the person.
+
+The grant lives on the member, not on one credential, so a second key for the same member cannot forget it. Writes
+follow the same rule: the member cannot update a page it cannot read, and a page it creates must name it
+(`access_labelled_only_unnamed`; add `readable_by: [<member>]` or ask for a rule over the folder). A `put_page` to an
+existing slug the member cannot read answers `page_not_found`, and to a new slug `access_labelled_only_unnamed`, the same
+existence pattern pages with readers already have. It never applies to the owner, even if the flag is stored on the
+owner's row: setting it there, or naming a labelled-only member the owner, is refused with exit 3
+(`access_labelled_only_owner`) and asks the user. Only the brain operator on the brain host sets it; a remote caller is
+refused (`permission_denied`). `gbrain access member list` and `gbrain access check` show it, `who-can-read` notes
+which labelled-only members a page leaves out, and doctor's `access_labelled_only_members` lists them. An older gbrain
+binary sharing the same database ignores the grant, so upgrade every binary that serves the brain before turning it on.
+
+### Pages every member's key can read
+
+On a brain that serves several people, a key bound to a member reads a page with no label like any other key: the
+binding says who is asking, and only labels decide what that person reads. So a chat export or mail import loaded
+before anyone named its readers is open to every member's key, and so are the facts drawn from it. gbrain counts those
+pages, read-only, wherever you set up or check such a brain: the `gbrain access serves several` preview and receipt
+(also shown by `gbrain setup <harness> --serves several`), `gbrain access serves`, doctor's `open_shared_pages` and
+`gbrain post-upgrade`. Each shows how many members' keys read them ("the keys of 2 of 3 members"; the owner and
+labelled-only members are never counted), the top folders, and the commands that close them, with the owner already in
+every reader list:
+
+- DMs, chat and mail: keep members to labelled pages (`gbrain access serves several --members <ids> --labelled-only`
+  or `gbrain access member labelled-only <id> on`), then name each page set's readers with
+  `gbrain repair visibility --source <id> --slugs-file <file> --readers <owner>,<list>` (preview, then
+  `--apply --expect <hash>`). A folder rule can't do this, because one chats/ folder holds DMs between different pairs.
+- A folder its readers share: `gbrain access rule add --prefix meetings/ --readers <owner>,<list> --source <id>`.
+- New pages: `readable_by: [<owner>, <list>]` in their frontmatter.
+
+The count never depends on who runs it, changes nothing, and never changes an exit code. Doctor warns while DM, chat,
+conversation or mail pages are open and reports other open folders as information, since a team may share them on
+purpose. A count that fails prints "count unknown" with `gbrain doctor --only open_shared_pages --json` to retry, and
+setup carries on. A one-person brain, or one with `access.serves` set to `one`, runs no count, and
+`gbrain access serves --no-open-pages` skips it. `--labelled-only` is
+opt-in and never applies to the owner: with the owner in the roster the run is BLOCKED before anything is written.
 
 ## Related
 

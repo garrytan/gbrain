@@ -9,7 +9,8 @@
  * Locked specs from the plan:
  *
  *   - Regression detection (D-ENG-2): a regression fires for every
- *     consecutive (metric, value) pair where the newer value is at least
+ *     consecutive comparable pair (same metric, unit and period, strictly
+ *     later; see comparablePairs) where the newer value is at least
  *     10% lower than the prior value. Threshold is configurable via the
  *     env var `GBRAIN_TRAJECTORY_REGRESSION_THRESHOLD` (default 0.10).
  *     Only points with `claim_value !== null` participate.
@@ -78,52 +79,69 @@ function cosineSim(a: Float32Array, b: Float32Array): number {
 }
 
 /**
- * Detect chronological regressions in a sorted trajectory.
- *
- * Iterates per-metric (so trajectories that interleave mrr + arr + team_size
- * don't trip false regressions across metric boundaries). Within each metric,
- * walks consecutive value pairs; a pair fires when the newer value is lower
- * than the older value by at least the threshold. The relative delta uses
- * `abs(older)` as the denominator so negative-valued metrics (net income,
- * cash flow, etc.) do not invert improvement and regression.
+ * Consecutive comparable observations, oldest first: the same metric, unit
+ * and period (so a monthly figure never pairs with an annual one, nor USD
+ * with EUR), the newer strictly later. Values that disagree at one
+ * valid_from say nothing certain about that time, so that time is skipped
+ * and the chain bridges it; equal ones count once. A point with no valid
+ * date is left out.
  *
  * Pre-condition: caller passed points sorted by (valid_from ASC, fact_id ASC).
  * The engine's `findTrajectory` enforces this. No re-sort here.
+ */
+export function comparablePairs(points: TrajectoryPoint[]): Array<[TrajectoryPoint, TrajectoryPoint]> {
+  const series = new Map<string, TrajectoryPoint[]>();
+  for (const p of points) {
+    if (p.metric === null || p.value === null || !Number.isFinite(p.value) || !Number.isFinite(p.valid_from.getTime())) continue;
+    const key = JSON.stringify([p.metric, p.unit?.trim().toLowerCase() ?? null, p.period?.trim().toLowerCase() ?? null]);
+    const s = series.get(key);
+    if (s) s.push(p);
+    else series.set(key, [p]);
+  }
+  const pairs: Array<[TrajectoryPoint, TrajectoryPoint]> = [];
+  for (const s of series.values()) {
+    let prior: TrajectoryPoint | null = null;
+    for (let i = 0; i < s.length;) {
+      let j = i + 1;
+      while (j < s.length && s[j].valid_from.getTime() === s[i].valid_from.getTime()) j++;
+      if (s.slice(i, j).every(p => p.value === s[i].value)) {
+        if (prior) pairs.push([prior, s[j - 1]]);
+        prior = s[j - 1];
+      }
+      i = j;
+    }
+  }
+  return pairs;
+}
+
+/**
+ * Detect chronological regressions in a sorted trajectory: every
+ * comparablePairs pair whose newer value is lower than the older one by at
+ * least the threshold. The relative delta uses `abs(older)` as the
+ * denominator so negative-valued metrics (net income, cash flow, etc.) do
+ * not invert improvement and regression.
  */
 export function detectRegressions(
   points: TrajectoryPoint[],
   threshold: number = DEFAULT_REGRESSION_THRESHOLD,
 ): TrajectoryRegression[] {
   const out: TrajectoryRegression[] = [];
-  // Group by metric so each metric's regression detection is independent.
-  const byMetric = new Map<string, TrajectoryPoint[]>();
-  for (const p of points) {
-    if (p.metric === null || p.value === null) continue;
-    if (!Number.isFinite(p.value)) continue;
-    if (!byMetric.has(p.metric)) byMetric.set(p.metric, []);
-    byMetric.get(p.metric)!.push(p);
-  }
-
-  for (const [metric, series] of byMetric) {
-    for (let i = 1; i < series.length; i++) {
-      const older = series[i - 1];
-      const newer = series[i];
-      const oldVal = older.value!;
-      const newVal = newer.value!;
-      // Guard against division-by-zero: a metric starting at exactly 0
-      // can't compute a relative delta. Skip.
-      if (oldVal === 0) continue;
-      const delta = (newVal - oldVal) / Math.abs(oldVal);
-      if (delta <= -threshold) {
-        out.push({
-          metric,
-          from_value: oldVal,
-          from_date: toISODate(older.valid_from),
-          to_value: newVal,
-          to_date: toISODate(newer.valid_from),
-          delta_pct: delta,
-        });
-      }
+  for (const [older, newer] of comparablePairs(points)) {
+    const oldVal = older.value!;
+    const newVal = newer.value!;
+    // Guard against division-by-zero: a metric starting at exactly 0
+    // can't compute a relative delta. Skip.
+    if (oldVal === 0) continue;
+    const delta = (newVal - oldVal) / Math.abs(oldVal);
+    if (delta <= -threshold) {
+      out.push({
+        metric: older.metric!,
+        from_value: oldVal,
+        from_date: toISODate(older.valid_from),
+        to_value: newVal,
+        to_date: toISODate(newer.valid_from),
+        delta_pct: delta,
+      });
     }
   }
   return out;

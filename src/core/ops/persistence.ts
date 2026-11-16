@@ -12,6 +12,8 @@ import type { LocalGrant } from '../persistence/identity.ts';
 import type { WriteHealthFacts } from '../persistence/health.ts';
 
 const RECEIPT_NAMES = ['get_write_request', 'list_write_requests', 'cancel_write_request'] as const;
+/** The receipt read path, shared with watch_write_request (ops/wakeshift.ts) so a watch sees exactly what get_write_request sees. */
+export { receiptAccess, visible as receiptVisible, missing as receiptNotFound, callerSource as receiptCallerSource };
 type ReceiptOperation = typeof RECEIPT_NAMES[number];
 const denied = () => opError('permission_denied', 'This writer grant does not include the requested receipt operation.',
   'Explicitly regrant the required receipt operation. Existing operation snapshots do not expand during upgrades.');
@@ -88,6 +90,28 @@ async function receiptAccess(ctx: OperationContext, operation: ReceiptOperation,
   return access;
 }
 
+/**
+ * #9426: the brain host's operator reading a receipt another principal owns. `gbrain sources writer failures` (trusted
+ * local CLI only) lists every principal's terminal receipts and names `gbrain write-request <id> --json` as each row's
+ * inspect step, but an owner write runs under the principal that submitted it (a fact extraction under the page write's
+ * MCP client), so the own-principal lookup answered not_found. The same trusted local CLI, inside its own grant, reads
+ * the receipt by request_id; a request_id two principals share stays not_found, and so does a receipt another local
+ * writer registration owns (local writers stay isolated from each other). Every other caller is unchanged.
+ */
+async function hostOperatorReceipt(ctx: OperationContext, access: ReceiptAccess, requestId: string): Promise<WriteRequest | null> {
+  if (ctx.remote !== false || ctx.auth || ctx.viaSubagent === true || access.principal.kind !== 'local_cli') return null;
+  const { currentVerifiedLocalWriter } = await import('../persistence/identity.ts');
+  if (currentVerifiedLocalWriter()?.remote) return null;
+  const rows = await ctx.engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=$1::uuid LIMIT 2', [requestId]);
+  const row = rows.length === 1 ? rows[0]! : null;
+  if (!row || row.principal_kind === 'local_cli' || row.principal_kind === 'local_stdio') return null;
+  if (access.sourceIds && !access.sourceIds.includes(row.source_id)) return null;
+  if (access.operations && !access.operations.includes(row.operation)) return null;
+  const slug = String(row.slug ?? '').toLowerCase();
+  if (access.slugPrefixes && !access.slugPrefixes.some(prefix => prefix.endsWith('/') ? slug.startsWith(prefix) : slug === prefix || slug.startsWith(`${prefix}/`))) return null;
+  return row;
+}
+
 async function visible(ctx: OperationContext, row: WriteRequest): Promise<boolean> {
   const { ownRequestAccessible } = await import('../persistence/authority.ts');
   if (!await ownRequestAccessible(ctx, row)) return false;
@@ -116,7 +140,7 @@ async function quotedOutcome(outcome: Record<string, unknown>, slug: string): Pr
 
 async function publicReceipt(ctx: OperationContext, row: WriteRequest, facts?: WriteHealthFacts): Promise<Record<string, unknown>> {
   const { receiptFor } = await import('../persistence/journal.ts');
-  const { publicEffectsForRequest } = await import('../persistence/effect-journal.ts');
+  const { gitReceiptState, publicEffectsForRequest } = await import('../persistence/effect-journal.ts');
   const { receiptDeliveredHint } = await import('../persistence/connector-errors.ts');
   const { CHECKPOINT_VALIDATION_TIMEOUT, checkpointTimeoutHint } = await import('../persistence/checkpoint-validation.ts');
   const { writeFailureDiagnostic } = await import('../persistence/verb-errors.ts');
@@ -136,7 +160,10 @@ async function publicReceipt(ctx: OperationContext, row: WriteRequest, facts?: W
   const { cliRenderContext, renderAction } = await import('../agent-output.ts');
   const render = ctx.remote === false ? cliRenderContext() : { transport: 'stdio' as const, isCallable: () => false, preapproved: () => false };
   const { liveSearchable } = await import('../persistence/searchable.ts');
-  const receipt = publicWriteReceipt(receiptFor(row, facts));
+  const stored = publicWriteReceipt(receiptFor(row, facts));
+  // #9227: a classic write's `git_state: queued` is what its publication stored; the Git effect row says where Git is now.
+  const git = stored.persistence?.git_state === 'queued' ? await gitReceiptState(ctx.engine, row.id) : null;
+  const receipt = git ? { ...stored, persistence: { ...stored.persistence!, ...git } } : stored;
   // GBRA-217: a reason whose Git effect was superseded is reported as not committed.
   const settled = await (await import('../persistence/change-reason.ts')).settledReasonRecorded(ctx.engine, row);
   if (settled) ctx.emitNotice?.(settled.notice);
@@ -209,15 +236,18 @@ export const persistenceOperations: Operation[] = [
     cliHints: { name: 'write-request', positional: ['request_id'] },
     handler: async (ctx, params) => {
       const id = requiredRequestId(params.request_id);
-      const { principal } = await receiptAccess(ctx, 'get_write_request');
+      const access = await receiptAccess(ctx, 'get_write_request');
+      const { principal } = access;
       const { getWriteRequest, writeHealthFacts } = await import('../persistence/journal.ts');
-      const row = await getWriteRequest(ctx.engine, principal, id);
+      const own = await getWriteRequest(ctx.engine, principal, id);
+      if (own && !await visible(ctx, own)) throw missing(callerSource(ctx));
+      let row = own;
       if (!row) {
         const proposal = await ownProposal(ctx, principal, id);
-        if (!proposal) throw missing(callerSource(ctx));
-        return (await import('../persistence/memory-proposals.ts')).proposalReceipt(proposal);
+        if (proposal) return (await import('../persistence/memory-proposals.ts')).proposalReceipt(proposal);
+        row = await hostOperatorReceipt(ctx, access, id);
+        if (!row) throw missing(callerSource(ctx));
       }
-      if (!await visible(ctx, row)) throw missing(callerSource(ctx));
       const receipt = { ...await publicReceipt(ctx, row, (await writeHealthFacts(ctx.engine, [row])).get(row.id)), ...await approvedProposal(ctx, principal, row) };
       if (params.applied !== true) return receipt;
       const applied = await (await import('../persistence/write-applied.ts')).readWriteApplied(ctx.engine, row).catch(() => null);

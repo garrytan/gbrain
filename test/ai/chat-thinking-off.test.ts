@@ -28,6 +28,15 @@ const realFetch = globalThis.fetch;
 beforeAll(() => {
   globalThis.fetch = (async (input: any, init?: any) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.startsWith('https://api.deepseek.com/')) {
+      const body = JSON.parse(String(init?.body));
+      bodies.push(body);
+      return Response.json({
+        id: 'chatcmpl_stub', object: 'chat.completion', created: 0, model: body.model,
+        choices: [{ index: 0, message: { role: 'assistant', content: '{"ok":true}' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      });
+    }
     if (!url.startsWith('https://generativelanguage.googleapis.com/')) return realFetch(input, init);
     bodies.push(JSON.parse(String(init?.body)));
     return Response.json({
@@ -79,8 +88,10 @@ beforeEach(() => {
   resetGateway();
 });
 
-function configure(model: string, providerChatOptions?: Record<string, Record<string, unknown>>): void {
+function configure(model: string, providerChatOptions?: Record<string, Record<string, unknown>>, baseUrls: Record<string, string | undefined> = {}): void {
   const base = `http://127.0.0.1:${server.port}/v1`;
+  const urls = Object.fromEntries(Object.entries({ deepseek: base, openrouter: base, zhipu: base, groq: base, ...baseUrls })
+    .filter((e): e is [string, string] => e[1] !== undefined));
   configureGateway({
     chat_model: model,
     env: {
@@ -88,7 +99,7 @@ function configure(model: string, providerChatOptions?: Record<string, Record<st
       OPENAI_API_KEY: 'stub', OPENAI_BASE_URL: base, GOOGLE_GENERATIVE_AI_API_KEY: 'stub',
       DEEPSEEK_API_KEY: 'stub', OPENROUTER_API_KEY: 'stub', ZHIPUAI_API_KEY: 'stub', GROQ_API_KEY: 'stub',
     },
-    base_urls: { deepseek: base, openrouter: base, zhipu: base, groq: base },
+    base_urls: urls,
     ...(providerChatOptions ? { provider_chat_options: providerChatOptions } : {}),
   });
 }
@@ -127,13 +138,31 @@ describe("chat({ thinking: 'off' }) request bodies (#5331)", () => {
     expect(bodies[0].thinking).toEqual({ type: 'enabled', budget_tokens: 4000 });
   });
 
-  test('DeepSeek (thinks by default) gets its documented thinking switch', async () => {
-    configure('deepseek:deepseek-v4-flash');
+  test('native DeepSeek (thinks by default) gets its documented thinking switch', async () => {
+    configure('deepseek:deepseek-v4-flash', undefined, { deepseek: undefined });
 
     await judgeCall('deepseek:deepseek-v4-flash');
 
     expect(bodies[0].thinking).toEqual({ type: 'disabled' });
     expect(bodies[0].max_tokens).toBe(2000);
+  });
+
+  test('a provider_base_urls.deepseek path on the DeepSeek origin is still the native route', async () => {
+    configure('deepseek:deepseek-v4-flash', undefined, { deepseek: 'https://api.deepseek.com/beta' });
+
+    await judgeCall('deepseek:deepseek-v4-flash');
+
+    expect(bodies[0].thinking).toEqual({ type: 'disabled' });
+    expect(bodies[0].max_tokens).toBe(2000);
+  });
+
+  test('#7662: provider_base_urls.deepseek on another origin gets no DeepSeek switch and keeps the thinking headroom', async () => {
+    configure('deepseek:deepseek-v4-flash');
+
+    await judgeCall('deepseek:deepseek-v4-flash');
+
+    expect('thinking' in bodies[0]).toBe(false);
+    expect(bodies[0].max_tokens).toBe(THINKING_MODEL_MAX_OUTPUT_TOKENS);
   });
 
   test('OpenRouter-hosted DeepSeek gets the same switch', async () => {
@@ -298,7 +327,7 @@ describe('judge preflight estimates price the cap chat() sends (W9F item 5)', ()
     const sent: Record<string, number> = {};
     for (const slot of [...cm.DEFAULT_SLOTS, { id: 'X', model: 'openai:gpt-5' }]) {
       bodies = [];
-      configure(slot.model);
+      configure(slot.model, undefined, { deepseek: undefined });
       await judgeCall(slot.model, { maxTokens: 4000 });
       sent[slot.model] = sentCap(bodies[0]);
       const p = canonicalLookup(slot.model)!;

@@ -44,6 +44,7 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `heavy-tests.yml` | `opencode-door-canary` | Named exception: schedule-only, non-gating canary | Itself |
 | `macos-validation.yml` | Label-gated on pull requests | Named exception | Nightly macOS validation schedule |
 | `scale-tier.yml` | Path- or label-gated 10k on pull requests | Named exception | Nightly Scale tier schedule (10k-50k) |
+| `upgrade-matrix.yml` | Pull requests run N-1 and N-50, keyless repo-less cells only, against the head; the full matrix (N-1, N-10, N-50, 30 days, stable × both engines × keys × brain shapes) is schedule and dispatch only, and those refuse any ref but master ([docs](ci-upgrade-matrix.md)) | Named exception | Nightly Upgrade matrix schedule |
 | `semgrep.yml` | PR diff scan vs full-tree scan | Named exception | Weekly Semgrep schedule |
 | `osv-scanner.yml` | Pull requests scan only on a manifest change | Named exception | Weekly OSV schedule; `dependency-audit` on every PR |
 | `nightly-watch.yml` | `workflow_run` event guard | Not a test scope: it files issues from qualifying scheduled and push-to-master runs | — |
@@ -132,7 +133,16 @@ complete full-suite run of the same workflow (`scripts/ci-reuse.ts`, in Test
   profile `full`).
 - The recorded tree equals both the push tree and the tree of the run's head.
 
-The push itself must be a merge commit. Anything else, an API error or a
+The push must be a merge commit or a one-parent commit. A merge commit tries the
+runs on its merged head first, newest first, then other heads with the same
+tree. A one-parent commit (a squashed landing) has no merged head, so only the
+landed pull request's own run counts: the heads GitHub names for the commit,
+with the push's tree. Every run on those heads is read, and the newest one
+decides, as in the
+[remote gate](#remote-gate-reuse): if that run failed or is still running, the
+push runs in full; a cancelled run, or one that skipped its full job, is passed
+over for the next older one. A one-parent commit no pull request names (a hand
+revert, a direct push) runs in full. Anything else, an API error or a
 partial, cancelled or diagnostic run included, leaves reuse unset, so the push
 runs in full. A reusing push skips every full lane and both aggregates, records the
 reused run in its summary, and runs the `reused-full-suite` job with the

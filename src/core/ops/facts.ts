@@ -739,7 +739,6 @@ const context_pack: Operation = {
     const { assembleContextPack, renderPack, isAfter, PACK_DEFAULT_MAX_ENTITIES, renderCardLine, renderThreadLine, renderFactLine, packHeaderCost,
       renderNewerMentionLines, ENTITY_FACTS_HEADER } = await import('../context/turn-context.ts');
     const { NEWER_MENTIONS_HEADER } = await import('../mentions/newer-mentions.ts');
-    const sourceId = ctx.sourceId ?? 'default';
     const rawSince = typeof p.since === 'string' && p.since.trim() ? p.since : undefined;
     if (rawSince !== undefined && !Number.isFinite(Date.parse(rawSince))) {
       throw verbError(
@@ -757,6 +756,8 @@ const context_pack: Operation = {
     // #6723: names resolve across the readable sources (home first) unless source_id pins one; entity_refs name their source.
     const { ambientMissNotice, entityRefs, entitySources } = await import('../verbs/entity-source.ts');
     const walk = await entitySources(ctx, p, 'context_pack');
+    const named = (await import('../access/scope-read.ts')).currentReadMode() !== undefined;
+    const sourceId = named ? walk.home : ctx.sourceId ?? 'default';
     const refs = (await entityRefs(ctx, p.entity_refs, PACK_DEFAULT_MAX_ENTITIES)).slice(0, PACK_DEFAULT_MAX_ENTITIES - names.length);
     const entities = [...names, ...refs.map((r) => r.name)];
     // Fail-closed: private only when EXPLICITLY requested AND the caller is
@@ -793,7 +794,7 @@ const context_pack: Operation = {
     // Always-loaded core tier (core-memory.ts): owner-designated pages of
     // `default` plus this source, inside the caller's grant; it packs first.
     const { loadCoreBlock } = await import('../core-memory.ts');
-    const allowed = ctx.auth?.allowedSources?.length ? ctx.auth.allowedSources : null;
+    const allowed = named ? [sourceId] : ctx.auth?.allowedSources?.length ? ctx.auth.allowedSources : null;
     const core = await loadCoreBlock(ctx.engine, { sessionSourceId: sourceId, allowedSources: allowed, excludePrivate: !includePrivate, forCaller: true, eligibility })
       .catch(() => null);
     const coreText = core?.text ?? '';

@@ -2,6 +2,11 @@
 
 Read [release rules](../RELEASING.md) before shipping.
 
+Under [releases per batch](../RELEASING.md#releases-per-batch) a PR edits
+none of VERSION, package.json's version or CHANGELOG.md; only the release PR
+does. The audit and recovery below apply to a branch that still carries a
+version, which `bun run release:unstamp` converts.
+
 ### Mandatory version-consistency audit (run after EVERY merge or commit that touches VERSION, package.json, or CHANGELOG)
 
 **The trio MUST agree.** Every merge from master will hit conflicts on

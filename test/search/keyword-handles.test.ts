@@ -33,6 +33,26 @@ describe('slugHandles', () => {
     expect(slugHandles('dan-example quokka')).toEqual(['dan-example']);
   });
 
+  test('#8618: a quoted phrase or a negation constrains only its own OR alternative', () => {
+    expect(slugHandles('"Acme-Example" OR "acme corp"', true)).toEqual(['acme-example']);
+    expect(slugHandles('"dan-example" OR "Dan Example"')).toEqual(['dan-example']);
+    expect(slugHandles('"dan-example" OR "Dan Example"', true)).toEqual(['dan-example']);
+    expect(slugHandles('dan-example OR northwind -draft')).toEqual(['dan-example']);
+    expect(slugHandles('"dan-example" "renewal due" OR "erin-example"')).toEqual(['erin-example']);
+    expect(slugHandles('dan-example quokka OR "erin-example"', true)).toEqual(['erin-example']);
+    expect(slugHandles('"acme corp" OR "Dan Example"')).toBeNull();
+    expect(slugHandles('"dan-example OR erin-example', true)).toBeNull();
+    expect(slugHandles('"dan-example OR erin-example')).toBeNull();
+    expect(slugHandles('dan-example OR "erin-example')).toEqual(['dan-example', 'erin-example']);
+  });
+
+  test('#8618: a quote mark is a word boundary and an empty phrase constrains nothing, as in websearch_to_tsquery', () => {
+    expect(slugHandles('dan-example "')).toEqual(['dan-example']);
+    expect(slugHandles('dan-example "" OR erin-example', true)).toEqual(['dan-example', 'erin-example']);
+    expect(slugHandles('acme"dan-example OR erin-example')).toBeNull();
+    expect(slugHandles('dan-example" OR erin-example')).toBeNull();
+  });
+
   test('at most MAX_SLUG_HANDLES handles', () => {
     const q = Array.from({ length: 40 }, (_, i) => 'p-' + i + 'x').join(' ');
     expect(slugHandles(q)).toHaveLength(MAX_SLUG_HANDLES);

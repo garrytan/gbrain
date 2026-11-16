@@ -13,7 +13,7 @@
  * so those facts stay unattributed. A link is also dropped whenever the
  * writer would refuse it: caller slug fences, the managed batch's grant and
  * page visibility, a withdrawn claim, or a malformed target fence (which
- * would fail the whole write). Remote callers infer only from the page
+ * would fail the whole write, read as that writer reads it: #9279). Remote callers infer only from the page
  * actually being written and never from pages they cannot read.
  */
 
@@ -39,12 +39,13 @@ export async function inferMissingSubjects(ctx: FactsBackstopCtx, facts: Extract
   const excludePrivate = managed?.authority.excludePrivate === true || await excludesPrivateWrites(engine, remote);
   const fromPage = remote ? pageSlug : ctx.sourceSlug ?? pageSlug;
   const out: ExtractedFact[] = [];
+  const fences = new Map<string, Promise<boolean>>();
   for (const f of facts) {
     // An extractor-named entity is kept even when it has no page: that name
     // competes with any page the text mentions, so inference never overrides it.
     if (!isNullLikeEntity(f.entity_slug)) { out.push(f); continue; }
     const inferred = await inferFactSubject(engine, ctx.sourceId, { fact: f.fact, pageSlug: fromPage, mode: 'write', excludePrivate });
-    if (inferred.slug !== null && await linkAllowed(ctx, inferred.slug, f.fact, visibility, remote, managed)) {
+    if (inferred.slug !== null && await linkAllowed(ctx, inferred.slug, f.fact, visibility, remote, managed, fences)) {
       out.push({ ...f, entity_slug: inferred.slug, entity_inferred: inferred.via });
     } else out.push(f);
   }
@@ -58,7 +59,7 @@ async function writesDatabaseOnly(engine: BrainEngine, sourceId: string): Promis
 }
 
 async function linkAllowed(ctx: FactsBackstopCtx, slug: string, fact: string, visibility: string, remote: boolean,
-  managed: ManagedFactsSession | null): Promise<boolean> {
+  managed: ManagedFactsSession | null, fences: Map<string, Promise<boolean>>): Promise<boolean> {
   const engine = ctx.engine;
   const { isFactWithdrawn } = await import('./withdrawal.ts');
   if (await isFactWithdrawn(engine, ctx.sourceId, visibility, fact, slug)) return false;
@@ -81,8 +82,29 @@ async function linkAllowed(ctx: FactsBackstopCtx, slug: string, fact: string, vi
     if (error instanceof OperationError) return false;
     throw error;
   }
-  const page = await engine.readPageSnapshot(slug, { sourceId: ctx.sourceId });
-  if (!page) return false;
+  if (!fences.has(slug)) fences.set(slug, targetFenceClean(engine, ctx.sourceId, slug, managed !== null));
+  return fences.get(slug)!;
+}
+
+/**
+ * #9279: whether the target's facts fence parses cleanly, read as its writer reads it. The managed writer reads a page
+ * stored in segments back whole up to the single-string ceiling; the unmanaged fence writer records a segmented page's
+ * facts database-only, and an over-ceiling page takes no fence row, so neither is a link target there.
+ */
+async function targetFenceClean(engine: BrainEngine, sourceId: string, slug: string, managed: boolean): Promise<boolean> {
+  const snapshot = await engine.readPageSnapshot(slug, { sourceId });
+  if (!snapshot) return false;
+  const { isSegmentedPage } = await import('../page-body/page-shape.ts');
+  const { materializedSnapshot, segmentedOverCeiling } = await import('../persistence/segmented-apply.ts');
+  if (isSegmentedPage(snapshot.page) && (!managed || segmentedOverCeiling(snapshot.page))) return false;
+  let body: string;
+  try {
+    body = (await materializedSnapshot(engine, snapshot))!.page.compiled_truth;
+  } catch (error) {
+    const { OperationError } = await import('../ops/contract.ts');
+    if (error instanceof OperationError) return false;
+    throw error;
+  }
   const { parseFactsFence } = await import('../facts-fence.ts');
-  return parseFactsFence(page.page.compiled_truth).warnings.length === 0;
+  return parseFactsFence(body).warnings.length === 0;
 }

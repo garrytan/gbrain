@@ -283,7 +283,7 @@ describe('buildToolDefs strictParams emission (WP3/D14.1)', () => {
     expect(props.dry_run.description).toBe(op.params.dry_run.description);
   });
 
-  test('strict mode changes ONLY additionalProperties + the two passthrough keys', () => {
+  test('strict mode changes ONLY additionalProperties + the passthrough keys (_meta, dry_run, room)', () => {
     const base = buildToolDefs(operations);
     for (let i = 0; i < base.length; i++) {
       const strict = strictDefs[i];
@@ -295,7 +295,7 @@ describe('buildToolDefs strictParams emission (WP3/D14.1)', () => {
       }
       const extraKeys = Object.keys(strict.inputSchema.properties)
         .filter(k => !(k in loose.inputSchema.properties));
-      expect(extraKeys.sort()).toEqual(['_meta', 'dry_run'].filter(k => !(k in loose.inputSchema.properties)).sort());
+      expect(extraKeys.sort()).toEqual(['_meta', 'dry_run', 'room'].filter(k => !(k in loose.inputSchema.properties)).sort());
       expect(strict.inputSchema.required).toEqual(loose.inputSchema.required);
     }
   });

@@ -6,9 +6,9 @@ import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
 import { withHeldFactsFence } from '../facts/unfenced-facts.ts';
-import { factsFenceEditor, factsFenceSection, parseFactsFenceFor, formatFenceDate, UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
+import { factsFenceEditor, factsFenceSection, parseFactsFenceFor, formatFenceDate, isHoldingSlug } from '../facts-fence.ts';
 import { getWorktreeBinding } from './ownership.ts';
-import { folderRestricted } from '../search/private-visibility.ts';
+import { holdingHome, refuseUnheldFact } from '../facts/held-fact-move.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { wholeBodySnapshot } from './segmented-apply.ts';
 import { assertFactNotWithdrawn, decideSingleFact, factWithdrawnRefusal, type FactCandidate } from '../facts/single-prepare.ts';
@@ -166,17 +166,21 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   }
   const facts = (p.facts ?? []).map(fact => ({ ...thawFact(fact), embedding_model: fact.embedding ? p.embedding?.model ?? null : null }));
   // writeSingleFact's opt-in: an unattributed row keeps its fallback entity slug, database-only.
-  const fallback = (fact: { entity_slug: string | null }) => p.attribute_fallback === true && row.slug === UNATTRIBUTED_MEMORY_SLUG
+  const fallback = (fact: { entity_slug: string | null }) => p.attribute_fallback === true && isHoldingSlug(row.slug)
     && fact.entity_slug !== null && fact.entity_slug !== row.slug;
-  // GST-2492 PR 2: on a strict source (Git is the record) a fact routed to memory/unattributed (no entity, or an entity
-  // with no page) gets a row there, committed before its database row; a held row names its entity in the `entity`
-  // cell. An entity under a folder access rule, or whose page is soft-deleted (it may be private, and a purge would not
-  // reach its row there), is not named on that world-readable page and stays database-only.
-  const holding = row.slug === UNATTRIBUTED_MEMORY_SLUG && !row.authority.databaseOnlyReason
+  // GST-2492: on a strict source (Git is the record) a fact routed to a holding page (no entity, or an entity with no
+  // page) gets a row there, committed before its database row; a held row names its entity in the `entity` cell. Each
+  // fact is held on the page holdingHome names for it (its folder's under a folder access rule); one that page cannot
+  // carry (an exact page rule, an unreadable access state, a soft-deleted entity page) stays database-only.
+  const holding = isHoldingSlug(row.slug) && !row.authority.databaseOnlyReason
     && (await getWorktreeBinding(engine, row.source_id))?.canonical_git === true;
-  const holdable = async (fact: { entity_slug: string | null }) => holding
-    && (fact.entity_slug === null || fact.entity_slug === row.slug || !await folderRestricted(engine, row.source_id, fact.entity_slug)
-      && !(await engine.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NOT NULL', [row.source_id, fact.entity_slug])).length);
+  const holdable = async (fact: { entity_slug: string | null }) => {
+    if (!holding) return false;
+    const home = await holdingHome(engine, row.source_id, fact.entity_slug === row.slug ? null : fact.entity_slug);
+    // GST-2635: a fallback fact whose home became refused after admission refuses here too, never stored outside Git.
+    if (home && 'refused' in home && fallback(fact)) await refuseUnheldFact(engine, row.source_id, fact.entity_slug!, home.refused, false);
+    return home !== null && 'slug' in home && home.slug === row.slug;
+  };
   if (!facts.length || facts.some(fact => !fallback(fact) && (fact.entity_slug !== null && fact.entity_slug !== row.slug || fact.entity_slug !== null && !stored))) {
     throw factsRefusal('invalid_params', 'The prepared facts do not match their entity.', row,
       `The request holds no facts, or facts attributed to a page other than ${row.slug}, so none were published.`);

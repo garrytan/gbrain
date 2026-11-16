@@ -182,7 +182,7 @@ describe('contract surfaces', () => {
   });
 
   test('HOLD_CODES is the canonical hold set', () => {
-    expect([...HOLD_CODES]).toEqual(['invalid_frontmatter', 'frontmatter_slug_conflict', 'file_too_large', 'rename_held', 'parser_regression']);
+    expect([...HOLD_CODES]).toEqual(['invalid_frontmatter', 'frontmatter_slug_conflict', 'file_too_large', 'rename_held', 'parser_regression', 'tag_too_long']);
   });
 
   test('slug conflicts hold unless the recorded-origin exemption applies', () => {

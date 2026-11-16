@@ -27,6 +27,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { callTool, clientCredentialsToken, envelopeOf, legacyToken, ownerCookie, registerOAuthClient, startServeHttp, type LiveServeHttp, type ToolResultWire } from './helpers/live-mcp-servers.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { noGrantFloorNext } from '../src/commands/sources-add-next.ts';
 
 const HIDDEN = 'source-hidden';
 const CANARY = 'harbourcanary';
@@ -257,6 +258,51 @@ for (const kind of testBackends()) {
           await engine.executeRaw("DELETE FROM pages WHERE source_id = 'default' AND slug = 'notes/floor-private'");
         }
       }, 60_000);
+
+      // Value: protects=quarantined pages count on neither side (#7993): a floor holding only a quarantined page is still refused (and sources add still prints the federate step), and other sources holding only quarantined pages never prompt a federate fix that could not make them searchable;
+      // fails_when=the refusal check or noGrantFloorNext counts pages search never returns;
+      // why_new=the private-page test covers visibility only; seam=none; no_claim=how pages become quarantined (marker set by SQL)
+      test('quarantined pages count on neither side of the refusal, nor in the sources add step', async () => {
+        const quarantine = (where: string, params: unknown[]) => engine.executeRaw(
+          `UPDATE pages SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || '{"quarantine": {"reason": "junk_pattern"}}'::jsonb WHERE ${where}`, params);
+        await importFromContent(engine, 'notes/floor-quarantined', '# Floor\nA quarantined note in the default source.', { sourceId: 'default', noEmbed: true });
+        await quarantine("source_id = 'default' AND slug = 'notes/floor-quarantined'", []);
+        try {
+          for (const [tool, args] of READS.filter(([tool]) => tool !== 'list_pages')) {
+            expect(envelopeOf(await callTool(serve.base, noGrant, tool, args)).code).toBe('sources_not_readable');
+          }
+          expect((await noGrantFloorNext(engine, HIDDEN))?.argv).toEqual(['gbrain', 'sources', 'federate', HIDDEN]);
+          await engine.executeRaw("DELETE FROM pages WHERE source_id = 'default' AND slug = 'notes/floor-quarantined'");
+          await quarantine('source_id = $1', [HIDDEN]);
+          for (const [tool, args] of READS) {
+            const out = await callTool(serve.base, noGrant, tool, args);
+            expect({ tool, isError: out.isError === true }).toEqual({ tool, isError: false });
+            expect(JSON.stringify(out.content)).not.toContain(CANARY);
+          }
+        } finally {
+          await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter - 'quarantine' WHERE source_id = $1`, [HIDDEN]);
+          await engine.executeRaw("DELETE FROM pages WHERE source_id = 'default' AND slug = 'notes/floor-quarantined'");
+        }
+      }, 60_000);
+
+      // Value: protects=only active world facts keep recall and query from the refusal (#7993); fails_when=a forgotten or lapsed world fact, which recall never returns, suppresses the refusal and the read answers empty;
+      // why_new=the facts test above seeds an active fact only; seam=none; no_claim=the forget write path (expired_at and valid_until set by SQL)
+      for (const state of ['forgotten', 'lapsed'] as const) {
+        test(`a ${state} world fact does not keep recall or query from the refusal`, async () => {
+          const [fact] = await engine.executeRaw<{ id: number }>(
+            `INSERT INTO facts (source_id, fact, visibility, source, expired_at, valid_until) VALUES ('default', 'The tidewell gauge runs fast.', 'world', 'test', $1::timestamptz, $2::timestamptz) RETURNING id`,
+            state === 'forgotten' ? [new Date().toISOString(), null] : [null, '2020-01-01T00:00:00Z']);
+          try {
+            for (const [tool, args] of [['recall', {}], ['query', { query: 'zzyzx nothing matches this', expand: false }]] as const) {
+              const out = await callTool(serve.base, noGrant, tool, args);
+              expect({ tool, code: envelopeOf(out).code }).toEqual({ tool, code: 'sources_not_readable' });
+              expect(JSON.stringify(out.content)).not.toContain('tidewell');
+            }
+          } finally {
+            await engine.executeRaw('DELETE FROM facts WHERE id = $1', [fact!.id]);
+          }
+        }, 60_000);
+      }
 
       test('a default source that holds a page but matches nothing answers empty, not refused', async () => {
         await importFromContent(engine, 'notes/floor-note', '# Floor\nAn unrelated note in the default source.', { sourceId: 'default', noEmbed: true });
