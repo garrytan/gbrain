@@ -10,6 +10,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
+import { collectFactCandidates, scoreFactCandidates } from '../src/core/search/fact-relevance.ts';
 import { newSource, page, putPage } from './helpers/pinned-questions-fixture.ts';
 
 type Row = { result_type?: string; chunk_text?: string; slug?: string };
@@ -61,6 +62,9 @@ beforeAll(async () => {
   await fact('Bob Example works at Beta Corp.', 10, day(10), 'people/bob-example');
   await fact('Bob Example left Beta Corp and joined Gamma Labs.', 60, '2025-02-15', 'people/bob-example');
   await fact('Dana Example had been promoted in 2025.', 80, day(80), 'people/dana-example');
+  for (const [slug, name] of [['people/sam-roger', 'Sam Roger'], ['people/sam-rogers', 'Sam Rogers']]) await putPage(engine, sourceId, slug, page('person', name, name + ' is a client.'));
+  await fact('Sam Roger lives in Porto.', 20, day(20), 'people/sam-roger');
+  await fact('Sam Rogers lives in Lisbon.', 21, day(21), 'people/sam-rogers');
 }, 300_000);
 afterAll(async () => { await engine?.disconnect(); }, 60_000);
 
@@ -101,6 +105,19 @@ describe('S7 keyless admission', () => {
   test('precision: a fact that shares only a year and auxiliaries with the question is not admitted', async () => {
     const rows = await ask('What had been decided in 2025 about the vendor contract?');
     expect(rows.filter(r => r.result_type === 'fact' && /Dana Example/.test(r.chunk_text ?? ''))).toEqual([]);
+  });
+});
+
+describe('A4 near names: an exact word outranks a stem-only match', () => {
+  const Q = 'Where did Sam Roger live in 2025?';
+  test('the named person\'s fact scores above the plural-shaped name', async () => {
+    const pool = await collectFactCandidates(engine, Q, { sourceIds: [sourceId], worldOnly: true, excludePrivate: false }, null, { depth: { keyword: 50, cosine: 50, entity: 40 } });
+    const order = scoreFactCandidates(Q, pool.candidates, pool.terms, pool.stems).map(s => s.candidate.fact).filter(f => f.startsWith('Sam Roger'));
+    expect(order).toEqual(['Sam Roger lives in Porto.', 'Sam Rogers lives in Lisbon.']);
+  });
+  test('the facts block puts it first', async () => {
+    const facts = (await ask(Q)).filter(r => r.result_type === 'fact').map(r => r.chunk_text ?? '').filter(t => t.includes('Sam Roger'));
+    expect(facts[0]).toContain('Sam Roger lives in Porto.');
   });
 });
 
