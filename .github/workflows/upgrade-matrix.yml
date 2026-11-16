@@ -19,14 +19,17 @@ name: Upgrade matrix
 #                      newest release); optional explicit from-versions and a
 #                      proof-only fault injection.
 #   schedule           nightly, full matrix against the newest release; a red
-#                      run opens or updates one upgrade-break issue (the label
-#                      that holds stable promotion) and a green run closes it.
+#                      run opens or updates one upgrade-break issue (its marker,
+#                      not the label, holds stable promotion: stable-daily.ts)
+#                      and a green run closes it.
 #   pull_request       reduced subset (N-1 and N-50, PGLite and Postgres,
 #                      keyless, repo-less) against the head, only when schema,
 #                      migration, self-upgrade or harness paths change.
 #
-# This workflow does not gate releases to the latest lane; stable promotion
-# reads its receipt (GBRA-224 W1).
+# This workflow does not gate releases to the latest lane. Stable promotion
+# reads its receipt: scripts/stable-daily.ts dispatches it on the candidate tag
+# and promotes only on a green run of that exact tag and tree
+# (scripts/stable-matrix.ts).
 
 on:
   workflow_dispatch:

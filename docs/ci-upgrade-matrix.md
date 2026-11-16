@@ -7,8 +7,11 @@ checks the candidate on the upgraded brain. The driver is
 [scripts/upgrade-matrix.ts](../scripts/upgrade-matrix.ts) with its modules in
 [scripts/upgrade-matrix/](../scripts/upgrade-matrix/).
 
-It does not gate releases to the latest lane. Stable promotion reads its run
-receipt (GBRA-224 W1).
+It does not gate releases to the latest lane. It gates stable: the daily
+stable check dispatches it on the stable candidate's tag and promotes only on
+a green run of that exact tag and tree, and holds while the nightly run's
+break issue is open ([daily stable check](RELEASING.md#daily-stable-check),
+`scripts/stable-matrix.ts`).
 
 ## What a run tests
 
@@ -16,9 +19,12 @@ receipt (GBRA-224 W1).
 releases API, authenticated with the workflow token) and recorded in the plan:
 N-1, N-10 and N-50 (the 1st, 10th and 50th newest release older than the
 candidate), the release published closest to 30 days before the candidate, and
-the current `stable` tag when it exists and is older. A role that cannot be
-filled is recorded as skipped with its reason. Pull requests run N-1 and N-50
-only.
+the current `stable` tag when it exists and is older, and the stable
+releases in the window (`stable-window`, `versions.ts` `stableWindow`): every
+`stable-v<version>` record older than the candidate that was stable during the
+183 days before it, capped at the newest 8 by promotion plus the newest one of
+each older calendar month. A role that cannot be filled is recorded as
+skipped with its reason. Pull requests run N-1 and N-50 only.
 
 **Cells.** Every from-version runs on PGLite and Postgres, keyless and keyed,
 repo-less and repo brain (32 to 40 cells; one job per from-version, engine and
@@ -143,8 +149,13 @@ branch.
 - **Nightly** (06:41 UTC): full matrix against the newest release. A red run
   opens or updates one issue carrying the `upgrade-break` label (found by the
   marker `<!-- gbrain-upgrade-matrix:nightly -->`) and a later green run
-  comments and closes it. Nightly watch also tracks the workflow like every
-  scheduled run.
+  comments and closes it. The issue's
+  `<!-- gbrain-upgrade-matrix:red-from <tags> -->` line names the from-versions
+  that failed or held. While it is open the daily stable check holds stable
+  (`upgrade-matrix/marker.ts`). Nightly watch also tracks the workflow like
+  every scheduled run.
+- **Stable candidate**: the daily stable check dispatches the full matrix on
+  its candidate's tag when that release has no run yet (`scripts/stable-daily.ts`).
 - **Dispatch**: `gh workflow run upgrade-matrix.yml --ref master -f candidate=v0.60.475.0`
   (empty candidate: the newest release; `-f from=v0.60.390.0,v0.60.425.0`
   replaces the resolved from-versions; `-f fault=corrupt-after-upgrade` is the
@@ -195,7 +206,11 @@ older Bun versions.
 
 A cell takes 40 to 70 seconds on a 4-vCPU runner (install from the Bun cache,
 seed, upgrade, checks, mixed-version probe); a job adds about two minutes of
-checkout, `bun install` and cache restore. A full run is 20 cell jobs of about
-four minutes on `ubicloud-standard-4` plus the plan, summary and issue jobs on
-`ubicloud-standard-2`: about 330 vCPU-minutes. The pull-request subset is
-4 jobs, about 50 vCPU-minutes.
+checkout, `bun install` and cache restore. A full run is 4 cell jobs per
+from-version, each about four minutes on `ubicloud-standard-4`, plus the
+plan, summary and issue jobs on `ubicloud-standard-2`. With the stable window
+(on 2026-11-16, candidate v0.60.729.0: 14 from-versions) that is 56 cell jobs
+and 112 cells, about 900 vCPU-minutes, against 20 cell jobs (5 from-versions,
+about 330 vCPU-minutes) before it. The window adds at most one from-version
+per stable promotion until it holds 8 recent ones plus one per older month.
+The pull-request subset is 4 jobs, about 50 vCPU-minutes.

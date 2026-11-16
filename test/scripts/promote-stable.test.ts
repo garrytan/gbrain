@@ -22,6 +22,7 @@ import {
   checkOrder, checkSoakRun, compareVersions, RELEASE_NOTES_MAX, rolledUpNotes, mergeKnownBad, mergeNotPromotable, normaliseWorkflowPath, parseRunUrl, parseTagMessage, processDeps, promote, Refusal, renderRecord, renderSummary, renderTagMessage, STABLE_RECORD_MAX_BYTES,
   type GitResult, type PromoteDeps, type PromoteInputs, type SoakRun, type TagFields,
 } from '../../scripts/promote-stable.ts';
+import type { MatrixReceipt } from '../../scripts/stable-matrix.ts';
 import { offeredVersion } from '../../src/core/self-upgrade.ts';
 import { RECORD_MAX_BYTES } from '../../src/core/stable-channel.ts';
 import { parseStableRecord } from '../../src/core/stable-channel.ts';
@@ -732,6 +733,63 @@ describe('stable.json bridge for a stable promoted before the evidence record (G
   });
 });
 
+describe('promote: the upgrade matrix run (stability plan 3a)', () => {
+  const MATRIX_URL = `https://github.com/${REPO}/actions/runs/777`;
+  const HARNESS = sha('f');
+  const greenRun = { id: 777, status: 'completed', conclusion: 'success', head_sha: HARNESS, head_branch: 'master', event: 'schedule', path: '.github/workflows/upgrade-matrix.yml' };
+  const greenReceipt = (): MatrixReceipt => ({
+    schema: 'gbrain-upgrade-matrix-run/1', harness: { sha: HARNESS }, candidate: { tag: 'v0.60.361.0', sha: sha('b'), tree: sha('2') }, profile: 'full',
+    status: 'green', cells: [], red: [], holds: [], foreign_receipts: [],
+  });
+  function withMatrix(run: Record<string, unknown>, receipt: MatrixReceipt | null, setup: Parameters<typeof harness>[0] = {}) {
+    const h = harness(setup);
+    const ghApi = h.deps.ghApi;
+    h.deps.ghApi = async path => (path.endsWith('/actions/runs/777') ? (h.api.push(path), run) : ghApi(path));
+    h.deps.matrixReceipt = async id => (id === 777 ? structuredClone(receipt) : null);
+    return h;
+  }
+
+  test('a green gate run on the exact tag and tree lands in stable.json and the tag message, and round-trips', async () => {
+    const h = withMatrix(greenRun, greenReceipt());
+    const p = await promote(h.deps, inputs({ matrixRunUrl: MATRIX_URL }));
+    expect(p.matrixRun).toBe(MATRIX_URL);
+    expect(JSON.parse(h.repo.records![h.repo.recordBranch!]!)).toMatchObject({ matrix_run: MATRIX_URL });
+    expect(parseStableRecord(h.repo.records![h.repo.recordBranch!]!, '0.60.361.0')).toMatchObject({ ok: true, record: { matrix_run: MATRIX_URL } });
+    expect(h.repo.tags.stable!.message).toContain(`soak_run: ${RUN_URL}\nscoreboard: ${RUN_URL}\nmatrix_run: ${MATRIX_URL}\npromoted_by: `);
+    expect(parseTagMessage(h.repo.tags.stable!.message!)).toMatchObject({ matrixRun: MATRIX_URL });
+    expect(renderSummary(p)).toContain(MATRIX_URL);
+  });
+
+  test('a maintainer may promote without a matrix run, recorded as matrix_run null with the maintainer as promoted_by', async () => {
+    const h = harness();
+    await promote(h.deps, inputs());
+    expect(JSON.parse(h.repo.records![h.repo.recordBranch!]!)).toMatchObject({ matrix_run: null, promoted_by: 'alice-example' });
+    expect(h.logs.some(l => l.includes("promoted on alice-example's decision"))).toBe(true);
+  });
+
+  test('a red, foreign, unfinished, pull-request, partial or unreadable run is refused and nothing moves', async () => {
+    const red = { ...greenReceipt(), status: 'red', red: ['v0.60.241.0__postgres__keyed__repo'], cells: [{ id: 'v0.60.241.0__postgres__keyed__repo', from: 'v0.60.241.0', verdict: 'fail' }] };
+    const cases: Array<[Record<string, unknown>, MatrixReceipt | null, RegExp, string?]> = [
+      [{ ...greenRun, conclusion: 'failure' }, red, /is red on v0\.60\.361\.0 \(failing from v0\.60\.241\.0\)/],
+      [greenRun, { ...greenReceipt(), candidate: { tag: 'v0.60.360.0', sha: sha('a'), tree: sha('1') } }, /tested v0\.60\.360\.0 .*not v0\.60\.361\.0/],
+      [greenRun, { ...greenReceipt(), candidate: { tag: 'v0.60.361.0', sha: sha('b'), tree: sha('9') } }, /tree 9+\), not v0\.60\.361\.0/],
+      [greenRun, { ...greenReceipt(), harness: { sha: sha('e') } }, /receipt names harness e+, not the run's commit f+/],
+      [{ ...greenRun, event: 'pull_request', head_branch: 'fix/x' }, greenReceipt(), /is a pull_request run on fix\/x/],
+      [{ ...greenRun, status: 'in_progress', conclusion: null }, greenReceipt(), /is in_progress, not completed/],
+      [{ ...greenRun, path: '.github/workflows/soak.yml' }, greenReceipt(), /ran \.github\/workflows\/soak\.yml, not the upgrade matrix/],
+      [greenRun, { ...greenReceipt(), profile: 'explicit' }, /ran the explicit profile/],
+      [greenRun, null, /has no upgrade-matrix-receipt artifact/],
+      [greenRun, greenReceipt(), /matrix_run_url names a run of acme-example\/gbrain/, 'https://github.com/acme-example/gbrain/actions/runs/777'],
+      [greenRun, greenReceipt(), /matrix_run_url names attempt 2/, `${MATRIX_URL}/attempts/2`],
+    ];
+    for (const [run, receipt, pattern, url] of cases) {
+      const h = withMatrix(run, receipt);
+      await refusedAsync(promote(h.deps, inputs({ matrixRunUrl: url ?? MATRIX_URL })), pattern);
+      expect(h.calls.filter(c => c.startsWith('push') || c.startsWith('tag -a'))).toEqual([]);
+    }
+  });
+});
+
 describe('promote-stable.yml', () => {
   const workflowYml = readFileSync(join(ROOT, '.github/workflows/promote-stable.yml'), 'utf8');
   const wf = load(workflowYml) as {
@@ -744,8 +802,8 @@ describe('promote-stable.yml', () => {
   test('dispatch only, with the decided inputs, one serial group and scoped permissions', () => {
     expect(Object.keys(wf.on)).toEqual(['workflow_dispatch']);
     const i = wf.on.workflow_dispatch!.inputs;
-    expect(Object.keys(i)).toEqual(['version', 'soak_run_url', 'scoreboard_url', 'rollback', 'reason', 'withdraw', 'not_promotable', 'not_promotable_reason', 'not_promotable_fixed_in', 'not_promotable_remove']);
-    for (const k of ['withdraw', 'not_promotable', 'not_promotable_reason', 'not_promotable_fixed_in', 'not_promotable_remove']) expect(i[k]).toMatchObject({ required: false, type: 'string', default: '' });
+    expect(Object.keys(i)).toEqual(['version', 'soak_run_url', 'matrix_run_url', 'scoreboard_url', 'rollback', 'reason', 'withdraw', 'not_promotable', 'not_promotable_reason', 'not_promotable_fixed_in', 'not_promotable_remove']);
+    for (const k of ['matrix_run_url', 'withdraw', 'not_promotable', 'not_promotable_reason', 'not_promotable_fixed_in', 'not_promotable_remove']) expect(i[k]).toMatchObject({ required: false, type: 'string', default: '' });
     expect([i.version!.required, i.soak_run_url!.required, i.scoreboard_url!.required]).toEqual([true, true, false]);
     expect(i.rollback).toMatchObject({ type: 'boolean', default: false });
     expect(wf.concurrency).toEqual({ group: 'promote-stable', 'cancel-in-progress': false });
@@ -760,7 +818,7 @@ describe('promote-stable.yml', () => {
       PROMOTE_VERSION: '${{ inputs.version }}', PROMOTE_SOAK_RUN_URL: '${{ inputs.soak_run_url }}', PROMOTE_SCOREBOARD_URL: '${{ inputs.scoreboard_url }}',
       PROMOTE_ROLLBACK: '${{ inputs.rollback }}', PROMOTE_REASON: '${{ inputs.reason }}', PROMOTE_WITHDRAW: '${{ inputs.withdraw }}',
       PROMOTE_NOT_PROMOTABLE: '${{ inputs.not_promotable }}', PROMOTE_NOT_PROMOTABLE_REASON: '${{ inputs.not_promotable_reason }}', PROMOTE_NOT_PROMOTABLE_FIXED_IN: '${{ inputs.not_promotable_fixed_in }}',
-      PROMOTE_NOT_PROMOTABLE_REMOVE: '${{ inputs.not_promotable_remove }}',
+      PROMOTE_NOT_PROMOTABLE_REMOVE: '${{ inputs.not_promotable_remove }}', PROMOTE_MATRIX_RUN_URL: '${{ inputs.matrix_run_url }}',
     });
     for (const s of steps) expect(s.run ?? '').not.toContain('${{');
     const releaseYml = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
