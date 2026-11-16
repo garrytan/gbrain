@@ -103,7 +103,7 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
   if (!mergeBase.ok && git('rev-parse', '--is-shallow-repository').out.trim() === 'true') {
     const tip = git('rev-parse', `${ref}^{commit}`).out.trim();
     const parents = git('cat-file', '-p', 'HEAD').out.split('\n').filter(l => l.startsWith('parent ')).map(l => l.slice('parent '.length));
-    if (parents.includes(tip)) mergeBase = { ok: true, out: tip };
+    if (parents.includes(tip)) mergeBase = { ok: true, out: tip, err: '' };
     for (const depth of [200, 2000]) {
       if (mergeBase.ok || deepened === 'timeout') break;
       deepened = fetch(30, '--filter=blob:none', `--deepen=${depth}`, 'origin', git('rev-parse', 'HEAD').out.trim(), tip);
