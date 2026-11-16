@@ -9,7 +9,7 @@ import postgres from '#postgres';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { PAGE_PROJECTION_ACTIVATION_SQL } from '../src/core/page-state/projection-schema.ts';
-import { drainProjections } from '../src/core/page-state/projections.ts';
+import { drainProjections, rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
 import { drainConcurrency, textRebuildDuration } from '../src/core/page-state/rebuild-estimate.ts';
 import { ACTIVATION_SERVED_REVISION } from '../src/core/search/safe-chunks.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
@@ -119,5 +119,36 @@ describe.skipIf(!pgUrl)('a refused connection (Postgres)', () => {
       await admin.unsafe(`DROP ROLE IF EXISTS ${role}`);
       await admin.end();
     }
+  }, 120_000);
+});
+
+describe.skipIf(!pgUrl)('a dropped connection after other workers finished (Postgres)', () => {
+  test('the lowered width counts lost connections, not workers that ran out of pages', async () => {
+    const { engine, close } = await isolatedSharedSkillsEngine(pgUrl);
+    try {
+      await seed(engine);
+      const rebuiltWaiting = async () => (await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages
+        WHERE slug = ANY($1::text[]) AND text_projection_revision = knowledge_revision`, [WAITING]))[0]!.n;
+      const original = engine.transaction.bind(engine);
+      let calls = 0;
+      let dropped!: () => void;
+      const afterDrop = new Promise<void>(resolve => { dropped = resolve; });
+      engine.transaction = (async (fn: Parameters<BrainEngine['transaction']>[0]) => {
+        const call = ++calls;
+        if (call === 3) {
+          const deadline = Date.now() + 60_000;
+          while (await rebuiltWaiting() < 2 && Date.now() < deadline) await new Promise(r => setTimeout(r, 20));
+          await new Promise(r => setTimeout(r, 0));
+          dropped();
+          throw Object.assign(new Error('write CONNECTION_ENDED 127.0.0.1:5432'), { code: 'CONNECTION_ENDED' });
+        }
+        if (call === 4) await afterDrop;
+        return original(fn);
+      }) as BrainEngine['transaction'];
+      const narrowed: number[] = [];
+      const batch = await rebuildPendingPageProjections(engine, 4, { served: 'waiting', concurrency: 4, onNarrow: n => { narrowed.push(n); } });
+      expect(batch.rebuilt).toBe(4);
+      expect(narrowed).toEqual([3]);
+    } finally { await close(); }
   }, 120_000);
 });

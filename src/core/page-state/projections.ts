@@ -822,6 +822,7 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
   let attempted = 0;
   const width = engine.kind === 'postgres' ? Math.max(1, Math.min(Math.floor(opts.concurrency ?? 1), jobs.length)) : 1;
   let active = width;
+  let lost = 0;
   let next = 0;
   const retry: number[] = [];
   // false: a refused or dropped connection handed this page back and this worker stops.
@@ -883,8 +884,9 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
     } catch (error) {
       if (active > 1 && isRetryableConnError(error)) {
         active--;
+        lost++;
         retry.push(index);
-        opts.onNarrow?.(active, error);
+        opts.onNarrow?.(width - lost, error);
         return false;
       }
       if (!(error instanceof PageRevisionConflictError)) {
