@@ -115,6 +115,29 @@ jobs:
           bun run check:bash32
           git fetch --no-tags --depth=1 origin +refs/heads/master:refs/remotes/origin/master
           bun run verify
+      # Run evidence for gstack's pregate (.gstack/pregate.json run_profiles
+      # "macos-validation.yml/macos-26"): the tree this job tested and the test
+      # files its device-identity step ran. Written only when every step passed.
+      - name: Record the tested tree
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          WORKFLOW: ${{ github.workflow }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/macos-26-tree"
+          jq -n --arg tree "$(git rev-parse 'HEAD^{tree}')" --arg sha "$(git rev-parse HEAD)" \
+            --arg workflow "$WORKFLOW" --arg event "$EVENT" --argjson run_id "$RUN_ID" --argjson run_attempt "$RUN_ATTEMPT" \
+            '{tree: $tree, sha: $sha, workflow: $workflow, event: $event, run_id: $run_id, run_attempt: $run_attempt, os: "macOS",
+              files: ["test/connector-physical-root-device.test.ts", "test/persistence-physical-root-device.test.ts"]}' \
+            > "$RUNNER_TEMP/macos-26-tree/tree.json"
+          cat "$RUNNER_TEMP/macos-26-tree/tree.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-26-tree
+          path: ${{ runner.temp }}/macos-26-tree/tree.json
+          retention-days: 30
+          overwrite: true
 
   typecheck:
     name: macOS 26 typecheck
