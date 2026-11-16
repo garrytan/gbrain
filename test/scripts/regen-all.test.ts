@@ -27,6 +27,11 @@ describe('regen:all', () => {
     expect(readFileSync(join(ROOT, 'docs/RELEASING.md'), 'utf8')).toContain('## Generated artifacts');
   });
 
+  test('the public surface is built after the operation manifest it reads', () => {
+    const names = ARTIFACTS.map(a => a.name);
+    expect(names.indexOf('public surface (docs/contracts/public-surface.json)')).toBeGreaterThan(names.indexOf('operation manifest'));
+  });
+
   test('every generator and check names a script or test that exists, and llms is regenerated last', () => {
     for (const a of ARTIFACTS) {
       for (const argv of [a.regen, a.check]) {

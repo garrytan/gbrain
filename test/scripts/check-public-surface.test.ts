@@ -56,6 +56,16 @@ function run(root: string, env: Record<string, string> = {}): { code: number; ou
   const code = main({ cwd: root, env: { GBRAIN_SURFACE_BASE_REF: 'base', GBRAIN_SURFACE_TODAY: TODAY, ...env }, log: (l) => lines.push(l) });
   return { code, out: lines.join('\n') };
 }
+function tagStable(root: string, stableManifest: string | null) {
+  git(root, 'checkout', '-q', '-b', 'stable-release', 'base');
+  if (stableManifest === null) git(root, 'rm', '-q', MANIFEST);
+  else write(root, { [MANIFEST]: stableManifest });
+  git(root, 'add', '-A');
+  git(root, 'commit', '-q', '--allow-empty', '-m', 'stable');
+  git(root, 'tag', 'stable');
+  git(root, 'checkout', '-q', 'head');
+}
+const row = (front: string, text = 'Text.') => `---\n${front}\n---\n${text}\n`;
 const record = (surface: string, name: string, removeAfter: string) => `---\nsurface: ${surface}\nname: ${name}\nowner: alice-example\nremove_after: ${removeAfter}\n---\nUse the new one.\n`;
 
 describe('dropped manifest entries', () => {
@@ -103,6 +113,60 @@ describe('dropped manifest entries', () => {
     }, gone));
     expect(r.out).not.toContain('FAIL');
     expect(r.code).toBe(0);
+  });
+});
+
+describe('removals the promise does not cover', () => {
+  test('a new kind: breaking row with exception: security or data-loss lets a removal through', () => {
+    for (const exception of ['security', 'data-loss']) {
+      const r = run(repo({}, { [MANIFEST]: manifest({ 'mcp-tool': [] }), 'behavior-changes.d/drop_search_1234.md': row(`kind: breaking\nexception: ${exception}`) }));
+      expect(r.out).not.toContain('FAIL');
+      expect(r.code).toBe(0);
+    }
+  });
+
+  test('an entry that never reached stable can go with no record; one on stable cannot', () => {
+    const base = { [MANIFEST]: manifest({ 'mcp-tool': ['search', 'think'], 'exit-code': { not_found: 5 } }) };
+    const unreleased = repo(base, { [MANIFEST]: manifest() });
+    tagStable(unreleased, manifest());
+    const ok = run(unreleased);
+    expect(ok.out).not.toContain('FAIL');
+    expect(ok.code).toBe(0);
+    const released = repo(base, { [MANIFEST]: manifest({ 'mcp-tool': [] }) });
+    tagStable(released, manifest());
+    const r = run(released);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('mcp-tool `search` is removed or changed with no deprecations.d/<id>.md naming it');
+    expect(r.out).not.toContain('mcp-tool `think`');
+    expect(r.out).not.toContain('exit-code');
+  });
+
+  test('exception: revert lets a removal through while no stable manifest can be read, and says why', () => {
+    const head = { [MANIFEST]: manifest({ 'mcp-tool': [] }), 'behavior-changes.d/revert_search_1234.md': row('kind: breaking\nexception: revert', 'Reverts #9999.') };
+    const untagged = run(repo({}, head));
+    expect(untagged.code).toBe(0);
+    expect(untagged.out).toContain('stable ref refs/tags/stable is unavailable (a shallow clone or a missing tag), so every entry counts as on stable');
+    const root = repo({}, head);
+    tagStable(root, null);
+    const noManifest = run(root);
+    expect(noManifest.code).toBe(0);
+    expect(noManifest.out).toContain('stable (refs/tags/stable) has no docs/contracts/public-surface.json yet, so every entry counts as on stable');
+    const plain = run(repo({}, { [MANIFEST]: manifest({ 'mcp-tool': [] }) }));
+    expect(plain.code).toBe(1);
+  });
+
+  test('exception: revert does not cover an entry that is on stable', () => {
+    const root = repo({}, { [MANIFEST]: manifest({ 'mcp-tool': [] }), 'behavior-changes.d/revert_search_1234.md': row('kind: breaking\nexception: revert', 'Reverts #9999.') });
+    tagStable(root, manifest());
+    const r = run(root);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('it is on stable, so exception: revert does not cover it');
+  });
+
+  test('a revert row names the pull request it reverts', () => {
+    const r = run(repo({}, { 'behavior-changes.d/revert_search_1234.md': row('kind: breaking\nexception: revert', 'Undo the change.') }));
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('exception: revert needs the notice text to name the pull request it reverts (#<number>)');
   });
 });
 

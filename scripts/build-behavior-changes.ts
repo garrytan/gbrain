@@ -45,7 +45,7 @@ const cmp = (a: string, b: string) => {
 const markers = (text: string) => [...text.matchAll(MARKER)].map(m => m[1]!);
 
 export const KINDS = ['breaking', 'action', 'default', 'fix', 'add'] as const;
-export const EXCEPTIONS = ['security', 'data-loss'] as const;
+export const EXCEPTIONS = ['security', 'data-loss', 'revert'] as const;
 const FRONT_KEYS = ['kind', 'exception', 'deprecation'];
 
 /** A notice fragment: optional front matter (kind, exception, deprecation), then the notice text. */
@@ -61,6 +61,7 @@ export function parseNoticeFragment(raw: string): { front: Record<string, string
   if (front.kind !== undefined && !(KINDS as readonly string[]).includes(front.kind)) problems.push(`kind: ${front.kind} is not one of ${KINDS.join(', ')}`);
   if (front.exception !== undefined && !(EXCEPTIONS as readonly string[]).includes(front.exception)) problems.push(`exception: ${front.exception} is not one of ${EXCEPTIONS.join(', ')}`);
   if (front.exception !== undefined && front.kind !== 'breaking') problems.push('exception: applies only to kind: breaking');
+  if (front.exception === 'revert' && !/#\d+/.test(m ? raw.slice(m[0].length) : raw)) problems.push('exception: revert needs the notice text to name the pull request it reverts (#<number>)');
   if (front.deprecation !== undefined && !ID.test(front.deprecation)) problems.push(`deprecation: ${front.deprecation} is not a deprecations.d id`);
   return { front, body: m ? raw.slice(m[0].length) : raw, problems };
 }

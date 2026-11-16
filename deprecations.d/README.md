@@ -56,4 +56,17 @@ review.
 A fix for a security hole or for something that loses data may change
 behaviour at once, with no record here. Its behaviour-change row has
 `kind: breaking` and `exception: security` or `exception: data-loss`, and
-says what users need to do.
+says what users need to do. The check lets the removal through when the
+pull request adds that row.
+
+## Reverts and things that never reached stable
+
+The promise covers what is on stable. The check compares with the list at
+the current stable release (the `stable` tag), so a command, flag, tool,
+config key or exit code added since then can be removed, or reverted, with
+no record here. Until a stable release carries the list, or when the tag
+can't be read (a shallow clone), the check says so and counts everything as
+on stable. A revert then adds a behaviour-change row with `kind: breaking`
+and `exception: revert` whose text names the reverted pull request
+(`#<number>`). Once stable carries the list, `exception: revert` no longer
+covers anything on it.

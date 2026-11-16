@@ -363,7 +363,7 @@ test/scripts/pregate-remote-gate.test.ts	pregate-remote-gate.sh --list	4	readFil
 test/scripts/pregate-remote-gate.test.ts	reuse of GitHub full runs on the identical tree	9	readFileSync
 test/scripts/pregate-remote-gate.test.ts	ship_lanes_from (/ship lanes carried from CI, docs/ci-event-parity.md#ship-lanes)	3	readFileSync
 test/scripts/promote-stable.test.ts	promote-stable.yml	2	readFileSync
-test/scripts/regen-all.test.ts	regen:all	5	readFileSync
+test/scripts/regen-all.test.ts	regen:all	6	readFileSync
 test/scripts/release-restamp.test.ts	release-restamp --stamp-only	2	readFileSync
 test/scripts/release-restamp.test.ts	release:restamp end to end	16	readFileSync
 test/scripts/release-restamp.test.ts	release:unstamp and merge: direct	7	readFileSync

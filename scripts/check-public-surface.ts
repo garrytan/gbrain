@@ -9,7 +9,10 @@
  * deepened until it has one) it refuses:
  *   1. an entry of docs/contracts/public-surface.json that the base has and this tree drops (or an exit code whose
  *      number changed), unless deprecations.d/<id>.md names it (same surface and name, or the command or MCP tool a
- *      dropped flag or parameter belongs to) and its remove_after date has passed;
+ *      dropped flag or parameter belongs to) and its remove_after date has passed. Exempt: an entry the manifest at the
+ *      stable release ($GBRAIN_SURFACE_STABLE_REF, default refs/tags/stable) lacks, every drop when a new
+ *      kind: breaking row has exception: security or data-loss, and, while no stable manifest can be read (it is said
+ *      so), every drop when one has exception: revert;
  *   2. a deprecations.d record added here whose remove_after is less than 14 days away, a record whose remove_after
  *      moved earlier, or any record with a bad field;
  *   3. a behavior-changes.d fragment added here with no `kind:`, or with `kind: breaking` and neither
@@ -24,7 +27,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CHANGELOG_FRAGMENT_DIR, FRAGMENT_DIR, ID, parseNoticeFragment } from './build-behavior-changes.ts';
-import { MANIFEST, SURFACES, type PublicSurface } from './build-public-surface.ts';
+import { MANIFEST, SURFACES, type PublicSurface, type Surface } from './build-public-surface.ts';
 
 export const DEPRECATION_DIR = 'deprecations.d';
 export const GOLDEN_DIRS = ['test/fixtures/goldens/cli/', 'test/fixtures/agent-contract/'];
@@ -130,25 +133,36 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
   }
   const matured = (r: Deprecation | undefined) => !!r && DATE.test(r.remove_after) && r.remove_after <= today;
 
+  const newNotices = listDir(FRAGMENT_DIR).filter(f => !onBase(`${FRAGMENT_DIR}/${f}`))
+    .map(f => ({ path: `${FRAGMENT_DIR}/${f}`, ...parseNoticeFragment(readFileSync(join(root, FRAGMENT_DIR, f), 'utf8')) }));
+  const exceptions = new Set(newNotices.filter(n => n.front.kind === 'breaking' && n.front.exception).map(n => n.front.exception));
+
   const baseManifest = git('show', `${base}:${MANIFEST}`);
   if (baseManifest.ok && existsSync(join(root, MANIFEST))) {
-    const dropped = droppedEntries(JSON.parse(baseManifest.out), JSON.parse(readFileSync(join(root, MANIFEST), 'utf8')));
-    for (const { surface, name } of dropped) {
+    const head: PublicSurface = JSON.parse(readFileSync(join(root, MANIFEST), 'utf8'));
+    const stableRef = env.GBRAIN_SURFACE_STABLE_REF || 'refs/tags/stable';
+    const stableCommit = git('rev-parse', '--verify', '-q', `${stableRef}^{commit}`);
+    const stableManifest = stableCommit.ok ? git('show', `${stableCommit.out.trim()}:${MANIFEST}`) : null;
+    const stable: PublicSurface | null = stableManifest?.ok ? JSON.parse(stableManifest.out) : null;
+    if (!stableCommit.ok) log(`check-public-surface: stable ref ${stableRef} is unavailable (a shallow clone or a missing tag), so every entry counts as on stable`);
+    else if (!stable) log(`check-public-surface: stable (${stableRef}) has no ${MANIFEST} yet, so every entry counts as on stable`);
+    const onStable = (surface: string, name: string) => !stable
+      || (surface === 'exit-code' ? name in (stable['exit-code'] ?? {}) && stable['exit-code'][name] !== head['exit-code']?.[name] : (stable[surface as Exclude<Surface, 'exit-code'>] ?? []).includes(name));
+    for (const { surface, name } of droppedEntries(JSON.parse(baseManifest.out), head)) {
+      if (!onStable(surface, name) || exceptions.has('security') || exceptions.has('data-loss') || (exceptions.has('revert') && !stable)) continue;
       const parent = surface === 'cli-flag' ? { surface: 'cli-command', name: name.slice(0, name.lastIndexOf(' --')) }
         : surface === 'mcp-param' ? { surface: 'mcp-tool', name: name.slice(0, name.indexOf('.')) } : null;
       const record = [...records.values()].find(r => r.surface === surface && r.name === name)
         ?? [...records.values()].find(r => parent && r.surface === parent.surface && r.name === parent.name);
-      if (!record) problems.push(`${surface} \`${name}\` is removed or changed with no ${DEPRECATION_DIR}/<id>.md naming it (surface: ${surface}, name: ${name})`);
+      if (!record) problems.push(`${surface} \`${name}\` is removed or changed with no ${DEPRECATION_DIR}/<id>.md naming it (surface: ${surface}, name: ${name})${exceptions.has('revert') ? '; it is on stable, so exception: revert does not cover it' : ''}`);
       else if (!matured(record)) problems.push(`${surface} \`${name}\` is removed before its record ${DEPRECATION_DIR}/${record.id}.md allows it (remove_after ${record.remove_after}); keep it working with a warning until then`);
     }
   } else if (!baseManifest.ok) {
     log(`check-public-surface: ${ref} has no ${MANIFEST} yet; the removal check starts once it does`);
   }
 
-  const newNotices = listDir(FRAGMENT_DIR).filter(f => !onBase(`${FRAGMENT_DIR}/${f}`));
-  for (const f of newNotices) {
-    const path = `${FRAGMENT_DIR}/${f}`;
-    const { front } = parseNoticeFragment(readFileSync(join(root, path), 'utf8'));
+  for (const { path, front, problems: invalid } of newNotices) {
+    for (const p of invalid) problems.push(`${path}: ${p}`);
     if (!front.kind) { problems.push(`${path}: a new behaviour-change row needs front matter with kind: breaking, action, default, fix or add (${FRAGMENT_DIR}/README.md)`); continue; }
     if (front.kind !== 'breaking' || front.exception) continue;
     const record = front.deprecation ? records.get(front.deprecation) : undefined;
@@ -168,7 +182,7 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
     return 0;
   }
   for (const p of problems) log(`FAIL: ${p}`);
-  log('Why:  stable promises that documented commands, flags, tools, config keys and exit codes change only after a 14-day announced deprecation, except for security and data-loss fixes.');
+  log('Why:  stable promises that documented commands, flags, tools, config keys and exit codes change only after a 14-day announced deprecation, except for security and data-loss fixes; what never reached stable can go at once.');
   log(SEE);
   return 1;
 }

@@ -31,7 +31,9 @@ line and nobody picks a version before the release.
    starts refusing what it accepted), `action` (users should do something),
    `default` (a default changed), `fix` or `add`. A `breaking` row also
    needs `exception: security` or `exception: data-loss` for a fix that
-   cannot wait, or `deprecation: <id>` naming the
+   cannot wait, `exception: revert` for a revert of something that never
+   reached stable (the notice text names the reverted pull request,
+   `#<number>`), or `deprecation: <id>` naming the
    [deprecations.d](../deprecations.d/) record whose `remove_after` date has
    passed. The front matter is not part of the notice text.
 
