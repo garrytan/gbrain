@@ -1147,13 +1147,13 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     // rides the same rail (systemMessage + additionalContext) when no push
     // failure is pending. Both are cache/file readers, budgeted by the race.
     turnRule = io.turnRule !== undefined ? io.turnRule : brainFirstTurnRule(io.harness ?? 'claude-code', io.cwd ?? hookSessionCwd());
+    const j = await readStdinJson(io, 300);
+    // #8028, #9163: a task notification or agent-team message arrives as a prompt but is no human turn: no context, no rule.
+    if (typeof j?.prompt === 'string' && /^\s*<(task-notification|teammate-message)[\s>]/.test(j.prompt)) { turnRule = null; return { outcome: 'ok', reason: 'harness_prompt' }; }
     // The turn-rule lane's connection may reach another brain, so it never reads this machine's context or banners.
     if (process.env.GBRAIN_HOOK_LANE === TURN_RULE_LANE) return { outcome: 'ok', reason: 'rule_only' };
     banner = io.disablePushBanner ? null : (pendingPushFailureBanner() ?? pendingBackupBanner());
-    const j = await readStdinJson(io, 300);
     if (!j) return { outcome: 'degraded', reason: 'no_stdin' };
-    // #8028: a task notification or agent-team message arrives as a prompt but is no human turn.
-    if (typeof j.prompt === 'string' && /^\s*<(task-notification|teammate-message)[\s>]/.test(j.prompt)) return { outcome: 'ok', reason: 'harness_prompt' };
 
     // S3#8: transcript_path is untrusted input. A present-but-unconfined
     // path aborts the event (heartbeat + empty stdout), never "best effort".
