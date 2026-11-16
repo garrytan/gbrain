@@ -150,13 +150,17 @@ function entryPaths(level: ShadowLevel, gitPath: string): { path: string; source
 /**
  * #7199 / GST-2843: the earlier committed versions of each entry of `chunk` whose held page is re-screened against them
  * (`historyOwed`), read in one batched Git read for the batch that drains next and reported per path, so the read never
- * looks stalled and a pass over many such holds commits each batch before it reads the next one's history.
+ * looks stalled and a pass over many such holds commits each batch before it reads the next one's history. While it reads,
+ * the pass row's `telemetry.step` says how far it got (the beat saves it), so status can name the step a killed pass stopped in.
  */
-async function readDriftHistories(level: ShadowLevel, chunk: PassEntry[], owed: ReadonlyMap<PassEntry, ShadowPath>, onHistoryRead: (done: number, total: number) => void): Promise<void> {
+async function readDriftHistories(level: ShadowLevel, chunk: PassEntry[], owed: ReadonlyMap<PassEntry, ShadowPath>, value: ManagedSyncPassValue, onHistoryRead: () => void): Promise<void> {
   const due = chunk.flatMap(entry => { const shadow = owed.get(entry); return shadow ? [[entry, shadow] as const] : []; });
   if (!due.length) return;
   let done = 0;
-  const read = await pathBlobHistories(level.gitRoot, level.baselineCommit ?? level.head, due.map(([, shadow]) => shadow.path), DRIFT_HISTORY_DEPTH, () => onHistoryRead(++done, due.length));
+  const read = await pathBlobHistories(level.gitRoot, level.baselineCommit ?? level.head, due.map(([, shadow]) => shadow.path), DRIFT_HISTORY_DEPTH, () => {
+    value.telemetry.step = { name: 'drift_history', at: new Date().toISOString(), done: ++done, total: due.length };
+    onHistoryRead();
+  }).finally(() => { delete value.telemetry.step; });
   for (const [entry, shadow] of due) {
     const versions = [...new Set(read.get(shadow.path) ?? [])].filter(oid => oid !== shadow.state.level && oid !== shadow.state.baseline).slice(0, DRIFT_HISTORY_VERSIONS);
     if (versions.length) entry.driftHistory = versions;
@@ -803,14 +807,13 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
 
   const save = async (outcome: PassOutcome, stopReason: string | null, pin = false, fenced = true, onlyOpen = false) => {
     await beat.pending; const ended = outcome !== 'open';
-    if (ended) delete value.telemetry.step;
     if (ended && outcome !== 'synced') {
       const open = await openPassRequests(engine, { sourceId, passId, carried: value.obligations.pending_requests ?? [] });
       if (open.length) value.obligations.pending_requests = open; else delete value.obligations.pending_requests;
     }
     value.telemetry = { ...value.telemetry, outcome, stop_reason: stopReason, settled: S.size + (yieldSettled || roundSettled + inBatch), counts: { ...counts, ...passApplyCounts(applied) },
       classes: applied.classes, ...(applied.summary ? { summary: applied.summary } : {}),
-      ...(ended ? { ended_at: new Date().toISOString(), duration_ms: Date.now() - started } : {}) };
+      ...(ended ? { ended_at: new Date().toISOString(), duration_ms: Date.now() - started, step: undefined } : {}) };
     if (outcome === 'blocked' || stopReason === 'not_converged') value.obligations.stuck_since ??= new Date().toISOString();
     await engine.transaction(async tx => { if (fenced) await assertDrainLease(tx, sourceId); await writePassRow(tx, value, { pin, onlyOpen }); });
   };
@@ -912,8 +915,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
       const levelInput = { sourceId, context, workingTree: mode === 'working',
         pass: { noSchemaPack: processingOptions.noSchemaPack, episodeFullId: episode?.full_id ?? null, retryConsumed: round > 1 ? retryConsumed : undefined, exclude: opts.exclude, includeHidden: opts.includeHidden, strategy: opts.strategy, bootstrap: markersOwed(),
           slugMode: value.obligations.slug_mode, cache: levelCache, levelReuse, passId, recorded: applied.recorded, onProgress: () => { value.telemetry.step = { name: 'level_read', at: new Date().toISOString() }; beat.report(); }, assertActive, ...(opts.conversionBinding ? { conversion: opts.conversionBinding } : {}) } };
-      const level = await readLevelReporting(engine, levelInput, round, opts.onProgress);
-      delete value.telemetry.step;
+      const level = await readLevelReporting(engine, levelInput, round, opts.onProgress).finally(() => { delete value.telemetry.step; });
       await faultPoint('sync:level_read', { sourceId, round, level: level ? { statements: level.statements, confirm: level.confirm ?? null, reused: level.reused ?? 0, shadow: level, input: levelInput } : undefined });
       assertActive();
       if (!level) throw new Error(`Source ${sourceId} became a company-brain source during its sync pass.`);
@@ -1011,10 +1013,8 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
         remote, episodeFullId: episode?.full_id ?? null });
       for (let i = 0; i < built.entries.length; i += PASS_BATCH_MAX) {
         const chunk = built.entries.slice(i, i + PASS_BATCH_MAX), last = !!fold && i + chunk.length >= built.entries.length; opts.onProgress?.({ phase: 'managed_sync.round_batch', round: { round, target: head, paths: level.paths.length, batch: i / PASS_BATCH_MAX + 1, batches: Math.ceil(built.entries.length / PASS_BATCH_MAX), base: i } });
-        await readDriftHistories(level, chunk, built.historyOwed, (done, total) => { assertActive(); value.telemetry.step = { name: 'drift_history', at: new Date().toISOString(), done, total }; beat.report(); });
-        delete value.telemetry.step;
         // A folded stamp writes the pass row with the obligations as they stand when its import is frozen.
-        const stopped = await drain(chunk, last ? { ...await stampFor(level), fold: { ...fold, obligations: structuredClone(value.obligations), batch: chunk.length } } : undefined);
+        const stopped = await readDriftHistories(level, chunk, built.historyOwed, value, () => { assertActive(); beat.report(); }).then(async () => drain(chunk, last ? { ...await stampFor(level), fold: { ...fold, obligations: structuredClone(value.obligations), batch: chunk.length } } : undefined));
         if (stopped) return stop(stopped);
         await consumeRetry(chunk.map(entry => entry.path));
         value.telemetry.remaining = Math.max(0, built.entries.length - i - chunk.length) + inFlight.length + owed.length + mismatch.length;
