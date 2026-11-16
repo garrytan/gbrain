@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.730.0] - 2026-11-16
+
+**A dry run of a Google or GitHub source no longer writes pages (#9449).**
+
+### Fixed
+- `gbrain sync --source <id> --dry-run` on a Google (Gmail, Calendar, Contacts) or GitHub source of a brain without managed persistence fetched from the provider and wrote what it fetched: pages, chunks and soft-deletes. It now fetches and writes nothing, prints that the source has no preview, and returns the `dry_run` result, as Slack and meetings sources already did. A brain with managed persistence still refuses a connector dry run before any provider call (#9449).
+- Tests: `test/sync-connector-dry-run-9449.test.ts` runs a dry run of every connector kind on PGLite and Postgres and checks that nothing was fetched or written.
+
+Reported by @kostjakla-del-ok. First fixed by @Masashi-Ono0611.
+
+Supersedes #9450
+
 ## [0.60.729.0] - 2026-11-15
 
 **Fifteen small fixes: the doctor's grant repair grants every operation it counted except the ones you approve by name, call import handles single files, look-alike names and pending writes, a folder whose own `.git` is not a repository is no longer taken as a checkout, storage adopt reports what it did, and doctor's type check reads through an index.**
