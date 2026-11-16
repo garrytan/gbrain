@@ -422,13 +422,23 @@ export async function reconcileArchiveAudience(engine: BrainEngine, sourceId?: s
  * turn a brain shared (gbrain access member add and member enable, gbrain access owner set, gbrain config set
  * brain.audience) so earlier pages are kept to the owner before a second member reads them, not at the next archive
  * run or maintenance pass. Returns each source whose re-scope was due, with why it could not apply (null when it did).
+ * It holds the source's archive run lock: a run that started while the brain was personal keeps writing pages with no
+ * readers into folders no rule covers yet, so while one runs the re-scope waits for the next run (archive_rescope_pending).
  */
 export async function rescopeArchiveOnShared(engine: BrainEngine): Promise<Array<{ source_id: string; skipped: ArchiveRescopeSkip | null }>> {
   const rows = await engine.executeRaw<{ key: string }>("SELECT key FROM config WHERE key LIKE $1 AND value = 'personal' ORDER BY key", [AUDIENCE_PREFIX + '%']);
+  if (!rows.length || !(await resolvePrivacy(engine)).shared) return [];
+  const { withRefreshingLock, LockUnavailableError } = await import('../db-lock.ts');
   const out: Array<{ source_id: string; skipped: ArchiveRescopeSkip | null }> = [];
   for (const { key } of rows) {
     const sourceId = key.slice(AUDIENCE_PREFIX.length);
-    if (!await reconcileArchiveAudience(engine, sourceId)) continue;
+    try {
+      if (!await withRefreshingLock(engine, ARCHIVE_LOCK_PREFIX + sourceId, () => reconcileArchiveAudience(engine, sourceId))) continue;
+    } catch (err) {
+      if (!(err instanceof LockUnavailableError)) throw err;
+      out.push({ source_id: sourceId, skipped: { code: 'archive_rescope_pending', message: 'Conversation archive pages written while this brain was personal are not yet kept to the owner, because an archive run is writing source ' + sourceId + ' now; run gbrain transcripts archive run once it finishes.' } });
+      continue;
+    }
     out.push({ source_id: sourceId, skipped: await archiveRescopeSkipped(engine, sourceId) });
   }
   return out;

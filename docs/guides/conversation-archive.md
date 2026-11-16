@@ -167,7 +167,9 @@ them. The command that makes the brain shared does that before it returns: `gbra
 and `gbrain access owner set` on a brain that is already shared. Each prints one line on stderr per archive source,
 saying the pages are now kept to the owner or why they still wait (the codes below); `--json` output is unchanged.
 When the brain turns shared some other way, the next archive run (`gbrain transcripts archive run`) or maintenance pass
-does it, also before it writes anything. Either way, every folder that holds an archive page at that moment (one per
+does it, also before it writes anything. That includes members added or enabled from the admin page over HTTP or by
+`gbrain access serves several --members <ids> --yes`, and a command run while an archive run is writing the source (that run started
+while the brain was personal, so the run after it applies the rules). Either way, every folder that holds an archive page at that moment (one per
 harness and day, such as `conversations/codex/2026-10-01/`, plus `conversations/days/`) gets an access rule readable
 only by the owner. Other pages in the archive source, outside `conversations/`, keep the rules they had. This re-scope **replaces any existing rule on those folders, including one the owner made wider on
 purpose**; re-add the wider readers afterwards (`gbrain access rule add`, which waits for `gbrain access apply`) if
@@ -193,7 +195,8 @@ each say so in one line, when the shared brain names no owner (`archive_rescope_
 `gbrain access owner set <member>`) or when the source keeps its access rules in git (`archive_rescope_git_rules`:
 add a rule with prefix `conversations/` and the owner as its reader to the source's `.gbrain/access.yml`).
 
-Three ways a brain becomes shared leave those earlier pages open to every member until you act. In each,
+Three ways a brain becomes shared leave those earlier pages open to every member until you act. In each, as in the
+paths above that wait for the next archive run,
 `gbrain transcripts archive status` prints `not kept to the owner yet (<code>): <what to do>`, its `--json` carries
 the same `rescope` object (`code` and `message`), and `gbrain doctor` warns on `transcript_archive_freshness` with that
 message, whether the archive is on or off:

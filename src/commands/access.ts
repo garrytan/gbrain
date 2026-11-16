@@ -17,6 +17,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { exitCliError, usageError } from '../cli/cli-error.ts';
 import { runAccessRules } from './access-rules.ts';
 import { runAccessServes } from './access-serves.ts';
+import { rescopeArchiveAfter } from './archive-rescope.ts';
 import { opError } from '../core/ops/contract.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { grantFromClient, type PrincipalGrant } from '../core/grants/model.ts';
@@ -316,25 +317,6 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
 
 function print(json: boolean, value: unknown, human: () => string[]): void {
   console.log(json ? JSON.stringify(value, null, 2) : human().join('\n'));
-}
-
-/**
- * After a command that can turn the brain shared: keep conversation archive pages written while it was personal to the
- * owner now (rescopeArchiveOnShared) and say what happened on stderr, so stdout and --json stay the command's own.
- */
-export async function rescopeArchiveAfter(engine: BrainEngine): Promise<void> {
-  const { rescopeArchiveOnShared } = await import('../core/transcripts/archive.ts');
-  let results: Awaited<ReturnType<typeof rescopeArchiveOnShared>>;
-  try {
-    results = await rescopeArchiveOnShared(engine);
-  } catch (e) {
-    process.exitCode = 1;
-    console.error('Conversation archive: keeping the pages written while this brain was personal to the owner failed (' + (e instanceof Error ? e.message : String(e)) + '); until it succeeds every member may read them. Run gbrain transcripts archive run now.');
-    return;
-  }
-  for (const r of results) {
-    console.error('Conversation archive (source ' + r.source_id + '): ' + (r.skipped ? r.skipped.message : 'pages written while this brain was personal are now kept to the owner.'));
-  }
 }
 
 async function memberCmd(engine: BrainEngine, sub: string | undefined, args: string[], json: boolean): Promise<void> {

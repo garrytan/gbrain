@@ -6,7 +6,8 @@
  * Each case drives the brain shared through the CLI handler alone, then reads over the http dispatch as the second
  * member, as the owner and with an unbound token. In the owner set case the second member is added first on a brain
  * with no owner, so member add says why the pages wait (archive_rescope_owner_unset) and owner set applies it.
- * Repo-less; synthetic values only.
+ * A member add while an archive run holds the source leaves the re-scope to that source's next run, because the run in
+ * flight still writes pages with no readers. Repo-less; synthetic values only.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -20,6 +21,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { addMember, bindCredential, disableMember } from '../src/core/access/members.ts';
 import { setOwner } from '../src/core/access/owner.ts';
+import { tryAcquireDbLock } from '../src/core/db-lock.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { ARCHIVE_TIMEZONE_KEY, archiveRescopeSkipped, runTranscriptArchive, setArchiveEnabled } from '../src/core/transcripts/archive.ts';
 import { runAccess } from '../src/commands/access.ts';
@@ -59,8 +61,8 @@ const readsFor = (slug: string, canary: string): Array<[string, string, Record<s
   ['recall (since)', 'recall', { since: '2000-01-01' }],
 ];
 
-type Trigger = 'member add' | 'member enable' | 'config set brain.audience' | 'owner set';
-const TRIGGERS: Trigger[] = ['member add', 'member enable', 'config set brain.audience', 'owner set'];
+type Trigger = 'member add' | 'member enable' | 'config set brain.audience' | 'owner set' | 'member add during an archive run';
+const TRIGGERS: Trigger[] = ['member add', 'member enable', 'config set brain.audience', 'owner set', 'member add during an archive run'];
 
 for (const kind of testBackends()) {
   for (const trigger of TRIGGERS) {
@@ -135,6 +137,15 @@ for (const kind of testBackends()) {
 
         await inHome(async () => {
           if (trigger === 'member add') await runAccess(engine, ['member', 'add', OTHER]);
+          if (trigger === 'member add during an archive run') {
+            const lock = await tryAcquireDbLock(engine, 'transcripts-archive:' + SRC);
+            const stderr: string[] = [];
+            const spy = spyOn(console, 'error').mockImplementation((...line: unknown[]) => { stderr.push(line.join(' ')); });
+            try { await runAccess(engine, ['member', 'add', OTHER]); } finally { spy.mockRestore(); await lock!.release(); }
+            expect(stderr.join('\n')).toContain('because an archive run is writing source ' + SRC + ' now; run gbrain transcripts archive run once it finishes.');
+            expect(await engine.getConfig('transcripts.archive.audience.' + SRC)).toBe('personal');
+            await runTranscriptArchive(engine, { mode: 'run', readers: [staticReader('openclaw', [])], now: new Date('2026-10-05T00:00:00Z') });
+          }
           if (trigger === 'member enable') await runAccess(engine, ['member', 'enable', OTHER]);
           if (trigger === 'config set brain.audience') await runConfig(engine, ['set', 'brain.audience', 'shared']);
           if (trigger === 'owner set') {
@@ -158,7 +169,7 @@ for (const kind of testBackends()) {
         await close?.();
       }, 60_000);
 
-      test('the re-scope ran synchronously: no pending re-scope and the archive records the brain as shared', async () => {
+      test('the re-scope has run: nothing pending and the archive records the brain as shared', async () => {
         expect(await inHome(() => archiveRescopeSkipped(engine))).toBeNull();
         expect(await engine.getConfig('transcripts.archive.audience.' + SRC)).toBe('shared');
       }, 60_000);
