@@ -762,7 +762,7 @@ function untrackPaths(root: string, rel: string[], message: string, scope: Commi
 
 export interface PendingWriteThrough { path: string; since: string }
 
-const PENDING_NOTED = new Set(['commit_lock_busy', 'git_index_locked', 'git_index_stale', 'git_unavailable', 'git_operation_in_progress']);
+const PENDING_NOTED = new Set(['commit_lock_busy', 'git_index_locked', 'git_index_stale', 'git_unavailable', 'git_command_stopped', 'git_operation_in_progress']);
 
 function readPendingFile(file: string, into: Map<string, string>): void {
   let text: string;
@@ -1153,7 +1153,7 @@ function remoteContains(ctx: Ctx, sha: string): boolean {
     const tip = listed.stdout.split(/\s/)[0];
     if (!/^[0-9a-f]{40,64}$/.test(tip)) return false;
     if (git(ctx.root, ['cat-file', '-e', `${tip}^{commit}`]).code !== 0) {
-      const got = git(ctx.root, [...transportFlags(), 'fetch', '--quiet', ...fetchFlags(ctx.root), ...GIT_SSRF_SUBCOMMAND_FLAGS, '--', url, tip], { auth: true, timeoutMs: 120_000 });
+      const got = git(ctx.root, [...transportFlags(), 'fetch', '--quiet', ...fetchFlags(ctx.root), ...GIT_SSRF_SUBCOMMAND_FLAGS, '--', url, tip], { auth: true, timeoutMs: 120_000, returnStopped: true });
       if (got.code !== 0) return false;
     }
     if (!isAncestor(ctx.root, sha, tip)) return false;
@@ -1171,12 +1171,12 @@ function pushBase(ctx: Ctx, fetched: string, candidate: string): string {
   const tips = new Set<string>();
   for (const url of urls) {
     if (git(ctx.root, ['ls-remote', '--get-url', '--', url]).stdout.trim() !== url) throw refuse(`push URL ${url} names another remote`);
-    const listed = git(ctx.root, [...transportFlags(), 'ls-remote', '--exit-code', '--', url, ctx.mergeRef], { auth: true, timeoutMs: 60_000 });
+    const listed = git(ctx.root, [...transportFlags(), 'ls-remote', '--exit-code', '--', url, ctx.mergeRef], { auth: true, timeoutMs: 60_000, returnStopped: true });
     if (listed.code === 2) { tips.add(''); continue; }
     const tip = listed.code === 0 ? listed.stdout.split(/\s/)[0] ?? '' : '';
     if (!/^[0-9a-f]{40,64}$/.test(tip)) throw refuse(`push URL ${url} could not be read`);
     if (git(ctx.root, ['cat-file', '-e', `${tip}^{commit}`]).code !== 0
-      && git(ctx.root, [...transportFlags(), 'fetch', '--quiet', ...fetchFlags(ctx.root), ...GIT_SSRF_SUBCOMMAND_FLAGS, '--', url, tip], { auth: true, timeoutMs: 120_000 }).code !== 0) {
+      && git(ctx.root, [...transportFlags(), 'fetch', '--quiet', ...fetchFlags(ctx.root), ...GIT_SSRF_SUBCOMMAND_FLAGS, '--', url, tip], { auth: true, timeoutMs: 120_000, returnStopped: true }).code !== 0) {
       throw refuse(`the commit push URL ${url} holds could not be fetched`);
     }
     tips.add(tip);
