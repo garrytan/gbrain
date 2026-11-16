@@ -151,6 +151,17 @@ export function normalizeAIError(err: unknown, context?: string, redact?: (text:
     return carryStatusFields(err, new AIConfigError(`${ctxPrefix}${msg}`, undefined, err));
   }
 
+  // A 2xx body the SDK cannot parse as JSON (e.g. a route that streams SSE
+  // when `stream` is omitted) is a deterministic format mismatch; retrying the
+  // identical request cannot succeed.
+  if (name === 'AI_JSONParseError') {
+    return carryStatusFields(err, new AIConfigError(
+      `${ctxPrefix}${msg}`,
+      'The provider response was not a single JSON body. Check it returns plain JSON for a non-streaming request (a route that streams when `stream` is omitted is the common cause); workaround: set provider_chat_options for this model to {"stream": false}.',
+      err,
+    ));
+  }
+
   // Everything else (5xx, timeouts, network) = transient
   return carryStatusFields(err, new AITransientError(`${ctxPrefix}${msg}`, err));
 }
