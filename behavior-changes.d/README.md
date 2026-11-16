@@ -35,7 +35,10 @@ line and nobody picks a version before the release.
    reached stable (the notice text names the reverted pull request,
    `#<number>`), or `deprecation: <id>` naming the
    [deprecations.d](../deprecations.d/) record whose `remove_after` date has
-   passed. The front matter is not part of the notice text.
+   passed. The front matter is not part of the notice text. The kind also
+   decides where the row shows in the short summary `gbrain post-upgrade`
+   prints: `breaking` and `action` under "Needs you", `default` under
+   "Behavior changes", `fix` and `add` as counts.
 
 That is all. `bun run check:public-surface` refuses a new row without
 `kind`, and a `breaking` row without an exception or a matured deprecation.

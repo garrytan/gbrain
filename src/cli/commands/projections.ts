@@ -22,17 +22,26 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
   };
   const limitAt = args.indexOf('--limit');
   const limitValue = limitAt === -1 ? undefined : args[limitAt + 1];
-  const known = new Set(['drain', '--json', '--dry-run', '--limit', ...(limitValue === undefined ? [] : [limitValue])]);
+  const concurrencyAt = args.indexOf('--concurrency');
+  const concurrencyValue = concurrencyAt === -1 ? undefined : args[concurrencyAt + 1];
+  const known = new Set(['drain', '--json', '--dry-run', '--limit', '--concurrency', ...(limitValue === undefined ? [] : [limitValue]),
+    ...(concurrencyValue === undefined ? [] : [concurrencyValue])]);
   const unknown = args.find(arg => !known.has(arg));
   if (args[0] !== 'drain' || unknown !== undefined) {
     await refuse(new OperationError('invalid_params', `Unknown projections argument '${unknown ?? args[0]}'.`,
-      'Run `gbrain projections drain [--limit <n>] [--json]`.', projections.PROJECTION_DRAIN_DOCS));
+      'Run `gbrain projections drain [--limit <n>] [--concurrency <n>] [--json]`.', projections.PROJECTION_DRAIN_DOCS));
     return;
   }
   const limit = limitValue === undefined ? undefined : Number(limitValue);
   if (limitAt !== -1 && (!Number.isSafeInteger(limit) || limit! < 1)) {
     await refuse(new OperationError('invalid_params', `--limit needs a positive whole number of pages, not '${limitValue ?? ''}'.`,
       'Run `gbrain projections drain --limit 1000`, or omit --limit to drain everything queued.', projections.PROJECTION_DRAIN_DOCS));
+    return;
+  }
+  const concurrency = concurrencyValue === undefined ? undefined : Number(concurrencyValue);
+  if (concurrencyAt !== -1 && (!Number.isSafeInteger(concurrency) || concurrency! < 1)) {
+    await refuse(new OperationError('invalid_params', `--concurrency needs a positive whole number of pages, not '${concurrencyValue ?? ''}'.`,
+      'Run `gbrain projections drain --concurrency 4`, or omit it for the default.', projections.PROJECTION_DRAIN_DOCS));
     return;
   }
 
@@ -70,7 +79,16 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
     return;
   }
   try {
-    const result = await projections.drainProjections(engine, { limit, media: true, progress: createProgress(cliOptsToProgressOptions(getCliOptions())) });
+    const { drainConcurrency } = await import('../../core/page-state/rebuild-estimate.ts');
+    const width = drainConcurrency(engine);
+    if (concurrency !== undefined && concurrency > width.max) {
+      await refuse(new OperationError('invalid_params', `--concurrency ${concurrency} is more than this database connection pool allows (${width.max}: the pool size less 2 kept free).`,
+        width.max > 1 ? `Run \`gbrain projections drain --concurrency ${width.max}\`, or raise the pool size.` : 'PGLite rebuilds one page at a time: omit --concurrency.', projections.PROJECTION_DRAIN_DOCS));
+      return;
+    }
+    const result = await projections.drainProjections(engine, { limit, media: true, progress: createProgress(cliOptsToProgressOptions(getCliOptions())),
+      concurrency: concurrency ?? width.default,
+      onNarrow: (n, error) => console.error(`[gbrain] A database connection was refused or dropped (${(error instanceof Error ? error.message : String(error)).split('\n')[0]!.slice(0, 200)}); rebuilding ${n} page(s) at once from here.`) });
     if (json) {
       await writeStdoutFinal(JSON.stringify(result) + '\n');
     } else {

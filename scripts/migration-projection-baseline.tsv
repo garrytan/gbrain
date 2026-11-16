@@ -1,0 +1,4 @@
+# Migrations allowed to change what the page revision trigger watches (scripts/check-migration-projection.ts, #9192).
+# Each row: version<TAB>name<TAB>how search keeps answering, or why it cannot. A row whose migration no longer matches fails as stale.
+153	verified_text_projection_activation	Assigns a revision only to pages that have none, then marks every page whose pre-upgrade chunks hold nothing the rebuild would remove as served from that index, so search keeps answering; pages with a facts or takes fence, private-key text or a quarantine key, images and pages indexed before the safe-chunk fence wait for gbrain projections drain (#9192).
+189	pages_credential_projection_pending	Withholds on purpose only pages whose body carries a private-key marker: their old chunks can hold key text the credential-safe projection removes, so they must leave search until rebuilt.

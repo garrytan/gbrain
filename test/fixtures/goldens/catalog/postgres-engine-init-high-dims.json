@@ -1466,6 +1466,7 @@
       "idx_oauth_tokens_expiry": "CREATE INDEX idx_oauth_tokens_expiry ON public.oauth_tokens USING btree (expires_at)",
       "idx_pages_frontmatter": "CREATE INDEX idx_pages_frontmatter ON public.pages USING gin (frontmatter)",
       "idx_pages_projection_pending": "CREATE INDEX idx_pages_projection_pending ON public.pages USING btree (source_id, page_kind, slug) WHERE ((deleted_at IS NULL) AND (text_projection_revision IS DISTINCT FROM knowledge_revision))",
+      "idx_pages_projection_waiting": "CREATE INDEX idx_pages_projection_waiting ON public.pages USING btree (source_id, page_kind, slug) WHERE ((deleted_at IS NULL) AND (text_projection_revision IS DISTINCT FROM knowledge_revision) AND (text_projection_revision IS DISTINCT FROM '00000000-0000-0000-0000-000000000153'::uuid))",
       "idx_pages_search": "CREATE INDEX idx_pages_search ON public.pages USING gin (search_vector)",
       "idx_pages_slug_basename": "CREATE INDEX idx_pages_slug_basename ON public.pages USING btree (source_id, regexp_replace(slug, '^.*/'::text, ''::text))",
       "idx_pages_slug_trgm": "CREATE INDEX idx_pages_slug_trgm ON public.pages USING gin (slug gin_trgm_ops)",

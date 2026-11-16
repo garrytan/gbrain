@@ -37,6 +37,7 @@ export async function archivedPages(engine: BrainEngine, sourceId = 'conversatio
   }));
 }
 
+/** Every archive config row except transcripts.archive.last_read.*, which records what each run read (and when), not what it archived. */
 export async function ledgerRows(engine: BrainEngine): Promise<Array<{ key: string; value: string }>> {
-  return engine.executeRaw<{ key: string; value: string }>("SELECT key, value FROM config WHERE key LIKE 'transcripts.archive.%' ORDER BY key");
+  return engine.executeRaw<{ key: string; value: string }>("SELECT key, value FROM config WHERE key LIKE 'transcripts.archive.%' AND key NOT LIKE 'transcripts.archive.last\\_read.%' ORDER BY key");
 }
