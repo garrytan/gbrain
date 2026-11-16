@@ -187,11 +187,10 @@ const previewCommand = (sel: Selection) => `gbrain repair open-facts --source ${
 
 function selectionOf(scope: RepairScope, opts?: RepairPlanOptions): { sel: Selection; request: OpenFactsRequest } {
   if (opts?.remote !== false) throw trustedCliRequired('gbrain repair open-facts widens what remote callers read, so it runs only from the CLI on the brain host; remote callers cannot run it.');
-  if (process.env.GBRAIN_ENFORCED_MEMBER !== undefined) throw memberModeRefused();
   const request = opts.openFacts;
   if (!request) throw opError('invalid_params', 'gbrain repair open-facts needs its ledger and selection, and this caller passed none.',
-    'Run it from the CLI on the brain host: gbrain repair open-facts --source <id> --created-before <ISO-8601>');
-  if (scope.source_ids.length !== 1) throw opError('invalid_params', 'gbrain repair open-facts opens facts in one named source.', 'Name it: gbrain repair open-facts --source <id> --created-before <ISO-8601>',
+    'Run it from the gbrain CLI on the brain host, naming one source (gbrain sources list --json lists them) and --created-before, e.g. --created-before 2026-06-01T00:00:00Z.');
+  if (scope.source_ids.length !== 1) throw opError('invalid_params', 'gbrain repair open-facts opens facts in one named source.', 'Name one source with --source (gbrain sources list --json lists them).',
     { reason: 'source_required' });
   if (!request.undo && !request.createdBefore) throw createdBeforeRequired();
   return { request, sel: { source_id: scope.source_ids[0]!, created_before: request.undo ? null : request.createdBefore!,
@@ -206,7 +205,7 @@ export function createdBeforeRequired(): OperationError {
     'Pass the instant facts.default_visibility became world on this brain, e.g. --created-before 2026-06-01T00:00:00Z; facts created after it stay as written.', { reason: 'created_before_required' });
 }
 
-/** `member_mode_refused`: a CLI under GBRAIN_ENFORCED_MEMBER acts as a member and never opens facts. */
+/** `member_mode_refused`: a CLI under GBRAIN_ENFORCED_MEMBER acts as a member and never opens facts (the CLI checks it before the run). */
 export function memberModeRefused(): OperationError {
   return opError('permission_denied', 'gbrain repair open-facts is refused under GBRAIN_ENFORCED_MEMBER: a member CLI cannot widen what other callers read.',
     'Run it as the brain host\'s operator, without GBRAIN_ENFORCED_MEMBER set.', { reason: 'member_mode_refused' });
@@ -259,7 +258,7 @@ export const openFactsRepair: RepairHandler = {
       chars: 0, action: `${group.mode === 'open' ? 'open' : 're-private'} ${group.facts.length} ${group.cls} fact(s)`, group, hash, ledger: request.ledger, brain_id: scope.brain_id }));
     if (opts?.apply) {
       if (!opts.expect) throw opError('invalid_params', 'gbrain repair open-facts --apply changes only the set a preview printed (opening a fact widens remote reads).',
-        `Preview first: ${command} — then run the apply command it prints with --apply --expect <preview-hash>`);
+        `Preview first: ${command} --json, then rerun it with --apply --expect and the preview_hash it printed.`);
       const approved = await loadApprovedSet<Group>(engine, { command: 'open-facts', hash: opts.expect, previewCommand: command,
         emptyHash: async () => previewHash(hashParts(scope, sel, [], null)) });
       if (approved.items.some(group => digest(group.selection) !== digest(sel))) throw previewChangedError(opts.expect, command);

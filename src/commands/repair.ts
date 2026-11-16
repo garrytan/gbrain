@@ -487,7 +487,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
     if (bad !== undefined) throw opError('invalid_params', `--class for gbrain repair open-facts is fenced, unfenced or unpaged:<lane> (got "${bad}").`,
       'Pass a class the preview counts under eligible, e.g. --class unpaged:mail:extract, or omit --class for fenced and unfenced facts.', { reason: 'class_invalid' });
     if (parsed.undo !== undefined && (parsed.createdBefore !== undefined || parsed.classes.length || parsed.idsFile !== undefined || parsed.afterPage !== undefined)) {
-      throw invalid('--undo takes only --source: it re-privates what its ledger recorded.', 'Preview the undo on its own: gbrain repair open-facts --source <id> --undo <ledger>',
+      throw invalid('--undo takes only --source: it re-privates what its ledger recorded.', `Preview the undo on its own: gbrain repair open-facts${parsed.source ? ` --source ${parsed.source}` : ''} --undo ${parsed.undo}`,
         ['gbrain', 'repair', 'open-facts', ...(parsed.source ? ['--source', parsed.source] : []), '--undo', parsed.undo, '--json']);
     }
   }
@@ -554,7 +554,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     classes, createdBefore, idsFile, undo } = parseRepairArgs(args);
   if (kind === 'open-facts') {
     if (process.env.GBRAIN_ENFORCED_MEMBER !== undefined) throw memberModeRefused();
-    if (!source) throw opError('invalid_params', 'gbrain repair open-facts opens facts in one named source.', 'Name it: gbrain repair open-facts --source <id> --created-before <ISO-8601>',
+    if (!source) throw opError('invalid_params', 'gbrain repair open-facts opens facts in one named source.', 'Name one source with --source (gbrain sources list --json lists them).',
       { reason: 'source_required' });
     if (undo === undefined && createdBefore === undefined) throw createdBeforeRequired();
   }

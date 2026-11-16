@@ -51,6 +51,7 @@ const EXEMPT = {
   'src/core/repair/extractor-facts.ts': 'owner-run repair restoring expired fact rows',
   'src/core/repair/unwithdrawn-facts.ts': 'owner-run, preview-bound repair putting expired fact rows back to their recorded before-state (row number and lifecycle); page text is unchanged',
   'src/core/repair/redacted-facts.ts': 'owner-run, preview-bound repair rewriting the text of database-only fact rows to words a source page proves; page text is unchanged (fenced rows publish through put_page, preparePageMutation)',
+  'src/core/repair/open-facts.ts': 'owner-run, preview-first repair (#8194): its own intent only changes the visibility of named database-only fact rows in place; fenced rows publish through the keep_trust maintenance page, which preparePageMutation guards (openFactsPublication wraps it)',
   'src/core/repair/visibility.ts': 'owner-run, preview-first repair that only tightens database-only fact rows from world to private; page text is unchanged (fenced rows and page labels publish through put_page, preparePageMutation)',
   'src/core/repair/purged-page-facts.ts': 'owner-run repair expiring fact rows of pages that no longer exist (shrinks only; no page text)',
   'src/core/repair/conversation-labels.ts': 'owner-run repair expiring fact rows and writing an outcome row (shrinks only; page text unchanged)',
