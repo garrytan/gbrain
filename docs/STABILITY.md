@@ -13,7 +13,7 @@ Check which channel you are on with `gbrain doctor`, which prints `channel=<chan
 1. **Every release passes the full test suite first.** A release is published only after the full unit and end-to-end test runs pass on its exact code.
 2. **A stable candidate then passes a production-shaped test.** gbrain runs a two-hour load test on a brain of 600,000 pages, at two network delays (2 ms and 65 ms), with privacy probes. It must pass the privacy-leak, read-error, version-skew, process-health and session checks in every run. The test has to have run on the release's exact files; a test of a nearby commit doesn't count.
 3. **Stable moves only for a reason.** A scheduled check runs twice a day (05:17 and 13:17 UTC). It promotes the newest release that passed step 2, and only when there is a reason to move:
-   - an important fix (a security, regression or data-loss fix, or a fix for something that blocks people) has been released but is not in stable yet, or
+   - an important fix (a security fix, a data-loss fix, or a fix for a regression in a release that is on stable) has been released but is not in stable yet, or
    - stable is more than 7 days old and a newer release exists.
 
    With no reason, stable stays where it is.
@@ -21,9 +21,9 @@ Check which channel you are on with `gbrain doctor`, which prints `channel=<chan
 
 ## How often stable moves
 
-The scheduled check can move it at most twice a day; a maintainer can also promote, or roll back, by hand. An important fix can move it on any day. If nothing important is waiting, the 7-day rule is the next reason for stable to move, though it still waits for a release that passed the test in step 2.
+The rule: an important fix reaches stable within a day once it has passed the full test suite and the load test in step 2; everything else rides a weekly move; and stable never sits more than seven days behind tested changes. The scheduled check can move it at most twice a day; a maintainer can also promote, or roll back, by hand. If nothing important is waiting, the 7-day rule is the next reason for stable to move, though it still waits for a release that passed the test in step 2. A fix for a problem only newer, non-stable releases have, or one that unblocks a single setup, waits for the weekly move; if you need it sooner, install that release by its tag (see "Pinning a version").
 
-What that has meant so far: the first stable release was v0.60.474.0 on 28 October 2026. Between then and 15 November 2026 stable moved 9 more times: once on 6 November, 9.7 days later, and then on each of the 8 days from 8 to 15 November, because an important fix was waiting on each of those days. Each move carried every change released since the one before. To see the current pace, list every stable release:
+What that has meant so far: the first stable release was v0.60.474.0 on 28 October 2026. Between then and 15 November 2026 stable moved 9 more times: once on 6 November, 9.7 days later, and then on each of the 8 days from 8 to 15 November, because an important fix was waiting on each of those days. Each move carried every change released since the one before. Until then an important fix also included a fix for something that blocked people. From the release that carries this change on (decided 16 November 2026), only security, data-loss and stable-regression fixes move stable early, so expect it to move about once a week. To see the current pace, list every stable release:
 
 ```bash
 git ls-remote --tags --refs https://github.com/garrytan/gbrain 'refs/tags/stable-v*'

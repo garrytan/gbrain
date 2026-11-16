@@ -16,6 +16,7 @@
  * newer than the CHANGELOG's top release heading (gstack-restamp --release runs this before it folds the
  * fragments). On every other tree they are pending and generate nothing, so a PR never changes the generated file.
  * A changelog.d fragment whose front matter says `bump:` anything but `patch` is refused: releases are PATCH only.
+ * So is an `important:` class other than security, regression or data-loss: only those reach stable early.
  * Dependency-free and history-free: gstack's release check reruns it in a bare worktree of the release head.
  *
  * Exit: 0 written or fresh, 1 stale or invalid (FAIL/Why/Fix printed), 2 usage.
@@ -32,6 +33,7 @@ export const MARKER = /<!--\s*behavior-change:\s*([^\s]+)\s*-->/g;
 export const ID = /^[a-z][a-z0-9_]{2,95}$/;
 const NOTICE_CAP = 2_000;
 const DOCS = 'behavior-changes.d/README.md';
+const IMPORTANT_CLASSES = ['security', 'regression', 'data-loss'];
 
 export interface Release { version: string | null; ids: string[] }
 export interface Built { text: string; problems: string[] }
@@ -75,8 +77,11 @@ export function build(root: string): Built {
     ? readdirSync(join(root, CHANGELOG_FRAGMENT_DIR)).filter(f => f.endsWith('.md') && f !== 'README.md').sort() : [];
   for (const f of pendingFiles) {
     const front = /^---\r?\n([\s\S]*?)\r?\n---\s*(\n|$)/.exec(read(root, join(CHANGELOG_FRAGMENT_DIR, f)))?.[1] ?? '';
-    const bump = /^\s*['"]?bump['"]?\s*:(.*)$/m.exec(front)?.[1]?.trim().replace(/^(['"])(.*)\1$/, '$2');
+    const field = (name: string) => new RegExp(`^\\s*['"]?${name}['"]?\\s*:(.*)$`, 'm').exec(front)?.[1]?.replace(/\s+#.*$/, '').trim().replace(/^(['"])(.*)\1$/, '$2');
+    const bump = field('bump');
     if (bump !== undefined && bump !== 'patch') problems.push(`${CHANGELOG_FRAGMENT_DIR}/${f} says bump: ${bump}; gbrain releases are PATCH only and the release takes the highest bump in the batch, so delete the bump: line (or write bump: patch)`);
+    const important = field('important');
+    if (important !== undefined && !IMPORTANT_CLASSES.includes(important)) problems.push(`${CHANGELOG_FRAGMENT_DIR}/${f} says important: ${important}; stable takes the fast path only for security, regression (in a release that is on stable) or data-loss, so write one of those or delete the important: line (docs/RELEASING.md#daily-stable-check)`);
   }
   const pending = [...pendingFiles.flatMap(f => markers(read(root, join(CHANGELOG_FRAGMENT_DIR, f)))), ...releases.filter(r => !r.version).flatMap(r => r.ids)];
   const sinceOf = new Map<string, string>();
