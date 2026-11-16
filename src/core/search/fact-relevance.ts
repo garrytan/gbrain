@@ -155,7 +155,11 @@ async function wordStems(engine: BrainEngine, words: string[]): Promise<WordStem
   try {
     const rows = await engine.executeRaw<{ w: string; lexemes: string[] | string | null }>(
       `SELECT w, tsvector_to_array(to_tsvector('${getFtsLanguage()}'::regconfig, w)) AS lexemes FROM unnest($1::text[]) AS w`, [words]);
-    return new Map(rows.map(r => [r.w, Array.isArray(r.lexemes) ? r.lexemes : typeof r.lexemes === 'string' ? r.lexemes.replace(/^\{|\}$/g, '').split(',').filter(Boolean) : []]));
+    return new Map(rows.map(r => {
+      const all = Array.isArray(r.lexemes) ? r.lexemes : typeof r.lexemes === 'string' ? r.lexemes.replace(/^\{|\}$/g, '').split(',').filter(Boolean) : [];
+      const whole = all.filter(l => l.length > 2 || l === r.w);
+      return [r.w, whole.length ? whole : all];
+    }));
   } catch {
     return null;
   }

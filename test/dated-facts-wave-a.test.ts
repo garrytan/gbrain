@@ -65,6 +65,10 @@ beforeAll(async () => {
   for (const [slug, name] of [['people/sam-roger', 'Sam Roger'], ['people/sam-rogers', 'Sam Rogers']]) await putPage(engine, sourceId, slug, page('person', name, name + ' is a client.'));
   await fact('Sam Roger lives in Porto.', 20, day(20), 'people/sam-roger');
   await fact('Sam Rogers lives in Lisbon.', 21, day(21), 'people/sam-rogers');
+  await fact('Carol Example moved to Madrid.', 7, '2020-01-01', 'people/carol-example');
+  await fact('Carol Example moved to Madrid.', 9, '2019-01-01', 'people/carol-example');
+  await fact("Kim O'Brien plays the cello.", 23, day(23), 'people/kim-obrien');
+  await fact("Lee O'Neil plays the violin.", 24, day(24), 'people/lee-oneil');
 }, 300_000);
 afterAll(async () => { await engine?.disconnect(); }, 60_000);
 
@@ -95,6 +99,13 @@ describe('A2 copies of one claim take one row; a differing value keeps its own',
     expect(still[0]).toContain('Alice Example still lives in Oslo. (stated 10 times, last ' + day(120) + ')');
     expect(facts.filter(t => /(^|\n)Alice Example lives in Oslo\.(\n|$)/.test(t))).toHaveLength(1);
   });
+  test('copies are ordered by when they were said, not by their event date', async () => {
+    const facts = (await ask('Where did Carol Example move to?')).filter(r => r.result_type === 'fact').map(r => r.chunk_text ?? '');
+    const moved = facts.filter(t => t.includes('Carol Example moved to Madrid.'));
+    expect(moved).toHaveLength(1);
+    expect(moved[0]!.split('\n')[0]).toBe('[observed ' + day(7) + '; valid 2020-01-01 to unknown]');
+    expect(moved[0]).toContain('Carol Example moved to Madrid. (stated 2 times, last ' + day(9) + ')');
+  });
 });
 
 describe('S7 keyless admission', () => {
@@ -114,6 +125,11 @@ describe('A4 near names: an exact word outranks a stem-only match', () => {
     const pool = await collectFactCandidates(engine, Q, { sourceIds: [sourceId], worldOnly: true, excludePrivate: false }, null, { depth: { keyword: 50, cosine: 50, entity: 40 } });
     const order = scoreFactCandidates(Q, pool.candidates, pool.terms, pool.stems).map(s => s.candidate.fact).filter(f => f.startsWith('Sam Roger'));
     expect(order).toEqual(['Sam Roger lives in Porto.', 'Sam Rogers lives in Lisbon.']);
+  });
+  test('a one-letter name fragment is no match: a question about O\'Brien does not admit an O\'Neil fact', async () => {
+    const facts = (await ask("What does Kim O'Brien play?")).filter(r => r.result_type === 'fact').map(r => r.chunk_text ?? '');
+    expect(facts.some(t => t.includes("Kim O'Brien plays the cello."))).toBe(true);
+    expect(facts.filter(t => t.includes("O'Neil"))).toEqual([]);
   });
   test('the facts block puts it first', async () => {
     const facts = (await ask(Q)).filter(r => r.result_type === 'fact').map(r => r.chunk_text ?? '').filter(t => t.includes('Sam Roger'));

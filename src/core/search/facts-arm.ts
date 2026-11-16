@@ -261,18 +261,19 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
     // GBRA-574 A2: copies of one claim (exact fingerprint, capture-dedup.ts) take one row, shown as first stated; a differing value never merges.
     const byId = new Map(scored.map(c => [Number(c.id), c]));
     const collapsed = await collapseFactReads(engine, scored.map(c => ({ ...c, id: Number(c.id), created_at: c.created_at ?? c.valid_from, visibility: c.visibility ?? '', attributed_to: c.attributed_to ?? null })));
-    const groups = collapsed.map(r => (r.collapsed_ids ?? [r.id]).map(id => byId.get(id)!)
-      .sort((a, b) => new Date(a.valid_from).getTime() - new Date(b.valid_from).getTime() || Number(a.id) - Number(b.id)));
+    const members = collapsed.map(r => (r.collapsed_ids ?? [r.id]).map(id => byId.get(id)!));
+    const { dates } = await observedDates(engine, members.flat(), opts.readScope);
+    const said = (c: FactCandidate) => dates?.get(Number(c.id)) ?? day(c.created_at ?? c.valid_from) ?? '';
+    const groups = members.map(g => g.sort((a, b) => said(a).localeCompare(said(b)) || Number(a.id) - Number(b.id)));
     const shown = groups.map(g => g[0]!);
     const pageSlugs = await readableEntityPages(engine, shown, opts.readScope).catch(() => new Set<string>());
     const fromQuoted = await factsFromQuotedPages(engine, shown.map(c => Number(c.id)));
-    const { dates } = await observedDates(engine, shown, opts.readScope);
     let left = Math.floor(opts.budget * policy.share);
     const chosen: Array<{ c: FactCandidate; row: SearchResult }> = [];
     for (const group of groups) {
       if (chosen.length >= maxRows) break;
       const c = group[0]!;
-      const restated = group.length > 1 ? ` (stated ${group.length} times, last ${day(group[group.length - 1]!.valid_from)})` : '';
+      const restated = group.length > 1 ? ` (stated ${group.length} times, last ${said(group[group.length - 1]!)})` : '';
       const row = factRow(c, 0, c.entity_slug && pageSlugs.has(`${c.source_id}\u0000${c.entity_slug}`) ? c.entity_slug : undefined, fromQuoted.has(Number(c.id)), dates);
       row.chunk_text = `${factDateHeader(c, undefined, dates?.get(Number(c.id)))}\n${c.fact}${restated}`;
       const cost = resultTokens(row);
