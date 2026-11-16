@@ -1373,10 +1373,11 @@
           {
             "lane": "tx",
             "params": [
+              "string",
               "string"
             ],
-            "sql": "UPDATE pages SET deleted_at = NULL, updated_at = now() WHERE slug = $1 AND deleted_at IS NOT NULL RETURNING slug",
-            "textSha256": "e657e4a81c518ed0669a4f80ce47e3114b42aaa4aa13667cdc35bb516e4d37cd"
+            "sql": "WITH restored AS ( UPDATE pages SET deleted_at = NULL, updated_at = now() WHERE slug = $1 AND deleted_at IS NOT NULL RETURNING id, slug ), owed AS ( DELETE FROM op_checkpoints WHERE op = $2 AND fingerprint IN (SELECT id::text FROM restored) ) SELECT slug FROM restored",
+            "textSha256": "0ceeb1e93750c78a5751dc0d5c8218a4527921c7f119c4ce3b4897f7a718c6ca"
           },
           {
             "event": "commit",
@@ -1402,10 +1403,11 @@
             "lane": "tx",
             "params": [
               "string",
+              "string",
               "string"
             ],
-            "sql": "UPDATE pages SET deleted_at = NULL, updated_at = now() WHERE slug = $1 AND deleted_at IS NOT NULL AND source_id = $2 RETURNING slug",
-            "textSha256": "d36ab3e3d4968ce3e210fbbc3a1e9247e4d6065537b380001da3285a3dc6054b"
+            "sql": "WITH restored AS ( UPDATE pages SET deleted_at = NULL, updated_at = now() WHERE slug = $1 AND deleted_at IS NOT NULL AND source_id = $2 RETURNING id, slug ), owed AS ( DELETE FROM op_checkpoints WHERE op = $3 AND fingerprint IN (SELECT id::text FROM restored) ) SELECT slug FROM restored",
+            "textSha256": "876b5f733f74390fe821c0bc9c2251b3c904c43bc30ef0268a59756ff746cc23"
           },
           {
             "event": "commit",

@@ -31,11 +31,11 @@ import { COVERAGE_KEY, factKey, pageKey, slugRef } from './keys.ts';
 import { appendBeliefEvents, type BeliefEventDraft } from './append.ts';
 import { appendDerivedHidden, bumpPurgeEpoch, derivedBeliefTargets, pageLifetimesOf, pagePurgeClaims, redactCarryingFields, redactPurgedKeys, registerLiveCarriers } from './purge.ts';
 import { derivedRowsFrom, hideDerivedRows, type DerivationRef } from '../facts/derivation-inputs.ts';
-import { writeOriginDeletedMarker } from '../persistence/sync-markers.ts';
 import { outcomeMarkerSql } from '../facts/audit-sources.ts';
 import { pageChangeReasons } from '../facts/purge-reasons.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { sweepRequestsForGroups, type IntentRedactionTarget } from '../persistence/intent-redaction.ts';
+import { declarePersistenceProtocol } from '../persistence/protocol.ts';
 
 export const PURGE_MIRROR_FILE = 'purge-events.jsonl';
 
@@ -130,6 +130,7 @@ async function replayRun(tx: BrainEngine, intents: readonly PurgeMirrorIntent[],
   const [reasonColumn] = await tx.executeRaw<{ present: boolean }>(`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'page_versions' AND column_name = 'change_reason') AS present`);
   const census = new Map<string, { targets: IntentRedactionTarget[]; complete: boolean }>();
   if (!present.has('persistence_requests')) return { present, reasons: false, census };
+  if (intents.some(intent => intent.scope === 'page') && (await tx.executeRaw<{ present: boolean }>("SELECT to_regclass('persistence_brain') IS NOT NULL AS present"))[0]?.present) await declarePersistenceProtocol(tx);
   const groups = new Map<string, Array<{ key: string; claims: string[] }>>();
   for (const intent of intents) {
     if (intent.scope !== 'page' || !intent.slug) continue;
@@ -191,8 +192,7 @@ async function replayOne(tx: BrainEngine, intent: PurgeMirrorIntent, ledger: boo
         const swept = await sweepPurgedPage(tx, { sourceId: src, slug: restored.slug, pageId: restored.id, requestId: intent.request, factIds, takeIds, needles, reasons,
           census: async () => run.census.get(intent.request) ?? { targets: [], complete: !needles.length }, timelineCap: Number.MAX_SAFE_INTEGER, present: run.present });
         if (!swept.complete) throw replayIncomplete(intent);
-        await writeOriginDeletedMarker(tx, { sourceId: src, page: restored });
-        await deletePurgedPage(tx, { sourceId: src, slug: restored.slug, pageId: restored.id, claims: segmentClaims, present: run.present });
+        await deletePurgedPage(tx, { sourceId: src, slug: restored.slug, pageId: restored.id, claims: segmentClaims, origin: restored, present: run.present });
       };
     }
   } else {

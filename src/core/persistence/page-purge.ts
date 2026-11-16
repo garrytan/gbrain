@@ -376,12 +376,14 @@ export async function sweepPurgedPage(tx: BrainEngine, input: PurgedPageSweep): 
 /**
  * The end of a page purge, shared by the live purge and the restore replay, after the sweep and the ledger redaction:
  * the page row with its segment storage (deletePageWithSegments), the retrieval feedback and mention-gazetteer names
- * for the slug, and its owed-purge record (GST-2766), in the purge's transaction. The deletion marker is the caller's.
+ * for the slug, and its owed-purge record (GST-2766), in the purge's transaction, right after the origin's deletion marker (none
+ * when `origin` is null: a purge that keeps its file).
  */
-export async function deletePurgedPage(tx: BrainEngine, input: { sourceId: string; slug: string; pageId: number; claims: readonly string[]; present?: ReadonlySet<string> }):
+export async function deletePurgedPage(tx: BrainEngine, input: { sourceId: string; slug: string; pageId: number; claims: readonly string[]; origin: { source_path?: string | null } | null; present?: ReadonlySet<string> }):
   Promise<{ shas: string[]; removed: Record<string, number> }> {
   const { sourceId, slug, pageId } = input;
   const has = (store: SweptStore) => !input.present || input.present.has(store);
+  if (input.origin) await writeOriginDeletedMarker(tx, { sourceId, page: { id: pageId, slug, source_path: input.origin.source_path } });
   const { shas, ...removed } = await deletePageWithSegments(tx, sourceId, slug, pageId, input.claims);
   if (has('retrieval_event_pages')) Object.assign(removed, await scrubPurgedSlugs(tx, sourceId, [slug]));
   if (has('mention_gazetteer_entries')) Object.assign(removed, await scrubPurgedNameStores(tx, sourceId, [slug]));
@@ -448,8 +450,7 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
     derived_hidden: await appendDerivedHidden(tx, { sourceId, request: row.id, publicationId: row.id, op: 'delete_page', targets: heldTargets, truncated: walk === 'truncated' }),
     derived_walk: walk })) : null;
   if (ledger) removed.belief_events = ledger.purged_events + ledger.redacted_fields.length;
-  if (!prepared.keepOrigin) await writeOriginDeletedMarker(tx, { sourceId, page: { id: page.id, slug, source_path: page.source_path } });
-  const { shas, removed: deleted } = await deletePurgedPage(tx, { sourceId, slug, pageId: page.id, claims: segmentClaims });
+  const { shas, removed: deleted } = await deletePurgedPage(tx, { sourceId, slug, pageId: page.id, claims: segmentClaims, origin: prepared.keepOrigin ? null : { source_path: page.source_path } });
   Object.assign(removed, deleted);
   if (!retention) appendPurgeIntent({ request: row.id, request_id: row.request_id, source_id: sourceId, source_incarnation: row.source_incarnation,
     scope: 'page', slug, purge_epoch: epoch, content_hashes: [...hashes], facts: mirrorFacts, takes: mirrorTakes, lifetimes });
