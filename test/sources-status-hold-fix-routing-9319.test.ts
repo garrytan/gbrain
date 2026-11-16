@@ -17,6 +17,6 @@ describe('#9319: sources status --json renders hold fixes with the routing pin',
     const out = gitHoldStatusJson('source-a', { count: 1, items: [item], sync_argv: ['gbrain', 'sync', '--source', 'source-a', '--no-pull'] }, { mode: 'summary' });
     const pinned = ['gbrain', 'sources', 'reconcile', 'source-a', 'notes/alice-example', '--preview', '--brain', 'host'];
     expect(out.items[0]!.fix.argv).toEqual(pinned);
-    expect(out.by_code[0]!.example.fix.argv).toEqual(pinned);
+    expect(out.by_code[0]!.example!.fix.argv).toEqual(pinned);
   });
 });
