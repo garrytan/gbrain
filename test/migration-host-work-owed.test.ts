@@ -165,6 +165,24 @@ describe('apply-migrations with a wedged migration that still owes host work', (
     expect((await cli(['post-upgrade', '--no-autopilot-install'])).exitCode).toBe(1);
     expect(ledger()).toBe(stuck);
   }, 240_000);
+
+  test('a named run of it refuses with the steps that clear it, and runs by name once the wedge is cleared', async () => {
+    owe(true);
+    const before = ledger();
+    const named = ['apply-migrations', '--migration', OWED, '--yes', '--no-autopilot-install', '--json'];
+    const refused = await cli(named);
+    expect(refused.exitCode).toBe(2);
+    const envelope = JSON.parse(refused.stdout);
+    expect(envelope.code).toBe('invalid_params');
+    expect(envelope.message).toContain(`v${OWED} is wedged`);
+    expect(envelope.suggestion).toContain(RETRY.join(' '));
+    expectOwedFix(envelope.fix);
+    expect(ledger()).toBe(before);
+    expect((await cli(RETRY.slice(1))).exitCode).toBe(0);
+    const run = await cli(named);
+    expect(run.exitCode).toBe(0);
+    expect(JSON.parse(run.stdout).code).toBeUndefined();
+  }, 240_000);
 });
 
 describe('the other surfaces say the same thing', () => {

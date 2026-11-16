@@ -520,6 +520,14 @@ function unknownMigrationError(version: string): OperationError {
     { fix: { argv: ['gbrain', COMMAND, '--list'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists every registered migration and its status.' } });
 }
 
+/** A named run of a wedged migration: it runs by name again only after its wedge is cleared; --list and --dry-run still inspect it. */
+function wedgedByNameError(version: string, hostWorkOwed: boolean): OperationError {
+  return usageError(`Migration v${version} is wedged (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partial runs), so it does not run by name until the wedge is cleared.`,
+    `${hostWorkOwed ? `See each source's conflict first (read-only): ${shellQuote(hostWorkInspectArgv(version))}. ` : `Read ${wedgedLedgerHint()} for the last failure and fix its cause. `}`
+      + `Then clear the wedge with ${shellQuote(forceRetryArgv(version))} and run this command again.`,
+    { fix: hostWorkOwed ? hostWorkOwedFix([version]) : wedgedMigrationFix([version]) });
+}
+
 /** The same invocation again once the underlying failure is fixed; any approval it needs is asked by the run itself. */
 function rerunFix(args: readonly string[], why: string, yes = false) {
   // Approval flags are dropped: the rerun asks for any consent effect itself.
@@ -751,10 +759,12 @@ async function runLockedMigrations(
   report.wedgedHostWork = plan.wedged_host_work.filter(m => forwardProgressPast(m.version, completed) === null);
   reportWedgedMigrations(plan.wedged, plan.wedged_superseded, plan.wedged_host_work, completed);
 
-  const readOnlyWedged = cli.list || cli.dryRun ? plan.wedged.length + plan.wedged_superseded.length + plan.wedged_host_work.length : 0;
+  const namedWedged = plan.wedged.length + plan.wedged_superseded.length + plan.wedged_host_work.length;
+  const readOnlyWedged = cli.list || cli.dryRun ? namedWedged : 0;
   if (cli.specificMigration && plan.applied.length + plan.partial.length + plan.pending.length + plan.pending_fresh_install.length + plan.skippedFuture.length + plan.declined.length + readOnlyWedged === 0) {
-    console.error(`No migration registered with version "${cli.specificMigration}". Run \`gbrain apply-migrations --list\` to see registered versions.`);
-    fail('invalid', unknownMigrationError(cli.specificMigration));
+    const error = namedWedged ? wedgedByNameError(cli.specificMigration, plan.wedged_host_work.length > 0) : unknownMigrationError(cli.specificMigration);
+    console.error(`${error.message} ${error.suggestion}`);
+    fail('invalid', error);
     return 2;
   }
   // #6466: an explicit run of a declined migration refuses (T1) instead of overriding brain-level config every machine shares.

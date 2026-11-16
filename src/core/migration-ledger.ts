@@ -156,7 +156,7 @@ export function hostWorkOwedMessage(versions: readonly string[]): string {
   const first = versions[0]!;
   return `Migration ${versions.map(v => `v${v}`).join(', ')} stopped ${MAX_CONSECUTIVE_PARTIALS}+ runs in a row on a conflict in one or more sources that a person has to resolve, and that work is still owed; `
     + `a newer migration does not replace it, and it does not clear without a person. See each source's conflict (read-only): ${hostWorkInspectArgv(first).join(' ')}. `
-    + `Only after they are resolved, clear it with ${forceRetryArgv(first).join(' ')} and run gbrain apply-migrations --yes.`;
+    + `Once the user has reviewed each one, clear the wedge with ${forceRetryArgv(first).join(' ')}, then run the command that output names for each source, or gbrain apply-migrations --yes.`;
 }
 
 /** The fix for a wedged version with host work owed: the read-only per-source inspect first, then ask the user to clear it once the conflict is resolved. */
@@ -166,9 +166,9 @@ export function hostWorkOwedFix(versions: readonly string[]): Action {
   return { argv: hostWorkInspectArgv(first), consent: [], actor: 'agent', requires_exclusive: false, verify,
     why: `Lists each source's remaining step and its conflict for v${first}, with the command that settles it; changes nothing.`,
     then: { ask_user: true, argv: forceRetryArgv(first), consent: [], actor: 'agent', requires_exclusive: true, verify,
-      why: `Writes a 'retry' marker so the next run re-attempts v${first}; before the conflict is resolved the run stops on it again.`,
+      why: `Writes a 'retry' marker so v${first} can run again, including the per-source command the inspect step names; a run that does not settle a conflict stops on it again.`,
       user_message: `gbrain migration v${first} is stuck on a conflict in one or more sources that needs your decision; the inspect step lists each source and what conflicts there. `
-        + `It will not clear by itself. Once you have resolved each conflict, clear it with ${forceRetryArgv(first).join(' ')} and run gbrain apply-migrations --yes. Clear it now?` } };
+        + `It will not clear by itself. Once you have reviewed each conflict, clear it with ${forceRetryArgv(first).join(' ')}, then run the command the inspect step names for each source, or gbrain apply-migrations --yes. Clear it now?` } };
 }
 
 export function trailingPartialCount(entries: readonly CompletedMigrationEntry[]): number {
