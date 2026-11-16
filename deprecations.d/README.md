@@ -31,14 +31,16 @@ key, a page-format rule, an exit code or a top-level `--json` field.
    carries the announcement.
 3. Announce it in the same pull request: add a behaviour-change row with the
    same id (`behavior-changes.d/<id>.md`, see its README) so the upgrade
-   notice and the release notes carry it.
+   notice carries it, and say it in your changelog fragment
+   (`changelog.d/<slug>.md`) so the release notes carry it.
 
 ## Removing it
 
 The removal is a separate pull request, made after `remove_after` and once
 the announcement has been in at least two stable releases. It deletes the old
 name and the warning, keeps this file (the history of what was removed and
-when) and adds a second behaviour-change row saying the old name is gone.
+when) and adds a second behaviour-change row, with an id of its own, saying the
+old name is gone.
 
 ## Security and data-loss fixes
 
