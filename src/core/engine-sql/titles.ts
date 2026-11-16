@@ -102,16 +102,15 @@ export async function searchTitles(
   };
 
   const strictQuery = statement.params[0] as string;
-  const [rows] = await run([strictQuery], false);
+  const limit = statement.params[2] as number, offset = statement.params[3] as number;
+  const [rows] = await run([strictQuery], false, offset + limit);
   if (rows.length > 0 && rows[0].candidates_cut === true) {
     opts?.onKeywordIncomplete?.('candidate_budget');
-    const limit = statement.params[2] as number, offset = statement.params[3] as number;
     const [titleRows] = await run([strictQuery], true, offset + limit);
-    const [cutRows] = offset ? await run([strictQuery], false, offset + limit) : [rows];
     const titled = new Set(titleRows.map(r => r.page_id));
-    return [...titleRows, ...cutRows.filter(r => !titled.has(r.page_id))].slice(offset, offset + limit).map(rowToSearchResult);
+    return [...titleRows, ...rows.filter(r => !titled.has(r.page_id))].slice(offset, offset + limit).map(rowToSearchResult);
   }
-  if (rows.length > 0) return rows.map(rowToSearchResult);
+  if (rows.length > offset) return rows.slice(offset).map(rowToSearchResult);
   const orQuery = buildOrFallbackWebsearchQuery(strictQuery);
   if (!orQuery) return [];
   const terms = orFallbackTokens(strictQuery);

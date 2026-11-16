@@ -115,8 +115,11 @@ describe('title arm: whole-vector candidate cap for local callers (#7082)', () =
     __setTitleWholeVectorCandidatesForTests(2);
     const all = (await engine.searchTitles('board meeting', { limit: 10 })).map(r => r.slug);
     expect(all.length).toBeGreaterThan(2);
-    const page = (await engine.searchTitles('board meeting', { limit: 2, offset: 1 })).map(r => r.slug);
-    expect(page).toEqual(all.slice(1, 3));
+    for (const offset of [1, 2, all.length - 1]) {
+      const cut: string[] = [];
+      const page = (await engine.searchTitles('board meeting', { limit: 2, offset, onKeywordIncomplete: r => { cut.push(r); } })).map(r => r.slug);
+      expect({ offset, page, cut }).toEqual({ offset, page: all.slice(offset, offset + 2), cut: ['candidate_budget'] });
+    }
   });
 
   test('hybrid search reports the cut as keyword_candidates_incomplete', async () => {
