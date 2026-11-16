@@ -496,6 +496,7 @@ async function buildRetrievalResponseMeta(
   const degraded = [...(m?.degraded ?? [])];
   if (safeIndexPending) degraded.push({ stage: 'safe_index_pending' });
   if (quotedFacts === null && visible.length) degraded.push({ stage: 'saved_facts_withheld' });
+  if ((results as SearchResult[]).some(r => r.fact_row?.observed_unavailable)) degraded.push({ stage: 'fact_observed_date_unavailable' });
   if (readiness.status === 'by_design') degraded.push({ stage: 'projection_by_design' });
   else if (readiness.status !== 'ready') {
     degraded.push({ stage: readiness.status === 'projection_pending' ? 'projection_pending' : 'projection_status_unknown' });
