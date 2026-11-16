@@ -674,7 +674,8 @@ take-holder permissions.
 **Say to your agent:** *"Check whether my search index is ready, and repair
 code metadata without spending on embeddings."* Search and query report
 `projection_readiness` for empty and nonempty results. `projection_pending`
-means visible pages lack a current revision seal; `projection_status_unknown`
+means visible pages lack a current revision seal and are not still served from
+the index they had before migration 153's rebuild; `projection_status_unknown`
 means the diagnostic could not establish readiness. Neither is a clean miss.
 `projection_by_design` means the only unsealed pages in scope are
 protected-OCR images (or pages of an archived source), which stay out of the

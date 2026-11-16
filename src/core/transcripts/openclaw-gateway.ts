@@ -9,10 +9,16 @@
  *   - sessions.list {limit, offset}: rows with key, sessionId, agentId, chatType (direct | group | room), createdAt,
  *     updatedAt (epoch ms); paged by hasMore / nextOffset. Archived sessions are not listed, and the call takes no
  *     parameter that lists them.
- *   - chat.history {sessionKey, limit, offset}: messages {role, content (string or [{type: text, text}]),
+ *   - chat.history {sessionKey, limit, maxBytes, offset}: messages {role, content (string or [{type: text, text}]),
  *     timestamp (epoch ms), __openclaw {id, seq}}; pages walk backward from the newest (hasMore / nextOffset), each
  *     page oldest first. It still reads an archived session by key. A reset in place keeps the sessionId and drops
- *     the earlier messages from this read.
+ *     the earlier messages from this read. A page holds at most limit messages (up to 1000) within maxBytes (default
+ *     512 KiB; since 2026.11 up to a 6 MiB ceiling, before that never above 512 KiB); a Gateway from before 2026.10
+ *     refuses maxBytes as an unexpected property.
+ *
+ * Every call is one openclaw process, and a process start costs far more than the Gateway's answer, so the reader
+ * asks for the largest page the Gateway gives and reads up to HISTORY_CONCURRENCY sessions side by side. Pages of one
+ * session stay in order, and the conversations come back in sessions.list order whichever read finished first.
  *   - Errors come back as a JSON envelope {ok: false, error: {type, code?, message, details?}}: a closed port is
  *     gateway_transport_error, a missing credential gateway_credentials_required, a wrong one gateway_request_error
  *     with details.code AUTH_*.
@@ -22,7 +28,8 @@
  * group and chatType direct). Anything else is unknown, which the archive resolves owner-only.
  *
  * Failures throw archive_gateway_unreachable, archive_gateway_auth or archive_gateway_failed with the Gateway's
- * message redacted; the reader yields nothing before every read finished, so a failed run changes no ledger row.
+ * message redacted; the reader yields nothing before every read finished, and after a failure it starts no new read
+ * and throws once the reads already running have ended, so a failed run changes no ledger row.
  */
 
 import { execFileBounded } from '../bounded-child-exec.ts';
@@ -50,7 +57,9 @@ export interface GatewayConversation {
 }
 
 const LIST_PAGE = 100;
-const HISTORY_PAGE = 200;
+const HISTORY_PAGE = 1000;
+const HISTORY_MAX_BYTES = 4 * 1024 * 1024;
+const HISTORY_CONCURRENCY = 4;
 const MAX_PAGES = 10_000;
 
 /** Redact and bound text that came from the Gateway before it reaches a message, a log or a receipt. */
@@ -167,11 +176,27 @@ function messageTimestamp(value: unknown): string {
 
 const asRecord = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' ? v as Record<string, unknown> : {});
 
-async function readHistory(transport: GatewayTransport, sessionKey: string): Promise<{ sessionId?: string; messages: TranscriptMessage[] }> {
+/** Whether this Gateway takes the maxBytes page budget; a Gateway from before 2026.10 refuses it as an unexpected property. */
+interface HistoryBudget { maxBytes: boolean }
+
+async function historyPage(transport: GatewayTransport, budget: HistoryBudget, sessionKey: string, offset: number): Promise<Record<string, unknown>> {
+  const params = { sessionKey, limit: HISTORY_PAGE, ...(offset ? { offset } : {}) };
+  if (!budget.maxBytes) return asRecord(await transport.call('chat.history', params));
+  try {
+    return asRecord(await transport.call('chat.history', { ...params, maxBytes: HISTORY_MAX_BYTES }));
+  } catch (err) {
+    const e = err as { code?: string; message?: string };
+    if (e.code !== 'archive_gateway_failed' || !/unexpected property '?maxBytes/.test(String(e.message))) throw err;
+    budget.maxBytes = false;
+    return asRecord(await transport.call('chat.history', params));
+  }
+}
+
+async function readHistory(transport: GatewayTransport, budget: HistoryBudget, sessionKey: string): Promise<{ sessionId?: string; messages: TranscriptMessage[] }> {
   const pages: Array<Record<string, unknown>> = [];
   let offset = 0;
   for (let i = 0; i < MAX_PAGES; i++) {
-    const page = asRecord(await transport.call('chat.history', { sessionKey, limit: HISTORY_PAGE, ...(offset ? { offset } : {}) }));
+    const page = await historyPage(transport, budget, sessionKey, offset);
     pages.push(page);
     if (page.hasMore !== true || typeof page.nextOffset !== 'number' || page.nextOffset <= offset) break;
     offset = page.nextOffset;
@@ -211,13 +236,31 @@ export function openclawGatewayReader(opts: { transport?: GatewayTransport } = {
         if (page.hasMore !== true || typeof page.nextOffset !== 'number' || page.nextOffset <= offset) break;
         offset = page.nextOffset;
       }
-      const out: GatewayConversation[] = [];
-      for (const row of rows) {
-        const key = typeof row.key === 'string' ? row.key : '';
-        if (!key) continue;
+      const wanted = rows.filter(row => {
+        if (typeof row.key !== 'string' || !row.key) return false;
         const updated = typeof row.updatedAt === 'number' ? row.updatedAt : null;
-        if (listOpts.sinceMs !== undefined && updated !== null && updated < listOpts.sinceMs) continue;
-        const history = await readHistory(transport, key);
+        return listOpts.sinceMs === undefined || updated === null || updated >= listOpts.sinceMs;
+      });
+      const budget: HistoryBudget = { maxBytes: true };
+      const histories: Array<Awaited<ReturnType<typeof readHistory>>> = new Array(wanted.length);
+      let next = 0;
+      let failure: { error: unknown } | null = null;
+      const worker = async () => {
+        while (!failure && next < wanted.length) {
+          const i = next++;
+          try {
+            histories[i] = await readHistory(transport, budget, String(wanted[i]!.key));
+          } catch (error) {
+            failure ??= { error };
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(HISTORY_CONCURRENCY, wanted.length) }, worker));
+      if (failure) throw (failure as { error: unknown }).error;
+      const out: GatewayConversation[] = [];
+      for (const [i, row] of wanted.entries()) {
+        const key = String(row.key);
+        const history = histories[i]!;
         if (history.messages.length === 0) continue;
         const sessionId = typeof row.sessionId === 'string' ? row.sessionId : history.sessionId ?? key;
         out.push({

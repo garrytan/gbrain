@@ -644,7 +644,12 @@ Verify with `gbrain doctor --only persistence_capacity --json`: the
 
 After an upgrade that re-queues text projections (for example the 0.51
 protocol activation, which also queued every image page), search and code
-results stay incomplete until every queued page is sealed. Every queued row
+results stay incomplete until every queued page is sealed. That activation
+(migration 153) keeps a Markdown or code page indexed at or after the
+safe-chunk fence in search from its old index until its own rebuild, when the
+page has no facts or takes fence, no private-key text and no quarantine marker
+and has not changed since; every other queued page stays out of search until
+it is sealed. Every queued row
 falls in exactly one class, and doctor `text_projection_readiness` counts each
 one (counts only, never page names):
 

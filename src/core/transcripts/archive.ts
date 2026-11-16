@@ -85,6 +85,8 @@ const AUDIENCE_PREFIX = 'transcripts.archive.audience.';
 const RESCOPE_CAPPED_PREFIX = 'transcripts.archive.rescope_capped.';
 /** Days whose index page still has to be written (a failed or interrupted index write), per source. */
 const INDEX_PENDING_PREFIX = 'transcripts.archive.index_pending.';
+/** What the last run that read each reader found, per source: status and doctor report it without reading again. */
+const LAST_READ_PREFIX = 'transcripts.archive.last_read.';
 const INGESTED_VIA = 'cli:transcripts-archive';
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -170,7 +172,27 @@ export interface ArchiveDayOutcome {
   message?: string;
 }
 
-export interface ArchiveReaderError { harness: string; reader: string; code: string; message: string; fix?: Action }
+export interface ArchiveReaderError { harness: string; reader: string; code: string; message: string; fix?: Action; /** When the run that met it read (status only). */ at?: string }
+
+/** One reader as the last run that read it found it: the newest message any run saw, and the last run's error until a later read succeeds. */
+interface ArchiveReadRecord {
+  harness: string;
+  at?: string;
+  mode?: 'run' | 'backfill';
+  conversations?: number;
+  newest?: string;
+  error?: { at: string; code: string; message: string; fix?: Action };
+}
+
+async function readArchiveReads(engine: BrainEngine, sourceId: string): Promise<Record<string, ArchiveReadRecord>> {
+  const raw = await engine.getConfig(`${LAST_READ_PREFIX}${sourceId}`);
+  try {
+    const doc = raw ? JSON.parse(raw) as unknown : null;
+    return doc && typeof doc === 'object' && !Array.isArray(doc) ? doc as Record<string, ArchiveReadRecord> : {};
+  } catch {
+    return {};
+  }
+}
 
 export interface ArchiveRunResult {
   mode: 'run' | 'backfill';
@@ -515,6 +537,49 @@ interface DayWrite {
   pending?: string[];
 }
 
+/** Reads every reader once for a run, and unless it is a dry run records what each one found (transcripts.archive.last_read.<source>) for status and doctor. */
+async function readReaders(engine: BrainEngine, readers: ArchiveReader[], scanOpts: ArchiveScanOpts,
+  ctx: { sourceId: string; mode: 'run' | 'backfill'; dryRun: boolean; at: string; result: ArchiveRunResult; pastDeadline: () => boolean }): Promise<ArchiveScanEntry[]> {
+  const entries: ArchiveScanEntry[] = [];
+  const { result, pastDeadline } = ctx;
+  const reads = new Map<string, { harness: string; conversations: number; newest?: string; error?: ArchiveReaderError }>();
+  for (const reader of readers) {
+    if (entries.length && pastDeadline()) break;
+    if (reader.unavailable) { result.info.push(reader.unavailable); continue; }
+    try {
+      let found = 0;
+      let newest: string | undefined;
+      for await (const entry of scanReader(reader, scanOpts)) {
+        entries.push(entry);
+        found++;
+        if (entry.newest && (!newest || entry.newest > newest)) newest = entry.newest;
+      }
+      reads.set(reader.name, { harness: reader.harness, conversations: found, ...(newest ? { newest } : {}) });
+      if (found === 0) result.info.push('no readable sessions for ' + reader.harness + '; use gbrain connectors or an export with gbrain transcripts ingest');
+    } catch (err) {
+      if (classifyItemFailure(err).scope === 'run') throw err;
+      const e = err as { code?: string; message?: string; fix?: Action };
+      const error = { harness: reader.harness, reader: reader.name, code: e.code ?? 'archive_reader_failed', message: e.message ?? String(err), ...(e.fix ? { fix: e.fix } : {}) };
+      result.errors.push(error);
+      reads.set(reader.name, { harness: reader.harness, conversations: 0, error });
+    }
+  }
+  if (ctx.dryRun || !reads.size) return entries;
+  const { at } = ctx;
+  const record = await readArchiveReads(engine, ctx.sourceId);
+  for (const [name, read] of reads) {
+    const prior = record[name];
+    if (read.error) {
+      record[name] = { ...prior, harness: read.harness, error: { at, code: read.error.code, message: read.error.message, ...(read.error.fix ? { fix: read.error.fix } : {}) } };
+      continue;
+    }
+    const newest = [prior?.newest, read.newest].filter((v): v is string => !!v).sort().pop();
+    record[name] = { harness: read.harness, at, mode: ctx.mode, conversations: read.conversations, ...(newest ? { newest } : {}) };
+  }
+  await engine.setConfig(LAST_READ_PREFIX + ctx.sourceId, JSON.stringify(record));
+  return entries;
+}
+
 export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRunOpts): Promise<ArchiveRunResult> {
   const dryRun = opts.dryRun === true;
   const enabled = await archiveEnabled(engine);
@@ -591,20 +656,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
   const minMtimeMs = opts.mode === 'backfill' ? Date.parse(from + 'T00:00:00.000Z') - 2 * 86_400_000 : sinceMs;
   const dayOf = (ts: string) => localDay(ts, tz.timezone);
   const pastDeadline = () => opts.deadlineAtMs !== undefined && Date.now() >= opts.deadlineAtMs && (result.stopped_at_deadline = true);
-  const entries: ArchiveScanEntry[] = [];
-  for (const reader of readers) {
-    if (entries.length && pastDeadline()) break;
-    if (reader.unavailable) { result.info.push(reader.unavailable); continue; }
-    try {
-      let found = 0;
-      for await (const entry of scanReader(reader, { sinceMs, minMtimeMs, dayOf })) { entries.push(entry); found++; }
-      if (found === 0) result.info.push('no readable sessions for ' + reader.harness + '; use gbrain connectors or an export with gbrain transcripts ingest');
-    } catch (err) {
-      if (classifyItemFailure(err).scope === 'run') throw err;
-      const e = err as { code?: string; message?: string; fix?: Action };
-      result.errors.push({ harness: reader.harness, reader: reader.name, code: e.code ?? 'archive_reader_failed', message: e.message ?? String(err), ...(e.fix ? { fix: e.fix } : {}) });
-    }
-  }
+  const entries = await readReaders(engine, readers, { sinceMs, minMtimeMs, dayOf }, { sourceId, mode: opts.mode, dryRun, at: now.toISOString(), result, pastDeadline });
   // A Gateway conversation and the session files of the same session id are one conversation: a reset in place leaves
   // the earlier messages only in the .jsonl.reset.* file, so the file messages merge in, each message once.
   const filesBySession = new Map<string, ArchiveScanEntry[]>();
@@ -967,15 +1019,25 @@ export interface ArchiveStatus {
   source_id: string;
   timezone: string | null;
   configured_timezone: string;
-  harnesses: Array<{ harness: string; reader: string; conversations: number; newest_session_day: string | null; newest_archived_day: string | null; info?: string }>;
+  /**
+   * One row per reader on this machine. conversations and newest_session_day are as of the last run that read it
+   * (read_at, read_mode; null when no run has read it yet): status never reads a reader itself. In run mode a run
+   * reads only recently active conversations, so conversations counts those; newest_session_day is the newest any run saw.
+   */
+  harnesses: Array<{ harness: string; reader: string; conversations: number; newest_session_day: string | null; newest_archived_day: string | null; read_at: string | null; read_mode?: 'run' | 'backfill'; info?: string }>;
   archived_days: number;
   held: Array<{ harness: string; day: string; code: string }>;
   legacy_days: number;
+  /** Readers whose last run failed, with when (at); a later successful read clears one. */
   errors: ArchiveReaderError[];
   /** The brain became shared but the pages archived while personal could not be kept to the owner yet. */
   rescope?: ArchiveRescopeSkip;
 }
 
+/**
+ * The archive's own records: config, ledger and what the last run read. It runs no reader (no Gateway call, no session
+ * file parsed); building the reader list only checks which harness folders exist and whether openclaw is on PATH.
+ */
 export async function archiveStatus(engine: BrainEngine, opts: { sourceId?: string; readers?: ArchiveReader[] } = {}): Promise<ArchiveStatus> {
   const { sourceId } = await effectiveSource(engine, opts.sourceId);
   const pinned = (await engine.getConfig(`${PIN_PREFIX}${sourceId}`))?.trim() || null;
@@ -987,25 +1049,18 @@ export async function archiveStatus(engine: BrainEngine, opts: { sourceId?: stri
     held: entries.filter(e => e.held).map(e => ({ harness: e.harness, day: e.day, code: e.held!.code })),
     legacy_days: (await legacyCovered(engine, sourceId)).size, errors: [],
   };
+  const reads = await readArchiveReads(engine, sourceId);
+  const zone = pinned ?? configured;
   for (const reader of opts.readers ?? await defaultArchiveReaders()) {
     const archived = entries.filter(e => e.harness === reader.harness && e.hash).map(e => e.day).sort();
-    const row = { harness: reader.harness, reader: reader.name, conversations: 0, newest_session_day: null as string | null, newest_archived_day: archived[archived.length - 1] ?? null };
+    const row = { harness: reader.harness, reader: reader.name, conversations: 0, newest_session_day: null as string | null, newest_archived_day: archived[archived.length - 1] ?? null, read_at: null as string | null };
     if (reader.unavailable) { out.harnesses.push({ ...row, info: reader.unavailable }); continue; }
-    try {
-      const zone = pinned ?? configured;
-      let conversations = 0;
-      let newest: string | undefined;
-      for await (const entry of scanReader(reader, { dayOf: ts => localDay(ts, zone) })) {
-        conversations++;
-        if (entry.newest && (!newest || entry.newest > newest)) newest = entry.newest;
-      }
-      out.harnesses.push({ ...row, conversations, newest_session_day: newest ? localDay(newest, zone) : null,
-        ...(conversations ? {} : { info: 'no readable sessions for ' + reader.harness + '; use gbrain connectors or an export with gbrain transcripts ingest' }) });
-    } catch (err) {
-      const e = err as { code?: string; message?: string; fix?: Action };
-      out.errors.push({ harness: reader.harness, reader: reader.name, code: e.code ?? 'archive_reader_failed', message: e.message ?? String(err), ...(e.fix ? { fix: e.fix } : {}) });
-      out.harnesses.push(row);
-    }
+    const read = reads[reader.name];
+    if (read?.error) out.errors.push({ harness: reader.harness, reader: reader.name, code: read.error.code, message: read.error.message, ...(read.error.fix ? { fix: read.error.fix } : {}), at: read.error.at });
+    const newest = read?.newest ? localDay(read.newest, zone) : null;
+    if (!read?.at) { out.harnesses.push({ ...row, newest_session_day: newest }); continue; }
+    out.harnesses.push({ ...row, conversations: read.conversations ?? 0, newest_session_day: newest, read_at: read.at, ...(read.mode ? { read_mode: read.mode } : {}),
+      ...(newest ? {} : { info: 'no readable sessions for ' + reader.harness + '; use gbrain connectors or an export with gbrain transcripts ingest' }) });
   }
   const rescope = await archiveRescopeSkipped(engine, opts.sourceId);
   if (rescope) out.rescope = rescope;

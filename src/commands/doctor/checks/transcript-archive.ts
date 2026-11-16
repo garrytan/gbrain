@@ -1,16 +1,18 @@
 /**
  * transcript_archive_freshness doctor check (GST-2768 PR 3): is the conversation archive keeping up?
  *
- * Off (switched off, or a shared brain that is only offered it) is one quiet ok row and reads no session. On, it
- * reads archiveStatus (the readers this machine has and the archive ledger) and the maintenance record
- * (transcripts.archive.last_maintenance), and warns when:
+ * Off (switched off, or a shared brain that is only offered it) is one quiet ok row. On, it reads archiveStatus (the
+ * readers this machine has, the archive ledger and what the last run read; no reader runs, so no session is read and
+ * no Gateway is called) and the maintenance record (transcripts.archive.last_maintenance), and warns when:
  *   - a harness's newest archived day is more than transcripts.archive.stale_days (default 2) behind the newest
- *     session day its reader sees: fix gbrain transcripts archive run, or backfill --from <first missing day> when
+ *     session day the last run read: fix gbrain transcripts archive run, or backfill --from <first missing day> when
  *     that day is older than one run's window;
+ *   - no run has read a reader successfully in stale_days (a maintenance pass that keeps stopping at its deadline
+ *     before that reader): fix gbrain transcripts archive run;
  *   - no maintenance pass has run the archive in stale_days (or ever, on a brain older than that): fix
  *     gbrain autopilot --install (persistent, so ask the user first);
  *   - days are held (listed with their codes), a reader failed, or the last pass recorded an error.
- * A harness with no readable sessions is informational.
+ * A harness with no readable sessions, or one no run has read yet, is informational.
  */
 import type { Check } from '../../doctor.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
@@ -54,6 +56,10 @@ export async function checkTranscriptArchiveFreshness(
     let fix: Action | undefined;
     const behind: Array<{ harness: string; newest_session_day: string; newest_archived_day: string | null; days_behind: number }> = [];
     for (const h of status.harnesses) {
+      if (h.read_at && nowMs - Date.parse(h.read_at) > staleDays * DAY_MS) {
+        problems.push(h.harness + ': no archive run has read ' + h.reader + ' successfully since ' + h.read_at);
+        fix ??= agentFix(['gbrain', 'transcripts', 'archive', 'run'], 'Archives the last ' + (runWindow + 1) + ' local days from every readable harness now.', name);
+      }
       if (h.info) continue;
       if (!h.newest_session_day) continue;
       const gap = h.newest_archived_day ? Math.round((dayMs(h.newest_session_day) - dayMs(h.newest_archived_day)) / DAY_MS) : Infinity;
@@ -94,7 +100,11 @@ export async function checkTranscriptArchiveFreshness(
     if (problems.length) return { name, status: 'warn', message: 'Conversation archive: ' + problems.join('; ') + '.', details, ...(fix ? { fix } : {}) };
     const readable = status.harnesses.filter(h => !h.info && h.newest_session_day);
     const idle = [...new Set(status.harnesses.filter(h => h.info).map(h => h.harness))];
-    const idleNote = idle.length ? 'no readable sessions for ' + idle.join(', ') + ' (gbrain transcripts archive status names each reader)' : '';
+    const unread = [...new Set(status.harnesses.filter(h => !h.info && !h.read_at && !h.newest_session_day).map(h => h.harness))];
+    const idleNote = [
+      ...(idle.length ? ['no readable sessions for ' + idle.join(', ') + ' (gbrain transcripts archive status names each reader)'] : []),
+      ...(unread.length ? ['not read by an archive run yet: ' + unread.join(', ')] : []),
+    ].join('; ');
     if (!readable.length) return infoCheck(name, 'Conversation archive is on; ' + (idleNote || 'no harness has readable sessions yet') + '.', 'not_applicable', undefined, details);
     return { name, status: 'ok', message: 'Conversation archive is up to date (' + readable.map(h => h.harness + ' ' + h.newest_archived_day).join(', ') + ')' + (idleNote ? '; ' + idleNote : '') + '.', details };
   } catch (error) {

@@ -28,7 +28,7 @@ import { quarantineFilterFragment } from '../quarantine.ts';
 import { rederiveHiddenSql } from '../eligibility/sql.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, isMissingSchemaObject, warnOncePerProcess } from '../utils.ts';
 import { DELETE_BATCH_SIZE } from '../engine-constants.ts';
-import { derivedOriginPurgeHold } from '../persistence/derived-origin-hold.ts';
+import { derivedOriginPurgeHold, OWED_PURGE_OP } from '../persistence/derived-origin-hold.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead, ScopedRead } from './brands.ts';
 import type { ScopedReadRunner } from './cjk-search.ts';
@@ -312,10 +312,16 @@ export async function softDeletePages(exec: SqlExecutor, slugs: string[], opts: 
 export async function restorePage(exec: SqlExecutor, slug: string, opts?: { sourceId?: string }): Promise<boolean> {
     const sourceId = opts?.sourceId;
     const sourceCondition = sourceId ? sqlFragment`AND source_id = ${sourceId}` : sqlFragment``;
+    // GST-2766: a restored page owes no purge; its owed-purge record goes in the same statement.
     const { rows } = await exec.run(sqlFragment`
-      UPDATE pages SET deleted_at = NULL, updated_at = now()
-      WHERE slug = ${slug} AND deleted_at IS NOT NULL ${sourceCondition}
-      RETURNING slug
+      WITH restored AS (
+        UPDATE pages SET deleted_at = NULL, updated_at = now()
+        WHERE slug = ${slug} AND deleted_at IS NOT NULL ${sourceCondition}
+        RETURNING id, slug
+      ), owed AS (
+        DELETE FROM op_checkpoints WHERE op = ${OWED_PURGE_OP} AND fingerprint IN (SELECT id::text FROM restored)
+      )
+      SELECT slug FROM restored
     `);
     return rows.length > 0;
   }

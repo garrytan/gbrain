@@ -22,7 +22,7 @@ import type { BrainEngine } from '../engine.ts';
 import { execFileBounded } from '../bounded-child-exec.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { SYNC_FRESHNESS_TARGET_KEY } from '../sync-config-keys.ts';
-import { chunkVisibleFilter } from '../search/safe-chunks.ts';
+import { chunkVisibleFilter, currentTextProjectionFilter } from '../search/safe-chunks.ts';
 
 export const FRESHNESS_WINDOW_HOURS = 24;
 /** The newest distinct targets dated per source; older ones in the window are left out of the sample. */
@@ -132,7 +132,7 @@ export async function readSyncFreshness(engine: BrainEngine, opts: { sourceIds?:
         FROM sample r LEFT JOIN later ON later.source_id=r.source_id AND later.slug=r.slug),
       e AS (SELECT s.completed_at, s.committed_at, s.superseded, ch.n, ch.missing, ch.last_at FROM s
         LEFT JOIN LATERAL (SELECT count(*) AS n, count(*) FILTER (WHERE cc.embedded_at IS NULL) AS missing, max(cc.embedded_at) AS last_at FROM content_chunks cc JOIN pages p ON p.id=cc.page_id
-          WHERE cc.page_id=s.page_id AND ${chunkVisibleFilter('p', 'cc')}) ch ON true),
+          WHERE cc.page_id=s.page_id AND ${chunkVisibleFilter('p', 'cc', currentTextProjectionFilter)}) ch ON true),
       l AS (SELECT GREATEST(0, extract(epoch FROM completed_at - committed_at)) AS searchable,
           CASE WHEN NOT superseded AND n > 0 AND missing = 0 AND last_at >= completed_at THEN GREATEST(0, extract(epoch FROM last_at - committed_at)) END AS embedded,
           (NOT superseded AND n > 0 AND missing > 0) AS pending FROM e)

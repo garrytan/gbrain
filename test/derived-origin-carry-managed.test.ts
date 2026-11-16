@@ -65,7 +65,7 @@ function fileText(k: string, shape: Shape): string {
   };
   return ['---', `title: ${k} ${shape}`, ...fm[shape], '---', '', `Harbor ledger planning notes ${canaryOf(k, shape)} for the roadmap.`, ''].join('\n');
 }
-const KEYS = ['gitrm', 'purge', 'remote', 'midpurge', 'preview', 'finish', 'retain'];
+const KEYS = ['gitrm', 'purge', 'remote', 'midpurge', 'preview', 'finish', 'retain', 'owedauto', 'owedfail'];
 /** A private origin, a public meeting, an event derived from the origin whose depth is the meeting, and an event whose depth is the origin. */
 const EVENT_SLUGS = { origin: 'notes/event-origin', depth: 'notes/event-depth', event: 'notes/event-event', closed: 'notes/event-closed' };
 const EVENT_FILES: Record<keyof typeof EVENT_SLUGS, string[]> = {
@@ -290,6 +290,50 @@ for (const backend of testBackends()) {
       expect((await page(engine, origin)) ?? null).toBeNull();
       const [{ n }] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM page_purges WHERE source_id = 'default' AND slug = $1", [origin]);
       expect(n).toBeGreaterThan(0);
+      await expectCarried(engine, root, k, files);
+    }, { setup, databaseUrl }), 300_000);
+
+    /** An explicit purge of `k`'s origin held by a forced label failure, as the owner's `gbrain delete --purge` is when a derived page cannot be labelled. */
+    async function heldPurge(engine: BrainEngine, ctx: OperationContext, k: string): Promise<void> {
+      const failing = spyOn(preparedMaintenance, 'publishMaintenancePages').mockImplementation(async () => { throw new Error('forced label failure'); });
+      let held: Record<string, any>;
+      try {
+        held = await operationsByName.delete_page!.handler(ctx, { slug: slugOf(k, 'origin'), purge: true, request_id: randomUUID(),
+          expected_revision: (await engine.readPageSnapshot(slugOf(k, 'origin'), { sourceId: 'default', includeDeleted: true }))!.revision }) as Record<string, any>;
+      } finally { failing.mockRestore(); }
+      expect(held.purge_held?.code).toBe('derived_origin_parked');
+    }
+    const pageTombstones = async (engine: BrainEngine, slug: string) => (await engine.executeRaw<{ n: number }>(
+      "SELECT count(*)::int AS n FROM page_purges WHERE source_id = 'default' AND slug = $1", [slug]))[0]!.n;
+
+    test('a held explicit purge whose park an automatic purge releases before the page expires still writes its purge tombstones when an automatic purge removes it (GST-2766)', () => managedBrain(async ({ engine, root, ctx }) => {
+      await performManagedSync(engine, OPTS);
+      const k = 'owedauto', origin = slugOf(k, 'origin');
+      const files = await before(engine, root, k);
+      await heldPurge(engine, ctx, k);
+      const early = await purgeDeletedPagesCoordinated(engine, 24, { automatic: true });
+      expect(early.slugs).not.toContain(origin);
+      expect((await readDerivedOriginParks(engine)).map(park => park.slug)).not.toContain(origin);
+      const late = await purgeDeletedPagesCoordinated(engine, 0, { automatic: true });
+      expect(late.slugs).toContain(origin);
+      expect(await pageTombstones(engine, origin)).toBeGreaterThan(0);
+      await expectCarried(engine, root, k, files);
+    }, { setup, databaseUrl }), 300_000);
+
+    test('a held explicit purge whose consented purge-deleted fails after its carry still writes its purge tombstones on the next run (GST-2766)', () => managedBrain(async ({ engine, root, ctx }) => {
+      await performManagedSync(engine, OPTS);
+      const k = 'owedfail', origin = slugOf(k, 'origin');
+      const files = await before(engine, root, k);
+      await heldPurge(engine, ctx, k);
+      let fired = false;
+      installFaultHook(async point => { if (point === 'purge:after_carry' && !fired) { fired = true; throw new Error('forced failure after the carry'); } });
+      try { await expect(consentedPurgeDeletedPages(engine, 0, true)).rejects.toThrow('forced failure after the carry'); }
+      finally { installFaultHook(undefined); }
+      expect(fired).toBe(true);
+      expect((await page(engine, origin))?.deleted_at).not.toBeNull();
+      const out = await consentedPurgeDeletedPages(engine, 0, true) as { slugs: string[] };
+      expect(out.slugs).toContain(origin);
+      expect(await pageTombstones(engine, origin)).toBeGreaterThan(0);
       await expectCarried(engine, root, k, files);
     }, { setup, databaseUrl }), 300_000);
 

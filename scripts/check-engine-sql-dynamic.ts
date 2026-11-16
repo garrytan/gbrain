@@ -67,6 +67,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   currentCodeEdgeFilter: 'src/core/code-intel/read-scope.ts: constant current-edge predicate over a caller alias',
   buildCJKKeywordSql: 'src/core/search/cjk-keyword-sql.ts: binds the query as params; shared by both engines',
   currentTextProjectionFilter: 'src/core/search/safe-chunks.ts: constant projection predicate over a caller alias',
+  servedTextProjectionFilter: 'src/core/search/safe-chunks.ts: constant projection predicate over a caller alias, ORed with the constant v153 served-index marker (#9192)',
   chunkVisibleFilter: 'src/core/search/safe-chunks.ts: constant projection + live body generation predicate over caller page/chunk aliases (Wave B)',
   chunkGenerationFilter: 'src/core/search/safe-chunks.ts: constant live body generation predicate over caller page/chunk aliases (Wave B)',
   chunkManifestJoin: 'src/core/search/safe-chunks.ts: constant LEFT JOIN onto the live page_body_manifest row over caller aliases (Wave B)',
