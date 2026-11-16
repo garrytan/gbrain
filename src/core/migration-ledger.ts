@@ -13,6 +13,7 @@
  * test/migration-ledger.test.ts so it cannot drift silently.
  */
 
+import type { Action } from './agent-output.ts';
 import type { BrainEngine } from './engine.ts';
 import { loadCompletedMigrations, preferencesPaths, type CompletedMigrationEntry } from './preferences.ts';
 import { schemaVersionAtConnect } from './migrate-pending.ts';
@@ -133,6 +134,41 @@ export function hostWorkPendingForVersion(version: string, byVersion: Map<string
 /** Read-only next step for host work a migration left pending: its per-source inventory. */
 export function hostWorkInspectArgv(version: string): string[] {
   return ['gbrain', 'apply-migrations', '--migration', version, '--dry-run', '--json'];
+}
+
+/** The one migration whose wedge can owe host work: v0.53.0, `SHARED_SKILLS_HOST_WORK_VERSION` (not imported: its module pulls in the shared-skills graph). */
+const HOST_WORK_OWED_VERSION = '0.53.0';
+
+/**
+ * v0.53.0 wedged with its latest row recording `apply_migrations_pending`: it stopped on a conflict in one or more sources
+ * that a person has to settle, and that work is still owed. A newer migration never supersedes it, and apply-migrations
+ * never runs it again by itself, so it stays until a person resolves the conflict and clears the wedge. Other migrations
+ * (v0.11.0, v0.14.0) set the same flag on ordinary partial runs, so their wedges keep the forward-progress rule.
+ */
+export function hostWorkOwedForVersion(version: string, byVersion: Map<string, CompletedMigrationEntry[]>): boolean {
+  return version === HOST_WORK_OWED_VERSION && statusForVersion(version, byVersion) === 'wedged' && byVersion.get(version)?.at(-1)?.apply_migrations_pending === true;
+}
+
+function forceRetryArgv(version: string): string[] { return ['gbrain', 'apply-migrations', '--force-retry', version]; }
+
+/** The one description of a wedged version with host work owed, shared by every surface that reports it. */
+export function hostWorkOwedMessage(versions: readonly string[]): string {
+  const first = versions[0]!;
+  return `Migration ${versions.map(v => `v${v}`).join(', ')} stopped ${MAX_CONSECUTIVE_PARTIALS}+ runs in a row on a conflict in one or more sources that a person has to resolve, and that work is still owed; `
+    + `a newer migration does not replace it, and it does not clear without a person. See each source's conflict (read-only): ${hostWorkInspectArgv(first).join(' ')}. `
+    + `Once the user has reviewed each one, clear the wedge with ${forceRetryArgv(first).join(' ')}, then run the command that output names for each source, or gbrain apply-migrations --yes.`;
+}
+
+/** The fix for a wedged version with host work owed: the read-only per-source inspect first, then ask the user to clear it once the conflict is resolved. */
+export function hostWorkOwedFix(versions: readonly string[]): Action {
+  const first = versions[0]!;
+  const verify = { argv: ['gbrain', 'apply-migrations', '--list', '--json'] };
+  return { argv: hostWorkInspectArgv(first), consent: [], actor: 'agent', requires_exclusive: false, verify,
+    why: `Lists each source's remaining step and its conflict for v${first}, with the command that settles it; changes nothing.`,
+    then: { ask_user: true, argv: forceRetryArgv(first), consent: [], actor: 'agent', requires_exclusive: true, verify,
+      why: `Writes a 'retry' marker so v${first} can run again, including the per-source command the inspect step names; a run that does not settle a conflict stops on it again.`,
+      user_message: `gbrain migration v${first} is stuck on a conflict in one or more sources that needs your decision; the inspect step lists each source and what conflicts there. `
+        + `It will not clear by itself. Once you have reviewed each conflict, clear it with ${forceRetryArgv(first).join(' ')}, then run the command the inspect step names for each source, or gbrain apply-migrations --yes. Clear it now?` } };
 }
 
 export function trailingPartialCount(entries: readonly CompletedMigrationEntry[]): number {

@@ -722,8 +722,10 @@ release.yml publishes every batch release with `prerelease: true` and
 release installs follow. Each promotion (`scripts/promote-stable.ts`, from the
 promote dispatch or the daily check) ends by marking the promoted release
 Latest and clearing its pre-release flag. A forward promotion also replaces its
-notes with every CHANGELOG entry since the previous stable, newest first; the
-oldest entries drop with a link to the full CHANGELOG once the notes would pass
+notes with a short summary of the behaviour changes since the previous stable
+(`upgradeSummary()` in `src/core/upgrade-summary.ts`, the same summary
+`gbrain post-upgrade` prints, left out when it alone would not fit), then every
+CHANGELOG entry since it, newest first; the oldest entries drop with a link to the full CHANGELOG once the notes would pass
 GitHub's 125,000-character limit. A rollback keeps the notes.
 
 A forward promotion never moves Latest to an older release than the one it
@@ -895,7 +897,10 @@ and keeps stable between one day and one week behind what matters:
   the weekly floor unless a maintainer promotes by hand. The rule: an
   important fix reaches stable within a day once it passes the full gate and
   soak; everything else rides a weekly cut; stable never sits more than seven
-  days behind gated changes on master.
+  days behind gated changes on master. It finds those PRs with GitHub's
+  search, so the workflow's token needs `pull-requests: read`; each run logs
+  how many labelled PRs the search returned, and if the search sees no merged
+  PR at all the check stops red and names that permission.
 - **Soak first.** The candidate is the newest release newer than stable whose
   commit is on master and whose exact tree passed a successful
   `STABLE_SOAK_WORKFLOW` run with the integrity gates (`privacy_leaks`,

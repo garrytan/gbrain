@@ -102,10 +102,18 @@ export async function classifyPurgedPageFacts(db: BrainEngine, sourceIds: string
   });
 }
 
-/** Doctor's bounded count of the retirable candidates by class, capped. Read-only. */
+/**
+ * Doctor's bounded count of the retirable candidates by class, capped. Read-only. The facts whose page is gone are found
+ * first, so the purge-record and exclusion checks (two fingerprints per row for a withdrawal) run only on those, never
+ * on every active fact of a healthy brain.
+ */
 export async function countPurgedPageFacts(db: BrainEngine, sourceIds: string[], cap: number): Promise<{ evidenced: number; ambiguous: number; capped: boolean }> {
-  const rows = await db.executeRaw<{ purged: boolean }>(`SELECT ${PURGED_SQL} AS purged FROM facts f
-     WHERE ${CANDIDATE_WHERE} AND NOT (${Object.values(EXCLUDED_SQL).join(' OR ')}) LIMIT $2`, [sourceIds, cap + 1]);
+  const rows = await db.executeRaw<{ purged: boolean }>(`WITH f AS MATERIALIZED (
+    SELECT f.id, f.source_id, f.fact, f.context, f.entity_slug, f.visibility, f.superseded_by, f.created_at FROM facts f
+     WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.source_markdown_slug IS NULL AND f.source IN (${SOURCES})
+       AND ${HEAD} <> '' AND ${HEAD} !~ '[[:space:]]' AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = ${HEAD}))
+    SELECT ${PURGED_SQL} AS purged FROM f WHERE (strpos(${HEAD}, '/') > 0 OR ${PURGED_SQL}) AND NOT (${Object.values(EXCLUDED_SQL).join(' OR ')}) LIMIT $2`,
+    [sourceIds, cap + 1]);
   const kept = rows.slice(0, cap);
   return { evidenced: kept.filter(r => r.purged).length, ambiguous: kept.filter(r => !r.purged).length, capped: rows.length > cap };
 }
