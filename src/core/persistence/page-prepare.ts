@@ -110,7 +110,7 @@ import { bindOrigin } from './origin-guard.ts';
 import { assertGuestWriterAtPublication, insertGuestMark, refuseRemoteGuestDelete } from '../guests/admission.ts';
 import { skipsGuestNote } from '../guests/derived.ts';
 import { NOT_A_GUEST_WRITE, prepareGuestWrite, type GuestWrite } from '../guests/publication.ts';
-import { clearOwedPurges } from './derived-origin-hold.ts';
+import { clearDerivedOriginParks, clearOwedPurges } from './derived-origin-hold.ts';
 
 
 const ownerStatusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId}'s canonical owner with its pending, failed and recovering requests, read-only.`,
@@ -1280,7 +1280,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       ]) as [unknown, { mode: string | null } | undefined, unknown, unknown];
       if (pinMode && pinned?.mode !== pinMode) throw pageRefusal('revision_conflict', 'The source slug-root mode changed during preparation.', row,
         `Another write pinned source ${row.source_id}'s slug-root mode while ${row.slug} was being prepared, so this publication rolled back. Once the request is final, submit the write again; it is prepared under the pinned mode.`);
-      if (row.operation === 'restore_page') { await tx.restorePage(row.slug, source); if (snapshot) await clearOwedPurges(tx, [Number(snapshot.page.id)]); }
+      if (row.operation === 'restore_page') { await tx.restorePage(row.slug, source); if (snapshot) { await clearOwedPurges(tx, [Number(snapshot.page.id)]); await clearDerivedOriginParks(tx, [Number(snapshot.page.id)]); } }
       if (versionTags) {
         for (const tag of snapshot!.tags) if (!versionTags.includes(tag)) await tx.removeTag(row.slug, tag, source);
         for (const tag of versionTags) await tx.addTag(row.slug, tag, source);

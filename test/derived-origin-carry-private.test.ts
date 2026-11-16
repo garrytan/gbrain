@@ -567,6 +567,24 @@ for (const kind of testBackends()) {
       expect(await owedRows(id)).toEqual([]);
     }, 240_000);
 
+    test('a held owner purge the owner restores and deletes again before any purge run owes nothing: the restore drops the park that held it, so a later run purges the page as retention without tombstones (GST-2766)', async () => {
+      const k = 'owedredelete';
+      await seed(k);
+      const origin = slugOf(k, 'origin');
+      const id = Number((await row(origin))!.id);
+      await parkByFailedLabel(origin);
+      const restored = await localCall('restore_page', { slug: origin, request_id: randomUUID(), expected_revision: await revision(origin) });
+      expect({ error: restored.isError, text: restored.text }).toMatchObject({ error: false });
+      expect(await owedRows(id)).toEqual([]);
+      await softDelete(origin);
+      const first = await purgeDeletedPagesCoordinated(engine, 0, { automatic: true });
+      const second = await purgeDeletedPagesCoordinated(engine, 0, { automatic: true });
+      expect([...first.slugs, ...second.slugs]).toContain(origin);
+      const [{ n }] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_purges WHERE source_id=$1 AND slug=$2', [SRC, origin]);
+      expect(n).toBe(0);
+      expect(await owedRows(id)).toEqual([]);
+    }, 240_000);
+
     test('restoring a parked origin drops its park: doctor stops naming it, and the next purge run deletes the park row (GST-2128, #9347 finding 6)', async () => {
       const k = 'restorepark';
       await seed(k);
