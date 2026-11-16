@@ -9,7 +9,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveFromVersions, type Release } from '../../scripts/upgrade-matrix/versions.ts';
+import { resolveFromVersions, stableWindow, type Release, type StableRecordTag } from '../../scripts/upgrade-matrix/versions.ts';
+import { failingFrom, parseRedFrom, renderRedFrom } from '../../scripts/upgrade-matrix/marker.ts';
 import { createCertificates, parseFixturePath, startGithubFixture } from '../../scripts/upgrade-matrix/github-fixture.ts';
 import { CELL_RELEASE_CHANNEL_ENV, compareInstalledTree, upgradeRefs } from '../../scripts/upgrade-matrix/cell.ts';
 import { diffCatalog, diffContent, takeSnapshot, type Query } from '../../scripts/upgrade-matrix/snapshot.ts';
@@ -28,13 +29,13 @@ describe('from-version resolution', () => {
     const r = resolveFromVersions(releases, candidate, { profile: 'full', stableVersion: null });
     const byRole = Object.fromEntries(r.from.flatMap(f => f.roles.map(role => [role, f.tag])));
     expect(byRole).toEqual({ 'N-1': 'v0.60.79.0', 'N-10': 'v0.60.70.0', 'N-50': 'v0.60.30.0', '30d': 'v0.60.50.0' });
-    expect(r.skipped).toEqual([{ role: 'stable', reason: expect.stringContaining('stable') }]);
+    expect(r.skipped).toEqual([{ role: 'stable', reason: expect.stringContaining('stable') }, { role: 'stable-window', reason: expect.stringContaining('window') }]);
   });
 
   test('a role shared by two picks is one from-version with both roles; too few releases skips N-50 instead of dropping it', () => {
     const few = releases.slice(0, 12);
     const r = resolveFromVersions(few, few[11]!, { profile: 'full', stableVersion: '0.60.2.0' });
-    expect(r.skipped.map(s => s.role)).toEqual(['N-50']);
+    expect(r.skipped.map(s => s.role)).toEqual(['N-50', 'stable-window']);
     expect(r.skipped[0]!.reason).toContain('only 11 published releases');
     const stable = r.from.find(f => f.roles.includes('stable'))!;
     expect(stable.tag).toBe('v0.60.2.0');
@@ -46,6 +47,52 @@ describe('from-version resolution', () => {
     const r = resolveFromVersions(releases, { version: '0.60.81.0', published_at: new Date(T0).toISOString() }, { profile: 'pr' });
     expect(r.from.map(f => [f.tag, f.roles])).toEqual([['v0.60.80.0', ['N-1']], ['v0.60.31.0', ['N-50']]]);
     expect(r.skipped).toEqual([]);
+  });
+});
+
+describe('the stable window (stability plan 3a)', () => {
+  const at = (iso: string) => new Date(iso).toISOString();
+  const candidate = { version: '0.60.730.0', published_at: at('2026-11-16T03:00:00Z') };
+  const records: StableRecordTag[] = [
+    { version: '0.50.1.0', promoted_at: at('2026-03-01T00:00:00Z') },
+    { version: '0.50.2.0', promoted_at: at('2026-04-01T00:00:00Z') },
+    { version: '0.55.1.0', promoted_at: at('2026-08-03T00:00:00Z') },
+    { version: '0.55.2.0', promoted_at: at('2026-08-20T00:00:00Z') },
+    { version: '0.60.474.0', promoted_at: at('2026-10-28T04:52:51Z') },
+    { version: '0.60.593.0', promoted_at: at('2026-11-06T20:40:18Z') },
+    ...['613', '620', '638', '654', '672', '707', '717', '722'].map((n, i) => ({ version: '0.60.' + n + '.0', promoted_at: at('2026-11-' + String(8 + i).padStart(2, '0') + 'T13:22:00Z') })),
+    { version: '0.60.731.0', promoted_at: at('2026-11-16T13:22:00Z') },
+  ];
+
+  test('keeps the last 8 stable releases, the newest of each older month, and the release stable when the window opened; nothing newer than the candidate', () => {
+    expect(stableWindow(records, candidate)).toEqual([
+      '0.60.722.0', '0.60.717.0', '0.60.707.0', '0.60.672.0', '0.60.654.0', '0.60.638.0', '0.60.620.0', '0.60.613.0',
+      '0.60.593.0', '0.60.474.0', '0.55.2.0', '0.50.2.0',
+    ]);
+    expect(stableWindow([], candidate)).toEqual([]);
+  });
+
+  test('the full profile upgrades from every window release that has a published release; one without is skipped with its reason; the pr profile has no window', () => {
+    const rel = (v: string, d: string): Release => ({ tag: 'v' + v, version: v, published_at: at(d) });
+    const published = [rel('0.60.722.0', '2026-11-15T00:00:00Z'), rel('0.60.717.0', '2026-11-14T00:00:00Z'), rel('0.60.474.0', '2026-10-27T00:00:00Z'), rel('0.60.729.0', '2026-11-16T00:00:00Z')];
+    const few = [{ version: '0.60.722.0', promoted_at: at('2026-11-15T13:22:00Z') }, { version: '0.60.717.0', promoted_at: at('2026-11-14T13:22:00Z') }, { version: '0.60.593.0', promoted_at: at('2026-11-06T20:40:18Z') }];
+    const r = resolveFromVersions(published, candidate, { profile: 'full', stableVersion: '0.60.722.0', stableRecords: few });
+    expect(r.from.find(f => f.tag === 'v0.60.722.0')!.roles).toEqual(['stable', 'stable-window']);
+    expect(r.from.find(f => f.tag === 'v0.60.717.0')!.roles).toEqual(['stable-window']);
+    expect(r.skipped).toContainEqual({ role: 'stable-window', reason: 'stable 0.60.593.0 has no published release' });
+    expect(resolveFromVersions(published, candidate, { profile: 'pr', stableRecords: few }).from.some(f => f.roles.includes('stable-window'))).toBe(false);
+  });
+
+  test("the break issue names the from-versions that failed or held, and only the matrix's marker line is read back", () => {
+    const summary = {
+      cells: [{ id: 'v0.60.241.0__postgres__keyed__repo', from: 'v0.60.241.0', verdict: 'fail' }, { id: 'v0.60.722.0__pglite__keyless__repo', from: 'v0.60.722.0', verdict: 'pass' }],
+      red: ['v0.60.241.0__postgres__keyed__repo', 'v0.60.150.0__pglite__keyed__repo-less'], holds: ['door:hermes'],
+    };
+    expect(failingFrom(summary)).toEqual({ from: ['v0.60.150.0', 'v0.60.241.0'], door: true });
+    const line = renderRedFrom(failingFrom(summary).from);
+    expect(line).toBe('<!-- gbrain-upgrade-matrix:red-from v0.60.150.0,v0.60.241.0 -->');
+    expect(parseRedFrom('<!-- gbrain-upgrade-matrix:nightly -->\n' + line + '\n## Upgrade matrix: RED')).toEqual(['v0.60.150.0', 'v0.60.241.0']);
+    expect(parseRedFrom('<!-- gbrain-upgrade-matrix:nightly -->\nUpgrading from v0.60.241.0 fails')).toBeNull();
   });
 });
 

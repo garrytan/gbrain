@@ -1,0 +1,1 @@
+The stable channel now moves within a day only for a security fix, a data-loss fix or a fix for a regression in a release that is already on stable. Everything else, a fix that only unblocks one setup included, waits for the weekly move; if you need such a fix sooner, install its release by tag (docs/STABILITY.md, "Pinning a version").

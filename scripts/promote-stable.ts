@@ -20,6 +20,11 @@
  *    the STABLE_SOAK_WORKFLOW repository variable, completed with success;
  * 4. the run's head commit has the release tree (the same bytes, not merely
  *    the same version);
+ * 4b. a forward promotion by the schedule names a green upgrade matrix run on
+ *    the release's exact tag and tree (matrix_run_url; scripts/stable-matrix.ts
+ *    judgeMatrixRun), and any matrix run named is checked the same way, so a
+ *    red or foreign run is refused; a maintainer may promote without one, and
+ *    the record then says matrix_run: null with the maintainer as promoted_by;
  * 5. the version is strictly newer than the current stable, unless this is a
  *    rollback with a reason; promoting the current stable again moves no
  *    tag and only writes its evidence record when the published one does
@@ -46,16 +51,19 @@
  * Clients read the record at
  * https://raw.githubusercontent.com/garrytan/gbrain/stable-record/stable.json
  * (src/core/stable-channel.ts: no API call, no git) and an explicit upgrade
- * checks it against `refs/tags/stable^{}` and `v<VERSION>`. Generation 1
- * records carry soak evidence only; the upgrade matrix (W2) adds matrix_run
- * and sets MATRIX_REQUIRED_FROM in src/core/self-upgrade.ts.
+ * checks it against `refs/tags/stable^{}` and `v<VERSION>`. Records carry the
+ * soak run and, from the matrix gate on, matrix_run; clients require matrix_run
+ * only once MATRIX_REQUIRED_FROM in src/core/self-upgrade.ts is set.
  * Side effects (gh, git, clock, log, step summary) come in through
  * PromoteDeps, so the decisions are tested without network or a real remote
  * (test/scripts/promote-stable.test.ts). Every refusal exits 1 with one
  * sentence saying what to do. Docs: docs/RELEASING.md#stable-channel-promotion
  */
 import { spawnSync } from 'node:child_process';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { judgeMatrixRun, MATRIX_RECEIPT_ARTIFACT, type BreakIssue, type MatrixReceipt, type MatrixRunRow } from './stable-matrix.ts';
 
 export const DOCS = 'docs/RELEASING.md#stable-channel-promotion';
 export const STABLE_REF = 'refs/tags/stable';
@@ -81,6 +89,10 @@ export interface PromoteInputs {
   notPromotable?: NotPromotable[];
   /** Releases to take off the record's not_promotable list (one listed by mistake, say). */
   notPromotableRemove?: string[];
+  /** The upgrade matrix run on this release (required for a scheduled forward promotion). */
+  matrixRunUrl?: string;
+  /** The open break issue a security or data-loss promotion passes (stable-daily only); the run may fail only on its named from-versions. */
+  matrixExcuse?: BreakIssue | null;
 }
 
 /** A release outside evidence shows is bad although it may soak clean, with the release that fixes it. */
@@ -102,6 +114,8 @@ export interface PromoteDeps {
   /** A write to the GitHub API (only the release edit that marks stable Latest). */
   ghApiWrite(method: 'PATCH', path: string, body: Record<string, unknown>): Promise<unknown>;
   git(args: string[], input?: string): Promise<GitResult>;
+  /** The upgrade-matrix-receipt artifact of a matrix run, or null when it cannot be read. */
+  matrixReceipt?(runId: number): Promise<MatrixReceipt | null>;
   now(): Date;
   log(line: string): void;
   summary(markdown: string): void;
@@ -120,6 +134,8 @@ export interface TagFields {
   tree: string;
   soakRun: string;
   scoreboard: string;
+  /** The upgrade matrix run; absent or empty when a maintainer promoted without one. */
+  matrixRun?: string;
   promotedBy: string;
   promotedAt: string;
   previous: string | null;
@@ -139,6 +155,7 @@ export function renderRecord(f: TagFields, knownBad: readonly string[], notPromo
     tree: f.tree,
     soak_run: f.soakRun,
     scoreboard: f.scoreboard,
+    matrix_run: f.matrixRun || null,
     promoted_by: f.promotedBy,
     promoted_at: f.promotedAt,
     previous: f.previous,
@@ -221,10 +238,11 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-export function parseRunUrl(url: string, repo: string): { runId: string; attempt: string | null } {
+export function parseRunUrl(url: string, repo: string, input: 'soak_run_url' | 'matrix_run_url' = 'soak_run_url'): { runId: string; attempt: string | null } {
+  const what = input === 'soak_run_url' ? 'soak' : 'upgrade matrix';
   const m = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/actions\/runs\/(\d+)(?:\/attempts\/(\d+))?\/?$/.exec(url.trim());
-  if (!m) throw new Refusal(`soak_run_url "${url}" is not a GitHub Actions run URL; pass https://github.com/${repo}/actions/runs/<run id> (optionally /attempts/<n>) of the soak run.`);
-  if (m[1]!.toLowerCase() !== repo.toLowerCase()) throw new Refusal(`soak_run_url names a run of ${m[1]}, not ${repo}; pass the soak run from this repository's Actions tab.`);
+  if (!m) throw new Refusal(`${input} "${url}" is not a GitHub Actions run URL; pass https://github.com/${repo}/actions/runs/<run id> (optionally /attempts/<n>) of the ${what} run.`);
+  if (m[1]!.toLowerCase() !== repo.toLowerCase()) throw new Refusal(`${input} names a run of ${m[1]}, not ${repo}; pass the ${what} run from this repository's Actions tab.`);
   return { runId: m[2]!, attempt: m[3] ?? null };
 }
 
@@ -263,6 +281,7 @@ export function renderTagMessage(f: TagFields): string {
     `tree: ${f.tree}`,
     `soak_run: ${f.soakRun}`,
     `scoreboard: ${f.scoreboard}`,
+    ...(f.matrixRun ? [`matrix_run: ${f.matrixRun}`] : []),
     `promoted_by: ${f.promotedBy}`,
     `promoted_at: ${f.promotedAt}`,
     `previous: ${f.previous ?? 'none'}`,
@@ -289,8 +308,9 @@ export function parseTagMessage(message: string): TagFields | null {
   if (!version || !VERSION_RE.test(version) || !commit || !SHA_RE.test(commit) || !tree || !SHA_RE.test(tree)) return null;
   if (!soakRun || !scoreboard || !promotedBy || !promotedAt || !reason || (rollback !== 'true' && rollback !== 'false')) return null;
   if (!previous || (previous !== 'none' && !VERSION_RE.test(previous))) return null;
+  const matrixRun = kv.get('matrix_run');
   return {
-    version, commit, tree, soakRun, scoreboard, promotedBy, promotedAt,
+    version, commit, tree, soakRun, scoreboard, ...(matrixRun ? { matrixRun } : {}), promotedBy, promotedAt,
     previous: previous === 'none' ? null : previous,
     rollback: rollback === 'true',
     reason: reason === '-' ? '' : reason,
@@ -304,6 +324,7 @@ export function renderSummary(p: Promotion, notPromotable: readonly NotPromotabl
     ['Tree', `\`${p.tree}\``],
     ['Soak run', p.soakRun],
     ['Scoreboard', p.scoreboard],
+    ['Upgrade matrix', p.matrixRun || 'none (promoted without one)'],
     ['Previous stable', p.previous ? `v${p.previous}` : 'none'],
     ['Rollback', p.rollback ? `yes: ${p.reason.trim()}` : 'no'],
     ['Known bad', p.knownBad.length ? p.knownBad.map(v => `v${v}`).join(', ') : 'none'],
@@ -455,6 +476,7 @@ export async function promote(deps: PromoteDeps, inputs: PromoteInputs): Promise
   const current = await currentStable(deps);
   if (current && !rollback && compareVersions(version, current.version) === 0) return recordCurrentStable(deps, inputs, { version, commit, tree }, current);
   checkOrder(version, current?.version ?? null, rollback, reason);
+  const matrixRun = await checkMatrix(deps, inputs, { version, commit, tree });
   deps.log(`[promote-stable] current stable is ${current ? `v${current.version}` : 'none'}; ${rollback ? `rollback to v${version}: ${reason.trim()}` : `v${version} is newer`}.`);
 
   const recordRef = `refs/tags/stable-v${version}`;
@@ -470,6 +492,7 @@ export async function promote(deps: PromoteDeps, inputs: PromoteInputs): Promise
     version, commit, tree,
     soakRun: inputs.soakRunUrl.trim(),
     scoreboard: inputs.scoreboardUrl.trim() || inputs.soakRunUrl.trim(),
+    ...(matrixRun ? { matrixRun } : {}),
     promotedBy: deps.scheduled ? `schedule (${DAILY_WORKFLOW})` : deps.actor,
     promotedAt: deps.now().toISOString().replace(/\.\d{3}Z$/, 'Z'),
     previous: current?.version ?? null,
@@ -505,6 +528,30 @@ export async function promote(deps: PromoteDeps, inputs: PromoteInputs): Promise
   deps.summary(renderSummary(promotion, notPromotable));
   return promotion;
 }
+
+/**
+ * The upgrade matrix run a promotion names, judged by judgeMatrixRun (scripts/stable-matrix.ts); refuses a red,
+ * foreign or unreadable run. A scheduled forward promotion must name one; a maintainer may promote without one.
+ */
+async function checkMatrix(deps: PromoteDeps, inputs: PromoteInputs, release: { version: string; commit: string; tree: string }): Promise<string> {
+  const url = (inputs.matrixRunUrl ?? '').trim();
+  if (!url) {
+    if (inputs.rollback) return '';
+    if (deps.scheduled) throw new Refusal(`a scheduled promotion needs a green upgrade matrix run on v${release.version}'s exact tree; the daily check dispatches one (${MATRIX_DOCS}).`);
+    deps.log(`[promote-stable] no upgrade matrix run given: v${release.version} is promoted on ${deps.actor}'s decision, and the record's matrix_run is null.`);
+    return '';
+  }
+  const { runId, attempt } = parseRunUrl(url, deps.repo, 'matrix_run_url');
+  if (attempt) throw new Refusal(`matrix_run_url names attempt ${attempt}; pass the run URL without /attempts/, whose receipt is the run's latest.`);
+  if (!deps.matrixReceipt) throw new Refusal('This caller cannot read upgrade matrix receipts; run the promotion from promote-stable.yml or stable-daily.yml.');
+  const run = await deps.ghApi(`repos/${deps.repo}/actions/runs/${runId}`) as MatrixRunRow;
+  const judged = judgeMatrixRun({ ...run, html_url: url }, await deps.matrixReceipt(Number(runId)), release, inputs.matrixExcuse);
+  if (!judged.ok) throw new Refusal(`${judged.why}; promote only a release whose upgrade matrix run passed on its exact tree (${MATRIX_DOCS}).`);
+  deps.log(`[promote-stable] ${judged.why}.`);
+  return url;
+}
+
+const MATRIX_DOCS = 'docs/RELEASING.md#daily-stable-check';
 
 /** GitHub's limit on a release body is 125,000 characters; stay under it with room for the trailer. */
 export const RELEASE_NOTES_MAX = 120_000;
@@ -609,6 +656,18 @@ export function processDeps(env: NodeJS.ProcessEnv = process.env, cwd = process.
       const r = spawnSync('git', args, { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...(input !== undefined ? { input } : {}) });
       return { code: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
     },
+    async matrixReceipt(runId) {
+      const dir = mkdtempSync(join(tmpdir(), 'matrix-'));
+      try {
+        const r = spawnSync('gh', ['run', 'download', String(runId), '-R', env.GITHUB_REPOSITORY ?? '', '-n', MATRIX_RECEIPT_ARTIFACT, '-D', dir], { cwd, env, encoding: 'utf8' });
+        if (r.status !== 0) return null;
+        return JSON.parse(readFileSync(join(dir, `${MATRIX_RECEIPT_ARTIFACT}.json`), 'utf8')) as MatrixReceipt;
+      } catch {
+        return null;
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
     now: () => new Date(),
     log: line => console.log(line),
     summary: markdown => { if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, markdown); },
@@ -627,6 +686,7 @@ if (import.meta.main) {
     notPromotable: (env.PROMOTE_NOT_PROMOTABLE ?? '').split(',').map(v => v.trim().replace(/^v/, '')).filter(Boolean)
       .map(version => ({ version, reason: env.PROMOTE_NOT_PROMOTABLE_REASON ?? '', fixed_in: (env.PROMOTE_NOT_PROMOTABLE_FIXED_IN ?? '').trim().replace(/^v/, '') })),
     notPromotableRemove: (env.PROMOTE_NOT_PROMOTABLE_REMOVE ?? '').split(',').map(v => v.trim().replace(/^v/, '')).filter(Boolean),
+    matrixRunUrl: env.PROMOTE_MATRIX_RUN_URL ?? '',
   };
   const deps = processDeps();
   try {

@@ -222,6 +222,18 @@ describe('build()', () => {
     expect(build(tree({ ...base, 'changelog.d/feature-x.md': '**Faster sync.**\n\nbump: minor appears in prose here.\n' })).problems).toEqual([]);
   });
 
+  test('a changelog.d fragment whose important: class is not security, regression or data-loss is refused, naming the three and the doc', () => {
+    const base = { VERSION: '0.1.0.0\n', 'CHANGELOG.md': changelog(section('0.1.0.0', 'First.')) };
+    for (const [line, value] of [['important: blocker', 'blocker'], ["important: 'urgent'", 'urgent'], ['"important": Security', 'Security'], ['important:', ''], ['important: blocker # unblocks a crew', 'blocker']]) {
+      const { problems } = build(tree({ ...base, 'changelog.d/fix-x.md': `---\n${line}\n---\n**Search works again.**\n` }));
+      expect(problems).toEqual([`changelog.d/fix-x.md says important: ${value}; stable takes the fast path only for security, regression (in a release that is on stable) or data-loss, so write one of those or delete the important: line (docs/RELEASING.md#daily-stable-check)`]);
+    }
+    for (const value of ['security', 'regression', 'data-loss', "'data-loss'", 'regression # on stable']) {
+      expect(build(tree({ ...base, 'changelog.d/fix-x.md': `---\nimportant: ${value}\n---\n**Search works again.**\n` })).problems).toEqual([]);
+    }
+    expect(build(tree({ ...base, 'changelog.d/fix-x.md': '**Search works again.**\n\nimportant: blocker appears in prose here.\n' })).problems).toEqual([]);
+  });
+
   test('an id starting with a digit is refused, so the generated map never holds an unquoted numeric key', () => {
     const root = tree({
       VERSION: '0.1.0.0\n',
