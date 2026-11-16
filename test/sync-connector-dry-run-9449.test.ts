@@ -63,7 +63,7 @@ test('a dry run of every connector kind on an unmanaged brain calls no provider 
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       calls.push(url);
       return providers[kind]!(url, init);
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     const before = await state(engine, f.id, f.dir);
     const result = await performSync(engine, { sourceId: f.id, dryRun: true, noExtract: true, noSchemaPack: true });
     globalThis.fetch = realFetch;
@@ -85,7 +85,7 @@ test('a dry run of every connector kind on a managed brain is refused before any
     globalThis.fetch = (async (input: string | URL | Request) => {
       calls.push(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
       throw new Error('Unexpected external request');
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     const before = await state(engine, f.id, f.dir);
     await expect(performSync(engine, { sourceId: f.id, dryRun: true, noExtract: true, noSchemaPack: true })).rejects.toMatchObject({ code: 'invalid_params' });
     globalThis.fetch = realFetch;
