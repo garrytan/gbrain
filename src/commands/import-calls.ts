@@ -17,8 +17,9 @@
  *     anything embeds it (call_import.embedding_hold, the conversation archive's any-size hold);
  *   - each file imports once: a rerun finds the page its file made by its folder and path under the prefix (call_import.root
  *     and path, a digest of the folder and the unredacted relative path, so two names a redaction pattern makes alike stay
- *     apart; a page stored before path existed is found by its file), not by the computed slug, which a new modified day
- *     can move, and reports it unchanged, or kept when the file changed since, and never writes it again. The prefix is slugified per segment, as stored slugs are. Two files that map to one slug get a short hash
+ *     apart; a page stored before path existed is found by its file), whichever folder above the file an import started
+ *     from, not by the computed slug, which a new modified day can move, and reports it unchanged, or kept when the file
+ *     changed since, and never writes it again. A write of the file still pending is reported pending, not written again. The prefix is slugified per segment, as stored slugs are. Two files that map to one slug get a short hash
  *     of their path on the second.
  *
  * These are not agent sessions: nothing here touches conversations/ or the conversation archive switch.
@@ -37,6 +38,7 @@ import { loadImportRedactionPatterns, redactSession, type ImportRedactionPattern
 import { acceptPendingCovers, acceptPendingRequested, CLI_WRITE_WAIT_MS, pendingReceiptOf, pollCommand } from '../core/persistence/write-wait.ts';
 import { PENDING_WRITE_EXIT_CODE } from '../core/exit-codes.ts';
 import { cliRenderContext } from '../core/agent-output.ts';
+import { TERMINAL_STATES } from '../core/persistence/model.ts';
 
 export const CALL_FILE_RE = /\.(txt|md)$/i;
 export const DEFAULT_CALL_PREFIX = 'calls';
@@ -162,6 +164,18 @@ export function redactCallPath(rel: string, patterns: ImportRedactionPattern[]):
 /** The import folder's identity in a page: a short hash of its real path, so two folders holding the same file name stay apart. */
 export const callRootId = (dir: string): string => createHash('sha256').update(dir).digest('hex').slice(0, 12);
 
+/** call_import.path: the file's identity, a digest of the import folder and the unredacted path under it. */
+const callPathId = (folder: string, rel: string): string => createHash('sha256').update(`${folder}\u0000${rel}`).digest('hex').slice(0, 16);
+
+/** Every call_import.path the file `abs` has had: one per folder above it that an import could have started from. */
+function callPathIds(abs: string): Set<string> {
+  const ids = new Set<string>();
+  for (let dir = dirname(abs); ; dir = dirname(dir)) {
+    ids.add(callPathId(dir, relative(dir, abs)));
+    if (dirname(dir) === dir) return ids;
+  }
+}
+
 function flagValue(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
@@ -180,16 +194,23 @@ export async function runCallImport(engine: BrainEngine, dir: string, args: stri
   const folder = single ? dirname(dir) : dir;
   const files = single ? [dir] : listCallFiles(dir);
   const root = callRootId(folder);
-  const prior = await engine.executeRaw<{ slug: string; file: string; path: string | null }>(
-    `SELECT slug, frontmatter->'call_import'->>'file' AS file, frontmatter->'call_import'->>'path' AS path FROM pages
-      WHERE source_id = $1 AND deleted_at IS NULL AND starts_with(slug, $2) AND frontmatter->'call_import'->>'root' = $3
-        AND frontmatter->'call_import'->>'file' IS NOT NULL`,
-    [sourceId, `${prefix}/`, root]);
+  const prior = await engine.executeRaw<{ slug: string; root: string | null; file: string; path: string | null }>(
+    `SELECT slug, frontmatter->'call_import'->>'root' AS root, frontmatter->'call_import'->>'file' AS file, frontmatter->'call_import'->>'path' AS path FROM pages
+      WHERE source_id = $1 AND deleted_at IS NULL AND starts_with(slug, $2) AND frontmatter->'call_import'->>'file' IS NOT NULL`,
+    [sourceId, `${prefix}/`]);
   const byPath = new Map(prior.filter(r => r.path).map(r => [r.path, r.slug]));
-  const byFile = new Map(prior.filter(r => !r.path).map(r => [r.file, r.slug]));
-  const sameImport = (frontmatter: unknown, page: CallPage): boolean => {
+  const byFile = new Map(prior.filter(r => !r.path && r.root === root).map(r => [r.file, r.slug]));
+  const pendingByPath = new Map<string, { slug: string; request_id: string }>();
+  for (const row of await engine.executeRaw<{ slug: string; request_id: string; content: string | null }>(
+    `SELECT slug, request_id::text AS request_id, intent->>'content' AS content FROM persistence_requests
+      WHERE source_id = $1 AND operation = 'put_page' AND starts_with(slug, $2) AND NOT (state = ANY($3::text[])) ORDER BY sequence`,
+    [sourceId, `${prefix}/`, [...TERMINAL_STATES]])) {
+    const id = /^ {2}path: "([0-9a-f]{16})"$/m.exec(row.content ?? '')?.[1];
+    if (id && !pendingByPath.has(id)) pendingByPath.set(id, { slug: row.slug, request_id: row.request_id });
+  }
+  const sameImport = (frontmatter: unknown, page: CallPage, ids: Set<string>): boolean => {
     const ci = callImportOf(frontmatter);
-    return ci?.root === root && (typeof ci.path === 'string' ? ci.path === page.path : ci.file === page.file);
+    return typeof ci?.path === 'string' ? ids.has(ci.path) : ci?.root === root && ci.file === page.file;
   };
   const results: CallFileResult[] = [];
   const used = new Set<string>();
@@ -202,24 +223,32 @@ export async function runCallImport(engine: BrainEngine, dir: string, args: stri
       continue;
     }
     try {
-      page = callPageFor(rel, readFileSync(path, 'utf8'), lstatSync(path).mtimeMs, prefix, patterns, root, createHash('sha256').update(`${folder}\u0000${rel}`).digest('hex').slice(0, 16));
+      page = callPageFor(rel, readFileSync(path, 'utf8'), lstatSync(path).mtimeMs, prefix, patterns, root, callPathId(folder, rel));
     } catch (e) {
       results.push({ file: redactCallPath(rel, patterns).file, slug: '', status: 'error', error: e instanceof Error ? e.message : String(e) });
       continue;
     }
     const suffixed = `${page.slug}-${createHash('sha256').update(`${root}/${rel}`).digest('hex').slice(0, 6)}`;
+    const ids = callPathIds(path);
     const legacy = byFile.get(page.file);
-    const priorSlug = byPath.get(page.path!) ?? (legacy && !used.has(legacy) ? legacy : undefined);
+    const priorSlug = [...ids].map(id => byPath.get(id)).find(Boolean) ?? (legacy && !used.has(legacy) ? legacy : undefined);
+    const held = priorSlug ? undefined : [...ids].map(id => pendingByPath.get(id)).find(Boolean);
+    if (held) {
+      used.add(held.slug);
+      results.push({ file: page.file, slug: held.slug, date_from: page.date_from, redactions: page.redactions, status: 'pending', request_id: held.request_id,
+        poll: pollCommand(held.request_id, undefined, cliRenderContext().routing) });
+      continue;
+    }
     let slug = priorSlug ?? (used.has(page.slug) ? suffixed : page.slug);
     let existing = await engine.readPageSnapshot(slug, { sourceId });
-    if (!priorSlug && existing && !sameImport(existing.page.frontmatter, page) && slug !== suffixed) {
+    if (!priorSlug && existing && !sameImport(existing.page.frontmatter, page, ids) && slug !== suffixed) {
       slug = suffixed;
       existing = await engine.readPageSnapshot(slug, { sourceId });
     }
     used.add(slug);
     const base = { file: page.file, slug, date_from: page.date_from, redactions: page.redactions };
     if (existing) {
-      if (!sameImport(existing.page.frontmatter, page)) results.push({ ...base, status: 'error', error: `${slug} already holds another page; rename the file to import it` });
+      if (!sameImport(existing.page.frontmatter, page, ids)) results.push({ ...base, status: 'error', error: `${slug} already holds another page; rename the file to import it` });
       else results.push({ ...base, status: callImportOf(existing.page.frontmatter)?.hash === page.hash ? 'unchanged' : 'kept' });
       continue;
     }

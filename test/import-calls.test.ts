@@ -24,12 +24,17 @@ import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-f
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { parseMarkdown } from '../src/core/markdown.ts';
 import { listBudgetLimitedPages, planPageEmbedding } from '../src/core/page-embedding-budget.ts';
+import { acquireWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
+import { disposePersistenceConsumer, startPersistenceConsumer } from '../src/core/persistence/service.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const roots: string[] = [];
 afterAll(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }); });
 const temp = (prefix: string): string => { const d = mkdtempSync(join(tmpdir(), prefix)); roots.push(d); return d; };
 const plantedToken = (): string => 'github' + '_pat_' + randomBytes(24).toString('hex');
 const MTIME = new Date(2026, 0, 15, 12).getTime();
+/** A put_page wait short enough that a write held behind the worktree lock answers pending at once. */
+const SHORT_WRITE_WAIT_MS = 200;
 
 describe('call pages', () => {
   test('date and title come from a dated file name, else the first line, else the modified day', () => {
@@ -290,4 +295,70 @@ describe('call import, in process', () => {
     expect(lines.join('\n')).toContain('1 pending');
     expect(lines.join('\n')).toContain(`gbrain write-request -- ${requestId}`);
   });
+});
+
+describe('call import finds the same file across import roots and pending writes', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 120_000);
+  afterAll(async () => { await disposePersistenceConsumer(engine); await engine.disconnect(); });
+  beforeEach(() => _resetCliExitVerdictForTests());
+  afterEach(() => mock.restore());
+
+  const callPages = (prefix: string) => engine.executeRaw<{ slug: string }>(
+    "SELECT slug FROM pages WHERE source_id='default' AND deleted_at IS NULL AND starts_with(slug, $1) ORDER BY slug", [`${prefix}/`]);
+
+  test('a file in a subfolder of an imported folder is found by a single-file import, and the other way round', async () => {
+    const calls = realpathSync(temp('gbrain-calls-nested-'));
+    mkdirSync(join(calls, 'team-a'));
+    mkdirSync(join(calls, 'team-b'));
+    writeFileSync(join(calls, 'team-a', 'Kickoff call.txt'), 'Kickoff call\nAlice: kickoff.\n');
+    writeFileSync(join(calls, 'team-b', 'Review call.txt'), 'Review call\nAlice: review.\n');
+    for (const f of ['team-a/Kickoff call.txt', 'team-b/Review call.txt']) utimesSync(join(calls, f), MTIME / 1000, MTIME / 1000);
+    spyOn(console, 'log').mockImplementation(() => {});
+    expect(await runCallImport(engine, join(calls, 'team-b', 'Review call.txt'), ['--calls', '--prefix', 'nested'], { json: false })).toMatchObject({ imported: 1, errors: 0 });
+    expect(await runCallImport(engine, calls, ['--calls', '--prefix', 'nested'], { json: false })).toMatchObject({ imported: 1, errors: 0 });
+    expect(await runCallImport(engine, join(calls, 'team-a', 'Kickoff call.txt'), ['--calls', '--prefix', 'nested'], { json: false })).toMatchObject({ imported: 0, errors: 0 });
+    expect(await runCallImport(engine, join(calls, 'team-a'), ['--calls', '--prefix', 'nested'], { json: false })).toMatchObject({ imported: 0, errors: 0 });
+    expect((await callPages('nested')).map(p => p.slug)).toEqual(['nested/2026-01-15-kickoff-call', 'nested/2026-01-15-review-call']);
+  });
+
+  test('a rerun while the first write is still pending finds the pending request and writes nothing', async () => {
+    const fixture = realpathSync(temp('gbrain-calls-pending-rerun-'));
+    const calls = join(fixture, 'calls');
+    mkdirSync(join(fixture, 'brain'));
+    mkdirSync(calls);
+    const managed = new PGLiteEngine();
+    await managed.connect({});
+    await managed.initSchema();
+    await managed.setConfig('sync.repo_path', join(fixture, 'brain'));
+    await withEnv({ GBRAIN_HOME: join(fixture, 'home') }, async () => {
+      spyOn(console, 'log').mockImplementation(() => {});
+      startPersistenceConsumer(managed, { engine: 'pglite' });
+      writeFileSync(join(calls, 'Seed call.txt'), 'Seed call\nAlice: seed.\n');
+      expect(await runCallImport(managed, calls, ['--calls', '--prefix', 'held'], { json: false })).toMatchObject({ imported: 1, errors: 0 });
+      const put = operations.find(op => op.name === 'put_page')!;
+      const handler = put.handler;
+      spyOn(put, 'handler').mockImplementation(((ctx: Parameters<typeof handler>[0], params: Parameters<typeof handler>[1]) => handler({ ...ctx, writeWaitMs: SHORT_WRITE_WAIT_MS }, params)) as never);
+      const file = join(calls, 'Pending call.txt');
+      writeFileSync(file, 'Pending call\nAlice: pending.\n');
+      utimesSync(file, MTIME / 1000, MTIME / 1000);
+      const requests = () => managed.executeRaw<{ slug: string; request_id: string }>(
+        "SELECT slug, request_id::text AS request_id FROM persistence_requests WHERE source_id='default' AND operation='put_page' AND slug LIKE 'held/%pending-call' ORDER BY sequence");
+      const lock = (await acquireWorktree((await getWorktreeBinding(managed, 'default'))!))!;
+      try {
+        expect(await runCallImport(managed, calls, ['--calls', '--prefix', 'held'], { json: false })).toMatchObject({ imported: 0, errors: 0 });
+        expect(currentExitCode()).toBe(10);
+        const [pending] = await requests();
+        expect(pending).toBeDefined();
+        utimesSync(file, MTIME / 1000 + 3 * 86_400, MTIME / 1000 + 3 * 86_400);
+        _resetCliExitVerdictForTests();
+        const lines: string[] = [];
+        spyOn(console, 'log').mockImplementation((line: string) => { lines.push(line); });
+        expect(await runCallImport(managed, calls, ['--calls', '--prefix', 'held'], { json: false })).toMatchObject({ imported: 0, errors: 0 });
+        expect(currentExitCode()).toBe(10);
+        expect(await requests()).toEqual([pending!]);
+        expect(lines.join('\n')).toContain(`gbrain write-request -- ${pending!.request_id}`);
+      } finally { await lock.release(); }
+    }).finally(async () => { await disposePersistenceConsumer(managed); await managed.disconnect(); });
+  }, 120_000);
 });
