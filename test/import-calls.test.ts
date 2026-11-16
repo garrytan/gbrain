@@ -358,6 +358,19 @@ describe('call import finds the same file across import roots and pending writes
         expect(currentExitCode()).toBe(10);
         expect(await requests()).toEqual([pending!]);
         expect(lines.join('\n')).toContain(`gbrain write-request -- ${pending!.request_id}`);
+        await withEnv({ GBRAIN_ACCEPT_PENDING: '1' }, async () => {
+          _resetCliExitVerdictForTests();
+          expect(await runCallImport(managed, calls, ['--calls', '--prefix', 'held'], { json: false })).toMatchObject({ imported: 0, errors: 0 });
+          expect(currentExitCode()).toBe(0);
+          const read = operations.find(op => op.name === 'get_write_request')!;
+          const readHandler = read.handler;
+          spyOn(read, 'handler').mockImplementation((async (ctx: Parameters<typeof readHandler>[0], params: Parameters<typeof readHandler>[1]) =>
+            ({ ...await readHandler(ctx, params) as object, diagnostic: { reason: 'owner_unavailable', next_action: 'inspect_owner', owner: { last_active: '2026-01-01T00:00:00Z' } } })) as never);
+          _resetCliExitVerdictForTests();
+          expect(await runCallImport(managed, calls, ['--calls', '--prefix', 'held'], { json: false })).toMatchObject({ imported: 0, errors: 0 });
+          expect(currentExitCode()).toBe(10);
+        });
+        expect(await requests()).toEqual([pending!]);
       } finally { await lock.release(); }
     }).finally(async () => { await disposePersistenceConsumer(managed); await managed.disconnect(); });
   }, 120_000);

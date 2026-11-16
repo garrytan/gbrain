@@ -39,6 +39,7 @@ import { acceptPendingCovers, acceptPendingRequested, CLI_WRITE_WAIT_MS, pending
 import { PENDING_WRITE_EXIT_CODE } from '../core/exit-codes.ts';
 import { cliRenderContext } from '../core/agent-output.ts';
 import { TERMINAL_STATES } from '../core/persistence/model.ts';
+import type { WriteReceipt } from '../core/persistence/types.ts';
 
 export const CALL_FILE_RE = /\.(txt|md)$/i;
 export const DEFAULT_CALL_PREFIX = 'calls';
@@ -188,6 +189,7 @@ export async function runCallImport(engine: BrainEngine, dir: string, args: stri
   const patterns = loadImportRedactionPatterns();
   const { operations } = await import('../core/operations.ts');
   const putPage = operations.find(op => op.name === 'put_page')!;
+  const getWriteRequest = operations.find(op => op.name === 'get_write_request')!;
   const ctx = { engine, config: loadConfig() ?? { engine: engine.kind }, logger: { info() {}, warn: (m: string) => process.stderr.write(`${m}\n`), error: (m: string) => process.stderr.write(`${m}\n`) },
     dryRun: false, remote: false, cliOpts: getCliOptions(), sourceId, writeWaitMs: CLI_WRITE_WAIT_MS } as Parameters<typeof putPage.handler>[0];
   const single = lstatSync(dir).isFile();
@@ -235,6 +237,8 @@ export async function runCallImport(engine: BrainEngine, dir: string, args: stri
     const held = priorSlug ? undefined : [...ids].map(id => pendingByPath.get(id)).find(Boolean);
     if (held) {
       used.add(held.slug);
+      const receipt = await getWriteRequest.handler(ctx, { request_id: held.request_id }).catch(() => null) as WriteReceipt | null;
+      if (!receipt || !acceptPendingCovers(receipt)) uncovered++;
       results.push({ file: page.file, slug: held.slug, date_from: page.date_from, redactions: page.redactions, status: 'pending', request_id: held.request_id,
         poll: pollCommand(held.request_id, undefined, cliRenderContext().routing) });
       continue;
