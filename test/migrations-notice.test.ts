@@ -101,6 +101,7 @@ describe('pendingUpgradeMigrationsNotice', () => {
   test('an empty ledger on a brain created in this run (schema version 1 at connect) gets no notice', async () => {
     const created = { getConfig: async () => null } as never;
     noteSchemaVersion(created, 1);
+    // pregate-literal: LATEST_SCHEMA_VERSION=316 any version above 1 stands for the brain after this run migrated it
     noteSchemaVersion(created, 316);
     expect(await inHome(() => pendingUpgradeMigrationsNotice(created, 'query', latest))).toBeNull();
   });
