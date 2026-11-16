@@ -307,7 +307,9 @@ Save ONE fact with mandatory attribution.
   `share: true`, and its `visibility: "world"` is refused; the brain owner's
   own credential saves as above (shared by default, `private` on its member
   page when it asks or the page or default keeps facts private). The response
-  names the `page` and `visibility` the fact got.
+  names the `page` and `visibility` the fact got. Facts saved `private` before
+  the default became `world` stay private until the operator runs
+  `gbrain repair open-facts` on the brain host (no remote verb opens them).
 
 Response: `{ id, status, status_text, entity_slug, valid_until,
 protocol_version }` (+ `degraded_dedup: true` when no embedding provider —

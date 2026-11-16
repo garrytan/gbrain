@@ -2451,6 +2451,71 @@ line with any other key, a non-string value or a page id that isn't an integer
 is counted as unreadable and never applied. Run restore on the host and
 `GBRAIN_HOME` that ran the clear, because the ledger lives there.
 
+### Open facts saved private before the world default
+
+Facts saved before `facts.default_visibility` became `world` were stamped
+`private`, so remote callers that are not the brain owner (a shared token, a
+second agent) can't recall them, even on pages everyone may read. Nothing
+opens them on upgrade. `gbrain repair open-facts` opens them when you, the
+operator, decide to, from the CLI on the brain host:
+
+```bash
+gbrain repair open-facts --source <id> --created-before 2026-06-01T00:00:00Z --json      # preview; writes nothing
+gbrain repair open-facts --source <id> --created-before 2026-06-01T00:00:00Z --apply --expect <preview_hash>
+```
+
+`--created-before` is required: name the moment the default became `world` on
+this brain, and facts saved after it stay as they were written. The preview
+lists one window of facts (`--limit`, default 1000; `--after <id>` previews
+the next one), each with its class: `fenced` (a row of a page's `## Facts`
+table) or `unfenced` (a fact stored only in the database, held on a page).
+Facts with no page, and facts from transcript lanes (conversation
+extraction, capture hooks, connectors), are counted as `unpaged:<lane>` and
+open only when you name that class, for example `--class unpaged:mail:extract`.
+`--ids-file <file>` (one fact id per line) narrows the set.
+
+The preview also counts every fact it leaves private, by reason: `expired`,
+`superseded`, `member_page`, `withdrawn` (forgotten or purged, at any
+visibility), `contested` (an open trust proposal, or a widening the owner
+rejected or undid), `holding_page_private`, `holding_page_missing`,
+`holding_page_quarantined`, `provenance_private`, `provenance_unresolved`,
+`provenance_quarantined` and `entity_page_private`. A page counts as private
+the same way `gbrain repair visibility` judges it (its label, a privacy alias,
+`readable_by`, a folder rule), across every row with that slug, deleted or
+not, so the tighten repair never plans to close what this opened.
+
+`--apply --expect <hash>` opens exactly the previewed window, keeping each
+fact's id, provenance, creation time and trust tier; a fact that became
+eligible inside the window since the preview refuses `preview_changed`. Each
+write locks the pages the fact names and checks it again, so a page made
+private while the apply waits keeps its facts private. A fenced row has its
+table cell set to `world` by the same label-only write the other privacy
+repairs use. A fact the apply could not open is reported `fact_left_private`
+with the reason, never as applied.
+
+The command refuses remote callers and any CLI running under
+`GBRAIN_ENFORCED_MEMBER`, and it never runs from `gbrain repair --all`,
+`gbrain doctor` or the remediation plan.
+
+Every change is written ahead to
+`~/.gbrain/repair/open-facts/<brain>.jsonl` (under `$GBRAIN_HOME/.gbrain/` if
+set). To undo:
+
+```bash
+gbrain repair open-facts --source <id> --undo <ledger> --json
+gbrain repair open-facts --source <id> --undo <ledger> --apply --expect <preview_hash>
+```
+
+Undo re-privates the facts the ledger opened that are still world and
+unchanged, and counts the rest as skipped (`expired`, `superseded`,
+`changed`, `already_private`, `gone`). It restores the label only: anything
+a remote caller read while a fact was world stays read.
+
+On a personal brain where every remote caller is you, you may not need this
+at all: bind the client to the owner instead (`gbrain access owner set`, then
+`gbrain auth rescope --client <id> --member <owner>`), and it reads private
+facts without opening them to anyone else.
+
 ### Lost fence rows
 
 A page rewrite that drops its `## Facts` or takes section is safe on its
