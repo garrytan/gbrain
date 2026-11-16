@@ -173,8 +173,13 @@ and its newline are part of `chunk_text`: they count in `delivered.tokens`,
 them first and a cut keeps the header line whole. `recall` facts gain
 `date_header: "[observed 2026-02-10; valid 2026-03-01 to unknown]"`. A fact's
 `observed` date is the observation date of the page it came from
-(`source_markdown_slug`, such as the conversation it was extracted from), and it
-reads `unknown` for a fact kept only in its entity page's facts fence. `valid`
+(`source_markdown_slug`, such as the conversation it was extracted from), read
+under the caller's own page access, and it reads `unknown` for a fact kept only
+in its entity page's facts fence or taken from a page the caller may not read.
+If that read fails, the header reads `unknown` and the response reports the
+degraded stage `fact_observed_date_unavailable` (`recall`:
+`facts_degraded.reason`). The facts block, the temporal fact reserve and the
+facts arm date their fact rows the same way. `valid`
 starts at the fact's `valid_from`: `remember` sets it from its `valid_from`
 parameter (when the fact was said or became true). A `valid_from` that only
 records the write time (within a minute of `created_at`) reads `unknown`, so a

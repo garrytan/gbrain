@@ -209,7 +209,8 @@ pass it to `get_page`.
 ```
 
 `search.query_facts_arm=false` turns these rows off. A `query` that passes
-`token_budget` instead gets the facts block (on by default): dated fact rows,
+`token_budget` instead gets the facts block (on by default): dated fact rows
+(copies of one claim take one row, followed by `(stated N times, last DATE)`),
 oldest first, ahead of the pages, within 22% of the budget and at most 40 rows
 and at most `limit` rows, in place of the facts arm. Block rows carry the top
 page's `score`: they are placed first, not ranked above the pages, so read
