@@ -98,7 +98,7 @@ export const SECTIONS: DocSection[] = [
       },
       {
         title: "docs/STABILITY.md",
-        description: "Which release the default install follows (the stable channel), how a release becomes stable, how often stable moves, staying on stable, pinning a version, going back, where behaviour changes are announced, and what the alpha channel is for.",
+        description: "Which release the default install follows (the stable channel), what stays the same on stable and how much warning a change gets, how a release becomes stable, how often stable moves, staying on stable, pinning a version, going back, where behaviour changes are announced, and what the alpha channel is for.",
         path: "docs/STABILITY.md",
       },
       {

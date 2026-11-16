@@ -18,7 +18,32 @@ line and nobody picks a version before the release.
    <!-- behavior-change: sync_holds_unparsable_8123 -->
    ```
 
-That is all. `bun run verify` (check:regen-all) refuses a fragment with no
+3. Start the file with front matter that says what kind of change it is:
+
+   ```markdown
+   ---
+   kind: fix
+   ---
+   The notice text.
+   ```
+
+   `kind` is one of `breaking` (something documented stops working or
+   starts refusing what it accepted), `action` (users should do something),
+   `default` (a default changed), `fix` or `add`. A `breaking` row also
+   needs `exception: security` or `exception: data-loss` for a fix that
+   cannot wait, `exception: revert` for a revert of something that never
+   reached stable (the notice text names the reverted pull request,
+   `#<number>`), or `deprecation: <id>` naming the
+   [deprecations.d](../deprecations.d/) record whose `remove_after` date has
+   passed. The front matter is not part of the notice text.
+
+That is all. `bun run check:public-surface` refuses a new row without
+`kind`, and a `breaking` row without an exception or a matured deprecation.
+It also refuses a change to the CLI or agent-contract goldens
+(`test/fixtures/goldens/cli/`, `test/fixtures/agent-contract/`) that adds no
+row; when the change is not a behaviour change, say so in your changelog
+fragment with `<!-- public-surface: no-behavior-change: <reason> -->`.
+`bun run verify` (check:regen-all) refuses a fragment with no
 marker, a marker with no fragment, a duplicate id (including an id marked
 twice among unreleased changes, or marked again after its release) and an
 over-long text.

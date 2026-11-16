@@ -45,6 +45,7 @@ export const ARTIFACTS: Artifact[] = [
   { name: 'lookup table copies', regen: ['bun', 'scripts/build-lookup-table.ts'], check: ['bun', 'scripts/build-lookup-table.ts', '--check'] },
   { name: 'harness adapter reference', regen: ['bun', 'run', 'scripts/build-harness-docs.ts'], check: ['bun', '-e', HARNESS_DOCS_CHECK] },
   { name: 'operation manifest', regen: ['bun', 'run', 'scripts/build-operation-manifest.ts'], check: [...BUN_TEST, 'test/operation-manifest.test.ts'] },
+  { name: 'public surface (docs/contracts/public-surface.json)', regen: ['bun', 'scripts/build-public-surface.ts'], check: ['bun', 'scripts/build-public-surface.ts', '--check'] },
   { name: 'MCP tool catalog', regen: ['bun', 'run', 'scripts/generate-tool-catalog.ts'], check: ['bash', 'scripts/check-tool-catalog-fresh.sh'] },
   { name: 'skills manifest', regen: ['bun', 'run', 'scripts/generate-skills-manifest.ts'], check: ['bash', 'scripts/check-skills-manifest-fresh.sh'] },
   { name: 'bundled skills module', regen: ['bun', 'run', 'scripts/generate-bundled-skills.ts'], check: ['bun', 'run', 'scripts/generate-bundled-skills.ts', '--check'] },

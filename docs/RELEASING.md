@@ -167,6 +167,9 @@ reader of the log should see.
 - One `behavior-changes.d/<id>.md` file per new upgrade-notice row, named
   in the fragment as `<!-- behavior-change: <id> -->`
   ([behavior-changes.d/README.md](../behavior-changes.d/README.md)).
+- A `deprecations.d/<id>.md` record before removing or renaming anything
+  stable promises to keep
+  ([deprecations.d/README.md](../deprecations.d/README.md)).
 - Its own schema migrations, numbered master's latest + 1 when written.
 - Nothing else that carries a version: no edit to VERSION, the package.json
   version, the plugin manifests, the BOOTSTRAP stamp, the plugin or template
@@ -223,7 +226,8 @@ every stamp back to master's version, moves the branch's CHANGELOG entry to
 `changelog.d/<branch-slug>.md` and its appended plain-text
 `BEHAVIOR_CHANGES` rows to `behavior-changes.d/` (with their markers),
 puts the notice file and its size-table row back to master's, and commits
-once. It refuses, with the fix, a branch with no entry of its own, one that
+once. The moved rows have no `kind:` yet: add one to each before pushing
+(`bun run check:public-surface` refuses a new row without it). It refuses, with the fix, a branch with no entry of its own, one that
 edits a released CHANGELOG section, one that carries other PRs' entries (land
 or convert those first), and notice rows it can't move (rows without an id,
 rows whose text is a function, edits other than appending). Plain
