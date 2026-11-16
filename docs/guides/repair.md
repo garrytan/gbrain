@@ -687,7 +687,6 @@ To drain now:
 ```bash
 gbrain projections drain            # until every page queued at the start was tried once
 gbrain projections drain --limit 5000
-gbrain projections drain --concurrency 8   # Postgres: 8 pages at once (default 4, at most the pool size less 2)
 gbrain projections drain --json     # {rebuilt, superseded, failed: [{source_id, slug, reason}], remaining, limited, sealed, sealed_with_visual, sealed_text_only, statistics_refreshed, remaining_by_class}
 gbrain projections drain --dry-run  # change nothing: every class count and the rows a drain takes, oldest first
 ```
