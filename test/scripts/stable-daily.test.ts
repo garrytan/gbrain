@@ -43,6 +43,8 @@ interface World {
   stable: { version: string; commit: number; message: string };
   /** `important`: the class its changelog.d fragment's front matter names. */
   importantPrs?: Array<{ number: number; merge: number; important?: string }>;
+  /** The token sees no pull request at all, as a GITHUB_TOKEN without pull-requests: read does. */
+  prsHidden?: boolean;
   runs?: Array<SoakRunRow & { boards?: Scoreboard[] }>;
   /** Upgrade matrix runs, newest first; default: one green gate run on every release (MATRIX_ID + its commit). */
   matrix?: Array<MatrixRunRow & { receipt?: MatrixReceipt | null }>;
@@ -141,7 +143,11 @@ function world(w: World) {
     dryRun: w.dryRun ?? false,
     async ghApi(path) {
       api.push(path);
-      if (path.startsWith('search/issues')) return { items: (w.importantPrs ?? []).map(p => ({ number: p.number })) };
+      if (path.startsWith('search/issues')) {
+        if (w.prsHidden) return { total_count: 0, items: [] };
+        if (!decodeURIComponent(path).includes('label:')) return { total_count: 1, items: [{ number: 1 }] };
+        return { items: (w.importantPrs ?? []).map(p => ({ number: p.number })) };
+      }
       if (path.includes('/issues?')) return w.breakIssues ?? [];
       if (path.includes('/actions/workflows/upgrade-matrix.yml/runs')) {
         const q = new URLSearchParams(path.split('?')[1] ?? '');
@@ -278,6 +284,22 @@ describe('daily: when it does nothing', () => {
     const w = world(base({ runs: [soak(9, 4)] }));
     const r = await daily(w.deps);
     expect(r.action).toBe('none');
+    expect(w.pushes).toEqual([]);
+    expect(w.posts).toEqual([]);
+  });
+
+  test('a quiet fortnight with no labelled PR stays none, and the check logs how many labelled PRs the search returned', async () => {
+    const w = world(base({ runs: [soak(9, 4)] }));
+    expect((await daily(w.deps)).action).toBe('none');
+    expect(w.logs.some(l => /stable:important search returned 0 merged PRs/.test(l))).toBe(true);
+    const found = world(base({ importantPrs: [{ number: 11, merge: 1 }], runs: [soak(9, 4)] }));
+    await daily(found.deps);
+    expect(found.logs.some(l => /stable:important search returned 1 merged PR\b/.test(l))).toBe(true);
+  });
+
+  test('a token that sees no merged pull request at all stops the check and names the missing pull-requests: read permission', async () => {
+    const w = world(base({ prsHidden: true, runs: [soak(9, 4)] }));
+    await expect(daily(w.deps)).rejects.toThrow(/pull-requests: read/);
     expect(w.pushes).toEqual([]);
     expect(w.posts).toEqual([]);
   });
@@ -659,7 +681,7 @@ describe('stable-daily.yml', () => {
     expect(Object.keys(wf.on).sort()).toEqual(['schedule', 'workflow_dispatch']);
     expect(wf.on.schedule.map(s => s.cron)).toEqual(['17 5 * * *', '17 13 * * *']);
     expect(wf.on.workflow_dispatch.inputs.dry_run).toMatchObject({ type: 'boolean', default: true });
-    expect(wf.permissions).toEqual({ contents: 'write', actions: 'write', issues: 'read' });
+    expect(wf.permissions).toEqual({ contents: 'write', actions: 'write', issues: 'read', 'pull-requests': 'read' });
     expect(wf.concurrency).toEqual({ group: 'promote-stable', 'cancel-in-progress': false });
   });
 

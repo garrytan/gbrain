@@ -124,7 +124,7 @@ function rerankFix(reason: RerankFailedReason, retry?: { op: string; args: Recor
 }
 
 /** #6495: `keyword_arm_failed` with reason `skipped_after_timeout` (postgres-engine/keyword-timeout-cache.ts). */
-const KEYWORD_SKIPPED_WHY = 'the keyword arm was skipped: this exact keyword search hit the keyword statement timeout (search.keyword_statement_timeout_ms) within the last search.keyword_timeout_negative_cache_seconds (default 600 seconds), so the brain did not wait for the timeout again; a narrower query (source_id, types, since or until) runs keyword search, and the skip ends by itself when the entry expires';
+const KEYWORD_SKIPPED_WHY = 'the keyword arm was skipped: this exact keyword search hit the keyword statement timeout (search.keyword_statement_timeout_ms) within the last search.keyword_timeout_negative_cache_seconds (default 600 seconds), so the brain did not wait for the timeout again; a narrower query (source_id, types, since or until) runs keyword search, and the skip ends by itself when a background re-run in the serve of the statement answers or the entry expires';
 const KEYWORD_PLAN_VERIFY = { argv: ['gbrain', 'doctor', '--only', 'keyword_plan', '--json'] };
 function keywordPlanFix(): Action {
   return {

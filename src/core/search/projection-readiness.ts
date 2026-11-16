@@ -91,8 +91,9 @@ async function probeUncached(
     // pending its LIMIT 1 finds no protected page to stop at, so evaluating it anyway read every unsealed page (#8000).
     // The planner has no statistics for a column-to-column comparison, so it believes most pages are unsealed and an
     // EXISTS chose a sequential scan of pages that expected to stop at once; on a sealed brain it read every page
-    // (~600 ms at 600k pages, on every cold call). Ordering by idx_pages_projection_pending's columns under LIMIT 1
-    // makes that partial index the cheap first row, so the probe reads only the unsealed pages.
+    // (~600 ms at 600k pages, on every cold call). Ordering by the partial index's columns under LIMIT 1 makes it the
+    // cheap first row. The index is idx_pages_projection_waiting (v317, #9192): its predicate is this one, so pages v153
+    // left serving their pre-upgrade index are not in it and the probe no longer steps over each of them.
     // JIT off (#8033): a remote caller's private-visibility subplans lift the estimate past jit_above_cost, and compiling
     // them cost ~66 of ~67 ms at 20k pages while the probe itself reads one index row.
     const unsealed = (cond: string) => `(SELECT true FROM pages p JOIN sources s ON s.id = p.source_id

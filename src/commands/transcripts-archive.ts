@@ -107,10 +107,10 @@ export async function runTranscriptsArchive(engine: BrainEngine, args: string[],
     console.log('  days written ' + result.written + ', unchanged ' + result.unchanged + ', held ' + result.held + ', planned ' + result.planned + ', covered by legacy ' + result.skipped_legacy);
     const redacted = result.days.filter(d => (d.redactions ?? 0) > 0);
     if (redacted.length) console.log('  redacted values on ' + redacted.length + ' page(s): ' + redacted.map(d => d.slug + ' (' + d.redactions + ')').join(', '));
-    for (const d of result.days.filter(d => d.status === 'held' || d.status === 'error')) console.log('  ' + d.status + ': ' + d.harness + ' ' + d.day + ' (' + d.code + ')');
+    for (const d of result.days.filter(d => d.status === 'held')) console.log('  held: ' + d.harness + ' ' + d.day + ' (' + d.code + ')');
     for (const line of result.info) console.log('  ' + line);
-    for (const e of result.errors) console.log('  error: ' + e.reader + ' ' + e.code + ': ' + e.message);
+    for (const e of result.errors) console.log('  error: ' + (e.reader ?? e.harness + (e.day ? ' ' + e.day : '')) + ' ' + e.code + ': ' + e.message);
     if (sub === 'backfill' && result.written) console.log('  backfilled pages are keyword-only; preview their embedding cost with: gbrain embed --held --dry-run');
   });
-  if (result.errors.length || result.days.some(d => d.status === 'error') || (result.held && result.fix)) setCliExitVerdict(1);
+  if (result.errors.length) setCliExitVerdict(1);
 }
