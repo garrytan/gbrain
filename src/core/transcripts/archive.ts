@@ -174,6 +174,12 @@ export interface ArchiveDayOutcome {
 
 export interface ArchiveReaderError { harness: string; reader: string; code: string; message: string; fix?: Action; /** When the run that met it read (status only). */ at?: string }
 
+/**
+ * One thing a run could not do: a reader that failed (reader set), a conversation day that failed (day set), the day
+ * index, or the owner-unset hold on a shared brain. A run returns exit 1 exactly when this list is not empty.
+ */
+export interface ArchiveRunError { harness: string; reader?: string; day?: string; conversation_key_hash?: string; code: string; message: string; fix?: Action }
+
 /** One reader as the last run that read it found it: the newest message any run saw, and the last run's error until a later read succeeds. */
 interface ArchiveReadRecord {
   harness: string;
@@ -214,7 +220,8 @@ export interface ArchiveRunResult {
   index_pages: string[];
   deferred_days: string[];
   info: string[];
-  errors: ArchiveReaderError[];
+  /** Every failure of this run (ArchiveRunError); empty exactly when the run exits 0. */
+  errors: ArchiveRunError[];
   message?: string;
   fix?: Action;
   /** The run reached deadlineAtMs and left conversations for the next run. */
@@ -306,10 +313,19 @@ async function writeLedger(engine: BrainEngine, entry: ArchiveLedgerEntry): Prom
   await engine.setConfig(ledgerKey(source_id, harness, conversation_key_hash, day), JSON.stringify({ ...value, updated_at: new Date().toISOString() }));
 }
 
-async function legacyCovered(engine: BrainEngine, sourceId: string): Promise<Set<string>> {
-  const prefix = LEGACY_PREFIX + sourceId + '.';
-  const rows = await engine.executeRaw<{ key: string }>('SELECT key FROM config WHERE key LIKE $1', [prefix + '%']);
-  return new Set(rows.map(r => r.key.slice(prefix.length)));
+/**
+ * Days an old archive folder covers, as adopt-legacy recorded them. adopt-legacy records them under the source it
+ * resolved then (the configured archive source, or its <source>-owner twin on a shared brain whose source is a
+ * checkout), so they are read under both ids: a brain that turned shared or personal in between still skips them.
+ */
+async function legacyCovered(engine: BrainEngine, sourceIds: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (const id of new Set(sourceIds)) {
+    const prefix = LEGACY_PREFIX + id + '.';
+    const rows = await engine.executeRaw<{ key: string }>('SELECT key FROM config WHERE key LIKE $1', [prefix + '%']);
+    for (const r of rows) out.add(r.key.slice(prefix.length));
+  }
+  return out;
 }
 
 function machineTimeZone(): string {
@@ -620,7 +636,8 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
     : await ensureSource(engine, sourceId);
   const context = dryRun ? undefined
     : opts.context ?? (opts.makeContext && await managedPersistenceEnabled(engine) ? await opts.makeContext(sourceId) : undefined);
-  const managed = !!context && await managedPersistenceEnabled(engine);
+  // A dry run builds no write context, but reports the write path the real run would take with the same options.
+  const managed = (dryRun ? !!(opts.context ?? opts.makeContext) : !!context) && await managedPersistenceEnabled(engine);
   const writeMode: ArchiveRunResult['write_mode'] = managed ? 'coordinator' : (!privacy.shared && isGitRepo(source.local_path) ? 'repo' : 'database');
   if (!dryRun) await reconcileAudience(engine, await configuredSource(engine, opts.sourceId), privacy);
   const tz = await archiveTimeZone(engine, sourceId);
@@ -649,6 +666,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
   if (privacy.shared && !privacy.owner) {
     result.message = 'This brain is shared and names no owner member, so every archive day is held (archive_owner_unset) and nothing was written.';
     result.fix = ownerFix;
+    result.errors.push({ harness: '*', code: 'archive_owner_unset', message: result.message, fix: ownerFix });
   }
 
   const readers = opts.readers ?? await defaultArchiveReaders();
@@ -675,7 +693,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
   const patterns = loadImportRedactionPatterns();
   const redactionVersion = sha256(ARCHIVE_REDACTION_RULES + '\u0000' + patterns.map(p => p.source).join('\u0000'));
   const ledger = new Map((await readArchiveLedger(engine, sourceId)).map(e => [e.harness + '.' + e.conversation_key_hash + '.' + e.day, e]));
-  const legacy = await legacyCovered(engine, sourceId);
+  const legacy = await legacyCovered(engine, [sourceId, await configuredSource(engine, opts.sourceId)]);
   const covered = (harness: string, day: string) => legacy.has(harness + '.' + day) || legacy.has('*.' + day);
 
   interface Item { entry: ArchiveScanEntry; hash: string; days: string[] }
@@ -878,6 +896,9 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
 
   pending.sort((a, b) => b.day.localeCompare(a.day));
   result.days.push(...pending);
+  for (const d of pending) {
+    if (d.status === 'error') result.errors.push({ harness: d.harness, day: d.day, conversation_key_hash: d.conversation_key_hash, code: d.code ?? 'archive_day_failed', message: d.message ?? 'no detail' });
+  }
   for (const d of result.days) {
     if (d.status === 'written') result.written++;
     else if (d.status === 'accepted') result.accepted++;
@@ -1047,7 +1068,7 @@ export async function archiveStatus(engine: BrainEngine, opts: { sourceId?: stri
     enabled: await archiveEnabled(engine), source_id: sourceId, timezone: pinned, configured_timezone: configured, harnesses: [],
     archived_days: entries.filter(e => e.hash && !e.held).length,
     held: entries.filter(e => e.held).map(e => ({ harness: e.harness, day: e.day, code: e.held!.code })),
-    legacy_days: (await legacyCovered(engine, sourceId)).size, errors: [],
+    legacy_days: (await legacyCovered(engine, [sourceId, await configuredSource(engine, opts.sourceId)])).size, errors: [],
   };
   const reads = await readArchiveReads(engine, sourceId);
   const zone = pinned ?? configured;

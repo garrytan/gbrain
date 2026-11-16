@@ -54,6 +54,14 @@ and the next pass picks up the rest.
 `gbrain transcripts archive run` archives now, on demand, whatever the pass is doing; it works with automatic
 maintenance turned off (`maintenance.auto false`).
 
+`run` and `backfill` exit 1 when anything in the run failed, and 0 otherwise, even when most days were written:
+the days that did not make it are retried by the next run on their own, and a script or scheduler should see that
+this run left work behind. Every failure is in the `errors` list of `--json` (a reader that could not be read, a day
+that could not be written, with its `day` and `code`, a day index, or the `archive_owner_unset` hold on a shared
+brain), so the list is empty exactly when the exit code is 0. A `--dry-run` reports the `write_mode` the real run
+will use (`coordinator` on a brain whose writes go through the write coordinator), even before the archive source
+exists.
+
 On a managed brain the pass writes each day page as a `put_page` write request through the write coordinator, under the
 same local identity as `gbrain transcripts archive run` (`local_cli`). Waiting for the coordinator counts against the
 120 seconds; a write it accepted but has not published yet counts as archived, publishes on the coordinator's next turn,
@@ -127,7 +135,9 @@ gbrain transcripts archive adopt-legacy --dir ~/brain/conversations            #
 gbrain transcripts archive adopt-legacy --dir ~/brain/conversations --apply    # record the covered days
 ```
 
-The old pages are never changed or deleted. Second, remove the old script's schedule yourself (its crontab line or
+The covered days are recorded in the brain's config, so they count before the archive source exists, and later
+runs skip them whichever archive source they write to (the brain turning shared included). The old pages are never
+changed or deleted. Second, remove the old script's schedule yourself (its crontab line or
 scheduled job), so two archivers do not run side by side. Third, let the maintenance pass fill the gap, or run
 `gbrain transcripts archive backfill --from <day>` now.
 
