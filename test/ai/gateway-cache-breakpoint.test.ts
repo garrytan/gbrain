@@ -37,10 +37,32 @@ import {
   __setGenerateTextTransportForTests,
 } from '../../src/core/ai/gateway.ts';
 import { OPENROUTER_CACHE_HEADER } from '../../src/core/ai/recipes/openrouter.ts';
+import { defaultSynthesize } from '../../src/commands/enrich.ts';
+import { buildEnrichPrompt } from '../../src/core/enrich/thin.ts';
 
 afterAll(() => {
   resetGateway();
   __setGenerateTextTransportForTests(null);
+});
+
+describe('#9541: enrich write-ups ask for no prompt cache', () => {
+  test('neither the call nor the system block carries a breakpoint, and the system prompt is below the smallest cacheable prefix', async () => {
+    resetGateway();
+    let captured: any;
+    __setGenerateTextTransportForTests(async (args: any) => {
+      captured = args;
+      return { content: [{ type: 'text', text: '## Summary\nok' }], finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1 } } as any;
+    });
+    configureGateway({ chat_model: 'anthropic:claude-sonnet-4-6', env: { ANTHROPIC_API_KEY: 'fake' } });
+    const { system, user } = buildEnrichPrompt({ slug: 'people/alice-example', title: 'Alice Example', kind: 'person', currentBody: '',
+      evidence: [{ source_slug: 'meetings/kickoff', text: 'Alice Example leads the launch.' }] });
+    // Anthropic caches no prefix under 1024 tokens; at about 4 characters a token this prompt is far below it.
+    expect(system.length).toBeLessThan(2048);
+    await defaultSynthesize({ system, user, model: 'anthropic:claude-sonnet-4-6' });
+    expect(JSON.stringify(captured.messages)).toContain('Alice Example leads the launch.');
+    expect(captured.providerOptions?.anthropic?.cacheControl).toBeUndefined();
+    expect(captured.system).toBe(system);
+  });
 });
 
 describe('gbrain#2490 — Anthropic cache breakpoint placement', () => {
