@@ -372,7 +372,7 @@ async function readersFor(engine: BrainEngine, privacy: Privacy, conv: ArchiveCo
  * conversations/ replaces them, so later group conversations stay owner-only too (archive_rescope_folder_cap). No other rule is
  * dropped, so a source that already held MAX_RULES other rules ends one rule over (rescopeCapped reports it). A source whose rules live in git is left to its access.yml.
  */
-async function reconcileAudience(engine: BrainEngine, sourceId: string, privacy: Privacy): Promise<void> {
+async function reconcileAudience(engine: BrainEngine, sourceId: string, privacy: Privacy, record = true): Promise<void> {
   const now = privacy.shared ? 'shared' : 'personal';
   const recorded = await engine.getConfig(`${AUDIENCE_PREFIX}${sourceId}`);
   if (recorded === now) return;
@@ -399,7 +399,7 @@ async function reconcileAudience(engine: BrainEngine, sourceId: string, privacy:
     }
     if (capped) await engine.setConfig(`${RESCOPE_CAPPED_PREFIX}${sourceId}`, String(folders.length));
   }
-  await engine.setConfig(`${AUDIENCE_PREFIX}${sourceId}`, now);
+  if (record) await engine.setConfig(`${AUDIENCE_PREFIX}${sourceId}`, now);
 }
 
 export interface ArchiveRescopeSkip { code: 'archive_rescope_owner_unset' | 'archive_rescope_git_rules' | 'archive_rescope_pending' | 'archive_rescope_folder_cap'; message: string }
@@ -422,12 +422,15 @@ export async function reconcileArchiveAudience(engine: BrainEngine, sourceId?: s
  * turn a brain shared (gbrain access member add and member enable, gbrain access owner set, gbrain config set
  * brain.audience) so earlier pages are kept to the owner before a second member reads them, not at the next archive
  * run or maintenance pass. Returns each source whose re-scope was due, with why it could not apply (null when it did).
- * It holds the source's archive run lock: a run that started while the brain was personal keeps writing pages with no
- * readers into folders no rule covers yet, so while one runs the re-scope waits for the next run (archive_rescope_pending).
+ * It holds the source's archive run lock. While a run that started on the personal brain holds it, that run keeps
+ * writing pages with no readers into folders no rule covers yet, so the pages archived so far are kept to the owner now
+ * but the audience stays recorded personal and the next run re-scopes again (archive_rescope_pending).
  */
 export async function rescopeArchiveOnShared(engine: BrainEngine): Promise<Array<{ source_id: string; skipped: ArchiveRescopeSkip | null }>> {
   const rows = await engine.executeRaw<{ key: string }>("SELECT key FROM config WHERE key LIKE $1 AND value = 'personal' ORDER BY key", [AUDIENCE_PREFIX + '%']);
-  if (!rows.length || !(await resolvePrivacy(engine)).shared) return [];
+  if (!rows.length) return [];
+  const privacy = await resolvePrivacy(engine);
+  if (!privacy.shared) return [];
   const { withRefreshingLock, LockUnavailableError } = await import('../db-lock.ts');
   const out: Array<{ source_id: string; skipped: ArchiveRescopeSkip | null }> = [];
   for (const { key } of rows) {
@@ -436,7 +439,9 @@ export async function rescopeArchiveOnShared(engine: BrainEngine): Promise<Array
       if (!await withRefreshingLock(engine, ARCHIVE_LOCK_PREFIX + sourceId, () => reconcileArchiveAudience(engine, sourceId))) continue;
     } catch (err) {
       if (!(err instanceof LockUnavailableError)) throw err;
-      out.push({ source_id: sourceId, skipped: { code: 'archive_rescope_pending', message: 'Conversation archive pages written while this brain was personal are not yet kept to the owner, because an archive run is writing source ' + sourceId + ' now; run gbrain transcripts archive run once it finishes.' } });
+      await reconcileAudience(engine, sourceId, privacy, false);
+      const skipped = await archiveRescopeSkipped(engine, sourceId);
+      out.push({ source_id: sourceId, skipped: skipped?.code !== 'archive_rescope_pending' ? skipped : { code: 'archive_rescope_pending', message: 'Conversation archive pages archived so far are kept to the owner, but an archive run that started while this brain was personal is writing source ' + sourceId + ' now and its new pages are not; run gbrain transcripts archive run once it finishes (gbrain status --section locks --json shows the holder).' } });
       continue;
     }
     out.push({ source_id: sourceId, skipped: await archiveRescopeSkipped(engine, sourceId) });

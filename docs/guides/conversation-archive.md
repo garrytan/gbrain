@@ -168,8 +168,9 @@ and `gbrain access owner set` on a brain that is already shared. Each prints one
 saying the pages are now kept to the owner or why they still wait (the codes below); `--json` output is unchanged.
 When the brain turns shared some other way, the next archive run (`gbrain transcripts archive run`) or maintenance pass
 does it, also before it writes anything. That includes members added or enabled from the admin page over HTTP or by
-`gbrain access serves several --members <ids> --yes`, and a command run while an archive run is writing the source (that run started
-while the brain was personal, so the run after it applies the rules). Either way, every folder that holds an archive page at that moment (one per
+`gbrain access serves several --members <ids> --yes`. A command run while an archive run that started on the personal
+brain is still writing the source keeps the pages archived so far to the owner at once; the pages that run still writes
+wait for the run after it (`archive_rescope_pending`). Either way, every folder that holds an archive page at that moment (one per
 harness and day, such as `conversations/codex/2026-10-01/`, plus `conversations/days/`) gets an access rule readable
 only by the owner. Other pages in the archive source, outside `conversations/`, keep the rules they had. This re-scope **replaces any existing rule on those folders, including one the owner made wider on
 purpose**; re-add the wider readers afterwards (`gbrain access rule add`, which waits for `gbrain access apply`) if

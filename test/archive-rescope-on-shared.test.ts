@@ -6,8 +6,8 @@
  * Each case drives the brain shared through the CLI handler alone, then reads over the http dispatch as the second
  * member, as the owner and with an unbound token. In the owner set case the second member is added first on a brain
  * with no owner, so member add says why the pages wait (archive_rescope_owner_unset) and owner set applies it.
- * A member add while an archive run holds the source leaves the re-scope to that source's next run, because the run in
- * flight still writes pages with no readers. Repo-less; synthetic values only.
+ * A member add while an archive run holds the source keeps the pages archived so far to the owner at once and leaves the
+ * audience recorded personal, so the source's next run re-scopes what the run in flight wrote with no readers. Repo-less; synthetic values only.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -142,9 +142,7 @@ for (const kind of testBackends()) {
             const stderr: string[] = [];
             const spy = spyOn(console, 'error').mockImplementation((...line: unknown[]) => { stderr.push(line.join(' ')); });
             try { await runAccess(engine, ['member', 'add', OTHER]); } finally { spy.mockRestore(); await lock!.release(); }
-            expect(stderr.join('\n')).toContain('because an archive run is writing source ' + SRC + ' now; run gbrain transcripts archive run once it finishes.');
-            expect(await engine.getConfig('transcripts.archive.audience.' + SRC)).toBe('personal');
-            await runTranscriptArchive(engine, { mode: 'run', readers: [staticReader('openclaw', [])], now: new Date('2026-10-05T00:00:00Z') });
+            expect(stderr.join('\n')).toContain('pages archived so far are kept to the owner, but an archive run that started while this brain was personal is writing source ' + SRC + ' now');
           }
           if (trigger === 'member enable') await runAccess(engine, ['member', 'enable', OTHER]);
           if (trigger === 'config set brain.audience') await runConfig(engine, ['set', 'brain.audience', 'shared']);
@@ -170,6 +168,11 @@ for (const kind of testBackends()) {
       }, 60_000);
 
       test('the re-scope has run: nothing pending and the archive records the brain as shared', async () => {
+        if (trigger === 'member add during an archive run') {
+          expect(await inHome(() => archiveRescopeSkipped(engine))).toMatchObject({ code: 'archive_rescope_pending' });
+          expect(await engine.getConfig('transcripts.archive.audience.' + SRC)).toBe('personal');
+          return;
+        }
         expect(await inHome(() => archiveRescopeSkipped(engine))).toBeNull();
         expect(await engine.getConfig('transcripts.archive.audience.' + SRC)).toBe('shared');
       }, 60_000);
@@ -190,6 +193,16 @@ for (const kind of testBackends()) {
         expect(Object.entries(after).filter(([, read]) => !read).map(([k]) => k)).toEqual([]);
         if (trigger !== 'owner set') expect(ownerBefore).toEqual(after);
       }, 240_000);
+
+      if (trigger === 'member add during an archive run') {
+        test('the next archive run finishes the re-scope, and the second member still reads nothing', async () => {
+          await inHome(() => runTranscriptArchive(engine, { mode: 'run', readers: [staticReader('openclaw', [])], now: new Date('2026-10-05T00:00:00Z') }));
+          expect(await inHome(() => archiveRescopeSkipped(engine))).toBeNull();
+          expect(await engine.getConfig('transcripts.archive.audience.' + SRC)).toBe('shared');
+          const matrix = await readMatrix('other');
+          expect(Object.entries(matrix).filter(([, read]) => read).map(([k]) => k)).toEqual([]);
+        }, 240_000);
+      }
     });
   }
 }
