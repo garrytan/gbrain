@@ -21,7 +21,7 @@ describe('#7326: sources status --json bounds git_holds', () => {
     expect(out.items).toHaveLength(HELD_STATUS_LIMIT);
     expect(out).toMatchObject({ items_complete: false, items_command: ['gbrain', 'sources', 'status', 'source-a', '--json', '--holds'] });
     expect(out.by_code.map(g => [g.code, g.count])).toEqual([['invalid_frontmatter', 333], ['invalid_fence', 167]]);
-    expect(out.by_code[0]!.example.fix).toBeDefined();
+    expect(out.by_code[0]!.example!.fix).toBeDefined();
     expect(Object.keys(out).at(-1)).toBe('items');
     const full = JSON.stringify(gitHoldStatusJson('source-a', holds(500), { mode: 'all' }));
     expect(JSON.stringify(out).length).toBeLessThan(full.length / 10);
