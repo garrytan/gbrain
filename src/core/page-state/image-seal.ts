@@ -6,6 +6,7 @@
  * moved since. Explicit only: the resident never seals images.
  */
 import type { BrainEngine } from '../engine.ts';
+import { TEXT_REBUILD_PAGES_PER_SECOND } from './rebuild-estimate.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
 import { chunkGenerationFilter, chunkGenerationProbe, movableChunkSql } from '../search/safe-chunks.ts';
 import { sealableImageSql } from './projection-class.ts';
@@ -23,12 +24,7 @@ import { AGENT_TOOL_LIMIT_MS } from '../agent-output.ts';
  */
 export const IMAGE_SEAL_PAGES_PER_SECOND = 1500;
 
-/**
- * Measured Markdown rebuild throughput of the same drain (no embedding): 2,000
- * queued notes of about 3 KB, 117 pages/s on PGLite and 87 pages/s on local
- * Postgres 16, same machine and day; the slower, rounded down.
- */
-export const TEXT_REBUILD_PAGES_PER_SECOND = 80;
+export { TEXT_REBUILD_PAGES_PER_SECOND } from './rebuild-estimate.ts';
 
 /**
  * Pages one drain run takes in doctor's fix: half the agent tool limit at the

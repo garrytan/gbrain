@@ -116,7 +116,7 @@ src/core/ops/links.ts	3	coordinator	Unmanaged add_link/remove_link keep the engi
 src/core/ops/pages.ts	0	coordinator	Page mutations delegate to persistence modules; purge_deleted_pages runs purgeDeletedPagesCoordinated.
 src/core/output/writer.ts	6	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/page-state/materialize.ts	1	coordinator	Publication is transaction-scoped under admitted authority, source/page guards and revision checks.
-src/core/page-state/projection-schema.ts	1	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.
+src/core/page-state/projection-schema.ts	2	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers. #9192: the activation also assigns a first knowledge_revision to pages written before v150 (no content column changes).
 src/core/page-state/projections.ts	3	projection	Derived indexing, retrieval telemetry, or source settings; canonical fields remain guarded by SQL triggers.
 src/core/page-state/versions.ts	2	projection	GBRA-217: stamps only pages.version_history_gap_at (history metadata outside the canonical trigger's guarded fields) in the caller's versioning transaction, when an import reports a multi-commit gap or a prune drops snapshots; no canonical field or body is written.
 src/core/page-state/image-seal.ts	1	projection	The explicit image seal (#6803) sets only text_projection_revision on an importer-attested image page, under its page guard with a revision compare-and-set; no canonical field or body is written.
