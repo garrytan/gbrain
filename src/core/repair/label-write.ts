@@ -72,10 +72,11 @@ export async function importAtRevision(engine: BrainEngine, page: { source_id: s
  * (`sync.write_through` off, a clone gbrain pulls, an unresolvable target, a write error) is held `file_backed` with
  * nothing written, since a database-only write would come back from the file at the next sync. A page with no file on
  * purpose (no checkout configured, a non-canonical target) or whose recorded file is gone writes the database only.
- * The revision written; null when the page moved.
+ * `afterImport` runs in the same transaction after the import and before the file is written, so what it throws leaves
+ * the page, the file and its own rows unwritten. The revision written; null when the page moved.
  */
 export async function writeLabelFile(engine: BrainEngine, page: { source_id: string; slug: string }, write: { revision: string; content: string; edit: LabelEdit; embed: boolean;
-  preview: string; path: string }): Promise<string | null | RepairItemOutcome> {
+  preview: string; path: string; afterImport?: (tx: BrainEngine) => Promise<void> }): Promise<string | null | RepairItemOutcome> {
   const ref = `${page.source_id}:${page.slug}`;
   const held = (why: string): RepairItemOutcome => ({ applied: false, outcome: 'file_backed', detail: { path: write.path },
     reason: `${ref} has a file in its source's checkout (${write.path}) that this repair cannot write (${why}), and a database-only write would come back from the file `
@@ -89,7 +90,7 @@ export async function writeLabelFile(engine: BrainEngine, page: { source_id: str
     `Run gbrain sync --source ${page.source_id}, then preview ${write.preview} again.`);
   const before = file.target?.expectedFileBytes ?? null;
   const snapshot = before === null ? null : await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
-  if (before === null || !snapshot) return importAtRevision(engine, page, write.revision, write.content, write.embed, write.preview);
+  if (before === null || !snapshot) return importAtRevision(engine, page, write.revision, write.content, write.embed, write.preview, write.afterImport);
   if (snapshot.revision !== write.revision) return null;
   const fit = labelEditFit(page.slug, Buffer.from(before, 'utf8'), write.content, write.edit, snapshot);
   if (typeof fit !== 'string') throw labelEditRefused(page, fit.keys, write.edit);
@@ -97,6 +98,7 @@ export async function writeLabelFile(engine: BrainEngine, page: { source_id: str
   let unwritable: string | undefined;
   try {
     return await importAtRevision(engine, page, write.revision, text, write.embed, write.preview, async tx => {
+      await write.afterImport?.(tx);
       const written = await writePageThrough(tx, page.slug, { sourceId: page.source_id, expectedFileBytes: before, fileText: text });
       if (written.written) return;
       if (written.skipped !== 'file_changed') unwritable = written.skipped ?? written.error ?? 'the write failed';
