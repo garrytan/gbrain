@@ -45,6 +45,12 @@ describe('the rule', () => {
   test('no replacement date: its own earlier end or now', () => {
     expect(supersededValidUntil(retired, null, NOW)).toEqual(NOW);
   });
+  test('a retired fact dated after now never ends before it began', () => {
+    const future = { valid_from: at('2026-09-01'), valid_until: null };
+    expect(supersededValidUntil(future, at('2026-10-01'), NOW)).toEqual(at('2026-09-01'));
+    expect(supersededValidUntil(future, at('2025-01-01'), NOW)).toEqual(at('2026-09-01'));
+    expect(supersededValidUntil(future, null, NOW)).toEqual(at('2026-09-01'));
+  });
 });
 
 describe('engine insertFact with supersedeId', () => {
@@ -58,6 +64,18 @@ describe('engine insertFact with supersedeId', () => {
     const until = (await row(later)).valid_until;
     expect(until).not.toBeNull();
     expect(new Date(until!).getTime()).toBeGreaterThanOrEqual(before - 1000);
+  });
+});
+
+describe('a retired fact whose valid_from is in the future', () => {
+  test('insertFact and expireFact end it no earlier than its own valid_from', async () => {
+    const begins = (id: number) => engine.executeRaw<{ valid_from: Date | string }>('SELECT valid_from FROM facts WHERE id = $1', [id]).then(r => new Date(r[0]!.valid_from).getTime());
+    const a = await add('Dana Example starts at Beta Corp.', '2099-01-01');
+    await add('Dana Example starts at Gamma Labs.', '2025-01-01', { supersedeId: a });
+    expect(new Date((await row(a)).valid_until!).getTime()).toBeGreaterThanOrEqual(await begins(a));
+    const b = await add('Dana Example moves to Porto.', '2099-01-01');
+    expect(await engine.expireFact(b, { successorFrom: at('2025-01-01') })).toBe(true);
+    expect(new Date((await row(b)).valid_until!).getTime()).toBeGreaterThanOrEqual(await begins(b));
   });
 });
 

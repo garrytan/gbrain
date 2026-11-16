@@ -136,7 +136,7 @@ export async function insertFact(
         `)).rows;
         const id = Number(ins[0].id);
         (await tx.run(sqlFragment`UPDATE facts SET expired_at = now(), superseded_by = ${id},
-                   valid_until = CASE WHEN valid_from < ${validFrom}::timestamptz AND ${validFrom}::timestamptz < COALESCE(valid_until, now()) THEN ${validFrom}::timestamptz ELSE LEAST(COALESCE(valid_until, now()), now()) END
+                   valid_until = CASE WHEN valid_from < ${validFrom}::timestamptz AND ${validFrom}::timestamptz < COALESCE(valid_until, now()) THEN ${validFrom}::timestamptz ELSE GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now())) END
                  WHERE id = ${supersedeId} AND expired_at IS NULL`)).rows;
         return id;
       });
@@ -180,7 +180,7 @@ export async function expireFact(exec: SqlExecutor, id: number, opts?: { superse
       UPDATE facts SET expired_at = ${at}, superseded_by = COALESCE(${supersededBy}, superseded_by),
         valid_until = CASE WHEN ${successor}::timestamptz IS NULL THEN valid_until
           WHEN valid_from < ${successor}::timestamptz AND ${successor}::timestamptz < COALESCE(valid_until, now()) THEN ${successor}::timestamptz
-          ELSE LEAST(COALESCE(valid_until, now()), now()) END
+          ELSE GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now())) END
       WHERE id = ${id} AND expired_at IS NULL
     `);
     return result.affectedRows > 0;

@@ -191,7 +191,7 @@ export async function forgetFactInFence(
   // withdrawn claim. Intent commits independently of filesystem availability.
   // A supersession or a retirement only expires the row; a supersession with a date ends it there (supersede-interval.ts).
   if (supersession || opts.retired !== undefined) {
-    await maintenanceTransaction(engine, tx => tx.executeRaw(`UPDATE facts SET valid_until = COALESCE($2::timestamptz, LEAST(COALESCE(valid_until, now()), now())), expired_at = now()
+    await maintenanceTransaction(engine, tx => tx.executeRaw(`UPDATE facts SET valid_until = COALESCE($2::timestamptz, GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now()))), expired_at = now()
       WHERE id = $1 AND expired_at IS NULL`, [factId, supersession?.validUntil?.toISOString() ?? null]));
   } else {
     // W1 #6783 §5.1: the withdrawal's ledger publication is marked committed once its transaction commits.

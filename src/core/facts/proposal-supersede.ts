@@ -180,7 +180,7 @@ async function expireOld(tx: BrainEngine, proposal: PairProposal): Promise<void>
   const [oldF, newF] = await Promise.all([loadPairFact(tx, proposal.old_fact_id), loadPairFact(tx, proposal.new_fact_id)]);
   const until = oldF && newF ? acceptedUntil(oldF, newF) ?? null : null;
   const rows = await tx.executeRaw<{ id: number }>(
-    `UPDATE facts SET expired_at = now(), valid_until = COALESCE($4::timestamptz, LEAST(COALESCE(valid_until, now()), now())), superseded_by = $3
+    `UPDATE facts SET expired_at = now(), valid_until = COALESCE($4::timestamptz, GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now()))), superseded_by = $3
       WHERE id = $1 AND source_id = $2 AND expired_at IS NULL RETURNING id`,
     [proposal.old_fact_id, proposal.source_id, proposal.new_fact_id, until?.toISOString() ?? null]);
   if (rows.length !== 1) throw new ProposalConflictError('the old fact changed during accept');
