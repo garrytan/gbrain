@@ -105,6 +105,8 @@ const GBRAIN_HOME_ENV = __GBRAIN_HOME_ENV__;
 const PLUGIN_VERSION = __PLUGIN_VERSION__;
 const ID = 'gbrain-skill-resolver';
 const DEADLINE_MS = Number(process.env.GBRAIN_TEST_OPENCLAW_SKILL_DEADLINE_MS) || 50;
+// The setup self-test checks that the plugin resolves a turn at all, so it waits this long, not a live turn's deadline.
+const SELF_TEST_MS = 10_000;
 const STUCK_AFTER = 3;
 const KEEP_DAYS = 14;
 const MEMO_MAX = 1000;
@@ -245,10 +247,10 @@ function armFor(a, sessionKey) {
   return bucket(sessionKey) < f ? 'live' : 'control';
 }
 
-function ask(w, msg) {
+function ask(w, msg, ms = DEADLINE_MS) {
   const id = ++seq;
   return new Promise((resolve) => {
-    const t = setTimeout(() => { waiters.delete(id); resolve({ id, late: true }); }, DEADLINE_MS);
+    const t = setTimeout(() => { waiters.delete(id); resolve({ id, late: true }); }, ms);
     waiters.set(id, (m) => { clearTimeout(t); resolve(m ? { ...m, id } : { id, late: true }); });
     w.postMessage({ ...msg, id });
   });
@@ -391,7 +393,7 @@ export default {
     const w = ensureWorker(s);
     if (!w) return { ok: false, code: 'skill_resolver_worker_unavailable' };
     const warm = await new Promise((resolve) => {
-      const t = setTimeout(() => resolve({ code: 'skill_resolve_timeout' }), 10_000);
+      const t = setTimeout(() => resolve({ code: 'skill_resolve_timeout' }), SELF_TEST_MS);
       const onMsg = (m) => { if (m && m.type === 'warm') { clearTimeout(t); w.off('message', onMsg); resolve(m); } };
       w.on('message', onMsg);
       w.postMessage({ type: 'warm' });
@@ -399,7 +401,7 @@ export default {
     if (warm.code) { dropWorker(); return { ok: false, code: warm.code }; }
     const a = s.agents[agentId];
     const t0 = Date.now();
-    const reply = await ask(w, { type: 'resolve', input: { message, harness: 'openclaw', top_k: Number.isInteger(a.top_k) ? a.top_k : 3, shadow: true, ...(typeof a.top_gate === 'number' ? { top_gate: a.top_gate } : {}) }, catalog: a.catalog, deadlineMs: DEADLINE_MS - 5, floor: a.min_match || null, dirs: [] });
+    const reply = await ask(w, { type: 'resolve', input: { message, harness: 'openclaw', top_k: Number.isInteger(a.top_k) ? a.top_k : 3, shadow: true, ...(typeof a.top_gate === 'number' ? { top_gate: a.top_gate } : {}) }, catalog: a.catalog, deadlineMs: SELF_TEST_MS - 5, floor: a.min_match || null, dirs: [] }, SELF_TEST_MS);
     dropWorker();
     if (reply.late) return { ok: false, code: 'skill_resolve_timeout', ms: Date.now() - t0 };
     if (reply.code && !reply.block) return { ok: false, code: reply.code, ms: Date.now() - t0 };

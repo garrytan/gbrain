@@ -1004,6 +1004,16 @@ Reasons: `assume_unchanged`, `skip_worktree`, `not_staged`.
 
 More: [docs/guides/shared-checkout-git.md#outcomes](../../docs/guides/shared-checkout-git.md#outcomes)
 
+### commit_paths_unmerged
+
+<a id="commit_paths_unmerged"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The commit was refused before staging: a named file still has unresolved merge conflicts in the index, so committing it would publish its conflict markers. | Git keeps the two sides of a conflicted file (after a merge, rebase or stash pop that stopped on a conflict) as unmerged index entries until someone resolves it; staging it would record the file with its markers as resolved. | Resolve each file (edit out the markers, or git checkout --ours/--theirs -- <file>), mark it resolved with git add -- <file>, then rerun the commit. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-checkout-git.md#outcomes](../../docs/guides/shared-checkout-git.md#outcomes)
+
 ### commit_prestaged_paths
 
 <a id="commit_prestaged_paths"></a>
@@ -2235,6 +2245,18 @@ More: [docs/guides/repair.md#ghost-pages](../../docs/guides/repair.md#ghost-page
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The canonical root is not inside a Git checkout, so its Git effects have nothing to commit to. | Only the operator of the brain host can change what blocks this. | Initialize the root as a Git repository with a first commit and a remote on the brain host, then rerun; a database-only source needs no Git durability. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### git_command_stopped
+
+<a id="git_command_stopped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A git command was stopped before it finished (its time limit, an output limit, or a signal from outside gbrain), so gbrain did not use its partial output. | Git itself works; the child ended without exiting on its own, and a cut-off listing read as the answer would stage, restore or report the wrong files. | Rerun the same command once. For a signal, check the machine first (the out-of-memory killer or a supervisor); if a time limit stops it again, tell the user which command and checkout. | agent | `repeat the read that failed` | 1 | yes |
+
+Reasons: `timeout`, `output_limit`, `signal`.
+
+More: [docs/guides/shared-checkout-git.md#outcomes](../../docs/guides/shared-checkout-git.md#outcomes)
 
 ### git_conversion_blocked
 
