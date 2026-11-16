@@ -213,15 +213,17 @@ function repoPathOf(scan: SyncReasonScan, filePath: string): string {
 }
 
 /**
- * What the snapshot an import of one file (absolute path) archives carries: the deciding reason, and a history gap when
+ * What the snapshot an import of one file (absolute path) archives carries: the deciding reason with the commit and path it
+ * came from (the snapshot insert rechecks that pair's tombstone, #8635), and a history gap when
  * the range held more than one commit for the file or the scan could not say. Nothing when the pass ran no scan (no Git
  * checkout).
  */
 export function importHistoryFor(scan: SyncReasonScan | null | undefined, filePath: string): VersionHistory | undefined {
   if (!scan) return undefined;
   if (scan.status !== 'complete') return { reason: null, historyGap: true };
-  const decision = scan.byPath.get(repoPathOf(scan, filePath));
-  return { reason: decision?.reason ?? null, historyGap: (decision?.commits ?? 0) > 1 };
+  const path = repoPathOf(scan, filePath);
+  const decision = scan.byPath.get(path);
+  return { reason: decision?.reason ?? null, ...(decision?.reason ? { reasonSource: { commit: decision.commit, path } } : {}), historyGap: (decision?.commits ?? 0) > 1 };
 }
 
 /** The pass's notices: a failed or capped scan (reasons stored as NULL, no backfill), and secrets found in pushed trailers. */
@@ -253,8 +255,8 @@ const CACHE_TTL_MS = 10 * 60_000;
 /**
  * Managed sync prepares one request at a time, each naming its pass's range: the pass's scan runs once per process and
  * its later requests reuse it. The key carries the source's purge epoch, which every fact purge bumps in the transaction
- * that writes its tombstones, so a purge from any process makes the next request scan again and read them. The cache is
- * per engine: the scan holds that brain's tombstones, so another brain on the same checkout never reuses it.
+ * that writes its tombstones, so a purge from any process makes the next request scan again and read them; a request
+ * prepared before the purge is caught when its snapshot is inserted (`createPageVersion`). The cache is per engine: the scan holds that brain's tombstones, so another brain on the same checkout never reuses it.
  */
 export async function cachedSyncReasonScan(engine: BrainEngine, input: Parameters<typeof scanSyncReasons>[1]): Promise<SyncReasonScan | null> {
   const [source] = await engine.executeRaw<{ purge_epoch: string | number }>(SOURCE_PURGE_EPOCH_SQL, [input.sourceId]);

@@ -272,7 +272,7 @@ describe('A6: sync mirrors gbrain-reason trailers', () => {
     const scan = await scanSyncReasons(engines[0]!, { sourceId: 'none', sourceRoot: root, from: base, to: head });
     expect(scan?.status).toBe('complete');
     expect(scan!.byPath.size).toBe(5000);
-    expect(importHistoryFor(scan, join(root, 'bulk/f4321.md'))).toEqual({ reason: 'Only this file has a reason.', historyGap: false });
+    expect(importHistoryFor(scan, join(root, 'bulk/f4321.md'))).toEqual({ reason: 'Only this file has a reason.', reasonSource: { commit: head, path: 'bulk/f4321.md' }, historyGap: false });
     expect(importHistoryFor(scan, join(root, 'bulk/f0001.md'))).toEqual({ reason: null, historyGap: false });
   }), 120_000);
 
@@ -310,7 +310,7 @@ describe('A6: sync mirrors gbrain-reason trailers', () => {
     await otherBrain.executeRaw('INSERT INTO reason_purge_tombstones(source_id, commit_sha, path) VALUES ($1, $2, $3)', [id, to, 'notes/a.md']);
     const range = { sourceId: id, sourceRoot: root, from, to };
     const file = join(root, 'notes/a.md');
-    expect(importHistoryFor(await cachedSyncReasonScan(engines[0]!, range), file)).toEqual({ reason: 'Canary reason for source-a.', historyGap: false });
+    expect(importHistoryFor(await cachedSyncReasonScan(engines[0]!, range), file)).toEqual({ reason: 'Canary reason for source-a.', reasonSource: { commit: to, path: 'notes/a.md' }, historyGap: false });
     expect(importHistoryFor(await cachedSyncReasonScan(otherBrain, range), file)).toEqual({ reason: null, historyGap: false });
   }), 120_000);
 });
@@ -498,7 +498,7 @@ describe('A7: purge reaches change reasons', () => {
       const to = commit(s.root, 'edit', [`notes/a.md: Changed once ${claim} was rotated.`]);
       const range = { sourceId: s.id, sourceRoot: s.root, from, to };
       const file = join(s.root, 'notes/a.md');
-      expect(worker.importHistoryFor(await worker.cachedSyncReasonScan(engine, range), file)).toEqual({ reason: `Changed once ${claim} was rotated.`, historyGap: false });
+      expect(worker.importHistoryFor(await worker.cachedSyncReasonScan(engine, range), file)).toEqual({ reason: `Changed once ${claim} was rotated.`, reasonSource: { commit: to, path: 'notes/a.md' }, historyGap: false });
       await sync(engine, s);
       const id = await seedFact(engine, s.id, `people/safe-example-${engines.indexOf(engine)}`, claim);
       expect((await purge(engine, s.id, id)).state).toBe('committed');
