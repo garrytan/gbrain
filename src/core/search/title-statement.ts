@@ -31,8 +31,6 @@ export interface SearchTitlesDialect {
   staleProbe: boolean;
   /** chunkManifestReads; unset reads the manifest. */
   chunkManifest?: boolean;
-  /** The relaxed (OR) re-run: match and rank title lexemes only, for local callers too (#7135). */
-  relaxed?: boolean;
 }
 
 export interface SearchTitlesStatement {
@@ -63,9 +61,8 @@ export function buildSearchTitlesStatement(query: string, opts: SearchOpts | und
   const tsqueries = ['$1', ...titleNameVariants(query).map(v => `$${params.push(v)}`)]
     .map(p => `websearch_to_tsquery('${ftsLang}', gbrain_fts_input(${p}))`);
   const tsq = tsqueries.length === 1 ? tsqueries[0] : `(${tsqueries.join(' || ')})`;
-  const titleOnly = safeChunks || dialect.relaxed === true;
-  const matchSql = titleOnly ? `ts_filter(p.search_vector, '{a}') @@ ${tsq}` : `p.search_vector @@ ${tsq}`;
-  const rankSql = titleOnly ? `ts_rank_cd(ts_filter(p.search_vector, '{a}'), ${tsq})` : `ts_rank_cd(p.search_vector, ${tsq})`;
+  const matchSql = `ts_filter(p.search_vector, '{a}') @@ ${tsq}`;
+  const rankSql = `ts_rank_cd(ts_filter(p.search_vector, '{a}'), ${tsq})`;
 
   let filters = '';
   if (opts?.type) {

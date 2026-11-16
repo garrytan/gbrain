@@ -25,23 +25,23 @@
  * stays authoritative, so a mismatch can only miss, never promote.
  *
  * Title predicate (title FTS; diagnosis credited to PR #5853 by morven-ai):
- * remote callers and every OR re-run match the title alone, which used to mean a per-row
+ * every caller and every attempt match the title alone, which used to mean a per-row
  * `to_tsvector(title)` that no index serves (a scan of every page in scope).
  * `pages.search_vector` carries the title, and only the title, at weight A
  * (schema trigger, `reindex-search-vector`, page-state projection), so the
- * arm matches `search_vector @@ q_a`, where `q_a` is the websearch query
- * with every lexeme labeled `:A`. That is served by `idx_pages_search`, and
- * negated or phrase terms are evaluated on title lexemes only, so timeline
- * text (weight C) never changes which titles they see. Ranking uses the
- * weight-A slice (`ts_filter(..., '{a}')`). Matching follows the language
+ * arm matches `ts_filter(search_vector, '{a}') @@ q`, served by
+ * `idx_pages_title_search`, and ranks that same weight-A slice; negated or
+ * phrase terms are evaluated on title lexemes only, so timeline text (weight C)
+ * never changes which titles they see. Matching follows the language
  * `search_vector` was built with; `gbrain reindex-search-vector` rebuilds it
  * after an FTS language change. A page with a NULL `search_vector` is absent
  * from the arm (the BEFORE INSERT/UPDATE trigger keeps it non-NULL). Local
- * callers' strict query still matches and ranks the whole vector (title weight
- * A dominates); their OR re-run matches titles only, like remote callers,
- * because matching the whole vector let a date in a question pull every dated
- * timeline into `ts_rank_cd`: 3-5 s on a large brain (#7135, diagnosed by
- * @veltri-23 in #7136).
+ * callers once matched and ranked the whole vector on their strict attempt:
+ * a date in a question pulled every dated timeline into `ts_rank_cd`, 3-5 s on
+ * a large brain (#7135, diagnosed by @veltri-23 in #7136), and a very common
+ * word read every timeline that held it from cold storage until the keyword
+ * statement timeout (#7082). A page whose timeline, not its title, holds the
+ * words is found by the keyword arm, which searches timeline chunks.
  */
 import type { SearchOpts, SearchResult } from '../types.ts';
 import { searchLimitCap } from '../search/eval-pool-depth.ts';
@@ -77,7 +77,7 @@ export async function searchTitles(
   if (opts?.limit && opts.limit > searchLimitCap()) {
     console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
   }
-  const statementFor = (chunkManifest: boolean, relaxed = false) => buildSearchTitlesStatement(query, opts, { ...dialect, chunkManifest, relaxed });
+  const statementFor = (chunkManifest: boolean) => buildSearchTitlesStatement(query, opts, { ...dialect, chunkManifest });
   const statement = statementFor(true);
   /** One scoped read running the statement once per query text ($1), in order. */
   const run = (queryTexts: string[], relaxed: boolean) => {
@@ -88,7 +88,7 @@ export async function searchTitles(
       ...(preferIndex ? { enable_seqscan: 'off' } : {}),
     };
     return scoped(async exec => {
-      const sql = statementFor(await dialect.chunkManifest?.(exec) ?? true, relaxed).sql;
+      const sql = statementFor(await dialect.chunkManifest?.(exec) ?? true).sql;
       const lists = [];
       for (const text of queryTexts) lists.push((await exec.unsafe(sql, [text, ...statement.params.slice(1)])).rows);
       return lists;
