@@ -26,6 +26,8 @@ import { withEnv } from './helpers/with-env.ts';
 
 const EXPLICIT: RepairKind[] = ['accepted-takes', 'google-file-modes', 'stale-atoms', 'atoms-restore', 'atom-fence-rows', 'extractor-facts', 'unwithdrawn-facts', 'purged-page-facts', 'conversation-labels', 'captured-facts', 'agent-session-facts', 'redacted-facts', 'loop-facts', 'ontology-facts', 'facts-rehome', 'consolidate-ties', 'duplicate-facts', 'orphan-children', 'failed-writes', 'split-facts', 'frontmatter', 'timeline-comments', 'timeline-order', 'contact-rows', 'managed-sync-orphans', 'content-receipt-root', 'frontmatter-keys', 'file-drift', 'stuck-recovery', 'ghost-pages', 'origin-twins', 'moved-pages', 'receipt-compaction', 'aliases', 'rename-identity', 'overwritten-edits', 'legacy-twins', 'missing-tables', 'url-clone-fences', 'segmented-mirror', 'segmented-tiling', 'uncommitted-deletions', 'generations', 'lost-fence-rows', 'fact-claim-dates', 'provenance', 'secret-spans', 'rows-behind', 'facts-home', 'private-labels', 'open-facts'];
 // GBRA-161: the generations preview carries its ledger kind and the restore window, so the printed command runs as is.
+// open-facts (#8194) needs --source and --created-before, which only the operator can name, so no surface lists it.
+const LISTED = EXPLICIT.filter(kind => kind !== 'open-facts');
 const PREVIEW = (kind: RepairKind): string => kind === 'generations' ? 'gbrain repair generations --kind atom --since 30d' : `gbrain repair ${kind}`;
 let engine: PGLiteEngine;
 const home = mkdtempSync(join(tmpdir(), 'gbrain-repair-explicit-'));
@@ -108,7 +110,7 @@ describe('surfaces that list instead of run', () => {
     for (const args of [['--all', '--json'], ['--json']]) {
       const out = JSON.parse(await captured(args)) as { results: Array<{ kind: string }>; explicit_kinds: Array<{ kind: string; code: string; preview_command: string }> };
       expect(out.results.map(r => r.kind)).toEqual(AUTO_REPAIR_REGISTRY.map(spec => spec.kind));
-      expect(out.explicit_kinds).toEqual(EXPLICIT.map(kind => ({ kind, code: 'explicit_kind_required', preview_command: PREVIEW(kind),
+      expect(out.explicit_kinds).toEqual(LISTED.map(kind => ({ kind, code: 'explicit_kind_required', preview_command: PREVIEW(kind),
         docs: 'docs/guides/repair.md#explicit-only-repair-kinds' })));
     }
     expect(await captured(['--all'])).toContain('Explicit-only kinds (not run without their name; preview each): gbrain repair accepted-takes; gbrain repair google-file-modes; gbrain repair stale-atoms; gbrain repair atoms-restore; gbrain repair atom-fence-rows; gbrain repair extractor-facts; gbrain repair unwithdrawn-facts; gbrain repair purged-page-facts; gbrain repair conversation-labels; gbrain repair captured-facts; gbrain repair agent-session-facts; gbrain repair redacted-facts; gbrain repair loop-facts');
@@ -148,7 +150,7 @@ describe('surfaces that list instead of run', () => {
     expect((await planRepairSteps(engine)).some(step => EXPLICIT.includes(step.kind))).toBe(false);
     const plan = await withEnv({ GBRAIN_HOME: home }, () => computeRemediationPlan(engine, { repairs: {} }));
     expect(plan.repair_steps!.some(step => EXPLICIT.includes(step.kind))).toBe(false);
-    expect(plan.explicit_repairs!.map(n => [n.kind, n.code, n.preview_command])).toEqual(EXPLICIT.map(kind => [kind, 'explicit_kind_required', PREVIEW(kind)]));
+    expect(plan.explicit_repairs!.map(n => [n.kind, n.code, n.preview_command])).toEqual(LISTED.map(kind => [kind, 'explicit_kind_required', PREVIEW(kind)]));
     const text = renderRemediationPlanLines(plan, 90).join('\n');
     expect(text).toContain('Explicit-only repairs');
     expect(text).toContain('  stale-atoms: gbrain repair stale-atoms');

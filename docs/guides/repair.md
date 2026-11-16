@@ -4992,6 +4992,10 @@ type and mode at apply time). They are excluded everywhere else:
 - The `gbrain post-upgrade` banner prints such a finding as
   `<check>: N (explicit_kind_required; preview with: gbrain repair <kind>)`.
 
+`open-facts` is not in these lists: its preview needs `--source` and
+`--created-before`, which only you can name, so no listed command would run
+as printed.
+
 A remediation step or any other runner that reaches an explicit-only kind
 without its name refuses with `explicit_kind_required`. A build that does not
 implement the kind refuses with `unavailable`.

@@ -156,7 +156,8 @@ describe('repair open-facts: registration and who may run it (test 7)', () => {
     expect(AUTO_REPAIR_REGISTRY.map(s => s.kind)).not.toContain('open-facts');
     const spec = REPAIR_REGISTRY.find(s => s.kind === 'open-facts')!;
     expect(spec).toMatchObject({ explicit_only: true, preview_bound: true, embeds: 'none', checks: [] });
-    expect(explicitRepairNotices().find(n => n.kind === 'open-facts')).toMatchObject({ code: 'explicit_kind_required' });
+    expect(explicitRepairNotices().find(n => n.kind === 'open-facts')).toBeUndefined();
+    expect(explicitRepairNotices({ source: 'default' }).find(n => n.kind === 'open-facts')).toBeUndefined();
   });
 
   test('a remote caller, an unnamed run and member mode are refused; --created-before is required with a coded error', async () => withEnv({ GBRAIN_HOME: home }, async () => {

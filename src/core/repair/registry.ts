@@ -120,6 +120,11 @@ export interface RepairKindSpec {
   explicit_only?: true;
   /** The preview prints a hash and `--apply --expect <hash>` applies exactly that set (accepted with or without `explicit_only`). */
   preview_bound?: true;
+  /**
+   * `unlisted`: an explicit-only kind whose preview needs inputs only the operator can name, so no command a surface prints
+   * would run as pasted; `--all`, the no-kind preview and the remediation plan leave it out of their explicit-only lists.
+   */
+  unlisted?: true;
   /** `destructive`: the apply rewrites user files or retires stored rows, so it also needs the user's consent (`--yes` with the preview hash, or a terminal prompt). */
   consent?: 'destructive';
   /** The consent payload's wording for a destructive kind: what the apply does and how to undo it (default: the frontmatter file rewrite). */
@@ -725,7 +730,7 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'and --class restore re-adds access and visibility: private from it. Runs only when named; never on upgrade.',
   },
   'open-facts': {
-    handler: openFactsRepair, embeds: 'none', checks: [], explicit_only: true, preview_bound: true,
+    handler: openFactsRepair, embeds: 'none', checks: [], explicit_only: true, preview_bound: true, unlisted: true,
     summary: 'Open facts stamped private before facts.default_visibility world (#8194), which widens what remote callers that are not the brain owner can read. '
       + 'Operator-only: runs from the CLI on the brain host, never for a remote caller or under GBRAIN_ENFORCED_MEMBER. Needs --source and --created-before <ISO-8601> '
       + '(the instant the default became world, with its offset; a date alone is read as midnight UTC). The preview lists one window (--limit, default 1000; --after <id> for the next) of active private facts by class '
@@ -809,7 +814,7 @@ export function repairPreviewCommand(kind: RepairKind, opts: { source?: string }
 export interface ExplicitRepairNotice { kind: RepairKind; code: 'explicit_kind_required'; preview_command: string; docs: string }
 
 export function explicitRepairNotices(opts: { source?: string } = {}): ExplicitRepairNotice[] {
-  return EXPLICIT_REPAIR_REGISTRY.map(spec => ({ kind: spec.kind, code: 'explicit_kind_required' as const,
+  return EXPLICIT_REPAIR_REGISTRY.filter(spec => !spec.unlisted).map(spec => ({ kind: spec.kind, code: 'explicit_kind_required' as const,
     preview_command: repairPreviewCommand(spec.kind, opts), docs: ERROR_CATALOGUE.explicit_kind_required.docs }));
 }
 
