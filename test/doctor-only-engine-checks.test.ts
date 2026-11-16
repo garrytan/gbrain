@@ -43,6 +43,11 @@ describe('doctor --only engine need (#6303)', () => {
     expect(onlyNeedsEngine(new Set(['pglite_data_dir', 'supervisor', 'harness_wiring']))).toBe(false);
   });
 
+  test('#9513: --only memory_writeback connects the engine; the relay check beside it stays engine-free', () => {
+    expect(onlyNeedsEngine(new Set(['memory_writeback']))).toBe(true);
+    expect(onlyNeedsEngine(new Set(['memorable_relay_health']))).toBe(false);
+  });
+
   test('declared engine checks are names the entry emits', () => {
     for (const entry of DOCTOR_CHECK_REGISTRY) {
       for (const name of entry.engineChecks ?? []) expect(`${entry.name}:${entry.emits.includes(name)}`).toBe(`${entry.name}:true`);
