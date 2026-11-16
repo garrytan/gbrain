@@ -1238,6 +1238,10 @@ export async function initPGLite(opts: {
     if (!opts.aiOpts?.noEmbedding && resolvedModel && resolvedDim) {
       delete config.embedding_disabled;
       await engine.unsetConfig('embedding_disabled');
+      // #9451: the database plane follows the explicit model too. assertInitEmbeddingIdentity already refused when stored
+      // vectors belong to another model, so only a brain with no vectors (or the same model) gets here.
+      await engine.setConfig('embedding_model', resolvedModel);
+      await engine.setConfig('embedding_dimensions', String(resolvedDim));
     }
     // PR1: new installs publish their skill catalog over MCP by default
     // (existing config wins on re-init, so a prior opt-out is preserved).
@@ -1580,6 +1584,10 @@ export async function initPostgresCore(opts: {
     if (!opts.aiOpts?.noEmbedding && resolvedModel && resolvedDim) {
       delete config.embedding_disabled;
       await engine.unsetConfig('embedding_disabled');
+      // #9451: the database plane follows the explicit model too. assertInitEmbeddingIdentity already refused when stored
+      // vectors belong to another model, so only a brain with no vectors (or the same model) gets here.
+      await engine.setConfig('embedding_model', resolvedModel);
+      await engine.setConfig('embedding_dimensions', String(resolvedDim));
     }
     // PR1: new installs publish their skill catalog over MCP by default
     // (existing config wins on re-init, so a prior opt-out is preserved).
