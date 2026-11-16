@@ -24,6 +24,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { __setPurgeRedactionFaultForTests } from '../src/core/belief/purge.ts';
 import { recordDerivationInputs } from '../src/core/facts/derivation-inputs.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { beliefBrain, beliefEngineCase, beliefPage, openFileBeliefBrain, withFileBeliefBrain, type BeliefBrain, type FileBeliefBrain } from './helpers/belief-ledger.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -292,6 +293,132 @@ describe('belief ledger restore (pglite archive)', () => {
       } finally { await close(); }
     }));
     expect(r).toEqual({ purge_replay: { state: 'complete', replays: ['complete'], ledger: 'absent' }, left: [], tombstones: 1 });
+  }, 300_000);
+
+  /** #9469: one page's text in each store a live page purge sweeps, for a replay parity probe. */
+  interface ParityPage { sourceId: string; slug: string; claim: string; timeline: string; reason: string }
+  const PURGED_REPLAY: Omit<ParityPage, 'sourceId'> = { slug: 'notes/purged-replay-example', claim: X, timeline: 'Visited the vault at the harbor office', reason: 'Reason quoting the vault plan' };
+  const KEPT_REPLAY: Omit<ParityPage, 'sourceId'> = { slug: 'notes/kept-replay-example', claim: 'Zebra fence code is 9921', timeline: 'Walked the dog by the river', reason: 'Reason about the dog walk' };
+  const REPOLESS = 'repoless-example';
+
+  /** Writes the page through the coordinator with a change reason, a fact and a timeline entry, then a file record, a core-edit notice, a generation preimage and (on a source with a checkout) its Git effect's reason trailer. */
+  async function seedParity(b: BeliefBrain, page: ParityPage): Promise<void> {
+    const ctx = { ...b.ctx, sourceId: page.sourceId };
+    const op = (operation: string, params: Record<string, unknown>) => submitPageMutation(ctx as never, { operation: operation as never, params: { request_id: randomUUID(), ...params } as never });
+    await op('put_page', { slug: page.slug, content: beliefPage({ prose: `The plan. ${page.claim}.` }), force: true, reason: page.reason });
+    await op('put_page', { slug: page.slug, content: beliefPage({ prose: `The plan. ${page.claim}.`, facts: [page.claim] }), force: true });
+    await op('add_timeline_entry', { slug: page.slug, date: '2024-01-02', summary: page.timeline, source: 'notes' });
+    const [row] = await b.engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id = $1 AND slug = $2', [page.sourceId, page.slug]);
+    const [request] = await b.engine.executeRaw<{ id: string }>('SELECT id::text AS id FROM persistence_requests WHERE source_id = $1 AND slug = $2 ORDER BY sequence LIMIT 1', [page.sourceId, page.slug]);
+    await b.engine.transaction(tx => withCoordinatedWrite(tx, [page.sourceId], async () => {
+      await tx.executeRaw(`INSERT INTO files (source_id, page_slug, page_id, filename, storage_path, content_hash) VALUES ($1, $2, $3, 'plan.pdf', $4, 'sha-example')`,
+        [page.sourceId, page.slug, row!.id, `files/${page.sourceId}/${page.slug}.pdf`]);
+      await tx.executeRaw(`INSERT INTO core_edit_notices (source_id, slug, page_id, base_text, actor) VALUES ($1, $2, $3, $4, 'example')`, [page.sourceId, page.slug, row!.id, page.claim]);
+      const [gen] = await tx.executeRaw<{ id: number }>(`INSERT INTO derived_generations (source_id, kind, owner_key, state, operation_id, item_set_hash) VALUES ($1, 'example', 'page:' || $2, 'superseded', 'op-example', 'hash-example') RETURNING id`,
+        [page.sourceId, page.slug]);
+      await tx.executeRaw(`INSERT INTO derived_generation_items (generation_id, item_key, identity_hash, action, preimage) VALUES ($1, $2, 'identity-example', 'published', $3::text::jsonb)`,
+        [gen!.id, page.slug, JSON.stringify({ text: page.claim })]);
+      if (page.sourceId !== REPOLESS) {
+        await tx.executeRaw(`INSERT INTO persistence_effects (request_id, kind, data, state, source_id) VALUES ($1::uuid, 'git', $2::text::jsonb, 'committed', $3) ON CONFLICT DO NOTHING`,
+          [request!.id, JSON.stringify({ slug: page.slug, commit_line: `Update ${page.slug}`, commit_trailers: [`gbrain-reason: ${page.reason}`] }), page.sourceId]);
+      }
+    }, TEST_WRITE_ATTRIBUTION));
+  }
+
+  /** The stores of the source that still carry the page's claim, timeline entry or reason, or name its slug. */
+  async function parityStores(engine: BrainEngine, page: ParityPage): Promise<string[]> {
+    const found: string[] = [];
+    const needles = [page.claim, page.timeline, page.reason].map(n => n.toLowerCase());
+    const carries = async (store: string, sql: string) => {
+      const rows = await engine.executeRaw<{ t: string | null }>(sql, [page.sourceId, page.slug]);
+      if (rows.some(r => needles.some(n => (r.t ?? '').toLowerCase().includes(n)))) found.push(store);
+    };
+    const names = async (store: string, sql: string) => { if ((await engine.executeRaw(sql, [page.sourceId, page.slug])).length) found.push(store); };
+    await carries('persistence_requests', "SELECT intent::text || COALESCE(outcome::text, '') AS t FROM persistence_requests WHERE source_id = $1 AND ($2::text IS NOT NULL)");
+    await names('files', 'SELECT 1 FROM files WHERE source_id = $1 AND page_slug = $2');
+    await names('core_edit_notices', 'SELECT 1 FROM core_edit_notices WHERE source_id = $1 AND slug = $2');
+    await carries('derived_generation_items', 'SELECT i.preimage::text AS t FROM derived_generation_items i JOIN derived_generations g ON g.id = i.generation_id WHERE g.source_id = $1 AND i.item_key = $2');
+    await carries('persistence_effects', "SELECT data::text AS t FROM persistence_effects WHERE source_id = $1 AND kind = 'git' AND data->>'slug' = $2");
+    return found;
+  }
+
+  /** Every row of the page and of the stores keyed to it, as stored, for a byte-for-byte comparison. */
+  async function parityRows(engine: BrainEngine, page: ParityPage): Promise<Record<string, string[]>> {
+    const [row] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id = $1 AND slug = $2', [page.sourceId, page.slug]);
+    const read = async (sql: string, params: unknown[]) => (await engine.executeRaw<{ r: string }>(sql, params)).map(x => x.r).sort();
+    const id = row?.id ?? -1;
+    return {
+      pages: await read('SELECT row_to_json(t)::text AS r FROM pages t WHERE id = $1', [id]),
+      facts: await read('SELECT row_to_json(t)::text AS r FROM facts t WHERE source_id = $1 AND source_markdown_slug = $2', [page.sourceId, page.slug]),
+      timeline_entries: await read('SELECT row_to_json(t)::text AS r FROM timeline_entries t WHERE page_id = $1', [id]),
+      page_versions: await read('SELECT row_to_json(t)::text AS r FROM page_versions t WHERE page_id = $1', [id]),
+      files: await read('SELECT row_to_json(t)::text AS r FROM files t WHERE source_id = $1 AND page_slug = $2', [page.sourceId, page.slug]),
+      core_edit_notices: await read('SELECT row_to_json(t)::text AS r FROM core_edit_notices t WHERE source_id = $1 AND slug = $2', [page.sourceId, page.slug]),
+      derived_generation_items: await read('SELECT row_to_json(i)::text AS r FROM derived_generation_items i JOIN derived_generations g ON g.id = i.generation_id WHERE g.source_id = $1 AND i.item_key = $2', [page.sourceId, page.slug]),
+      derived_generations: await read("SELECT row_to_json(g)::text AS r FROM derived_generations g WHERE g.source_id = $1 AND g.owner_key = 'page:' || $2", [page.sourceId, page.slug]),
+      // An effect's state and attempts move as background work runs after the restore; what a purge would change is its data.
+      persistence_effects: await read("SELECT json_build_object('id', id, 'kind', kind, 'data', data)::text AS r FROM persistence_effects t WHERE source_id = $1 AND data->>'slug' = $2", [page.sourceId, page.slug]),
+      // A settled request's claim bookkeeping (execution token, terminal reservation) is released after the restore opens; a purge changes neither.
+      persistence_requests: await read("SELECT (to_jsonb(t) - 'execution_token' - 'terminal_reservation' - 'claim_expires_at')::text AS r FROM persistence_requests t WHERE source_id = $1 AND slug = $2", [page.sourceId, page.slug]),
+    };
+  }
+
+  /** Seeds a purged and a kept page in \`sourceId\`, backs up, purges the first live, restores, and reports what each brain still holds. */
+  async function parityProbe(sourceId: string) {
+    const purged = { ...PURGED_REPLAY, sourceId }, kept = { ...KEPT_REPLAY, sourceId };
+    return collect<Record<string, unknown>>(resolve => withFileBeliefBrain(SOURCE, async fb => {
+      let keptBefore: Record<string, string[]> = {}, seeded: string[] = [], effects = 0;
+      await fb.open(async b => {
+        if (sourceId === REPOLESS) await b.engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1)', [REPOLESS]);
+        await seedParity(b, purged);
+        await seedParity(b, kept);
+        seeded = await parityStores(b.engine, purged);
+        effects = (await b.engine.executeRaw("SELECT 1 FROM persistence_effects WHERE source_id = $1 AND kind = 'git'", [sourceId])).length;
+        keptBefore = await parityRows(b.engine, kept);
+      });
+      let live: string[] = [];
+      const restored = await backupAndRestore(fb, () => fb.open(async b => {
+        const ctx = { ...b.ctx, sourceId };
+        const snapshot = await b.engine.readPageSnapshot(purged.slug, { sourceId, includeDeleted: true });
+        expect((await deleteOp.handler(ctx as never, { slug: purged.slug, source_id: sourceId, purge: true, expected_revision: snapshot!.revision, request_id: randomUUID() }) as { status: string }).status).toBe('purged');
+        live = await parityStores(b.engine, purged);
+      }));
+      const out = { seeded, effects: effects > 0, live, replayed: await parityStores(restored.restored.engine, purged),
+        keptChanged: await parityRows(restored.restored.engine, kept).then(after => Object.keys(after).filter(k => JSON.stringify(after[k]) !== JSON.stringify(keptBefore[k]))), keptCarries: await parityStores(restored.restored.engine, kept),
+        outcomes: restored.result.purge_replay.replays.map(x => [x.scope, x.outcome]) };
+      await restored.close();
+      resolve(out);
+    }));
+  }
+
+  test('#9469: a replayed page purge leaves no more of the page than the live purge (request intents and timeline receipts, files, slug stores, the generation ledger, Git effect reasons), and a page it did not purge is byte-for-byte intact', async () => {
+    expect(await parityProbe(SOURCE)).toEqual({ seeded: ['persistence_requests', 'files', 'core_edit_notices', 'derived_generation_items', 'persistence_effects'], effects: true,
+      live: [], replayed: [], keptChanged: [], keptCarries: ['persistence_requests', 'files', 'core_edit_notices', 'derived_generation_items', 'persistence_effects'], outcomes: [['page', 'complete']] });
+  }, 300_000);
+
+  test('#9469 (repo-less source): no Git effects exist; the change reason lives only in the request journal, and the replay redacts it there as the live purge does', async () => {
+    expect(await parityProbe(REPOLESS)).toEqual({ seeded: ['persistence_requests', 'files', 'core_edit_notices', 'derived_generation_items'], effects: false,
+      live: [], replayed: [], keptChanged: [], keptCarries: ['persistence_requests', 'files', 'core_edit_notices', 'derived_generation_items'], outcomes: [['page', 'complete']] });
+  }, 300_000);
+
+  test('#9469: a replay whose journal sweep cannot cover every request stops the restore and names the purge it did not replay', async () => {
+    const r = await collect<Record<string, unknown>>(resolve => withFileBeliefBrain(SOURCE, async fb => {
+      const purged = { ...PURGED_REPLAY, sourceId: SOURCE };
+      await fb.open(b => seedParity(b, purged));
+      let requestId = '';
+      __setPurgeReplayFaultForTests('incomplete_census');
+      try {
+        await backupAndRestore(fb, () => fb.open(async b => {
+          requestId = randomUUID();
+          const snapshot = await b.engine.readPageSnapshot(purged.slug, { sourceId: SOURCE, includeDeleted: true });
+          await deleteOp.handler(b.ctx, { slug: purged.slug, purge: true, expected_revision: snapshot!.revision, request_id: requestId });
+        }));
+        resolve({ threw: null });
+      } catch (error) {
+        resolve({ threw: (error as { code?: string }).code ?? String(error), names: String((error as Error).message).includes(requestId) });
+      }
+    }));
+    expect(r).toEqual({ threw: 'purge_replay_incomplete', names: true });
   }, 300_000);
 
   test('#33: a page-scope replay never deletes an unrelated page that held the slug in the archive', async () => {

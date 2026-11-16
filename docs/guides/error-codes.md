@@ -4150,6 +4150,16 @@ More: [docs/guides/write-refusals.md#purge_lookup_timeout](../../docs/guides/wri
 
 More: [docs/guides/write-refusals.md#purge_mirror_unwritable](../../docs/guides/write-refusals.md#purge_mirror_unwritable)
 
+### purge_replay_incomplete
+
+<a id="purge_replay_incomplete"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A restore stopped because the replay of a purge could not sweep every stored request that carries the purged page; that purge was not replayed and nothing was restored. | A replayed purge removes what the live purge removed, the request journal included; reporting a partial sweep as replayed would leave purged text in the restored brain. | Do not use the restored copy. Report the purge request named in the message with the output of gbrain doctor --json; restore again once it is fixed. | host_admin | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#purge_replay_incomplete](../../docs/guides/write-refusals.md#purge_replay_incomplete)
+
 ### purged_content
 
 <a id="purged_content"></a>

@@ -37,7 +37,7 @@ import { AbortError } from './abort-check.ts';
 import { contentDriftSweepLine, runContentDriftSweep, type ContentDriftSweepStatus } from './content-drift-sweep.ts';
 import { meterPageBatch, spendGrant } from './page-embedding-budget.ts';
 import { acquirePageEmbeddingLease, stillPendingChunks } from './page-embedding-lease.ts';
-import { chunkGenerationFilter, chunkVisibleFilter } from './search/safe-chunks.ts';
+import { chunkGenerationFilter, chunkVisibleFilter, currentTextProjectionFilter } from './search/safe-chunks.ts';
 import { embedSegmentedPage, embedSegmentedRows, readSegmentedEmbedPage, type SegmentedEmbedOpts } from './page-body/segmented-embedding.ts';
 
 /**
@@ -201,7 +201,7 @@ export async function stampIfPageProvenanceComplete(
       `SELECT count(*) > 0
               AND bool_and(${currentSpaceChunkPredicate(colId, 1, 4)}) AS complete
          FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-        WHERE p.slug = $2 AND p.source_id = $3 AND ${chunkVisibleFilter('p', 'cc')}
+        WHERE p.slug = $2 AND p.source_id = $3 AND ${chunkVisibleFilter('p', 'cc', currentTextProjectionFilter)}
           AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)`,
       [model, slug, sourceId, dims],
     );
