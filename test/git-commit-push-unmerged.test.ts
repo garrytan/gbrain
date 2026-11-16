@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { recordManagedRoots } from '../src/core/persistence/root-registry.ts';
 import { commitPathsLocked, readPendingWriteThrough } from '../src/core/git/commit-push.ts';
-import { assertNoUnmergedPaths } from '../src/core/git/skipped-paths.ts';
+import { assertNoUnmergedPaths, withoutUnmergedPaths } from '../src/core/git/skipped-paths.ts';
 import { CODES } from '../src/core/error-registry.ts';
 import { runCli } from './helpers/cli-spawn.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -106,6 +106,14 @@ test('an unmerged file in the pending ledger does not hold back the other pendin
   expect(git(f.brain, ['show', '--name-only', '--format=', 'HEAD']).split('\n').sort()).toEqual(['notes/b.md', 'notes/c.md']);
   expect(git(f.brain, ['ls-files', '-u', '--', path]).split('\n')).toHaveLength(3);
   expect(readPendingWriteThrough(f.brain).map(e => e.path)).toContain(path);
+}, 60_000);
+
+test('the sweep filter keeps the whole pending list when git cannot list conflicts, so the write-through falls back instead of failing', () => {
+  const f = fixture('sweep-unreadable-index', false);
+  const many = Array.from({ length: 1200 }, (_, i) => `notes/pending-${i}.md`);
+  expect(withoutUnmergedPaths(f.brain, ['people/alice-example.md', ...many])).toHaveLength(1201);
+  writeFileSync(join(f.brain, '.git', 'index'), 'not an index');
+  expect(withoutUnmergedPaths(f.brain, ['people/alice-example.md', 'notes/b.md'])).toEqual(['people/alice-example.md', 'notes/b.md']);
 }, 60_000);
 
 test('a failing unmerged-path check refuses instead of reading as no conflicts', () => {

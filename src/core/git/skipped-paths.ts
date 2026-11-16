@@ -186,10 +186,13 @@ export function unmergedPaths(root: string, rel: string[]): string[] {
   return [...new Set(gitOk(root, ['ls-files', '-u', '-z', '--', ...literalPathspecs(rel)], 'ls-files -u').split('\0').filter(Boolean).map(l => l.slice(l.indexOf('\t') + 1)))];
 }
 
-/** The named paths without those an unresolved merge conflict holds, so a pending-ledger sweep still commits the rest. */
+/**
+ * The named paths without those an unresolved merge conflict holds, so a pending-ledger sweep still commits the rest. Asks git in
+ * batches of 500 paths; a listing that fails leaves the list whole, so the commit's own check refuses it and the caller's fallback runs.
+ */
 export function withoutUnmergedPaths(root: string, rel: string[]): string[] {
-  if (!rel.length) return rel;
-  const unmerged = new Set(unmergedPaths(root, rel));
+  const unmerged = new Set<string>();
+  try { for (let i = 0; i < rel.length; i += 500) for (const p of unmergedPaths(root, rel.slice(i, i + 500))) unmerged.add(p); } catch { return rel; }
   return rel.filter(p => !unmerged.has(p));
 }
 
