@@ -1,7 +1,7 @@
 import type { Migration } from './types.ts';
 import { PAGE_PROJECTION_ACTIVATION_SQL, PAGE_PROJECTION_SCHEMA_SQL } from '../page-state/projection-schema.ts';
 import { ACTIVATION_SERVED_REVISION } from '../search/safe-chunks.ts';
-import { measuredRoundTripMs, textRebuildDuration } from '../page-state/rebuild-estimate.ts';
+import { drainConcurrency, measuredRoundTripMs, textRebuildDuration } from '../page-state/rebuild-estimate.ts';
 import { migrationNotice } from './helpers.ts';
 
 export const v153: Migration = {
@@ -15,8 +15,11 @@ export const v153: Migration = {
     const n = Number(row?.n ?? 0), served = Number(row?.served ?? 0);
     if (n === 0) return;
     const rtt = await measuredRoundTripMs(engine);
+    const width = drainConcurrency(engine);
+    const atOnce = width.default > 1 ? `, ${width.default} pages at once` : '';
+    const faster = width.max > width.default ? ` (about ${textRebuildDuration(n, rtt, width.max)} with gbrain projections drain --concurrency ${width.max})` : '';
     const waiting = n - served ? `; ${n - served} (images, pages indexed before the safe-chunk fence, and pages with a facts or takes fence, private-key text or a quarantine marker) stay out of search until rebuilt` : '';
     migrationNotice(`  [153] ${n} page(s) queued for a keyless search index rebuild (no embedding calls). Search keeps answering from the index ${served} of them already had${waiting}. ` +
-      `At the ${rtt} ms round trip measured to this database the rebuild takes about ${textRebuildDuration(n, rtt)}: gbrain projections drain. Progress: gbrain doctor --only text_projection_readiness\n`);
+      `At the ${rtt} ms round trip measured to this database the rebuild takes about ${textRebuildDuration(n, rtt, width.default)}${atOnce}, pages out of search first: gbrain projections drain${faster}. Progress: gbrain doctor --only text_projection_readiness\n`);
   },
 };
