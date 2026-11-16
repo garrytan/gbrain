@@ -30,6 +30,7 @@ export const NO_BEHAVIOR_CHANGE = /<!--\s*public-surface:\s*no-behavior-change:\
 const NOTICE_DAYS = 14;
 const SEE = 'See:  docs/STABILITY.md#what-stays-the-same-on-stable and deprecations.d/README.md';
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const RECORD_SURFACES: readonly string[] = [...SURFACES, 'page-format', 'json-field'];
 
 export interface Deprecation { id: string; surface: string; name: string; owner: string; remove_after: string }
 
@@ -89,7 +90,7 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
     const record = { id, surface: front.surface ?? '', name: front.name ?? '', owner: front.owner ?? '', remove_after: front.remove_after ?? '' };
     const bad = [
       !ID.test(id) && 'its file name is not an id (lowercase letters, digits and _, starting with a letter)',
-      !(SURFACES as readonly string[]).includes(record.surface) && `surface: must be one of ${SURFACES.join(', ')}`,
+      !RECORD_SURFACES.includes(record.surface) && `surface: must be one of ${RECORD_SURFACES.join(', ')}`,
       !record.name && 'name: is missing',
       !record.owner && 'owner: is missing',
       !DATE.test(record.remove_after) && 'remove_after: must be a date (YYYY-MM-DD)',

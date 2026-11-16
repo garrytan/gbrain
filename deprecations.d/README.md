@@ -28,7 +28,9 @@ key, a page-format rule, an exit code or a top-level `--json` field.
    `surface` is one of `cli-command`, `cli-flag`, `mcp-tool`, `mcp-param`,
    `config-key`, `page-format`, `exit-code` or `json-field`.
    `remove_after` is at least 14 days after the stable release that first
-   carries the announcement.
+   carries the announcement. `bun run check:public-surface` refuses a new
+   record whose date is less than 14 days after the day it is added; the
+   stable-release part is checked in review.
 3. Announce it in the same pull request: add a behaviour-change row with the
    same id (`behavior-changes.d/<id>.md`, see its README) so the upgrade
    notice carries it, and say it in your changelog fragment
@@ -40,10 +42,16 @@ The removal is a separate pull request, made after `remove_after` and once
 the announcement has been in at least two stable releases. It deletes the old
 name and the warning, keeps this file (the history of what was removed and
 when) and adds a second behaviour-change row, with an id of its own, saying the
-old name is gone.
+old name is gone. That row's front matter is `kind: breaking` and
+`deprecation: <id>`, naming this record. Until `remove_after` has passed, the
+check refuses a pull request that drops a command, flag, MCP tool or
+parameter, config key or exit code this record names. A page-format rule or
+`--json` field is not on the check's list, so its removal is checked in
+review.
 
 ## Security and data-loss fixes
 
 A fix for a security hole or for something that loses data may change
-behaviour at once, with no record here. Its behaviour-change row says which
-of the two it is and what users need to do.
+behaviour at once, with no record here. Its behaviour-change row has
+`kind: breaking` and `exception: security` or `exception: data-loss`, and
+says what users need to do.

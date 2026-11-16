@@ -166,6 +166,9 @@ reader of the log should see.
 - One `behavior-changes.d/<id>.md` file per new upgrade-notice row, named
   in the fragment as `<!-- behavior-change: <id> -->`
   ([behavior-changes.d/README.md](../behavior-changes.d/README.md)).
+- A `deprecations.d/<id>.md` record before removing or renaming anything
+  stable promises to keep
+  ([deprecations.d/README.md](../deprecations.d/README.md)).
 - Its own schema migrations, numbered master's latest + 1 when written.
 - Nothing else that carries a version: no edit to VERSION, the package.json
   version, the plugin manifests, the BOOTSTRAP stamp, the plugin or template

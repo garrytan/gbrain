@@ -105,9 +105,15 @@ describe('deprecation records', () => {
   test('a record with a bad surface, no owner or no date is refused', () => {
     const r = run(repo({}, { 'deprecations.d/bad_record_1234.md': '---\nsurface: cli-thing\nname: gbrain x\n---\nText.\n' }));
     expect(r.code).toBe(1);
-    expect(r.out).toContain('surface: must be one of cli-command, cli-flag, mcp-tool, mcp-param, config-key, exit-code');
+    expect(r.out).toContain('surface: must be one of cli-command, cli-flag, mcp-tool, mcp-param, config-key, exit-code, page-format, json-field');
     expect(r.out).toContain('owner: is missing');
     expect(r.out).toContain('remove_after: must be a date (YYYY-MM-DD)');
+  });
+
+  test('a page-format or --json field record is accepted though the list does not hold those surfaces', () => {
+    for (const surface of ['page-format', 'json-field']) {
+      expect(run(repo({}, { 'deprecations.d/old_field_1234.md': record(surface, 'gbrain stats --json .old_field', '2026-11-30') })).code).toBe(0);
+    }
   });
 });
 
