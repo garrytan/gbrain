@@ -29,6 +29,7 @@ import { propagateFactLowering } from '../trust/propagation.ts';
 import { loadWriteGateConfig } from '../trust/gate-outcomes.ts';
 import { fenceOwnerKey, readFenceBlocks, TAKE_FENCE_KIND } from '../generations/fence.ts';
 import { projectFactFenceGeneration } from '../generations/adapters/fact-rows.ts';
+import { openedFactRowSql } from './context.ts';
 import { fenceRowKeys, moveKeptRows, pageFenceRowKeys } from '../generations/fence-evidence.ts';
 import { projectTakeFenceGeneration } from '../generations/adapters/take-rows.ts';
 import { linksFenceProjectionRows, projectLinksFence } from '../links-fence-projection.ts';
@@ -737,14 +738,16 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     // Conversation-extractor rows share the page coordinate without a fence
     // (#1928, as in the extract_facts reconcile); their replay owns them. A
     // fence row that takes one of their row numbers wins that position.
-    // #8819: only the rows the fact generation found a fence held (`retireIds`) expire.
+    // #8819: only the rows the fact generation found a fence held (`retireIds`) expire. #8194: never a row `gbrain repair
+    // open-facts` opens in place (context.ts openedFactRowSql); fence-guard moves it to world with its id.
     const incoming = JSON.stringify(factRows.map(f => ({ row_num: f.row_num, fact: f.fact, visibility: f.visibility })));
     const expireFacts = (ids: number[]) => () => tx.executeRaw(`UPDATE facts f SET expired_at=COALESCE(expired_at,now()),row_num=NULL
       WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num IS NOT NULL AND f.id=ANY($4::bigint[])
       AND (COALESCE(f.source,'') NOT LIKE 'cli:extract-conversation-facts%'
         OR EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS c(row_num integer) WHERE c.row_num=f.row_num))
       AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS n(row_num integer,fact text,visibility text)
-        WHERE n.row_num=f.row_num AND n.fact=f.fact AND n.visibility=f.visibility)`, [sourceId, slug, incoming, ids]);
+        WHERE n.row_num=f.row_num AND n.fact=f.fact AND n.visibility=f.visibility)
+      AND NOT ${openedFactRowSql('f', '$3')}`, [sourceId, slug, incoming, ids]);
     // #6574: every fence row's fields refresh in one statement, not one round trip per row.
     const fieldRows = JSON.stringify([...new Map(factRows.map(fact => [fact.row_num, fact])).values()].map(fact => ({ row_num: fact.row_num, kind: fact.kind, notability: fact.notability,
       context: fact.context, valid_from: fact.valid_from?.toISOString() ?? null, valid_until: fact.valid_until?.toISOString() ?? null,

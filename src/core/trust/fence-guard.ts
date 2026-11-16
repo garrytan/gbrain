@@ -18,6 +18,11 @@
  *   row's visibility and its proposal carries the widening, which only the
  *   owner's accept applies (GST-2511); until then later writes of the same
  *   fence keep that contested row narrower.
+ * - Operator open (#8194): only inside `gbrain repair open-facts`
+ *   (persistence/context.ts withOpenFacts), a named private row whose cell is
+ *   now world at the same row number and claim is guarded at any tier and
+ *   moves back in place as world, keeping its id and tier. Every other
+ *   widening keeps the rules above.
  * - Row gate (ENG-1): every new fence row is gated like other fact writers at
  *   the writer's tier; a held row is not inserted (the hold keeps it), a
  *   flagged row records its receipt after insert.
@@ -28,7 +33,7 @@
  *   (trust/held-removals.ts).
  */
 import type { BrainEngine, NewFact } from '../engine.ts';
-import { currentWriteTrust } from '../persistence/context.ts';
+import { currentWriteTrust, openedFactRowSql } from '../persistence/context.ts';
 import type { WriteGateConfig } from '../write-gate.ts';
 import { decideFactWrite, recordFlaggedRow, recordWriteGateHold, type GatedRowDecision } from '../write-gate-store.ts';
 import { gateInput } from './gate-outcomes.ts';
@@ -62,14 +67,17 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
       AND ${trustRankSql("tp.before_state->'old'->>'tier'")} > ${WRITER_RANK})
     AND EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS w(row_num integer, fact text, visibility text)
       WHERE w.row_num = f.row_num AND w.fact = f.fact AND w.visibility = 'world')`;
-  const guarded = (await tx.executeRaw<{ id: number; row_num: number; fact: string; visibility: string; trust_tier: string; above: boolean }>(
-    `SELECT f.id, f.row_num, f.fact, f.visibility, f.trust_tier, ${trustRankSql('f.trust_tier')} > ${WRITER_RANK} AS above FROM facts f
+  // #8194: a row `gbrain repair open-facts` opens (withOpenFacts: only private to world, same row number and claim) is guarded at
+  // any tier, so it is detached before the expiry and moves back in place as world, keeping its id and tier.
+  const opened = openedFactRowSql('f', '$3');
+  const guarded = (await tx.executeRaw<{ id: number; row_num: number; fact: string; visibility: string; trust_tier: string; above: boolean; opened: boolean }>(
+    `SELECT f.id, f.row_num, f.fact, f.visibility, f.trust_tier, ${trustRankSql('f.trust_tier')} > ${WRITER_RANK} AS above, ${opened} AS opened FROM facts f
       WHERE f.source_id = $1 AND f.source_markdown_slug = $2 AND f.row_num IS NOT NULL AND f.expired_at IS NULL
         AND (COALESCE(f.source, '') NOT LIKE 'cli:extract-conversation-facts%'
           OR EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS c(row_num integer) WHERE c.row_num = f.row_num))
         AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS n(row_num integer, fact text, visibility text)
           WHERE n.row_num = f.row_num AND n.fact = f.fact AND n.visibility = f.visibility)
-        AND (${trustRankSql('f.trust_tier')} > ${WRITER_RANK} OR (${held}))
+        AND (${trustRankSql('f.trust_tier')} > ${WRITER_RANK} OR (${held}) OR ${opened})
       ORDER BY f.row_num FOR UPDATE`, [sourceId, slug, incoming])).filter(row => !input.kept?.includes(Number(row.id)));
   if (guarded.length) await tx.executeRaw('UPDATE facts SET row_num = NULL WHERE id = ANY($1::bigint[])', [guarded.map(g => Number(g.id))]);
   await expire();
@@ -83,6 +91,13 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
   const moves: Array<{ id: number; row_num: number; visibility: string }> = [];
   for (const g of guarded) {
     const free = rows.filter(r => r.fact === g.fact && !occupied.has(r.row_num));
+    const reopened = g.opened ? free.find(r => r.row_num === Number(g.row_num) && r.visibility === 'world') : undefined;
+    if (reopened) {
+      moves.push({ id: Number(g.id), row_num: reopened.row_num, visibility: 'world' });
+      occupied.add(reopened.row_num);
+      rows = rows.filter(r => r !== reopened);
+      continue;
+    }
     if (!g.above) {
       const target = free.find(r => r.row_num === Number(g.row_num));
       if (!target) continue;
