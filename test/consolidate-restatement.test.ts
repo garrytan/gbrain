@@ -21,15 +21,17 @@ import { newSource, page, putPage } from './helpers/pinned-questions-fixture.ts'
 const SLUG = 'people/alice-example';
 const OSLO = 'Alice Example lives in Oslo.';
 const BERGEN = 'Alice Example lives in Bergen.';
+const MRR = 'Alice Example reports monthly recurring revenue.';
 
-async function seedFacts(engine: BrainEngine, sourceId: string, statements: Array<[string, string]>): Promise<void> {
+async function seedFacts(engine: BrainEngine, sourceId: string, statements: Array<[string, string, number?]>): Promise<void> {
   const [{ t }] = await engine.executeRaw<{ t: string }>("SELECT format_type(atttypid, atttypmod) AS t FROM pg_attribute WHERE attrelid = 'facts'::regclass AND attname = 'embedding'");
   const dim = Number(t.match(/\((\d+)\)/)![1]);
   const vec = '[' + Array.from({ length: dim }, (_, k) => (k % 7 === 0 ? 0.3 : 0.01)).join(',') + ']';
-  for (const [text, day] of statements) {
-    await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, source, visibility, confidence, valid_from, embedding, embedded_at, embedding_model, embedded_text_hash)
-      VALUES ($1, $2, $3, 'event', 'cli:extract-conversation-facts:v1', 'world', 1, $4::timestamptz, $5::vector, now(), 'openai:text-embedding-3-large', md5($3))`,
-      [sourceId, SLUG, text, `${day}T00:00:00Z`, vec]);
+  for (const [text, day, value] of statements) {
+    await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, source, visibility, confidence, valid_from, embedding, embedded_at, embedding_model, embedded_text_hash,
+        claim_metric, claim_value, claim_unit, claim_period)
+      VALUES ($1, $2, $3, 'event', 'cli:extract-conversation-facts:v1', 'world', 1, $4::timestamptz, $5::vector, now(), 'openai:text-embedding-3-large', md5($3), $6, $7, $8, $9)`,
+      [sourceId, SLUG, text, `${day}T00:00:00Z`, vec, value === undefined ? null : 'mrr', value ?? null, value === undefined ? null : 'USD', value === undefined ? null : 'monthly']);
   }
 }
 const chain = async (engine: BrainEngine, sourceId: string) => (await engine.executeRaw<{ fact: string; vf: string; vu: string | null; consolidated: boolean }>(
@@ -38,7 +40,7 @@ const chain = async (engine: BrainEngine, sourceId: string) => (await engine.exe
 
 for (const backend of testBackends()) describe(`[${backend}] consolidate keeps restated facts open`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
-  const unmanaged = async (statements: Array<[string, string]>) => {
+  const unmanaged = async (statements: Array<[string, string, number?]>) => {
     const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
     try {
       const sourceId = await newSource(engine);
@@ -64,6 +66,28 @@ for (const backend of testBackends()) describe(`[${backend}] consolidate keeps r
       { fact: BERGEN, vf: '2025-09-01', vu: null, consolidated: true },
     ]);
   }, 300_000);
+
+  test('a typed value that changed under the same claim text is not a restatement: the older value ends', async () => {
+    expect(await unmanaged([[MRR, '2025-03-01', 50000], [MRR, '2025-06-01', 50000], [MRR, '2025-09-01', 75000]])).toEqual([
+      { fact: MRR, vf: '2025-03-01', vu: '2025-09-01', consolidated: true },
+      { fact: MRR, vf: '2025-06-01', vu: '2025-09-01', consolidated: true },
+      { fact: MRR, vf: '2025-09-01', vu: null, consolidated: true },
+    ]);
+  }, 300_000);
+
+  test('managed: a typed value that changed under the same claim text ends the older value', () => managedBrain(async ({ engine, ctx }) => {
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug: SLUG, request_id: randomUUID(), content: page('person', 'Alice Example', 'Alice Example is a designer.') } });
+    await settleManagedGitEffects(engine);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    try { await seedFacts(engine, 'default', [[MRR, '2025-03-01', 50000], [MRR, '2025-06-01', 50000], [MRR, '2025-09-01', 75000]]); }
+    finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1'); }
+    await runPhaseConsolidate(engine, { sourceId: 'default' });
+    expect(await chain(engine, 'default')).toEqual([
+      { fact: MRR, vf: '2025-03-01', vu: '2025-09-01', consolidated: true },
+      { fact: MRR, vf: '2025-06-01', vu: '2025-09-01', consolidated: true },
+      { fact: MRR, vf: '2025-09-01', vu: null, consolidated: true },
+    ]);
+  }, { databaseUrl }), 300_000);
 
   test('managed: the publication closes restated database rows the same way', () => managedBrain(async ({ engine, ctx }) => {
     await submitPageMutation(ctx, { operation: 'put_page', params: { slug: SLUG, request_id: randomUUID(), content: page('person', 'Alice Example', 'Alice Example is a designer.') } });

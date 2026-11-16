@@ -378,13 +378,15 @@ export interface FactSnapshot { id: number; value: Record<string, unknown>; }
 
 /**
  * Which members of a chronological consolidation cluster end, and at which later member's valid_from: the first one
- * that says something else. A restatement (the same claim said again later) is the value still holding, so it never
- * ends the member before it, and a member with no differing successor stays open.
+ * that says something else. A restatement (the same claim text and typed value said again later) is the value still
+ * holding, so it never ends the member before it, and a member with no differing successor stays open. A cluster's typed
+ * members already share metric, unit and period, so the value is the typed part that can differ under the same text.
  */
-export function consolidationCloses<T>(chronological: readonly T[], claim: (member: T) => string): Array<{ member: T; next: T }> {
+export function consolidationCloses<T>(chronological: readonly T[], claim: (member: T) => { text: string; value: unknown }): Array<{ member: T; next: T }> {
+  const key = (member: T) => { const { text, value } = claim(member); return JSON.stringify([normalizeClaimWhitespace(text), value == null ? null : Number(value)]); };
   return chronological.flatMap((member, i) => {
-    const own = normalizeClaimWhitespace(claim(member));
-    const next = chronological.slice(i + 1).find(later => normalizeClaimWhitespace(claim(later)) !== own);
+    const own = key(member);
+    const next = chronological.slice(i + 1).find(later => key(later) !== own);
     return next ? [{ member, next }] : [];
   });
 }
@@ -761,7 +763,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   // take on this page, and its row derives from that cell; an unfenced fact has no fence row and is closed in the database.
   // A fenced fact whose fence is on another page stays open: this publication does not write that file.
   const chronological = [...facts].sort((a, b) => Date.parse(String(a.value.valid_from)) - Date.parse(String(b.value.valid_from)) || a.id - b.id);
-  const closes = consolidationCloses(chronological, f => String(f.value.fact)).map(({ member, next }) => ({ fact: member, until: String(next.value.valid_from) }));
+  const closes = consolidationCloses(chronological, f => ({ text: String(f.value.fact), value: f.value.claim_value })).map(({ member, next }) => ({ fact: member, until: String(next.value.valid_from) }));
   const fenceCloses = new Map(closes.filter(c => c.fact.value.row_num !== null && c.fact.value.source_markdown_slug === row.slug)
     .map(c => [Number(c.fact.value.row_num), c]));
   const databaseCloses = closes.filter(c => c.fact.value.row_num === null);
