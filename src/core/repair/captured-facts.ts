@@ -50,7 +50,7 @@ import type { WriteRequest } from '../persistence/model.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { claudeCliSelfSessions } from '../ai/providers/claude-cli-scratch.ts';
-import { claudeProjectsDir } from '../bootstrap/host-specs.ts';
+import { claudeProjectsDir, codexArchivedSessionsDir, codexSessionsDir } from '../bootstrap/host-specs.ts';
 import { corpusFileSessionId, corpusTextForExtraction } from '../context/corpus-segments.ts';
 import { pruneDir } from '../sync.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
@@ -142,6 +142,22 @@ function harnessSessionIds(projectsRoot: string): Set<string> {
   return ids;
 }
 
+/** Session ids of Codex rollouts (`rollout-<timestamp>-<uuid>.jsonl`) in the live (nested by date) and archived (flat) stores. */
+function codexSessionIds(roots: string[]): Set<string> {
+  const ids = new Set<string>();
+  const walk = (dir: string, depth: number) => {
+    let entries: import('node:fs').Dirent[];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (entry.isDirectory()) { if (depth < 4) walk(join(dir, entry.name), depth + 1); continue; }
+      const m = /^rollout-.*?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(entry.name);
+      if (m) ids.add(m[1]!);
+    }
+  };
+  for (const root of roots) walk(root, 0);
+  return ids;
+}
+
 /** The capture session a fact row came from (`sweep:corpus:<file>` names the corpus file). */
 export function captureSessionId(sourceSession: string | null): string | null {
   if (!sourceSession) return null;
@@ -168,7 +184,7 @@ export async function classifyCapturedFacts(db: BrainEngine, sourceIds: string[]
   if (!rows.length) return { candidates: [], unclassifiable: 0, not_suspect: 0, unreadable_corpus_files: [] };
   const projectsRoot = opts.projectsRoot ?? claudeProjectsDir();
   const selfSessions = claudeCliSelfSessions(projectsRoot);
-  const known = harnessSessionIds(projectsRoot);
+  const known = new Set([...harnessSessionIds(projectsRoot), ...codexSessionIds([codexSessionsDir(), codexArchivedSessionsDir()])]);
   const corpusDir = opts.corpusDir === undefined ? await db.getConfig(CORPUS_KEY) : opts.corpusDir;
   const unreadable: string[] = [];
   const corpus = sessionFiles(corpusDir, unreadable);
