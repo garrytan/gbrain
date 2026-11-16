@@ -20,6 +20,7 @@ import { describeMigrationFailure } from '../src/commands/upgrade.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { getDbUrlSource } from '../src/core/config.ts';
 import { VERSION } from '../src/version.ts';
+import { SHARED_SKILLS_HOST_WORK_VERSION } from '../src/core/shared-skills/migration-host-work.ts';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 const OWED = '0.53.0';
@@ -27,6 +28,10 @@ const INSPECT = ['gbrain', 'apply-migrations', '--migration', OWED, '--dry-run',
 const RETRY = ['gbrain', 'apply-migrations', '--force-retry', OWED];
 const owedRow = (n: number) => ({ ts: `2026-10-0${n}T00:00:00.000Z`, version: OWED, status: 'partial', apply_migrations_pending: true,
   phases: [{ name: 'content-checkpoints', status: 'complete', detail: 'Mechanical inventory is durable; publication and enrollment are NOT complete.' }] });
+/** v0.11.0 records apply_migrations_pending on every partial run that left host TODOs: an ordinary wedge, never a source conflict. */
+const LEGACY = '0.11.0';
+const legacyRow = (n: number) => ({ ts: `2026-10-0${n}T00:00:00.000Z`, version: LEGACY, status: 'partial', apply_migrations_pending: true,
+  phases: [{ name: 'record', status: 'complete', detail: 'status=partial (ledger write in runner)' }] });
 let home: string;
 let base: string[];
 let engine: PGLiteEngine;
@@ -139,6 +144,17 @@ describe('apply-migrations with a wedged migration that still owes host work', (
     expect(ledger()).toBe(before);
   }, 120_000);
 
+  test('a superseded wedge of another migration that recorded host TODOs stays history, never owed host work', async () => {
+    writeFileSync(ledgerPath(), [...base.filter(line => JSON.parse(line).version !== LEGACY), JSON.stringify({ version: '0.60.31', status: 'complete' }),
+      ...[1, 2, 3].map(n => JSON.stringify(legacyRow(n)))].join('\n') + '\n');
+    const list = await cli(['apply-migrations', '--list', '--json']);
+    expect(list.exitCode).toBe(0);
+    const doc = JSON.parse(list.stdout);
+    expect(doc.plan.wedged_superseded).toEqual([LEGACY]);
+    expect(doc.plan.wedged_host_work).toEqual([]);
+    expect(doc.wedged_host_work).toBeUndefined();
+  }, 120_000);
+
   test('post-upgrade leaves it untouched and keeps its exit status', async () => {
     owe(true);
     const before = ledger();
@@ -152,16 +168,16 @@ describe('apply-migrations with a wedged migration that still owes host work', (
 });
 
 describe('the other surfaces say the same thing', () => {
-  function ledgerHome(superseded: boolean): string {
+  function ledgerHome(superseded: boolean, wedge: object[] = [1, 2, 3].map(owedRow)): string {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-host-work-owed-ledger-'));
     mkdirSync(join(dir, '.gbrain', 'migrations'), { recursive: true });
     writeFileSync(join(dir, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite' }));
-    const rows = [...[1, 2, 3].map(owedRow), { version: '0.60.31', status: 'complete', ...(superseded ? {} : { fresh_install: true }) }];
+    const rows = [...wedge, { version: '0.60.31', status: 'complete', ...(superseded ? {} : { fresh_install: true }) }];
     writeFileSync(join(dir, '.gbrain', 'migrations', 'completed.jsonl'), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
     return dir;
   }
-  const scoped = <T>(superseded: boolean, fn: () => Promise<T>) => {
-    const dir = ledgerHome(superseded);
+  const scoped = <T>(superseded: boolean, fn: () => Promise<T>, wedge?: object[]) => {
+    const dir = ledgerHome(superseded, wedge);
     return withEnv({ HOME: dir, GBRAIN_HOME: dir, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, fn)
       .finally(() => rmSync(dir, { recursive: true, force: true }));
   };
@@ -191,6 +207,19 @@ describe('the other surfaces say the same thing', () => {
     const row = rows.find(c => (c.details as any)?.code === 'migration_host_work_owed');
     expect(row?.status).toBe('warn');
     expect(row!.message).toContain(INSPECT.join(' '));
+  }, 120_000);
+
+  test('a superseded wedge of another migration that recorded host TODOs is not reported as owed host work', async () => {
+    expect(SHARED_SKILLS_HOST_WORK_VERSION).toBe(OWED);
+    const legacy = [1, 2, 3].map(legacyRow);
+    const rows = await scoped(true, async () => (await buildChecks(null, ['--fast', '--json'], getDbUrlSource())).filter(c => c.name === 'minions_migration'), legacy);
+    expect(rows.some(c => (c.details as any)?.code === 'migration_host_work_owed')).toBe(false);
+    const remote = await scoped(true, async () => (await doctorReportRemote(engine, { remote: true })).checks.filter(c => c.name === 'minions_migration'), legacy);
+    expect(remote.some(c => (c.details as any)?.code === 'migration_host_work_owed')).toBe(false);
+    const notice = await scoped(true, () => pendingUpgradeMigrationsNotice({ getConfig: async () => null } as never, 'serve', VERSION), legacy);
+    expect(notice?.why ?? '').not.toContain('does not clear without a person');
+    const line = await scoped(true, () => describeMigrationFailure(new Error('exit 1'), VERSION), legacy);
+    expect(line).not.toContain(`--migration ${LEGACY}`);
   }, 120_000);
 
   test('upgrade\'s failure line names the inspect step, never a forced retry first', async () => {

@@ -136,13 +136,17 @@ export function hostWorkInspectArgv(version: string): string[] {
   return ['gbrain', 'apply-migrations', '--migration', version, '--dry-run', '--json'];
 }
 
+/** The one migration whose wedge can owe host work: v0.53.0, `SHARED_SKILLS_HOST_WORK_VERSION` (not imported: its module pulls in the shared-skills graph). */
+const HOST_WORK_OWED_VERSION = '0.53.0';
+
 /**
- * A wedged version whose latest row records `apply_migrations_pending`: it stopped on host work a person has to settle (for
- * v0.53.0, a conflict in one or more sources), and that work is still owed. A newer migration never supersedes it, and
- * apply-migrations never runs it again by itself, so it stays until a person resolves the conflict and clears the wedge.
+ * v0.53.0 wedged with its latest row recording `apply_migrations_pending`: it stopped on a conflict in one or more sources
+ * that a person has to settle, and that work is still owed. A newer migration never supersedes it, and apply-migrations
+ * never runs it again by itself, so it stays until a person resolves the conflict and clears the wedge. Other migrations
+ * (v0.11.0, v0.14.0) set the same flag on ordinary partial runs, so their wedges keep the forward-progress rule.
  */
 export function hostWorkOwedForVersion(version: string, byVersion: Map<string, CompletedMigrationEntry[]>): boolean {
-  return statusForVersion(version, byVersion) === 'wedged' && byVersion.get(version)?.at(-1)?.apply_migrations_pending === true;
+  return version === HOST_WORK_OWED_VERSION && statusForVersion(version, byVersion) === 'wedged' && byVersion.get(version)?.at(-1)?.apply_migrations_pending === true;
 }
 
 function forceRetryArgv(version: string): string[] { return ['gbrain', 'apply-migrations', '--force-retry', version]; }
