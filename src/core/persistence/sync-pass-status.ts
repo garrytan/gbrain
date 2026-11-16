@@ -70,8 +70,8 @@ export async function passConvergence(engine: Pick<BrainEngine, 'executeRaw'>, i
     duration_ms: t.duration_ms, timings_ms: t.timings_ms, last_full_at: o.converged?.last_full_at ?? null };
 }
 
-/** GST-2843: how many of a pass's rewritten holds `passBanked` reads to find one that settled its re-screen. */
-const RESCREEN_SAMPLE = 50;
+/** GST-2843: how many of a pass's rewritten holds `passBanked` reads per page while it looks for one that settled its re-screen. */
+const RESCREEN_PAGE = 500;
 
 /**
  * GBRA-542: whether a pass committed work: a sync write it admitted committed, or it held a path it had not held before. Read
@@ -87,13 +87,17 @@ export async function passBanked(engine: Pick<BrainEngine, 'executeRaw'>, source
     OR EXISTS (SELECT 1 FROM op_checkpoints WHERE op=$3 AND left(fingerprint, length($4))=$4 AND completed_keys->0->>'run_id'=$2 AND (completed_keys->0->>'held_at')::timestamptz >= $5::timestamptz) AS banked`,
     [sourceId, telemetry.pass_id, GIT_HOLD_OP, `${sourceId}:${incarnation}:`, telemetry.started_at, incarnation]);
   if (row?.banked === true) return true;
-  const rewritten = await engine.executeRaw<{ record: GitHoldRecord; revision: string | null }>(`SELECT h.completed_keys->0 AS record, p.knowledge_revision::text AS revision
-    FROM op_checkpoints h LEFT JOIN pages p ON p.source_id=$1 AND p.id=(h.completed_keys->0->>'page_id')::bigint
-    WHERE h.op=$2 AND left(h.fingerprint, length($3))=$3 AND h.completed_keys->0->>'run_id'=$4 AND (h.completed_keys->0->>'updated_at')::timestamptz >= $5::timestamptz
-      AND NOT (h.completed_keys->0->>'code' = ANY($6::text[])) LIMIT $7`,
-  [sourceId, GIT_HOLD_OP, `${sourceId}:${incarnation}:`, telemetry.pass_id, telemetry.started_at, [...EVERY_PASS_RESCREEN_CODES], RESCREEN_SAMPLE]);
-  return rewritten.some(({ record, revision }) => !holdRescreenDue(record, false)
-    && (record.code !== 'file_drift' || record.page_id == null || (record.meta.page_revision ?? null) === revision));
+  for (let after = ''; ;) {
+    const rewritten = await engine.executeRaw<{ fingerprint: string; record: GitHoldRecord; revision: string | null }>(`SELECT h.fingerprint, h.completed_keys->0 AS record, p.knowledge_revision::text AS revision
+      FROM op_checkpoints h LEFT JOIN pages p ON p.source_id=$1 AND p.id=(h.completed_keys->0->>'page_id')::bigint
+      WHERE h.op=$2 AND left(h.fingerprint, length($3))=$3 AND h.completed_keys->0->>'run_id'=$4 AND (h.completed_keys->0->>'updated_at')::timestamptz >= $5::timestamptz
+        AND NOT (h.completed_keys->0->>'code' = ANY($6::text[])) AND h.fingerprint > $7 ORDER BY h.fingerprint LIMIT $8`,
+    [sourceId, GIT_HOLD_OP, `${sourceId}:${incarnation}:`, telemetry.pass_id, telemetry.started_at, [...EVERY_PASS_RESCREEN_CODES], after, RESCREEN_PAGE]);
+    if (rewritten.some(({ record, revision }) => !holdRescreenDue(record, false)
+      && (record.code !== 'file_drift' || record.page_id == null || (record.meta.page_revision ?? null) === revision))) return true;
+    if (rewritten.length < RESCREEN_PAGE) return false;
+    after = rewritten.at(-1)!.fingerprint;
+  }
 }
 
 export type PassStatusReason = 'pass_unfinished' | 'pass_interrupted' | 'pass_abandoned' | 'not_converged' | 'settle_mismatch' | 'deletes_withheld' | 'selection_scoped' | 'admission_paused' | 'writeback_failed';

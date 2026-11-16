@@ -22,6 +22,7 @@ import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { FILE_DRIFT_VERSION, writeGitHold } from '../src/core/persistence/sync-holds.ts';
 import { readPassRow } from '../src/core/persistence/sync-pass-row.ts';
+import { passBanked } from '../src/core/persistence/sync-pass-status.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
 import { gitHoldStatusJson, readGitHoldStatuses } from '../src/core/persistence/connector-status.ts';
@@ -225,4 +226,20 @@ describe.each(testBackends())('GST-2843: counts past a window or a listing limit
     expect(json.by_code).toEqual([expect.objectContaining({ code: 'file_drift', count: 230 })]);
     expect(json.by_code_complete).toBeUndefined();
   }, { databaseUrl, setup: notes(230) }), 900_000);
+});
+
+describe.each(testBackends())('GST-2843: a pass that settled one re-check among many still-due ones (%s)', backend => {
+  const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
+  test('the settled re-check counts as progress even behind more than 50 rewritten holds that stay due', () => managedBrain(async ({ engine }) => {
+    const inc = await incarnation(engine);
+    const before = '2026-01-01T00:00:00.000Z', started = '2026-01-02T00:00:00.000Z', during = '2026-01-02T00:05:00.000Z';
+    const hold = (path: string, code: string, meta: Record<string, unknown>) => [`default:${inc}:${path}`, JSON.stringify([{ version: 1, source_id: 'default', incarnation: inc, path,
+      source_path: path, slug: null, page_id: null, code, message: 'synthetic', upstream_version: null, observed_at: during, held_at: before, updated_at: during,
+      run_id: 'pass-1', mode: 'managed', meta: { recovery_version: RECOVERY_VERSION, ...meta } }])];
+    // Rewritten by the pass and still due (a transient hold below its attempt cap), then one hold whose re-screen settled.
+    const rows = [...Array.from({ length: 520 }, (_, i) => hold(`a/n${String(i).padStart(3, '0')}.md`, 'preparation_stalled', { attempts: 1 })), hold('z/settled.md', 'invalid_frontmatter', {})];
+    await coordinated(engine, "INSERT INTO op_checkpoints(op,fingerprint,completed_keys) SELECT 'sync-hold', f, k::jsonb FROM unnest($1::text[], $2::text[]) AS t(f, k)",
+      [rows.map(([fingerprint]) => fingerprint), rows.map(([, keys]) => keys)]);
+    expect(await passBanked(engine, 'default', inc, { pass_id: 'pass-1', started_at: started })).toBe(true);
+  }, { databaseUrl }), 120_000);
 });
