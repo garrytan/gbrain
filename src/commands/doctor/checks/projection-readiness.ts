@@ -101,7 +101,8 @@ export async function checkProjectionReadiness(engine: BrainEngine, scope: PageR
   const heldText = held.length ? `${held.length} page(s) holding a private key failed their credential-safe re-chunk and stay withheld from search${opts.remote ? '' : ` (${held.slice(0, 3)
     .map(hold => `${hold.source_id}:${hold.slug} ${hold.code}`).join(', ')}${held.length > 3 ? ', ...' : ''})`}; retry them with ${[...new Set(held.map(hold => `\`${hold.fix.argv!.join(' ')}\``))].join(', ')}.` : '';
   const text = backlog.pending || (work === 0 && readiness.status === 'projection_pending')
-    ? `Visible pages have missing or stale text projections${backlog.pending ? ` (${backlog.pending} queued Markdown/code page(s)${backlog.failed ? `, ${backlog.failed} last failed` : ''})` : ''}; search and code results may be incomplete. ${opts.resident
+    ? `Visible pages have missing or stale text projections${backlog.pending ? ` (${backlog.pending} queued Markdown/code page(s)${backlog.failed ? `, ${backlog.failed} last failed` : ''})` : ''}; ${readiness.status === 'projection_pending'
+      ? 'search and code results may be incomplete.' : 'search keeps answering from the index these pages had before the upgrade until each is rebuilt.'} ${opts.resident
       ? 'The resident gbrain process that holds this PGLite brain is rebuilding queued Markdown and code projections (up to 100 pages per pass, fewer while writes wait). On the brain host, `gbrain doctor --only text_projection_readiness --json` shows the counts and how to drain faster.'
       : 'Run `gbrain projections drain` to rebuild queued Markdown and code projections now; it is safe while `gbrain serve` runs on Postgres.'}${segmentedNote} ${CODE_REPAIR}`
     : '';

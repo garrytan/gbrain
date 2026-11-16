@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope } from '../types.ts';
 import { projectionClassSql } from '../page-state/projection-class.ts';
+import { ACTIVATION_SERVED_REVISION } from './safe-chunks.ts';
 import { coverageScopeFilters } from './retrieval-coverage.ts';
 
 export interface ProjectionReadinessScope extends PageReadScope {
@@ -97,6 +98,7 @@ async function probeUncached(
     const unsealed = (cond: string) => `(SELECT true FROM pages p JOIN sources s ON s.id = p.source_id
         WHERE p.deleted_at IS NULL
           AND p.text_projection_revision IS DISTINCT FROM p.knowledge_revision
+          AND p.text_projection_revision IS DISTINCT FROM '${ACTIVATION_SERVED_REVISION}'::uuid
           AND ${filters.join(' AND ')} AND ${cond}
         ORDER BY p.source_id, p.page_kind, p.slug LIMIT 1) IS NOT NULL`;
     const cls = projectionClassSql('p', 's');
