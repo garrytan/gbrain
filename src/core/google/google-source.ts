@@ -3,6 +3,7 @@ import { resolveGoogleAccount } from '../persistence/connector-account.ts';
 import { googleApiProblem, googleUserinfo } from './api-access.ts';
 import { ConnectorHoldSession, connectorHoldsResult } from '../connectors/connector-hold-session.ts';
 import { carryLegacyFailCounts } from '../connectors/item-holds.ts';
+import { connectorDryRunResult } from '../connectors/api-source.ts';
 /**
  * google-source — Gmail/Calendar/Contacts sync for the `google` source kind.
  *
@@ -720,7 +721,7 @@ export async function runGoogleSync(
   vaultOverride?: CredentialVault,
 ): Promise<SyncResult> {
   return withConnectorSync(engine, sourceId, 'google', cfg, opts,
-    (managed, options) => runGoogleSyncInner(engine, sourceId, cfg, options, managed, fetchImpl, vaultOverride), pendingConnectorResult);
+    async (managed, options) => options.dryRun ? connectorDryRunResult('google', sourceId) : runGoogleSyncInner(engine, sourceId, cfg, options, managed, fetchImpl, vaultOverride), pendingConnectorResult);
 }
 
 async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: GoogleSourceConfig, opts: SyncOpts,
