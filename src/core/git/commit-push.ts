@@ -32,7 +32,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { literalPathspecs } from '../git-env.ts';
 import { git, gitOk, type GitRun } from './git-run.ts';
 export type { SkippedPath } from './skipped-paths.ts';
-import { assertNoUnmergedPaths, checkoutBehindStrayGitfile, directoryStatus, worktreeOfGitdir, flaggedChanges, stagedRemovals, STAGED_FOR_REMOVAL_WHY, unindexedFiles, unstagedPaths, type SkippedPath } from './skipped-paths.ts';
+import { assertNoUnmergedPaths, withoutUnmergedPaths, checkoutBehindStrayGitfile, directoryStatus, worktreeOfGitdir, flaggedChanges, stagedRemovals, STAGED_FOR_REMOVAL_WHY, unindexedFiles, unstagedPaths, type SkippedPath } from './skipped-paths.ts';
 import { GIT_SSRF_SUBCOMMAND_FLAGS, ownRemoteTransportFlags as transportFlags } from '../git-transport.ts';
 import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesystemRootFor, type ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
@@ -762,7 +762,7 @@ function untrackPaths(root: string, rel: string[], message: string, scope: Commi
 
 export interface PendingWriteThrough { path: string; since: string }
 
-const PENDING_NOTED = new Set(['commit_lock_busy', 'git_index_locked', 'git_index_stale', 'git_unavailable', 'git_command_stopped', 'git_operation_in_progress']);
+const PENDING_NOTED = new Set(['commit_lock_busy', 'git_index_locked', 'git_index_stale', 'git_unavailable', 'git_command_stopped', 'git_operation_in_progress', 'commit_paths_unmerged']);
 
 function readPendingFile(file: string, into: Map<string, string>): void {
   let text: string;
@@ -867,7 +867,7 @@ export function commitPathsLocked(repo: string, rel: string[], message: string, 
     throw e;
   }
   try {
-    const pending = [...dirtyPaths(root, readPendingWriteThrough(root).map(e => e.path).filter(p => !paths.includes(p) && insideSourceRoots(p, roots)))];
+    const pending = withoutUnmergedPaths(root, [...dirtyPaths(root, readPendingWriteThrough(root).map(e => e.path).filter(p => !paths.includes(p) && insideSourceRoots(p, roots)))]);
     const scope = { roots, lockPath: lock.lockPath, markHeld: false };
     let commit: ReturnType<typeof commitPaths>;
     try {
