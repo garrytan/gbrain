@@ -122,6 +122,8 @@ for (const kind of testBackends()) {
 
     const row = async (slug: string) => (await engine.executeRaw<{ id: number; frontmatter: Record<string, unknown> | string; trust_tier: string; deleted_at: string | null }>(
       'SELECT id, frontmatter, trust_tier, deleted_at FROM pages WHERE source_id=$1 AND slug=$2', [SRC, slug]))[0];
+    /** GST-2766: the owed-purge records of a page id, as stored text. */
+    const owedRows = async (id: number) => (await engine.executeRaw<{ t: string }>("SELECT completed_keys::text AS t FROM op_checkpoints WHERE op = 'owed-page-purge' AND fingerprint = $1", [String(id)])).map(r => r.t);
     const fm = async (slug: string) => { const r = await row(slug); return typeof r!.frontmatter === 'string' ? JSON.parse(r!.frontmatter) : r!.frontmatter; };
     const state = async (k: string) => Object.fromEntries(await Promise.all(SHAPES.filter(s => s !== 'origin').map(async s => [s, { fm: await fm(slugOf(k, s)), tier: (await row(slugOf(k, s)))!.trust_tier }])));
     const proposals = async () => Number((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM trust_proposals WHERE source_id=$1', [SRC]))[0]!.n);
@@ -524,6 +526,83 @@ for (const kind of testBackends()) {
       expect(new Set(written)).toEqual(new Set([second]));
       await nothingKept(origin);
       await expectCarriedHidden(k);
+    }, 240_000);
+
+    test('a held owner purge that a later purge run removes writes its purge tombstones, even after an automatic run released its park first (GST-2766)', async () => {
+      const k = 'owed';
+      await seed(k);
+      const origin = slugOf(k, 'origin');
+      const id = Number((await row(origin))!.id);
+      await parkByFailedLabel(origin);
+      expect(await owedRows(id)).toEqual([expect.not.stringContaining(origin)]);
+      const early = await purgeDeletedPagesCoordinated(engine, 24, { automatic: true });
+      expect(early.slugs).not.toContain(origin);
+      expect((await readDerivedOriginParks(engine)).map(park => park.slug)).not.toContain(origin);
+      const late = await purgeDeletedPagesCoordinated(engine, 0, { automatic: true });
+      expect(late.slugs).toContain(origin);
+      const [{ n }] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_purges WHERE source_id=$1 AND slug=$2', [SRC, origin]);
+      expect(n).toBeGreaterThan(0);
+      expect(await owedRows(id)).toEqual([]);
+      await nothingKept(origin);
+      await expectCarriedHidden(k);
+    }, 240_000);
+
+    test('a held owner purge the owner then restores owes nothing: its record goes with the restore, and a later delete of the page is purged as retention without tombstones (GST-2766)', async () => {
+      const k = 'owedrestore';
+      await seed(k);
+      const origin = slugOf(k, 'origin');
+      const id = Number((await row(origin))!.id);
+      await parkByFailedLabel(origin);
+      expect((await owedRows(id)).length).toBe(1);
+      const restored = await localCall('restore_page', { slug: origin, request_id: randomUUID(), expected_revision: await revision(origin) });
+      expect({ error: restored.isError, text: restored.text }).toMatchObject({ error: false });
+      expect((await row(origin))?.deleted_at).toBeNull();
+      expect(await owedRows(id)).toEqual([]);
+      expect((await purgeDeletedPagesCoordinated(engine, 0, { automatic: true })).slugs).not.toContain(origin);
+      expect((await row(origin))?.deleted_at).toBeNull();
+      await softDelete(origin);
+      await backdate(origin);
+      expect((await purgeDeletedPagesCoordinated(engine, 0, { automatic: true })).slugs).toContain(origin);
+      const [{ n }] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_purges WHERE source_id=$1 AND slug=$2', [SRC, origin]);
+      expect(n).toBe(0);
+      expect(await owedRows(id)).toEqual([]);
+    }, 240_000);
+
+    test('a held owner purge the owner restores and deletes again before any purge run owes nothing: the hold is bound to the tombstone it held, so a later run purges the page as retention without tombstones (GST-2766)', async () => {
+      const k = 'owedredelete';
+      await seed(k);
+      const origin = slugOf(k, 'origin');
+      const id = Number((await row(origin))!.id);
+      await parkByFailedLabel(origin);
+      const restored = await localCall('restore_page', { slug: origin, request_id: randomUUID(), expected_revision: await revision(origin) });
+      expect({ error: restored.isError, text: restored.text }).toMatchObject({ error: false });
+      expect(await owedRows(id)).toEqual([]);
+      await softDelete(origin);
+      await backdate(origin);
+      const first = await purgeDeletedPagesCoordinated(engine, 0, { automatic: true });
+      const second = await purgeDeletedPagesCoordinated(engine, 0, { automatic: true });
+      expect([...first.slugs, ...second.slugs]).toContain(origin);
+      const [{ n }] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_purges WHERE source_id=$1 AND slug=$2', [SRC, origin]);
+      expect(n).toBe(0);
+      expect(await owedRows(id)).toEqual([]);
+    }, 240_000);
+
+    test('a held owner purge whose page comes back through the engine restore (the large-page, guest and atoms restores share it) and is deleted again owes nothing, and the park no longer names the old request (GST-2766)', async () => {
+      const k = 'owedengine';
+      await seed(k);
+      const origin = slugOf(k, 'origin');
+      const id = Number((await row(origin))!.id);
+      await parkByFailedLabel(origin);
+      expect(await engine.restorePage(origin, { sourceId: SRC })).toBe(true);
+      await softDelete(origin);
+      await backdate(origin);
+      const first = await purgeDeletedPagesCoordinated(engine, 0, { automatic: true });
+      expect((await readDerivedOriginParks(engine)).filter(park => park.page_id === id).map(park => park.held_request_id ?? null)).not.toContainEqual(expect.any(String));
+      const second = await purgeDeletedPagesCoordinated(engine, 0, { automatic: true });
+      expect([...first.slugs, ...second.slugs]).toContain(origin);
+      const [{ n }] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_purges WHERE source_id=$1 AND slug=$2', [SRC, origin]);
+      expect(n).toBe(0);
+      expect(await owedRows(id)).toEqual([]);
     }, 240_000);
 
     test('restoring a parked origin drops its park: doctor stops naming it, and the next purge run deletes the park row (GST-2128, #9347 finding 6)', async () => {

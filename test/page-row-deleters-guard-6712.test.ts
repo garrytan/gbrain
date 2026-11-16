@@ -20,8 +20,7 @@ const SEGMENTS = /(?<!function )\bdeletePageWithSegments\(/g;
  * `writeOriginDeletedMarker(` within three lines.
  */
 const MARKED: Record<string, number> = {
-  'src/core/persistence/page-purge.ts': 1, // delete_page --purge, manual and retention (the coordinator's purge transaction)
-  'src/core/belief/purge-mirror.ts': 1, // the restore-time purge replay
+  'src/core/persistence/page-purge.ts': 1, // deletePurgedPage: delete_page --purge, manual and retention, and the restore-time purge replay (#9469)
 };
 
 /** Reviewed callers a managed Git source never reaches, with the number of matches each file may hold. */

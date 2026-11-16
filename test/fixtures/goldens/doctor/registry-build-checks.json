@@ -1179,6 +1179,10 @@
       },
       {
         "category": "brain",
+        "name": "purge_mirror"
+      },
+      {
+        "category": "brain",
         "name": "derivation_purge_sweeps"
       },
       {

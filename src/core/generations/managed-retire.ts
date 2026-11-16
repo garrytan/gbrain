@@ -18,7 +18,7 @@ import { preparePageMutation } from '../persistence/page-prepare.ts';
 import type { MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { waitForWrite, writeResponse } from '../persistence/service.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
-import type { DerivedRetiredBy } from '../persistence/derived-retirement-hold.ts';
+import { stampDerivedRetirement, type DerivedRetiredBy } from '../persistence/derived-retirement-hold.ts';
 import { generationAdapter } from './adapters/index.ts';
 import type { GenerationKey } from './contract.ts';
 import { assertMemberPending, GENERATION_ACTIVATE_SLUG, listPendingMembers, memberRequestId, recordActivation, settleMember,
@@ -84,8 +84,7 @@ export async function prepareGenerationRetireMember(engine: BrainEngine, row: Wr
   }, apply: async tx => {
     const result = await prepared.apply(tx);
     if (!prepared.noop) {
-      await tx.executeRaw(`UPDATE pages SET frontmatter=frontmatter||jsonb_build_object('retired_by',$1::text,'retired_at',$2::text)
-        WHERE id=$3 AND source_id=$4 AND deleted_at IS NOT NULL`, [p.retiredBy, new Date().toISOString(), row.page_id, row.source_id]);
+      await stampDerivedRetirement(tx, row.source_id, [row.slug], p.retiredBy);
       await settleMember(tx, p.activationId, row.slug);
     }
     return { ...result, retired_by: p.retiredBy, activation_id: p.activationId };
