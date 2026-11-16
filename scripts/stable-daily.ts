@@ -15,10 +15,15 @@
  *    promote()'s re-promotion path (no tag moves; the release, exact tree,
  *    soak run and leases are checked as for any promotion), and stops there
  *    (GBRA-346: stable was promoted before the record existed).
- * 2. A reason must exist: a merged PR labelled `stable:important` (security,
- *    regression, data-loss or blocking fix, set by the merge lane) that is in a
- *    published release but not in stable, or stable older than 7 days with a
- *    newer release (the weekly floor). No reason: nothing happens.
+ * 2. A reason must exist: a merged PR labelled `stable:important` (set by the
+ *    merge lane; the classes are in docs/RELEASING.md) that is in a published
+ *    release but not in stable, or stable older than 7 days with a newer
+ *    release (the weekly floor). No reason: nothing happens.
+ * 2b. While the upgrade matrix's own break issue is open (scripts/stable-matrix.ts
+ *    findBreakIssue: the ISSUE_MARKER issue, not any issue with the label), stable
+ *    holds: only an important fix whose fragment says `important: security` or
+ *    `important: data-loss` may pass it, and only on a candidate whose matrix run
+ *    fails on no from-version the issue does not name. The weekly floor waits.
  * 3. The candidate is the newest release on master newer than stable whose exact
  *    git tree passed a full (SOAK_SHAPE) successful run of the STABLE_SOAK_WORKFLOW
  *    soak with every integrity gate (INTEGRITY_GATES) passing in every cell; on the
@@ -29,8 +34,14 @@
  *    then rolled back) or that stable.json lists as known_bad or not_promotable
  *    (bad on outside evidence the soak cannot see) is never a candidate or soaked
  *    (#8792).
+ * 3b. The candidate also needs an upgrade matrix run on its exact tag and tree
+ *    (stable-matrix.ts judgeMatrixRun): green, or past an open break as in 2b. No
+ *    run yet: one matrix dispatch on the candidate tag, unless a matrix run is
+ *    active. A red or foreign run holds stable (a maintainer decides) and is never
+ *    re-dispatched by the schedule. promote() checks the run again.
  * 4. Nothing promotable yet: the newest release is soaked (one dispatch of the
- *    soak on its tag) unless a soak is already running, or a soak on any newer
+ *    soak on its tag, with an upgrade matrix dispatch on the same tag when it has
+ *    no run) unless a soak is already running, or a soak on any newer
  *    release did not qualify (a maintainer decides; past the weekly floor it
  *    warns); a failed soak is never retried by the schedule.
  *
@@ -44,6 +55,10 @@ import {
   authorize, compareVersions, currentStable, DOCS, onReleaseBranch, processDeps, promote, readPriorRecord, refExists, Refusal, requireSoakWorkflow, scheduleAuthorized, STABLE_REF,
   type PromoteDeps, type Promotion,
 } from './promote-stable.ts';
+import {
+  BREAK_PASS_CLASSES, breakIssueQuery, findBreakIssue, fragmentImportance, isGateRun, judgeMatrixRun, MATRIX_WORKFLOW, receiptNames,
+  type MatrixReceipt, type MatrixRunRow,
+} from './stable-matrix.ts';
 
 export const IMPORTANT_LABEL = 'stable:important';
 export const WEEKLY_FLOOR_DAYS = 7;
@@ -64,14 +79,15 @@ export interface Scoreboard {
 export interface DailyDeps extends PromoteDeps {
   ghPost(path: string, body: unknown): Promise<void>;
   scoreboards(runId: number): Promise<Scoreboard[]>;
+  matrixReceipt(runId: number): Promise<MatrixReceipt | null>;
   autoPromote: string;
   dryRun: boolean;
 }
 
 export type DailyResult =
-  | { action: 'off' | 'paused' | 'none'; why: string }
+  | { action: 'off' | 'paused' | 'none' | 'held'; why: string }
   | { action: 'promoted' | 'backfilled'; why: string; promotion: Promotion }
-  | { action: 'soak_dispatched' | 'waiting'; why: string; version: string }
+  | { action: 'soak_dispatched' | 'matrix_dispatched' | 'waiting'; why: string; version: string }
   | { action: 'dry_run'; why: string; would: string };
 
 export function parseRecord(message: string): Record<string, string> {
@@ -114,6 +130,18 @@ async function ok(deps: PromoteDeps, args: string[]): Promise<string> {
   const r = await deps.git(args);
   if (r.code !== 0) throw new Refusal(`git ${args.join(' ')} failed${r.stderr.trim() ? `: ${r.stderr.trim().split('\n').at(-1)}` : ''}; re-run the daily check.`);
   return r.stdout.trim();
+}
+
+/** The `important:` class of the changelog.d fragment a merge commit added, or null. */
+async function importanceOf(deps: PromoteDeps, commit: string): Promise<string | null> {
+  const added = await deps.git(['diff-tree', '--no-commit-id', '--name-only', '-r', '--diff-filter=A', commit, '--', 'changelog.d']);
+  if (added.code !== 0) return null;
+  for (const path of added.stdout.split('\n').map(p => p.trim()).filter(p => /^changelog\.d\/[^/]+\.md$/.test(p) && !p.endsWith('/README.md'))) {
+    const shown = await deps.git(['show', `${commit}:${path}`]);
+    const cls = shown.code === 0 ? fragmentImportance(shown.stdout) : null;
+    if (cls) return cls;
+  }
+  return null;
 }
 
 const isAncestor = async (deps: PromoteDeps, a: string, b: string) => (await deps.git(['merge-base', '--is-ancestor', a, b])).code === 0;
@@ -166,26 +194,50 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
   const since = new Date((Number.isFinite(promotedAt) ? promotedAt : deps.now().getTime()) - 14 * DAY_MS).toISOString().slice(0, 10);
   const q = `repo:${deps.repo} is:pr is:merged label:"${IMPORTANT_LABEL}" merged:>=${since}`;
   const found = await deps.ghApi(`search/issues?q=${encodeURIComponent(q)}&per_page=100`) as { items?: Array<{ number: number }> };
-  const important: Array<{ pr: number; version: string }> = [];
+  const important: Array<{ pr: number; version: string; passesBreak: boolean }> = [];
   for (const { number } of found.items ?? []) {
     const pr = await deps.ghApi(`repos/${deps.repo}/pulls/${number}`) as { merge_commit_sha?: string | null };
     const sha = pr.merge_commit_sha;
     if (!sha || (await treeOf(deps, sha)) === null || await isAncestor(deps, sha, stableCommit)) continue;
     for (const r of [...releases].reverse()) {
       if (!(await isAncestor(deps, sha, r.commit))) continue;
-      important.push({ pr: number, version: r.version });
+      const cls = await importanceOf(deps, sha);
+      important.push({ pr: number, version: r.version, passesBreak: (BREAK_PASS_CLASSES as readonly string[]).includes(cls ?? '') });
       break;
     }
   }
-  const weekly = ageDays > WEEKLY_FLOOR_DAYS;
-  if (important.length === 0 && !weekly) {
+  const weeklyDue = ageDays > WEEKLY_FLOOR_DAYS;
+  if (important.length === 0 && !weeklyDue) {
     return { action: 'none', why: `no released ${IMPORTANT_LABEL} fix is missing from stable v${current.version}, and stable is ${ageDays.toFixed(1)} days old (floor ${WEEKLY_FLOOR_DAYS}).` };
   }
+  const breakIssue = findBreakIssue(await deps.ghApi(breakIssueQuery(deps.repo)));
+  const passing = breakIssue ? important.filter(i => i.passesBreak) : important;
+  const weekly = weeklyDue && !breakIssue;
+  if (breakIssue && passing.length === 0) {
+    const why = `the upgrade matrix's break issue #${breakIssue.number} (${breakIssue.url}) is open, so stable v${current.version} holds; only a released important: security or data-loss fix may pass it${important.length ? ` (waiting: ${important.map(i => `#${i.pr}`).join(', ')})` : ''}.`;
+    deps.log(`::warning::Daily stable check: ${why} Docs: docs/RELEASING.md#daily-stable-check`);
+    return { action: 'held', why };
+  }
   const reason = [
-    ...(important.length ? [`important: ${important.map(i => `#${i.pr} (v${i.version})`).join(', ')}`] : []),
+    ...(passing.length ? [`important: ${passing.map(i => `#${i.pr} (v${i.version})`).join(', ')}`] : []),
     ...(weekly ? [`weekly floor: stable v${current.version} is ${ageDays.toFixed(1)} days old`] : []),
+    ...(breakIssue ? [`passing open upgrade break #${breakIssue.number} as a security or data-loss fix`] : []),
   ].join('; ');
   deps.log(`[stable-daily] reason: ${reason}.`);
+
+  const matrixFile = MATRIX_WORKFLOW.split('/').at(-1);
+  const matrixRuns = (((await deps.ghApi(`repos/${deps.repo}/actions/workflows/${matrixFile}/runs?branch=master&per_page=100`)) as { workflow_runs?: MatrixRunRow[] }).workflow_runs ?? []).filter(isGateRun);
+  const receipts = new Map<number, MatrixReceipt | null>();
+  /** The newest completed gate run whose receipt tests this release, or null. */
+  const matrixRunFor = async (version: string): Promise<{ run: MatrixRunRow; receipt: MatrixReceipt | null } | null> => {
+    for (const run of matrixRuns.filter(r => r.status === 'completed')) {
+      if (!receipts.has(run.id)) receipts.set(run.id, await deps.matrixReceipt(run.id));
+      if (receiptNames(receipts.get(run.id)!, version)) return { run, receipt: receipts.get(run.id)! };
+    }
+    return null;
+  };
+  const activeMatrix = matrixRuns.find(r => r.status !== 'completed');
+  const dispatchMatrix = (version: string) => deps.ghPost(`repos/${deps.repo}/actions/workflows/${matrixFile}/dispatches`, { ref: 'master', inputs: { candidate: `v${version}` } });
 
   const runs = ((await deps.ghApi(`repos/${deps.repo}/actions/workflows/${soakPath.split('/').at(-1)}/runs?per_page=100`)) as { workflow_runs?: SoakRunRow[] }).workflow_runs ?? [];
   const runsByTree = new Map<string, SoakRunRow[]>();
@@ -193,7 +245,7 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
     const tree = await treeOf(deps, run.head_sha);
     if (tree) runsByTree.set(tree, [...(runsByTree.get(tree) ?? []), run]);
   }
-  const oldestImportant = important.reduce<string | null>((v, i) => (!v || compareVersions(i.version, v) < 0 ? i.version : v), null);
+  const oldestImportant = passing.reduce<string | null>((v, i) => (!v || compareVersions(i.version, v) < 0 ? i.version : v), null);
   let failedSoak: { version: string; run: SoakRunRow } | null = null;
   for (const rel of releases) {
     if (!weekly && oldestImportant && compareVersions(rel.version, oldestImportant) < 0) break;
@@ -208,8 +260,25 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
       deps.log(`[stable-daily] not promotable: v${rel.version} soak ${run.html_url}: ${failures.join(', ')}.`);
     }
     if (!chosen) { failedSoak ??= completed[0] ? { version: rel.version, run: completed[0] } : null; continue; }
-    if (deps.dryRun) return { action: 'dry_run', why: reason, would: `promote v${rel.version} on soak ${chosen.html_url}` };
-    const promotion = await promote(deps, { version: rel.version, soakRunUrl: chosen.html_url, scoreboardUrl: '', rollback: false, reason: `scheduled daily check; ${reason}` });
+    const matrix = await matrixRunFor(rel.version);
+    if (!matrix) {
+      if (activeMatrix) return { action: 'waiting', why: `${reason}; v${rel.version} passed its soak and upgrade matrix run ${activeMatrix.html_url} is still running.`, version: rel.version };
+      if (deps.dryRun) return { action: 'dry_run', why: reason, would: `dispatch the upgrade matrix on v${rel.version}` };
+      await dispatchMatrix(rel.version);
+      return { action: 'matrix_dispatched', why: `${reason}; v${rel.version} passed its soak and has no upgrade matrix run yet.`, version: rel.version };
+    }
+    const judged = judgeMatrixRun(matrix.run, matrix.receipt, { version: rel.version, commit: rel.commit, tree: tree! }, breakIssue);
+    if (!judged.ok) {
+      const why = `${reason}; ${judged.why}, so stable holds and a maintainer decides.`;
+      deps.log(`::warning::Daily stable check: ${why} Docs: docs/RELEASING.md#daily-stable-check`);
+      return { action: 'held', why };
+    }
+    if (deps.dryRun) return { action: 'dry_run', why: reason, would: `promote v${rel.version} on soak ${chosen.html_url} and upgrade matrix ${matrix.run.html_url}` };
+    const excused = judged.excused.length ? `; upgrade break #${breakIssue!.number} excused for ${judged.excused.join(', ')}` : '';
+    const promotion = await promote(deps, {
+      version: rel.version, soakRunUrl: chosen.html_url, scoreboardUrl: '', rollback: false, reason: `scheduled daily check; ${reason}${excused}`,
+      matrixRunUrl: matrix.run.html_url, matrixExcuse: breakIssue,
+    });
     return { action: 'promoted', why: reason, promotion };
   }
 
@@ -220,8 +289,10 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
     if (weekly) deps.log(`::warning::Daily stable check: stable v${current.version} is past the ${WEEKLY_FLOOR_DAYS}-day floor and no soak qualifies; a maintainer decides. Docs: docs/RELEASING.md#daily-stable-check`);
     return { action: 'waiting', why: `${reason}; v${failedSoak.version} already had a soak (${failedSoak.run.html_url}, ${failedSoak.run.conclusion}) that did not qualify, so no new soak is dispatched and a maintainer decides.`, version: newest.version };
   }
-  if (deps.dryRun) return { action: 'dry_run', why: reason, would: `dispatch the soak on v${newest.version}` };
+  const matrixToo = !activeMatrix && !(await matrixRunFor(newest.version));
+  if (deps.dryRun) return { action: 'dry_run', why: reason, would: `dispatch the soak${matrixToo ? ' and the upgrade matrix' : ''} on v${newest.version}` };
   await deps.ghPost(`repos/${deps.repo}/actions/workflows/${soakPath.split('/').at(-1)}/dispatches`, { ref: `v${newest.version}` });
+  if (matrixToo) await dispatchMatrix(newest.version);
   return { action: 'soak_dispatched', why: reason, version: newest.version };
 }
 
@@ -230,6 +301,7 @@ export function dailyDeps(env: NodeJS.ProcessEnv = process.env, cwd = process.cw
   return {
     ...base,
     scheduled: scheduleAuthorized(env, base.repo),
+    matrixReceipt: base.matrixReceipt!,
     autoPromote: env.STABLE_AUTO_PROMOTE ?? '',
     dryRun: env.DAILY_DRY_RUN === 'true',
     async ghPost(path, body) {

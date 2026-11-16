@@ -18,7 +18,8 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
-import { fetchReleases, hasEnoughHistory, RELEASE_TAG, resolveFromVersions, type Candidate, type FromVersion, type Profile, type Release } from './upgrade-matrix/versions.ts';
+import { fetchReleases, hasEnoughHistory, RELEASE_TAG, resolveFromVersions, stableWindow, type Candidate, type FromVersion, type Profile, type Release, type StableRecordTag } from './upgrade-matrix/versions.ts';
+import { failingFrom, ISSUE_LABEL, ISSUE_MARKER, renderRedFrom } from './upgrade-matrix/marker.ts';
 import { cellId, runCell, type BrainShape, type Engine, type Fault, type Keys } from './upgrade-matrix/cell.ts';
 import { CHECKS, loadKnownExceptions, summarize, type CellSummary } from './upgrade-matrix/verdict.ts';
 import { AGENT_FILED_LABEL } from './lib/gh-issue.ts';
@@ -26,8 +27,7 @@ import { AGENT_FILED_LABEL } from './lib/gh-issue.ts';
 const REPO = 'garrytan/gbrain';
 const ROOT = resolve(import.meta.dir, '..');
 const BT = '\x60';
-export const ISSUE_MARKER = '<!-- gbrain-upgrade-matrix:nightly -->';
-export const ISSUE_LABEL = 'upgrade-break';
+export { ISSUE_LABEL, ISSUE_MARKER };
 
 const argv = process.argv.slice(2);
 const flag = (name: string, fallback?: string) => { const i = argv.indexOf(name); return i >= 0 && i + 1 < argv.length ? argv[i + 1]! : fallback; };
@@ -61,9 +61,12 @@ async function plan(): Promise<void> {
   const profile = flag('--profile', 'full') as Profile;
   if (profile !== 'full' && profile !== 'pr') throw new Error('--profile takes full or pr');
   const input = (flag('--candidate', '') ?? '').trim();
+  const stableRecords = profile === 'full' ? stableRecordTags() : [];
   const releases = await fetchReleases(REPO, rs => {
     const newest = rs[0];
-    return !!newest && hasEnoughHistory(rs, candidateHint(rs, input) ?? newest);
+    if (!newest) return false;
+    const hint = candidateHint(rs, input) ?? newest;
+    return hasEnoughHistory(rs, hint) && stableWindow(stableRecords, hint).every(v => rs.some(r => r.version === v));
   });
   if (!releases.length) throw new Error('no published releases found');
   let candidate: Candidate;
@@ -86,7 +89,7 @@ async function plan(): Promise<void> {
       return { tag, version: m[1]!, published_at: releases.find(r => r.tag === tag)?.published_at ?? '', roles: ['explicit' as never] };
     });
   } else {
-    const resolved = resolveFromVersions(releases, candidate, { profile, stableVersion: stableVersion() });
+    const resolved = resolveFromVersions(releases, candidate, { profile, stableVersion: stableVersion(), stableRecords });
     from = resolved.from;
     skipped = resolved.skipped;
   }
@@ -116,6 +119,17 @@ function stableVersion(): string | null {
   const ls = spawnSync('git', ['-C', ROOT, 'ls-remote', '--tags', 'origin', 'refs/tags/stable'], { encoding: 'utf8' });
   if (ls.status !== 0 || !ls.stdout.trim()) return null;
   try { return commitVersion(ensureCommit('stable')); } catch { return null; }
+}
+
+/** Every stable-v<version> record tag on origin with its creation time (the promotion), fetched first. */
+function stableRecordTags(): StableRecordTag[] {
+  execFileSync('git', ['-C', ROOT, 'fetch', '--quiet', '--no-tags', '--force', 'origin', '+refs/tags/stable-v*:refs/tags/stable-v*'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const out = git('for-each-ref', '--format=%(refname:strip=2)%09%(creatordate:iso-strict)', 'refs/tags/stable-v*');
+  return out.split('\n').filter(Boolean).flatMap(line => {
+    const [name, date] = line.split('\t');
+    const m = /^stable-v(\d+\.\d+\.\d+(?:\.\d+)?)$/.exec(name ?? '');
+    return m && date ? [{ version: m[1]!, promoted_at: new Date(date).toISOString() }] : [];
+  });
 }
 
 function candidateHint(releases: Release[], input: string): { version: string; published_at: string } | null {
@@ -228,7 +242,8 @@ async function issue(): Promise<void> {
     return res.status === 204 ? null : res.json();
   };
   const existing = (await api('GET', '/issues?state=all&labels=' + ISSUE_LABEL + '&per_page=100') as any[]).find(i => !i.pull_request && String(i.body ?? '').includes(ISSUE_MARKER));
-  const body = ISSUE_MARKER + '\n' + renderSummary(s) + '\n\nRun: ' + (s.harness.run_url ?? '(local)') + '\n\nThis issue carries the ' + BT + ISSUE_LABEL + BT + ' label, which holds stable promotion while it is open. The nightly matrix closes it when a later run is green.';
+  const body = ISSUE_MARKER + '\n' + renderRedFrom(failingFrom(s).from) + '\n' + renderSummary(s) + '\n\nRun: ' + (s.harness.run_url ?? '(local)')
+    + '\n\nWhile this issue is open the daily stable check holds stable (docs/RELEASING.md#daily-stable-check); only a security or data-loss fix that is green on every from-version this issue does not name may pass it. The nightly matrix closes it when a later run is green.';
   if (s.status === 'red') {
     const title = 'Upgrade matrix red: upgrading to ' + (s.candidate.tag ?? s.candidate.sha.slice(0, 12)) + ' fails ' + s.red.length + ' cell(s)';
     if (dry) { console.log((existing ? 'update #' + existing.number : 'create') + ': ' + title + '\n' + body); return; }
