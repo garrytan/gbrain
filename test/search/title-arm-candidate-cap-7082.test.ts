@@ -111,6 +111,14 @@ describe('title arm: whole-vector candidate cap for local callers (#7082)', () =
     for (let i = 0; i < 3; i++) expect((await titles('board meeting', false)).slugs).toEqual(first);
   });
 
+  test('a cut attempt pages through the merged rows once', async () => {
+    __setTitleWholeVectorCandidatesForTests(2);
+    const all = (await engine.searchTitles('board meeting', { limit: 10 })).map(r => r.slug);
+    expect(all.length).toBeGreaterThan(2);
+    const page = (await engine.searchTitles('board meeting', { limit: 2, offset: 1 })).map(r => r.slug);
+    expect(page).toEqual(all.slice(1, 3));
+  });
+
   test('hybrid search reports the cut as keyword_candidates_incomplete', async () => {
     __setTitleWholeVectorCandidatesForTests(2);
     let degraded: unknown[] = [];

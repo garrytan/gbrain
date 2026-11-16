@@ -86,7 +86,7 @@ export async function searchTitles(
   const statementFor = (chunkManifest: boolean, relaxed = false) => buildSearchTitlesStatement(query, opts, { ...dialect, chunkManifest, relaxed });
   const statement = statementFor(true);
   /** One scoped read running the statement once per query text ($1), in order. */
-  const run = (queryTexts: string[], relaxed: boolean) => {
+  const run = (queryTexts: string[], relaxed: boolean, top?: number) => {
     const preferIndex = relaxed && dialect.relaxedPrefersIndex && !statement.safeChunks;
     const settings = {
       ...(dialect.statementTimeout ? { statement_timeout: dialect.statementTimeout } : {}),
@@ -96,7 +96,7 @@ export async function searchTitles(
     return scoped(async exec => {
       const sql = statementFor(await dialect.chunkManifest?.(exec) ?? true, relaxed).sql;
       const lists = [];
-      for (const text of queryTexts) lists.push((await exec.unsafe(sql, [text, ...statement.params.slice(1)])).rows);
+      for (const text of queryTexts) lists.push((await exec.unsafe(sql, [text, statement.params[1], ...(top === undefined ? statement.params.slice(2, 4) : [top, 0]), ...statement.params.slice(4)])).rows);
       return lists;
     }, Object.keys(settings).length ? settings : undefined);
   };
@@ -105,9 +105,11 @@ export async function searchTitles(
   const [rows] = await run([strictQuery], false);
   if (rows.length > 0 && rows[0].candidates_cut === true) {
     opts?.onKeywordIncomplete?.('candidate_budget');
-    const [titleRows] = await run([strictQuery], true);
+    const limit = statement.params[2] as number, offset = statement.params[3] as number;
+    const [titleRows] = await run([strictQuery], true, offset + limit);
+    const [cutRows] = offset ? await run([strictQuery], false, offset + limit) : [rows];
     const titled = new Set(titleRows.map(r => r.page_id));
-    return [...titleRows, ...rows.filter(r => !titled.has(r.page_id))].slice(0, statement.params[2] as number).map(rowToSearchResult);
+    return [...titleRows, ...cutRows.filter(r => !titled.has(r.page_id))].slice(offset, offset + limit).map(rowToSearchResult);
   }
   if (rows.length > 0) return rows.map(rowToSearchResult);
   const orQuery = buildOrFallbackWebsearchQuery(strictQuery);
