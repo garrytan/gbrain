@@ -11,7 +11,7 @@ gbrain transcripts archive on                          # turn it on (a shared br
 gbrain transcripts archive run --dry-run               # preview the last two local days
 gbrain transcripts archive run                         # write them
 gbrain transcripts archive backfill --from 2026-09-01  # older history, newest days first
-gbrain transcripts archive status                      # readers, timezone, archived and held days
+gbrain transcripts archive status                      # readers as of the last run, timezone, archived and held days
 gbrain doctor --only transcript_archive_freshness      # is it keeping up?
 ```
 
@@ -71,14 +71,20 @@ false` turns both off.
 `gbrain doctor --only transcript_archive_freshness` (brain category) warns when:
 
 - a harness's newest archived day is more than `transcripts.archive.stale_days` (default 2) behind the newest session
-  day its reader sees. The fix is `gbrain transcripts archive run`, or
+  day the last run read. The fix is `gbrain transcripts archive run`, or
   `gbrain transcripts archive backfill --from <first missing day>` when the gap is wider than one run;
 - the archive is on but no maintenance pass has run it in that long. The fix is `gbrain autopilot --install`
   (a persistent service, so it asks first);
 - days are held (each is listed with its code, such as `archive_owner_unset` or `archive_redaction_failed`), a reader
-  failed, or the last pass recorded an error.
+  failed on the last run, or the last pass recorded an error.
 
-Off is ok with no detail, and a harness with no readable sessions is informational.
+Off is ok with no detail, and a harness with no readable sessions, or one no run has read yet, is informational.
+
+Neither this check nor `gbrain transcripts archive status` reads a session or calls the OpenClaw Gateway, so both
+answer in about a second however many sessions there are. They read the archive's ledger and config, and what each
+run (`run`, `backfill` or the maintenance pass, never a `--dry-run`) recorded about every reader: how many
+conversations it read, the newest session day any run has seen, and the reader's error if the last run failed. Status
+shows those as of that run, with its time; a reader no run has read yet says so.
 
 Every command takes `--json` and `--source <id>` (the archive source, `conversations` by default).
 
@@ -179,6 +185,12 @@ Current OpenClaw keeps live sessions in a database owned by its Gateway. gbrain 
 `OPENCLAW_GATEWAY_TOKEN`), never on the command line. Errors map to `archive_gateway_unreachable`,
 `archive_gateway_auth` and `archive_gateway_failed`; a failed read leaves the archive ledger unchanged, so the next
 run retries. Checked against OpenClaw 2026.10.9 and 2026.11.3, which list sessions and return history the same way.
+
+Each `openclaw gateway call` is a new process, and starting one takes far longer than the Gateway takes to answer,
+so gbrain asks for the largest history page the Gateway gives (1,000 messages within 4 MiB; OpenClaw before 2026.11
+caps a page at 512 KiB, and one before 2026.10 refuses the byte budget, so gbrain asks again without it) and reads up
+to 4 sessions at once. The messages of each session, and the order of the conversations, are the same as one read at
+a time; if any session cannot be read, the whole Gateway read fails once the reads already running have ended.
 
 Session files OpenClaw keeps on disk are read too, even when the Gateway is down: `<id>.jsonl.reset.<stamp>`, the
 zstd-compressed `<id>.jsonl.deleted.<stamp>.<hex>.zst` and the legacy compact backup `<id>.jsonl.bak.<stamp>`.
