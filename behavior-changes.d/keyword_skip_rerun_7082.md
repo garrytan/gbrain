@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+On Postgres, a hybrid keyword statement that hit the keyword statement timeout is still skipped by later identical searches in the same serving process (`keyword_arm_failed: skipped_after_timeout`), but the skip no longer always lasts the whole `search.keyword_timeout_negative_cache_seconds` (default 600 s, unchanged, now the longest skip). The serve re-runs the statement once in the background 30 s after the timeout, then after 60 s, 120 s and so on while it keeps failing, with the same scope and the same bound, only when the pool has no waiting query and keeps a connection free for other queries, and one at a time per brain. Its rows are thrown away and it is not recorded as a search. The first re-run that answers ends the skip, so a timeout on a cold cache stops costing keyword results within about a minute of the cache warming. One-shot CLI commands are unchanged.
