@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { LEDGER_ROTATE_BYTES, ledgerFiles, messageDigest, readLedger, recordCommit, recordIntent } from '../src/core/git/commit-ledger.ts';
+import { LEDGER_ROTATE_BYTES, ledgerFiles, ledgerLocation, messageDigest, readLedger, recordCommit, recordIntent } from '../src/core/git/commit-ledger.ts';
 import { commitPathsLocked } from '../src/core/git/commit-push.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'gbrain-commit-ledger-'));
@@ -90,6 +90,14 @@ test('commit-push records an intent with head_before and the message digest, the
   const intent = records.find(r => r.e === 'intent');
   expect(intent).toMatchObject({ writer: 'commit_push', head_before: before, msg_sha256: messageDigest(git(root, ['log', '-1', '--format=%B', sha])) });
   expect(records.find(r => r.e === 'commit')).toMatchObject({ writer: 'commit_push', sha });
+});
+
+test('#8870: a failed location lookup is not remembered; the directory is found once it becomes a repository', () => {
+  const root = join(dir, `not-yet-${n++}`);
+  mkdirSync(root);
+  expect(ledgerLocation(root)).toBeNull();
+  git(root, ['init', '-q', '-b', 'main']);
+  expect(ledgerLocation(root)).toMatchObject({ gitDir: join(root, '.git'), common: join(root, '.git'), worktree: root });
 });
 
 test('messageDigest applies git whitespace cleanup', () => {
