@@ -47,7 +47,7 @@ import { writeOriginDeletedMarker } from './sync-markers.ts';
 import { withTrustKeep } from './context.ts';
 import { clearRebuildableCache } from './rebuildable-cache.ts';
 import { carryingNeedles, findRequestsForSlugs, JOURNAL_SWEEP_MATCH_CAP, recheckRequestsCarrying, redactRequestIntents, sweepRequestsCarrying, sweepRequestsForGroups,
-  type IntentRedactionTarget, type JournalSweep } from './intent-redaction.ts';
+  type IntentRedactionTarget, type JournalRecheck, type JournalSweep } from './intent-redaction.ts';
 import { dropPurgedFenceRows } from '../facts/purge-overlay.ts';
 import { isOutcomeMarker, outcomeMarkerSql } from '../facts/audit-sources.ts';
 import { derivedRowsFrom, hideDerivedRows } from '../facts/derivation-inputs.ts';
@@ -60,6 +60,7 @@ import { CLAIM_FORMS_BATCH, claimTextForms } from '../fence-shared.ts';
 import type { PagePurgeContext } from '../facts/purge-verify.ts';
 import { pageChangeReasons, requestsRecordingReasons, stripPageGitNotes } from '../facts/purge-reasons.ts';
 import { assertHeldPageKeys } from '../page-state/guards.ts';
+import { clearOwedPurges, recordOwedPurge } from './derived-origin-hold.ts';
 import { noteBelief } from '../belief/ledger.ts';
 import { appendPurgeIntent } from '../belief/purge-mirror.ts';
 import { scrubPurgedSlugs } from '../feedback/store.ts';
@@ -91,7 +92,7 @@ const purgeReceipts = new Map<string, { receipt: Record<string, unknown>; purge:
 const PAGE_FACTS = `(source_markdown_slug=$2 OR ${extractedFromPageSql('facts', '$2')})`;
 
 /** The page's claims (facts filed on it, its takes) that the journal sweep searches for, bounded, trimmed, deduplicated. */
-async function readPurgeClaims(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, pageId: number) {
+export async function readPurgeClaims(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, pageId: number) {
   const factRows = await engine.executeRaw<{ id: number; fact: string; source: string | null }>(`SELECT id,fact,source FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} ORDER BY id LIMIT 1000`, [sourceId, slug]);
   const takeRows = await engine.executeRaw<{ id: number; claim: string }>('SELECT id,claim FROM takes WHERE page_id=$1 ORDER BY id LIMIT 1000', [pageId]);
   const needles = [...new Set([...factRows.filter(f => !isOutcomeMarker(f)).map(f => f.fact), ...takeRows.map(t => t.claim)].map(t => t.trim()).filter(t => t.length >= 8))].slice(0, 32);
@@ -99,7 +100,7 @@ async function readPurgeClaims(engine: Pick<BrainEngine, 'executeRaw'>, sourceId
 }
 
 /** Every claim of the page (its facts, withdrawn ones included, and its takes), trimmed and deduplicated, unbounded: the segment-text sweep's needles. */
-async function readSegmentClaims(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, pageId: number): Promise<string[]> {
+export async function readSegmentClaims(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, pageId: number): Promise<string[]> {
   const rows = await engine.executeRaw<{ c: string }>(`SELECT fact AS c FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} AND NOT ${outcomeMarkerSql('facts')} UNION SELECT claim FROM takes WHERE page_id=$3`,
     [sourceId, slug, pageId]);
   return [...new Set(rows.map(r => r.c.trim()).filter(t => t.length >= 8))];
@@ -282,6 +283,112 @@ async function tombstonePage(tx: BrainEngine, sourceId: string, slug: string, pa
 /** The page's add_timeline_entry receipts one purge redacts; a page with more leaves `journal_sweep.complete` false. */
 const TIMELINE_RECEIPT_CAP = 10_000;
 
+/** The journal census a page purge redacts: the requests carrying its claims, and whether the search covered every one. */
+export interface PurgeCensus { targets: IntentRedactionTarget[]; complete: boolean }
+
+/** What the shared page sweep needs: the page, its rows and claims, and how to take the journal census. */
+export interface PurgedPageSweep {
+  sourceId: string; slug: string; pageId: number;
+  /** The purge's request row id: excluded from redaction and named as the redacting request. */
+  requestId: string;
+  factIds: number[]; takeIds: number[];
+  /** The page's claims (readPurgeClaims) and change reasons (pageChangeReasons). */
+  needles: string[]; reasons: string[];
+  /** Called once, where the census belongs in the sweep's order. */
+  census: () => Promise<PurgeCensus>;
+  /** The live purge's typed timeout wrapper around journal lookups; the restore replay passes none. */
+  lookup?: <T>(point: PurgeLookupPoint, fn: () => Promise<T>) => Promise<T>;
+  /** The most add_timeline_entry receipts redacted; more leaves the sweep incomplete. */
+  timelineCap?: number;
+  /** A restored archive older than some stores: the stores it has. Absent means every store exists (the live database). */
+  present?: ReadonlySet<string>;
+}
+
+/** The stores the shared sweep touches that an older restored archive may not have yet. */
+export const PURGE_SWEEP_STORES = ['decide_review_queue', 'decide_review_proposals', 'decide_proposals', 'trust_proposals', 'write_gate_holds', 'write_gate_receipts',
+  'persistence_requests', 'persistence_effects', 'files', 'derived_generations', 'derived_generation_items', 'retrieval_event_pages', 'mention_gazetteer_entries', 'op_checkpoints'] as const;
+type SweptStore = typeof PURGE_SWEEP_STORES[number];
+
+/**
+ * #9469: the live-store sweep of one purged page, before its row is deleted, shared by the live page purge and the
+ * restore-time purge replay, so a replayed purge leaves no more of the page than the live one: proposals, write-gate
+ * holds and receipts naming it or its rows, the query cache, the facts filed on or extracted from it, the slug stores,
+ * the journal (the census of requests carrying its claims, its own requests, those recording its change reasons and its
+ * add_timeline_entry receipts), its Git effects' commit notes, its file records and the generation ledger. Returns the
+ * rows removed per store, the file blobs to delete after commit and whether the journal sweep covered every request.
+ */
+export async function sweepPurgedPage(tx: BrainEngine, input: PurgedPageSweep): Promise<{ removed: Record<string, number>; blobs: string[]; missingCaches: string[]; complete: boolean }> {
+  const { sourceId, slug, pageId, requestId, factIds, takeIds, needles, reasons } = input;
+  const lookup = input.lookup ?? (<T>(_point: PurgeLookupPoint, fn: () => Promise<T>) => fn());
+  const has = (store: SweptStore) => !input.present || input.present.has(store);
+  const timelineCap = input.timelineCap ?? TIMELINE_RECEIPT_CAP;
+  const count = async (sql: string, params: unknown[]) => (await tx.executeRaw(sql, params)).length;
+  const refs = factIds.map(String);
+  const removed: Record<string, number> = {};
+  if (has('decide_review_queue')) removed.decide_review_queue = await count('DELETE FROM decide_review_queue WHERE source_id=$1 AND (a_ref=ANY($2::text[]) OR b_ref=ANY($2::text[])) RETURNING 1', [sourceId, refs]);
+  if (has('decide_review_proposals')) removed.decide_review_proposals = await count('DELETE FROM decide_review_proposals WHERE source_id=$1 AND (a_ref=ANY($2::text[]) OR b_ref=ANY($2::text[])) RETURNING 1', [sourceId, refs]);
+  if (has('decide_proposals')) removed.decide_proposals = await count('DELETE FROM decide_proposals WHERE source_id=$1 AND (new_fact_id=ANY($2::bigint[]) OR old_fact_id=ANY($2::bigint[])) RETURNING 1', [sourceId, factIds]);
+  if (has('trust_proposals')) {
+    removed.trust_proposals = await count(`DELETE FROM trust_proposals WHERE source_id=$1 AND ((target_table='pages' AND target_id=$2) OR (related_table='pages' AND related_id=$2)
+      OR (target_table='facts' AND target_id=ANY($3::bigint[])) OR (related_table='facts' AND related_id=ANY($3::bigint[]))
+      OR (target_table='takes' AND target_id=ANY($4::bigint[])) OR (related_table='takes' AND related_id=ANY($4::bigint[]))) RETURNING 1`, [sourceId, pageId, factIds, takeIds]);
+  }
+  const holds = has('write_gate_holds') ? (await tx.executeRaw<{ id: string }>('DELETE FROM write_gate_holds WHERE source_id=$1 AND slug=$2 RETURNING id::text AS id', [sourceId, slug])).map(h => h.id) : [];
+  if (has('write_gate_holds')) removed.write_gate_holds = holds.length;
+  if (has('write_gate_receipts')) {
+    removed.write_gate_receipts = await count(`DELETE FROM write_gate_receipts WHERE (target_table='pages' AND target_id=$1) OR (target_table='facts' AND target_id=ANY($2::text[]))
+      OR (target_table='takes' AND target_id=ANY($3::text[])) OR (target_table='write_gate_holds' AND target_id=ANY($4::text[])) RETURNING 1`,
+    [String(pageId), refs, takeIds.map(String), holds]);
+  }
+  const missingCaches: string[] = [];
+  const cleared = await clearRebuildableCache(tx, 'query_cache');
+  if (cleared === null) missingCaches.push('query_cache');
+  removed.query_cache = cleared ?? 0;
+  removed.facts = await count(`DELETE FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} RETURNING 1`, [sourceId, slug]);
+  Object.assign(removed, await scrubPurgedSlugStores(tx, sourceId, [slug], { ifPresent: !!input.present }));
+  let complete = true;
+  if (has('persistence_requests')) {
+    const census = await input.census();
+    // The page's add_timeline_entry receipts keep the entry text in their outcome (`entry` summary and source, `bullet`), compacted
+    // ones included. That text is matched whole in the page's own requests (a set lookup, linear in their strings). A page past
+    // the cap leaves the journal sweep incomplete instead of claiming every receipt.
+    const timelineRows = await lookup('slug_lookup', () => tx.executeRaw<IntentRedactionTarget & { summary: string | null; source: string | null; bullet: string | null }>(`SELECT id::text AS id,
+      principal_kind, principal_id, outcome->'entry'->>'summary' AS summary, outcome->'entry'->>'source' AS source, outcome->>'bullet' AS bullet FROM persistence_requests
+      WHERE source_id=$1 AND slug=$2 AND operation='add_timeline_entry' AND outcome ? 'entry' ORDER BY sequence LIMIT $3`, [sourceId, slug, timelineCap + 1]));
+    const timeline = timelineRows.slice(0, timelineCap);
+    const timelineText = new Set(timeline.flatMap(t => [t.summary, t.source, t.bullet]).map(text => text?.trim() ?? '').filter(Boolean));
+    const forSlug = await lookup('slug_lookup', async () => [...await findRequestsForSlugs(tx, sourceId, [slug]), ...reasons.length ? await requestsRecordingReasons(tx, sourceId, slug) : [], ...timeline]);
+    const own = new Set(forSlug.map(r => r.id));
+    const requests = [...new Map([...forSlug, ...census.targets].map(r => [r.id, r])).values()];
+    // GBRA-217: the page's reasons are needles in its own requests only, so a short reason never redacts another page's receipt.
+    removed.persistence_requests = await lookup('redaction_read', async () => await redactRequestIntents(tx, requests.filter(r => own.has(r.id)), requestId,
+      { skipPending: true, needles: [...needles, ...reasons], exact: timelineText }) + await redactRequestIntents(tx, requests.filter(r => !own.has(r.id)), requestId, { skipPending: true, needles }));
+    complete = census.complete && timelineRows.length <= timelineCap;
+    if (has('persistence_effects')) removed.persistence_effects = await stripPageGitNotes(tx, sourceId, slug);
+  }
+  const files = has('files') ? await tx.executeRaw<{ storage_path: string }>(`DELETE FROM files WHERE (page_id=$1 OR (page_id IS NULL AND page_slug=$2 AND (source_id=$3 OR source_id IS NULL)))
+    RETURNING storage_path`, [pageId, slug, sourceId]) : [];
+  if (has('files')) removed.files = files.length;
+  if (has('derived_generations') && has('derived_generation_items')) Object.assign(removed, await (await import('../generations/ledger-scrub.ts')).scrubGenerationLedger(tx, sourceId, { slug }));
+  return { removed, blobs: files.map(f => f.storage_path).filter(Boolean), missingCaches, complete };
+}
+
+/**
+ * The end of a page purge, shared by the live purge and the restore replay, after the sweep and the ledger redaction:
+ * the page row with its segment storage (deletePageWithSegments), the retrieval feedback and mention-gazetteer names
+ * for the slug, and its owed-purge record (GST-2766), in the purge's transaction. The deletion marker is the caller's.
+ */
+export async function deletePurgedPage(tx: BrainEngine, input: { sourceId: string; slug: string; pageId: number; claims: readonly string[]; present?: ReadonlySet<string> }):
+  Promise<{ shas: string[]; removed: Record<string, number> }> {
+  const { sourceId, slug, pageId } = input;
+  const has = (store: SweptStore) => !input.present || input.present.has(store);
+  const { shas, ...removed } = await deletePageWithSegments(tx, sourceId, slug, pageId, input.claims);
+  if (has('retrieval_event_pages')) Object.assign(removed, await scrubPurgedSlugs(tx, sourceId, [slug]));
+  if (has('mention_gazetteer_entries')) Object.assign(removed, await scrubPurgedNameStores(tx, sourceId, [slug]));
+  if (has('op_checkpoints')) await clearOwedPurges(tx, [pageId]);
+  return { shas, removed };
+}
+
 export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest, snapshot: PageSnapshot, prepared: PreparedPagePurge): Promise<Record<string, unknown>> {
   const page = snapshot.page, sourceId = row.source_id, slug = page.slug;
   // GST-2689: a page derived from this one written after the purge's carry keeps it: soft-deleted (a live page) and parked.
@@ -289,6 +396,7 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
   const owner = prepared.retention ? undefined : { sourceId, slug, requestId: row.request_id };
   if ((await parkUncarriedInPurge(tx, [Number(page.id)], { recheckParked: true, ...(owner ? { heldRequestId: owner.requestId } : {}) })).length) {
     if (!page.deleted_at) { await tx.createVersion(slug, { sourceId }); await withTrustKeep(tx, ['pages'], () => tx.softDeletePage(slug, { sourceId })); }
+    if (owner) await recordOwedPurge(tx, Number(page.id), owner.requestId);
     return { status: 'soft_deleted', slug, source_id: sourceId, noop: !!page.deleted_at, ...(prepared.retention ? { retention: true } : {}), purge_held: midPurgeHold(owner) };
   }
   const actor = `${row.principal_kind}:${row.principal_id}`;
@@ -317,51 +425,16 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
   const walk = derivedFrom.truncated || heldTargets.length < targets.length ? 'truncated' as const : 'complete' as const;
   if (!retention) noteBelief({ kind: 'purged', table: 'pages', ids: [page.id], request: row.id, ...(walk === 'truncated' ? { derivedWalk: walk } : {}) });
   const derived = await hideDerivedRows(tx, derivedRows, { sourceId, requestId: row.id, reason: 'page purge' });
-  const count = async (sql: string, params: unknown[]) => (await tx.executeRaw(sql, params)).length;
-  const refs = factIds.map(String);
-  const removed: Record<string, number> = {
-    decide_review_queue: await count('DELETE FROM decide_review_queue WHERE source_id=$1 AND (a_ref=ANY($2::text[]) OR b_ref=ANY($2::text[])) RETURNING 1', [sourceId, refs]),
-    decide_review_proposals: await count('DELETE FROM decide_review_proposals WHERE source_id=$1 AND (a_ref=ANY($2::text[]) OR b_ref=ANY($2::text[])) RETURNING 1', [sourceId, refs]),
-    decide_proposals: await count('DELETE FROM decide_proposals WHERE source_id=$1 AND (new_fact_id=ANY($2::bigint[]) OR old_fact_id=ANY($2::bigint[])) RETURNING 1', [sourceId, factIds]),
-    trust_proposals: await count(`DELETE FROM trust_proposals WHERE source_id=$1 AND ((target_table='pages' AND target_id=$2) OR (related_table='pages' AND related_id=$2)
-      OR (target_table='facts' AND target_id=ANY($3::bigint[])) OR (related_table='facts' AND related_id=ANY($3::bigint[]))
-      OR (target_table='takes' AND target_id=ANY($4::bigint[])) OR (related_table='takes' AND related_id=ANY($4::bigint[]))) RETURNING 1`, [sourceId, page.id, factIds, takeIds]),
-  };
-  const holds = (await tx.executeRaw<{ id: string }>('DELETE FROM write_gate_holds WHERE source_id=$1 AND slug=$2 RETURNING id::text AS id', [sourceId, slug])).map(h => h.id);
-  removed.write_gate_holds = holds.length;
-  removed.write_gate_receipts = await count(`DELETE FROM write_gate_receipts WHERE (target_table='pages' AND target_id=$1) OR (target_table='facts' AND target_id=ANY($2::text[]))
-    OR (target_table='takes' AND target_id=ANY($3::text[])) OR (target_table='write_gate_holds' AND target_id=ANY($4::text[])) RETURNING 1`,
-  [String(page.id), refs, takeIds.map(String), holds]);
-  const missingCaches: string[] = [];
-  const cleared = await clearRebuildableCache(tx, 'query_cache');
-  if (cleared === null) missingCaches.push('query_cache');
-  removed.query_cache = cleared ?? 0;
-  removed.facts = await count(`DELETE FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} RETURNING 1`, [sourceId, slug]);
-  Object.assign(removed, await scrubPurgedSlugStores(tx, sourceId, [slug]));
-  // #6511 [R2]: the preparation sweep's targets, plus the tail past its ceiling and the rows pending at scan time, re-tested here.
-  const recheck = await lookup('tail_recheck', () => recheckRequestsCarrying(tx, sourceId, needles, prepared.sweep,
-    { exclude: row.id, beforePending: () => faultPoint('purge:pending_recheck', { requestId: row.request_id, sourceId, operation: row.operation }) }));
-  // The page's add_timeline_entry receipts keep the entry text in their outcome (`entry` summary and source, `bullet`), compacted
-  // ones included. That text is matched whole in the page's own requests (a set lookup, linear in their strings). A page past
-  // the cap leaves the journal sweep incomplete instead of claiming every receipt.
-  const timelineRows = await lookup('slug_lookup', () => tx.executeRaw<IntentRedactionTarget & { summary: string | null; source: string | null; bullet: string | null }>(`SELECT id::text AS id,
-    principal_kind, principal_id, outcome->'entry'->>'summary' AS summary, outcome->'entry'->>'source' AS source, outcome->>'bullet' AS bullet FROM persistence_requests
-    WHERE source_id=$1 AND slug=$2 AND operation='add_timeline_entry' AND outcome ? 'entry' ORDER BY sequence LIMIT $3`, [sourceId, slug, TIMELINE_RECEIPT_CAP + 1]));
-  const timeline = timelineRows.slice(0, TIMELINE_RECEIPT_CAP);
-  const timelineText = new Set(timeline.flatMap(t => [t.summary, t.source, t.bullet]).map(text => text?.trim() ?? '').filter(Boolean));
-  const forSlug = await lookup('slug_lookup', async () => [...await findRequestsForSlugs(tx, sourceId, [slug]), ...reasons.length ? await requestsRecordingReasons(tx, sourceId, slug) : [], ...timeline]);
-  const own = new Set(forSlug.map(r => r.id));
-  const requests = [...new Map([...forSlug, ...prepared.sweep.targets, ...recheck.targets].map(r => [r.id, r])).values()];
-  // GBRA-217: the page's reasons are needles in its own requests only, so a short reason never redacts another page's receipt.
-  removed.persistence_requests = await lookup('redaction_read', async () => await redactRequestIntents(tx, requests.filter(r => own.has(r.id)), row.id,
-    { skipPending: true, needles: [...needles, ...reasons], exact: timelineText }) + await redactRequestIntents(tx, requests.filter(r => !own.has(r.id)), row.id, { skipPending: true, needles }));
-  removed.persistence_effects = await stripPageGitNotes(tx, sourceId, slug);
+  let recheck: JournalRecheck = { targets: [], tail: 0, pendingRechecked: 0, complete: true };
+  const { removed, blobs, missingCaches, complete } = await sweepPurgedPage(tx, { sourceId, slug, pageId: page.id, requestId: row.id, factIds, takeIds, needles, reasons, lookup,
+    // #6511 [R2]: the preparation sweep's targets, plus the tail past its ceiling and the rows pending at scan time, re-tested here.
+    census: async () => {
+      recheck = await lookup('tail_recheck', () => recheckRequestsCarrying(tx, sourceId, needles, prepared.sweep,
+        { exclude: row.id, beforePending: () => faultPoint('purge:pending_recheck', { requestId: row.request_id, sourceId, operation: row.operation }) }));
+      return { targets: [...prepared.sweep.targets, ...recheck.targets], complete: prepared.sweep.complete && recheck.complete };
+    } });
   const journalSweep = { scanned: prepared.sweep.scanned, ceiling: prepared.sweep.ceiling, watermark: prepared.sweep.watermark ?? null, batch: prepared.sweep.batch ?? 1,
-    tail: recheck.tail, pending_rechecked: recheck.pendingRechecked, complete: prepared.sweep.complete && recheck.complete && timelineRows.length <= TIMELINE_RECEIPT_CAP };
-  const files = await tx.executeRaw<{ storage_path: string }>(`DELETE FROM files WHERE (page_id=$1 OR (page_id IS NULL AND page_slug=$2 AND (source_id=$3 OR source_id IS NULL)))
-    RETURNING storage_path`, [page.id, slug, sourceId]);
-  removed.files = files.length;
-  Object.assign(removed, await (await import('../generations/ledger-scrub.ts')).scrubGenerationLedger(tx, sourceId, { slug }));
+    tail: recheck.tail, pending_rechecked: recheck.pendingRechecked, complete };
   const [cascade] = await tx.executeRaw<{ chunks: number; versions: number; takes: number; timeline: number }>(`SELECT
     (SELECT count(*)::int FROM content_chunks WHERE page_id=$1) AS chunks, (SELECT count(*)::int FROM page_versions WHERE page_id=$1) AS versions,
     (SELECT count(*)::int FROM takes WHERE page_id=$1) AS takes, (SELECT count(*)::int FROM timeline_entries WHERE page_id=$1) AS timeline`, [page.id]);
@@ -376,10 +449,8 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
     derived_walk: walk })) : null;
   if (ledger) removed.belief_events = ledger.purged_events + ledger.redacted_fields.length;
   if (!prepared.keepOrigin) await writeOriginDeletedMarker(tx, { sourceId, page: { id: page.id, slug, source_path: page.source_path } });
-  const { shas, ...segmentRows } = await deletePageWithSegments(tx, sourceId, slug, page.id, segmentClaims);
-  Object.assign(removed, segmentRows);
-  Object.assign(removed, await scrubPurgedSlugs(tx, sourceId, [slug]));
-  Object.assign(removed, await scrubPurgedNameStores(tx, sourceId, [slug]));
+  const { shas, removed: deleted } = await deletePurgedPage(tx, { sourceId, slug, pageId: page.id, claims: segmentClaims });
+  Object.assign(removed, deleted);
   if (!retention) appendPurgeIntent({ request: row.id, request_id: row.request_id, source_id: sourceId, source_incarnation: row.source_incarnation,
     scope: 'page', slug, purge_epoch: epoch, content_hashes: [...hashes], facts: mirrorFacts, takes: mirrorTakes, lifetimes });
   const key = `${sourceId}:${row.request_id}`;
@@ -391,7 +462,7 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
       ...(missingCaches.length ? { missing_caches: missingCaches } : {}),
       ...(ledger ? { ledger: { purged_events: ledger.purged_events, redacted_fields: ledger.redacted_fields.length, live_carriers: ledger.live_carriers.length, derived_hidden: ledger.derived_hidden, derived_walk: ledger.derived_walk } } : {}),
       derived: { ...derived, truncated: derivedFrom.truncated },
-      blobs: files.map(f => f.storage_path).filter(Boolean) } };
+      blobs } };
 }
 
 /**

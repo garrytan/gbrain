@@ -3955,6 +3955,18 @@
         {
           "category": "brain",
           "details": {
+            "missing": 0,
+            "path": "<home>/.gbrain/purge-events.jsonl",
+            "recent": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No purge in the last 30 days to check against the purge mirror at <home>/.gbrain/purge-events.jsonl.",
+          "name": "purge_mirror",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "sweeps": 0
           },
           "elapsed_ms": "<volatile>",

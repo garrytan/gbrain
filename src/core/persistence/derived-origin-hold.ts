@@ -39,6 +39,46 @@ export async function parkDerivedOrigin(engine: SqlEngine, park: Omit<DerivedOri
       THEN jsonb_set(EXCLUDED.completed_keys, '{0,held_request_id}', op_checkpoints.completed_keys->0->'held_request_id') ELSE EXCLUDED.completed_keys END`, [DERIVED_ORIGIN_PARK_OP, String(park.page_id), JSON.stringify([row])]);
 }
 
+/**
+ * GST-2766: the record that an owner purge is owed (op `owed-page-purge`, fingerprint the page id), kept apart from the
+ * park. A park is cleared once its carry lands, often in a run that does not remove the page; this record stays until
+ * the page is removed or restored, so whichever purge removes the page writes the purge tombstones. It names no slug or
+ * text: the source, the page id, the tombstone it was owed for (`deleted_us`, as purge-parks.ts keys a tombstone) and
+ * the owner's request id. A record whose tombstone changed (restored, deleted again) applies to nothing and is pruned.
+ */
+export const OWED_PURGE_OP = 'owed-page-purge';
+export interface OwedPurge { source_id: string; page_id: number; deleted_us: string; request_id: string }
+
+const DELETED_US = (alias: string) => `floor(extract(epoch FROM ${alias}.deleted_at)*1000000)::bigint::text`;
+const OWED_TOMBSTONE = `EXISTS (SELECT 1 FROM pages p WHERE p.id::text = o.fingerprint AND p.deleted_at IS NOT NULL AND ${DELETED_US('p')} = o.completed_keys->0->>'deleted_us')`;
+
+/** Records that the owner's purge `requestId` is owed for page `pageId`'s current tombstone; a page that is not a tombstone records nothing. */
+export async function recordOwedPurge(engine: SqlEngine, pageId: number, requestId: string): Promise<void> {
+  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
+    SELECT $1, p.id::text, jsonb_build_array(jsonb_build_object('source_id', p.source_id, 'page_id', p.id, 'deleted_us', ${DELETED_US('p')}, 'request_id', $3::text))
+    FROM pages p WHERE p.id = $2 AND p.deleted_at IS NOT NULL
+    ON CONFLICT (op,fingerprint) DO UPDATE SET updated_at=now(), completed_keys=EXCLUDED.completed_keys
+      WHERE op_checkpoints.completed_keys->0->>'deleted_us' IS DISTINCT FROM EXCLUDED.completed_keys->0->>'deleted_us'`, [OWED_PURGE_OP, pageId, requestId]);
+}
+
+/** Read-only: every owed purge whose tombstone still exists as recorded. */
+export async function readOwedPurges(engine: SqlEngine): Promise<OwedPurge[]> {
+  const rows = await engine.executeRaw<{ owed: OwedPurge | string }>(`SELECT o.completed_keys->0 AS owed FROM op_checkpoints o WHERE o.op=$1 AND ${OWED_TOMBSTONE}
+    ORDER BY o.fingerprint`, [OWED_PURGE_OP]);
+  return rows.map(row => typeof row.owed === 'string' ? JSON.parse(row.owed) as OwedPurge : row.owed).map(owed => ({ ...owed, page_id: Number(owed.page_id) }));
+}
+
+/** Drops the records whose tombstone was removed, restored or deleted again. */
+export async function pruneOwedPurges(engine: SqlEngine): Promise<void> {
+  await engine.executeRaw(`DELETE FROM op_checkpoints o WHERE o.op=$1 AND NOT ${OWED_TOMBSTONE}`, [OWED_PURGE_OP]);
+}
+
+/** Removes the records of these pages; the purge that removes a page calls it in its transaction. */
+export async function clearOwedPurges(engine: SqlEngine, pageIds: readonly number[]): Promise<void> {
+  if (!pageIds.length) return;
+  await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint = ANY($2::text[])', [OWED_PURGE_OP, pageIds.map(String)]);
+}
+
 export async function clearDerivedOriginParks(engine: SqlEngine, pageIds: readonly number[]): Promise<void> {
   if (!pageIds.length) return;
   await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint = ANY($2::text[])', [DERIVED_ORIGIN_PARK_OP, pageIds.map(String)]);
