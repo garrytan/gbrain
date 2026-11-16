@@ -69,6 +69,7 @@ beforeAll(async () => {
   await fact('Carol Example moved to Madrid.', 9, '2019-01-01', 'people/carol-example');
   await fact("Kim O'Brien plays the cello.", 23, day(23), 'people/kim-obrien');
   await fact("Lee O'Neil plays the violin.", 24, day(24), 'people/lee-oneil');
+  await fact('Pat Example built an AI-powered search tool.', 25, day(25), 'people/pat-example');
 }, 300_000);
 afterAll(async () => { await engine?.disconnect(); }, 60_000);
 
@@ -130,6 +131,12 @@ describe('A4 near names: an exact word outranks a stem-only match', () => {
     const facts = (await ask("What does Kim O'Brien play?")).filter(r => r.result_type === 'fact').map(r => r.chunk_text ?? '');
     expect(facts.some(t => t.includes("Kim O'Brien plays the cello."))).toBe(true);
     expect(facts.filter(t => t.includes("O'Neil"))).toEqual([]);
+  });
+  test('a two-letter acronym still matches the hyphenated word it starts', async () => {
+    const pool = await collectFactCandidates(engine, 'Which AI tool did Pat build?', { sourceIds: [sourceId], worldOnly: true, excludePrivate: false }, null, { depth: { keyword: 50, cosine: 50, entity: 40 } });
+    const pat = scoreFactCandidates('Which AI tool did Pat build?', pool.candidates, pool.terms, pool.stems).find(s => s.candidate.fact.startsWith('Pat Example'));
+    expect(pool.stems?.get('ai-powered')).toContain('ai');
+    expect(pat).toBeDefined();
   });
   test('the facts block puts it first', async () => {
     const facts = (await ask(Q)).filter(r => r.result_type === 'fact').map(r => r.chunk_text ?? '').filter(t => t.includes('Sam Roger'));
