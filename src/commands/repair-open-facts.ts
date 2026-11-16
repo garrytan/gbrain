@@ -3,12 +3,23 @@
  * ledger at <gbrain home>/repair/open-facts/<brain_id>.jsonl (0700 directory, 0600 file, as private-labels keeps its
  * own) and the fact ids an `--ids-file` lists.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { opError } from '../core/ops/contract.ts';
 import type { OpenFactsLedger, OpenFactsLedgerLine } from '../core/repair/open-facts.ts';
-import { repairLedger } from './repair-private-labels.ts';
+import { ledgerAt, repairLedger } from './repair-private-labels.ts';
 
 export const openFactsLedger = (brainId: string): OpenFactsLedger => repairLedger<OpenFactsLedgerLine>('open-facts', brainId);
+
+/** `--undo <ledger>`: the ledger at that path, whose lines the undo plans from and appends to; a missing file refuses `undo_ledger_missing`. */
+export function openFactsUndoLedger(path: string): OpenFactsLedger {
+  const full = resolve(path);
+  if (!existsSync(full)) {
+    throw opError('invalid_params', `--undo ${path}: no ledger file is there, so nothing was planned.`,
+      'Pass the ledger path the apply printed; gbrain keeps it in ~/.gbrain/repair/open-facts/ (in $GBRAIN_HOME/.gbrain/repair/open-facts/ when GBRAIN_HOME is set).', { reason: 'undo_ledger_missing' });
+  }
+  return ledgerAt<OpenFactsLedgerLine>(full, false);
+}
 
 /** The fact ids a file lists, one per line; blank lines and # comments are skipped. */
 export function readFactIdsFile(path: string): number[] {

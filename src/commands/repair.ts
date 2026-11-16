@@ -40,7 +40,7 @@ import { normalizeSeatLabel } from '../core/context/seat.ts';
 import { agentSessionFlagArgs } from '../core/repair/agent-session-facts.ts';
 import { fileDriftConsentText } from '../core/repair/file-drift.ts';
 import { privateLabelsLedger } from './repair-private-labels.ts';
-import { openFactsLedger, readFactIdsFile } from './repair-open-facts.ts';
+import { openFactsLedger, openFactsUndoLedger, readFactIdsFile } from './repair-open-facts.ts';
 import { createdBeforeRequired, memberModeRefused } from '../core/repair/open-facts.ts';
 import { isAbsolute } from 'node:path';
 import { readFileSync } from 'node:fs';
@@ -367,9 +367,9 @@ export function parseRepairArgs(args: string[]): RepairArgs {
     else if (flag === '--created-before') {
       if (!/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2}))?$/.test(value) || !Number.isFinite(Date.parse(value))) {
         throw opError('invalid_params', `--created-before takes an ISO-8601 instant (got "${value}").`,
-          'Pass the instant facts.default_visibility became world on this brain, e.g. --created-before 2026-06-01T00:00:00Z.', { reason: 'created_before_invalid' });
+          'Pass the instant facts.default_visibility became world on this brain with its offset, e.g. --created-before 2026-06-01T00:00:00Z; a date alone (2026-06-01) is read as midnight UTC.', { reason: 'created_before_invalid' });
       }
-      parsed.createdBefore = value;
+      parsed.createdBefore = new Date(value).toISOString();
     }
     else if (flag === '--ids-file') parsed.idsFile = value;
     else if (flag === '--undo') parsed.undo = value;
@@ -483,7 +483,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
       `Preview one by name: ${repairPreviewCommand(EXPLICIT_REPAIR_REGISTRY[0]!.kind)}`);
   }
   if (parsed.kind === 'open-facts') {
-    const bad = parsed.classes.find(cls => cls !== 'fenced' && cls !== 'unfenced' && !/^unpaged:\S+$/.test(cls));
+    const bad = parsed.classes.find(cls => cls !== 'fenced' && cls !== 'unfenced' && !(cls.startsWith('unpaged:') && cls.slice('unpaged:'.length).trim() !== ''));
     if (bad !== undefined) throw opError('invalid_params', `--class for gbrain repair open-facts is fenced, unfenced or unpaged:<lane> (got "${bad}").`,
       'Pass a class the preview counts under eligible, e.g. --class unpaged:mail:extract, or omit --class for fenced and unfenced facts.', { reason: 'class_invalid' });
     if (parsed.undo !== undefined && (parsed.createdBefore !== undefined || parsed.classes.length || parsed.idsFile !== undefined || parsed.afterPage !== undefined)) {
@@ -629,7 +629,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     ...(k === kind && noLlm ? { noLlm } : {}), ...(k === kind && maxUsd !== undefined ? { maxLlmUsd: maxUsd } : {}),
     ...(k === kind && (k === 'visibility' || k === 'private-labels') && driftClass ? { driftClass } : {}),
     ...(k === kind && k === 'private-labels' ? { privateLabelsLedger: privateLabelsLedger(scope.brain_id) } : {}),
-    ...(k === kind && k === 'open-facts' ? { openFacts: { classes, ledger: openFactsLedger(scope.brain_id), ...(createdBefore !== undefined ? { createdBefore } : {}),
+    ...(k === kind && k === 'open-facts' ? { openFacts: { classes, ledger: undo !== undefined ? openFactsUndoLedger(undo) : openFactsLedger(scope.brain_id), ...(createdBefore !== undefined ? { createdBefore } : {}),
       ...(openFactIds ? { ids: openFactIds } : {}), ...(idsFile !== undefined ? { idsFile } : {}), ...(undo !== undefined ? { undo } : {}) } } : {}),
     ...(k === kind && k === 'file-drift' ? { prefer, requests, allDrifted, driftClass, since, ...(held ? { held } : {}), ...(side ? { side } : {}), ...(state ? { state } : {}), ...(provenance ? { provenance } : {}), ...(cursor ? { cursor } : {}),
       progress: createProgress(cliOptsToProgressOptions(getCliOptions())) } : {}),

@@ -18,7 +18,7 @@
  * Red before the build: the kind does not exist yet. The pins (remote rewrite, #9196 holds) are green today.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -505,6 +505,120 @@ describe('test 16: the fenced open is one transaction with its page, its checkou
     expect(await visibilityOf(b, before.id)).toBe('private');
     expect((await fenceCell(b, slug, 1))?.visibility).toBe('private');
     expect(readFileSync(file!, 'utf8')).toBe(text!);
+  }), 120_000);
+});
+
+/**
+ * Test 17 (review round 2 on PR #9523, the owner's grant of one scoped fix): --undo reads the ledger it is given and refuses
+ * a missing one or one that records another brain or source; an open whose intent line is its only record (its write
+ * confirmed after the run stopped waiting) is closed unless the fact was world before that run or an accepted trust
+ * proposal widened it since; a date-only --created-before is midnight UTC whatever the session time zone; a lane with
+ * spaces can be named. Unmanaged PGLite brain.
+ */
+describe('test 17: undo reads the named ledger, intent-only opens, the UTC cut and spaced lanes', () => {
+  const slug = 'companies/undo-example';
+  const factMd5 = (claim: string) => createHash('md5').update(claim).digest('hex');
+  const ledgerLines = (path: string) => readFileSync(path, 'utf8').split('\n').filter(Boolean).map(text => JSON.parse(text));
+  const writeLedger = (lines: object[]) => {
+    const path = join(mkdtempSync(join(home, 'ledger-')), 'open-facts.jsonl');
+    writeFileSync(path, lines.map(line => JSON.stringify(line)).join('\n') + '\n');
+    return path;
+  };
+  /** An unfenced private fact on a page, opened by a real apply; its own ledger lines and the default ledger's path. */
+  async function opened(claim: string) {
+    const b = await brain(engines[0]!, false);
+    await page(b, slug, '', []);
+    const id = await dbOnly(b, claim, slug);
+    const { applied } = await previewAndApply(b);
+    expect(applied!.applied).toBe(1);
+    expect(await visibilityOf(b, id)).toBe('world');
+    const ledger = applied!.details.ledger as string;
+    const mine = ledgerLines(ledger).filter(line => line.source_id === b.sourceId);
+    return { b, id, ledger, mine, intent: mine.find(line => line.phase === 'intent')!, committed: mine.find(line => line.phase === 'committed')! };
+  }
+  const undo = async (b: Brain, ledger: string) => {
+    const planned = await openFacts(b, ['--undo', ledger]);
+    const applied = planned.preview_hash && planned.listing?.length ? await openFacts(b, ['--undo', ledger, '--apply', '--expect', planned.preview_hash]) : null;
+    return { planned, applied };
+  };
+
+  test('--undo plans from the file it names, not the default ledger', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const { b, id, ledger, mine, committed } = await opened('Orchardline fact undone from a copied ledger');
+    const copy = writeLedger(mine);
+    writeFileSync(ledger, readFileSync(ledger, 'utf8') + JSON.stringify({ ...committed, at: new Date().toISOString(), action: 'close' }) + '\n');
+    const { planned, applied } = await undo(b, copy);
+    expect(planned.details.ledger).toBe(copy);
+    expect(applied!.applied).toBe(1);
+    expect(await visibilityOf(b, id)).toBe('private');
+  }), 120_000);
+
+  test('a missing ledger, or one that records another brain or another source, refuses with a typed reason', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const { b, id, intent } = await opened('Orchardline fact behind a foreign ledger');
+    const brainId = (await resolveRepairScope(b.engine, b.sourceId)).brain_id;
+    await expect(cli(b.engine, ['open-facts', '--source', b.sourceId, '--undo', join(home, 'no-such-ledger.jsonl')])).rejects.toMatchObject({ code: 'invalid_params', reason: 'undo_ledger_missing' });
+    await expect(cli(b.engine, ['open-facts', '--source', b.sourceId, '--undo', writeLedger([{ ...intent, brain_id: 'brain-elsewhere' }])]))
+      .rejects.toMatchObject({ code: 'invalid_params', reason: 'undo_ledger_wrong_brain' });
+    const otherSource = writeLedger([{ ...intent, brain_id: brainId, source_id: 'source-elsewhere' }]);
+    const refused = await cli(b.engine, ['open-facts', '--source', b.sourceId, '--undo', otherSource]).then(() => null, (error: unknown) => error as Record<string, any>);
+    expect(refused).toMatchObject({ code: 'invalid_params', reason: 'undo_ledger_wrong_source' });
+    expect(String(refused!.fix ?? refused!.next ?? JSON.stringify(refused))).toContain('--source source-elsewhere');
+    expect(await visibilityOf(b, id)).toBe('world');
+  }), 120_000);
+
+  test('an open recorded only by its intent line is closed: the late-commit case', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const { b, id, intent } = await opened('Orchardline fact whose commit line never came');
+    expect(intent.facts).toEqual([expect.objectContaining({ id, fact_md5: factMd5('Orchardline fact whose commit line never came'), visibility_before: 'private' })]);
+    const { applied } = await undo(b, writeLedger([intent]));
+    expect(applied!.applied).toBe(1);
+    expect(await visibilityOf(b, id)).toBe('private');
+  }), 120_000);
+
+  test('an intent-only fact that was world before that run, or that an accepted proposal widened since, is skipped and reported', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const before = await opened('Orchardline fact already world before the run');
+    const worldBefore = await undo(before.b, writeLedger([{ ...before.intent, facts: before.intent.facts.map((f: object) => ({ ...f, visibility_before: 'world' })) }]));
+    expect(worldBefore.planned.details.skipped).toEqual({ world_before_run: 1 });
+    expect(worldBefore.applied).toBeNull();
+    expect(await visibilityOf(before.b, before.id)).toBe('world');
+
+    const widened = await opened('Orchardline fact widened by an accepted proposal');
+    const ledger = writeLedger([widened.intent]);
+    await widened.b.engine.transaction(tx => withCoordinatedWrite(tx, [widened.b.sourceId], async () => {
+      const { id } = await insertTrustProposal(tx, { action: 'supersede_fact', sourceId: widened.b.sourceId, target: { table: 'facts', id: widened.id }, proposer: 'fixture',
+        before: { visibility: { from: 'private', to: 'world' } } });
+      await tx.executeRaw("UPDATE trust_proposals SET status='accepted', decided_at=now() WHERE id=$1", [id]);
+    }, TEST_WRITE_ATTRIBUTION));
+    const later = await undo(widened.b, ledger);
+    expect(later.planned.details.skipped).toEqual({ widened_by_proposal: 1 });
+    expect(later.applied).toBeNull();
+    expect(await visibilityOf(widened.b, widened.id)).toBe('world');
+  }), 120_000);
+
+  test('a date-only --created-before is midnight UTC in any session time zone, the preview prints it, and a time without an offset refuses', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const b = await brain(engines[0]!, false);
+    await page(b, slug, '', []);
+    const id = await dbOnly(b, 'Orchardline fact saved at five UTC on the cut day', slug);
+    await coordinated(b, "UPDATE facts SET created_at='2026-06-01T05:00:00Z' WHERE id=$1", [id]);
+    await b.engine.executeRaw("SET TIME ZONE 'Pacific/Honolulu'");
+    try {
+      const dateOnly = await openFacts(b, ['--created-before', '2026-06-01']);
+      expect(dateOnly.details.created_before).toBe('2026-06-01T00:00:00.000Z');
+      expect(dateOnly.listing ?? []).toEqual([]);
+      const afterFive = await openFacts(b, ['--created-before', '2026-06-01T06:00:00+00:00']);
+      expect(afterFive.details.created_before).toBe('2026-06-01T06:00:00.000Z');
+      expect(afterFive.listing.map((l: { detail: string }) => l.detail)).toEqual([`fact ${id} (unfenced)`]);
+    } finally { await b.engine.executeRaw('RESET TIME ZONE'); }
+    await expect(cli(b.engine, ['open-facts', '--source', b.sourceId, '--created-before', '2026-06-01T00:00:00'])).rejects.toMatchObject({ code: 'invalid_params', reason: 'created_before_invalid' });
+  }), 120_000);
+
+  test('--class unpaged:<lane> takes a lane whose name has spaces', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const b = await brain(engines[0]!, false);
+    const id = await dbOnly(b, 'Orchardline note from a lane with spaces', null, { source: 'mail extract', entity: null });
+    const planned = await preview(b);
+    expect(planned.details.eligible).toMatchObject({ 'unpaged:mail extract': 1 });
+    expect(planned.warnings.join('\n')).toContain("--class 'unpaged:mail extract'");
+    const { applied } = await previewAndApply(b, ['--class', 'unpaged:mail extract']);
+    expect(applied!.applied).toBe(1);
+    expect(await visibilityOf(b, id)).toBe('world');
   }), 120_000);
 });
 

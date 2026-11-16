@@ -728,7 +728,7 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     handler: openFactsRepair, embeds: 'none', checks: [], explicit_only: true, preview_bound: true,
     summary: 'Open facts stamped private before facts.default_visibility world (#8194), which widens what remote callers that are not the brain owner can read. '
       + 'Operator-only: runs from the CLI on the brain host, never for a remote caller or under GBRAIN_ENFORCED_MEMBER. Needs --source and --created-before <ISO-8601> '
-      + '(the instant the default became world). The preview lists one window (--limit, default 1000; --after <id> for the next) of active private facts by class '
+      + '(the instant the default became world, with its offset; a date alone is read as midnight UTC). The preview lists one window (--limit, default 1000; --after <id> for the next) of active private facts by class '
       + '(fenced, unfenced; unpaged:<lane> for facts with no page or from a transcript lane, opened only with --class <that class>; --ids-file narrows to listed ids) '
       + 'and counts every fact it leaves private by reason: expired, superseded, member page, withdrawn or purged, a trust contest, a private, missing or '
       + 'quarantined holding, provenance or entity page, an unresolved provenance page. --apply --expect <hash> opens exactly that window, keeping each fact\'s '

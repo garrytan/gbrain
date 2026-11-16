@@ -2465,13 +2465,16 @@ gbrain repair open-facts --source <id> --created-before 2026-06-01T00:00:00Z --a
 ```
 
 `--created-before` is required: name the moment the default became `world` on
-this brain, and facts saved after it stay as they were written. The preview
+this brain, with its offset (a date alone, such as `2026-06-01`, is read as
+midnight UTC; the preview prints the cut it used), and facts saved after it
+stay as they were written. The preview
 lists one window of facts (`--limit`, default 1000; `--after <id>` previews
 the next one), each with its class: `fenced` (a row of a page's `## Facts`
 table) or `unfenced` (a fact stored only in the database, held on a page).
 Facts with no page, and facts from transcript lanes (conversation
 extraction, capture hooks, connectors), are counted as `unpaged:<lane>` and
-open only when you name that class, for example `--class unpaged:mail:extract`.
+open only when you name that class, for example `--class unpaged:mail:extract`
+(quote a lane that contains spaces).
 `--ids-file <file>` (one fact id per line) narrows the set.
 
 The preview also counts every fact it leaves private, by reason: `expired`,
@@ -2506,9 +2509,15 @@ gbrain repair open-facts --source <id> --undo <ledger> --json
 gbrain repair open-facts --source <id> --undo <ledger> --apply --expect <preview_hash>
 ```
 
-Undo re-privates the facts the ledger opened that are still world and
+Undo reads the ledger you name and refuses one that is missing
+(`undo_ledger_missing`) or that records another brain
+(`undo_ledger_wrong_brain`) or another source (`undo_ledger_wrong_source`).
+It re-privates the facts the ledger opened that are still world and
 unchanged, and counts the rest as skipped (`expired`, `superseded`,
-`changed`, `already_private`, `gone`). It restores the label only: anything
+`changed`, `already_private`, `gone`). A fact whose write confirmed after the
+run stopped waiting has only its intent line; undo closes it too, unless it
+was already world before that run (`world_before_run`) or an accepted trust
+proposal widened it since (`widened_by_proposal`). It restores the label only: anything
 a remote caller read while a fact was world stays read.
 
 On a personal brain where every remote caller is you, you may not need this

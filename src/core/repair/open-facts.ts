@@ -67,7 +67,7 @@ const bounded = { timeoutMs: PLAN_STATEMENT_MS };
 
 /** One ledger line: `intent` before a write, `committed` after it with the facts it changed. */
 export interface OpenFactsLedgerLine { at: string; brain_id: string; source_id: string; hash: string; request_id: string; action: 'open' | 'close'; phase: 'intent' | 'committed';
-  facts: Array<{ id: number; row_num: number | null; slug: string | null; fact_md5: string }> }
+  facts: Array<{ id: number; row_num: number | null; slug: string | null; fact_md5: string; visibility_before?: string }> }
 /** The undo ledger the CLI keeps (src/commands/repair-open-facts.ts): its path, parsed lines (untrusted) and the append. */
 export interface OpenFactsLedger { path: string; lines: unknown[]; unreadable: number; record(line: OpenFactsLedgerLine): void }
 /** What the CLI parsed for this kind. `undo`: the ledger path whose opened facts the run re-privates. */
@@ -184,7 +184,9 @@ const selectionArgs = (sel: Selection) => sel.undo ? ['--undo', sel.undo]
 /** The selection flags the printed apply command repeats (`--after` and `--limit` are the runner's). */
 export const openFactsApplyArgs = (request: OpenFactsRequest): string[] => request.undo ? ['--undo', request.undo]
   : [...(request.createdBefore ? ['--created-before', request.createdBefore] : []), ...request.classes.flatMap(c => ['--class', c]), ...(request.idsFile ? ['--ids-file', request.idsFile] : [])];
-const previewCommand = (sel: Selection) => `gbrain repair open-facts --source ${sel.source_id} ${selectionArgs(sel).join(' ')}`;
+/** One shell word: a lane named with spaces stays one --class value in a printed command. */
+const sh = (arg: string) => /^[\w@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`;
+const previewCommand = (sel: Selection) => `gbrain repair open-facts --source ${sel.source_id} ${selectionArgs(sel).map(sh).join(' ')}`;
 
 function selectionOf(scope: RepairScope, opts?: RepairPlanOptions): { sel: Selection; request: OpenFactsRequest } {
   if (opts?.remote !== false) throw trustedCliRequired('gbrain repair open-facts widens what remote callers read, so it runs only from the CLI on the brain host; remote callers cannot run it.');
@@ -212,34 +214,61 @@ export function memberModeRefused(): OperationError {
     'Run it as the brain host\'s operator, without GBRAIN_ENFORCED_MEMBER set.', { reason: 'member_mode_refused' });
 }
 
-/** Ledger lines readable for --undo: the latest committed line per fact decides (open: still to undo; close: undone). */
-function ledgerOpened(ledger: OpenFactsLedger, brainId: string, sourceId: string): Map<number, { row_num: number | null; slug: string | null; fact_md5: string }> {
-  const latest = new Map<number, { action: string; row_num: number | null; slug: string | null; fact_md5: string }>();
-  for (const raw of ledger.lines) {
-    const line = raw as Partial<OpenFactsLedgerLine> | null;
-    if (!line || typeof line !== 'object' || line.phase !== 'committed' || line.brain_id !== brainId || line.source_id !== sourceId || !Array.isArray(line.facts)) continue;
-    for (const fact of line.facts) {
+interface LedgerOpened { row_num: number | null; slug: string | null; fact_md5: string; intent: { at: string; visibility_before: string | null } | null }
+
+/**
+ * The facts a ledger records as opened in this brain and source, refusing a ledger that belongs elsewhere. The latest line
+ * per fact decides: a committed open is still to undo, a committed close is undone. An open whose `intent` line is its only
+ * record (its write confirmed after the run gave up waiting, or the run died before its committed line) counts with the
+ * intent's time and the visibility the fact had then, which planUndo checks before closing it.
+ */
+function ledgerOpened(ledger: OpenFactsLedger, brainId: string, sourceId: string): Map<number, LedgerOpened> {
+  const lines = ledger.lines.map(raw => raw as Partial<OpenFactsLedgerLine> | null)
+    .filter((line): line is Partial<OpenFactsLedgerLine> => !!line && typeof line === 'object' && (line.phase === 'committed' || line.phase === 'intent') && Array.isArray(line.facts));
+  const foreignBrain = lines.find(line => line.brain_id !== brainId);
+  if (foreignBrain) {
+    throw opError('invalid_params', `The ledger ${ledger.path} records brain ${String(foreignBrain.brain_id)}, not this brain (${brainId}), so nothing was planned.`,
+      'Run the undo on the brain that ledger belongs to (its GBRAIN_HOME and database), or pass this brain\'s own ledger, which the apply printed.', { reason: 'undo_ledger_wrong_brain' });
+  }
+  if (lines.length && !lines.some(line => line.source_id === sourceId)) {
+    const recorded = [...new Set(lines.map(line => String(line.source_id)))].sort();
+    throw opError('invalid_params', `The ledger ${ledger.path} records source ${recorded.join(', ')}, not ${sourceId}, so nothing was planned.`,
+      `Rerun the undo with the source the ledger records, e.g. --source ${recorded[0]}.`, { reason: 'undo_ledger_wrong_source' });
+  }
+  const latest = new Map<number, LedgerOpened & { action: string; committed: boolean }>();
+  for (const line of lines) {
+    if (line.source_id !== sourceId) continue;
+    for (const fact of line.facts!) {
       if (!fact || !Number.isSafeInteger(fact.id) || typeof fact.fact_md5 !== 'string') continue;
-      latest.set(fact.id, { action: String(line.action), row_num: Number.isSafeInteger(fact.row_num) ? fact.row_num : null, slug: typeof fact.slug === 'string' ? fact.slug : null, fact_md5: fact.fact_md5 });
+      const entry = { action: String(line.action), row_num: Number.isSafeInteger(fact.row_num) ? fact.row_num : null, slug: typeof fact.slug === 'string' ? fact.slug : null, fact_md5: fact.fact_md5 };
+      if (line.phase === 'committed') latest.set(fact.id, { ...entry, committed: true, intent: null });
+      else if (line.action === 'open' && !(latest.get(fact.id)?.committed && latest.get(fact.id)?.action === 'open')) {
+        latest.set(fact.id, { ...entry, committed: false, intent: { at: String(line.at), visibility_before: typeof fact.visibility_before === 'string' ? fact.visibility_before : null } });
+      }
     }
   }
-  return new Map([...latest].flatMap(([id, entry]) => entry.action === 'open' ? [[id, entry] as const] : []));
+  return new Map([...latest].flatMap(([id, { action, committed: _c, ...entry }]) => action === 'open' ? [[id, entry] as const] : []));
 }
 
 /** --undo: the opened facts still world and unchanged, grouped as writes, and the count of each one skipped by reason. */
 async function planUndo(engine: BrainEngine, scope: RepairScope, sel: Selection, ledger: OpenFactsLedger) {
   const opened = ledgerOpened(ledger, scope.brain_id, sel.source_id);
   const rows = opened.size ? await engine.executeRaw<{ id: number; row_num: number | null; fact: string; visibility: string; source_markdown_slug: string | null;
-    expired: boolean; superseded: boolean; fact_md5: string; cls: string }>(`SELECT f.id, f.row_num, f.fact, f.visibility, f.source_markdown_slug, f.expired_at IS NOT NULL AS expired,
-      f.superseded_by IS NOT NULL AS superseded, md5(f.fact) AS fact_md5, ${openFactClassSql('f')} AS cls
+    expired: boolean; superseded: boolean; fact_md5: string; cls: string; accepted_at: string | null }>(`SELECT f.id, f.row_num, f.fact, f.visibility, f.source_markdown_slug, f.expired_at IS NOT NULL AS expired,
+      f.superseded_by IS NOT NULL AS superseded, md5(f.fact) AS fact_md5, ${openFactClassSql('f')} AS cls,
+      (SELECT max(tp.decided_at) FROM trust_proposals tp WHERE tp.status = 'accepted'
+        AND ((tp.target_table = 'facts' AND tp.target_id = f.id) OR (tp.related_table = 'facts' AND tp.related_id = f.id)))::text AS accepted_at
     FROM facts f WHERE f.source_id = $1 AND f.id = ANY($2::bigint[]) ORDER BY f.id`, [sel.source_id, [...opened.keys()]], bounded) : [];
   const skipped: Record<string, number> = { gone: opened.size - rows.length };
   const keep: PlannedRow[] = [];
   for (const row of rows) {
     const recorded = opened.get(Number(row.id))!;
     const rowNum = row.row_num === null ? null : Number(row.row_num);
+    const intent = recorded.intent;
     const reason = row.expired ? 'expired' : row.superseded ? 'superseded' : row.visibility !== 'world' ? 'already_private'
-      : row.fact_md5 !== recorded.fact_md5 || rowNum !== recorded.row_num || row.source_markdown_slug !== recorded.slug ? 'changed' : null;
+      : row.fact_md5 !== recorded.fact_md5 || rowNum !== recorded.row_num || row.source_markdown_slug !== recorded.slug ? 'changed'
+      : intent && intent.visibility_before !== 'private' ? 'world_before_run'
+      : intent && row.accepted_at !== null && Date.parse(row.accepted_at) >= Date.parse(intent.at) ? 'widened_by_proposal' : null;
     if (reason) { skipped[reason] = (skipped[reason] ?? 0) + 1; continue; }
     keep.push({ id: Number(row.id), row_num: rowNum, fact: row.fact, holder: row.source_markdown_slug, cls: row.cls, fence: row.cls === 'fenced' });
   }
@@ -299,10 +328,10 @@ export const openFactsRepair: RepairHandler = {
         ...(next ? [`This preview lists one window of ${window.length} fact(s); more may follow it. Apply this window (or decide not to), then preview the next one: ${next}`] : []),
         ...(counts ? [] : [`The counts by reason did not finish within the ${PLAN_STATEMENT_MS} ms statement bound and are not listed; the window is.`]),
         ...(notNamed.length ? [`${notNamed.map(([cls, n]) => `${n} ${cls}`).join(', ')} fact(s) are not in this preview: they come from no page the brain can judge, or from a class not named. `
-          + `Name one to preview it, e.g. --class ${notNamed[0]![0]}`] : []),
+          + `Name one to preview it, e.g. --class ${sh(notNamed[0]![0])}`] : []),
       ],
       listing: listingOf(groups),
-      details: { mode: 'open', ledger: request.ledger.path, eligible: counts?.eligible ?? null, excluded: counts?.excluded ?? null, samples,
+      details: { mode: 'open', ledger: request.ledger.path, created_before: sel.created_before, eligible: counts?.eligible ?? null, excluded: counts?.excluded ?? null, samples,
         window: { size, listed: window.length, after: sel.after, next_after: upper, next_preview: next } } };
   },
   async apply(ctx, raw): Promise<RepairItemOutcome> {
@@ -319,7 +348,7 @@ export const openFactsRepair: RepairHandler = {
     const line = (values: unknown) => Object.entries((values ?? {}) as Record<string, number>).map(([key, value]) => `${key}=${value}`).join(', ') || 'none';
     const samples = (details.samples ?? {}) as Record<string, string[]>;
     return [
-      ...(details.mode === 'open' ? [`  eligible by class: ${line(details.eligible)}`, `  left private by reason: ${line(details.excluded)}`] : []),
+      ...(details.mode === 'open' ? [`  facts created before: ${String(details.created_before)} (UTC; a date alone is read as midnight UTC)`, `  eligible by class: ${line(details.eligible)}`, `  left private by reason: ${line(details.excluded)}`] : []),
       ...(details.mode === 'undo' ? [`  skipped (changed since it was opened): ${line(details.skipped)}`] : []),
       ...Object.entries(samples).map(([cls, claims]) => `  sample ${cls}: ${claims.map(claim => JSON.stringify(claim)).join('; ')}`),
       ...(details.ledger ? [`  ledger: ${String(details.ledger)}`] : []),
@@ -330,8 +359,12 @@ export const openFactsRepair: RepairHandler = {
 /** The ledger entries of a group's facts. */
 const ledgerFacts = (group: Group, ids?: ReadonlySet<number>) => group.facts.filter(f => !ids || ids.has(f.id))
   .map(f => ({ id: f.id, row_num: f.row_num, slug: f.holder, fact_md5: md5(f.fact) }));
-function recordIntent(item: OpenItem, requestId: string): void {
-  try { item.ledger.record({ at: new Date().toISOString(), brain_id: item.brain_id, source_id: item.group.source_id, hash: item.hash, request_id: requestId, action: item.group.mode, phase: 'intent', facts: ledgerFacts(item.group) }); }
+/** The intent line, with each fact's visibility read just before the write (undo from an intent line closes only a fact this run opened). */
+async function recordIntent(engine: BrainEngine, item: OpenItem, requestId: string): Promise<void> {
+  const before = new Map((await engine.executeRaw<{ id: number; visibility: string }>('SELECT id, visibility FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])',
+    [item.group.source_id, item.group.facts.map(f => f.id)])).map(row => [Number(row.id), row.visibility]));
+  const facts = ledgerFacts(item.group).map(f => ({ ...f, visibility_before: before.get(f.id) ?? 'missing' }));
+  try { item.ledger.record({ at: new Date().toISOString(), brain_id: item.brain_id, source_id: item.group.source_id, hash: item.hash, request_id: requestId, action: item.group.mode, phase: 'intent', facts }); }
   catch (error) {
     throw opError('storage_error', `${item.group.source_id}:${item.group.slug} was not written: the undo ledger ${item.ledger.path} did not take its intent line (${error instanceof Error ? error.message : String(error)}).`,
       `Make ${item.ledger.path} writable by this user, then rerun the same apply command; nothing was changed and the approved preview is kept.`);
@@ -411,13 +444,13 @@ async function applyDatabase(ctx: OperationContext, item: OpenItem): Promise<Rep
   const rows = pinned(group.facts);
   if (!await managedPersistenceEnabled(ctx.engine)) {
     const requestId = requestIdOf(item, null);
-    recordIntent(item, requestId);
+    await recordIntent(ctx.engine, item, requestId);
     return settle(item, requestId, await maintenanceTransaction(ctx.engine, tx => changeRows(tx, group.source_id, group.mode, rows)), CHANGED);
   }
   const authority = (await maintenancePreflight(ctx.engine, group.source_id))!;
   const holder = await ctx.engine.readPageSnapshot(group.slug, { sourceId: group.source_id });
   const requestId = requestIdOf(item, holder?.revision ?? null);
-  recordIntent(item, requestId);
+  await recordIntent(ctx.engine, item, requestId);
   try {
     const receipt = await submitDatabaseMaintenanceIntent(ctx.engine, authority, group.slug,
       { kind: OPEN_FACTS_INTENT, action: group.mode, expected_revision: holder?.revision ?? null, rows }, requestId);
@@ -460,7 +493,7 @@ async function applyFence(ctx: OperationContext, item: OpenItem): Promise<Repair
       const authority = (await maintenancePreflight(ctx.engine, group.source_id))!;
       const refused = await labelFileRefusal(ctx.engine, snapshot, content, edit);
       if (refused) return settle(item, requestId, [], refused.error.message);
-      recordIntent(item, requestId);
+      await recordIntent(ctx.engine, item, requestId);
       await publishMaintenancePage(ctx.engine, authority, group.slug, content,
         { expectedRevision: snapshot.revision, requestId, keepTrust: true, labelEdit: edit, ...(group.mode === 'open' ? { openFacts: rows } : {}) });
       const settled = await ctx.engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[]) AND visibility = $3 AND expired_at IS NULL`,
@@ -468,7 +501,7 @@ async function applyFence(ctx: OperationContext, item: OpenItem): Promise<Repair
       return settle(item, requestId, settled.map(r => Number(r.id)), CHANGED);
     }
     const path = (await filesInCheckout(ctx.engine, [Number(snapshot.page.id)])).get(Number(snapshot.page.id));
-    recordIntent(item, requestId);
+    await recordIntent(ctx.engine, item, requestId);
     let changed: number[] = [];
     const inPlace = async (tx: BrainEngine) => {
       changed = await changeRows(tx, group.source_id, group.mode, rows);
