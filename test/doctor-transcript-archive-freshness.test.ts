@@ -101,6 +101,16 @@ describe('transcript_archive_freshness', () => {
     expect(check.status).toBe('ok');
   }, 60_000);
 
+  test('a reader no run has read in stale_days warns even when its archive matches the last read', async () => {
+    await archiveDay('2026-11-01');
+    await recordPass(NOW.getTime() - 60_000);
+    const readers = [staticReader('codex', [said('codex-old-2026-11-01', '2026-11-01T08:00:00.000Z')])];
+    const check = await checkTranscriptArchiveFreshness(engine, { readers, nowMs: NOW.getTime() });
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('codex: no archive run has read codex successfully since 2026-11-01T12:00:00.000Z');
+    expect(check.fix?.argv).toEqual(['gbrain', 'transcripts', 'archive', 'run']);
+  }, 60_000);
+
   test('a harness with no readable sessions is informational', async () => {
     await recordPass(NOW.getTime() - 60_000);
     const check = await checkTranscriptArchiveFreshness(engine, { readers: [staticReader('grok', []), { harness: 'hermes', name: 'hermes', unavailable: 'no Hermes sessions on this machine' }], nowMs: NOW.getTime() });
