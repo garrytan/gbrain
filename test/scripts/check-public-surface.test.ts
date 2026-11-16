@@ -51,9 +51,9 @@ function repo(base: Record<string, string>, head: Record<string, string>): strin
   git(root, 'commit', '-q', '--allow-empty', '-m', 'head');
   return root;
 }
-function run(root: string): { code: number; out: string } {
+function run(root: string, env: Record<string, string> = {}): { code: number; out: string } {
   const lines: string[] = [];
-  const code = main({ cwd: root, env: { GBRAIN_SURFACE_BASE_REF: 'base', GBRAIN_SURFACE_TODAY: TODAY }, log: (l) => lines.push(l) });
+  const code = main({ cwd: root, env: { GBRAIN_SURFACE_BASE_REF: 'base', GBRAIN_SURFACE_TODAY: TODAY, ...env }, log: (l) => lines.push(l) });
   return { code, out: lines.join('\n') };
 }
 const record = (surface: string, name: string, removeAfter: string) => `---\nsurface: ${surface}\nname: ${name}\nowner: alice-example\nremove_after: ${removeAfter}\n---\nUse the new one.\n`;
@@ -86,10 +86,78 @@ describe('dropped manifest entries', () => {
     git(root, 'checkout', '-q', 'base');
     git(root, 'rm', '-q', MANIFEST);
     git(root, 'commit', '-q', '-m', 'no manifest');
-    git(root, 'checkout', '-q', 'head');
+    git(root, 'checkout', '-q', '-b', 'head-after', 'base');
+    write(root, { [MANIFEST]: manifest() });
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'head adds the manifest');
     const r = run(root);
     expect(r.code).toBe(0);
     expect(r.out).toContain('has no docs/contracts/public-surface.json yet');
+  });
+
+  test('a matured cli-command or mcp-tool record also covers the flags or parameters the removal drops', () => {
+    const gone = { [MANIFEST]: manifest({ 'cli-command': [], 'cli-flag': [], 'mcp-tool': [], 'mcp-param': [] }) };
+    const r = run(repo({
+      'deprecations.d/search_command_1234.md': record('cli-command', 'gbrain search', '2026-11-10'),
+      'deprecations.d/search_tool_1234.md': record('mcp-tool', 'search', '2026-11-10'),
+    }, gone));
+    expect(r.out).not.toContain('FAIL');
+    expect(r.code).toBe(0);
+  });
+});
+
+describe('the base it compares with', () => {
+  test('changes the base made after the branch point are not this branch\'s (an added tool, a release that moved a row)', () => {
+    const root = repo({ 'behavior-changes.d/old_row_1234.md': 'Plain text.\n' }, {});
+    git(root, 'checkout', '-q', 'base');
+    write(root, { [MANIFEST]: manifest({ 'mcp-tool': ['search', 'think'] }) });
+    git(root, 'rm', '-q', 'behavior-changes.d/old_row_1234.md');
+    git(root, 'commit', '-qam', 'base moves on');
+    git(root, 'checkout', '-q', 'head');
+    const r = run(root);
+    expect(r.out).not.toContain('FAIL');
+    expect(r.code).toBe(0);
+  });
+
+  test('a shallow CI clone is deepened until it has a merge base', () => {
+    const origin = repo({}, {});
+    git(origin, 'checkout', '-q', 'base');
+    write(origin, { [MANIFEST]: manifest({ 'mcp-tool': ['search', 'think'] }) });
+    git(origin, 'commit', '-qam', 'base adds think');
+    const clone = mkdtempSync(join(tmpdir(), 'gbrain-public-surface-clone-'));
+    roots.push(clone);
+    git(clone, 'clone', '-q', '--depth=1', '--branch', 'head', `file://${origin}`, '.');
+    git(clone, 'fetch', '-q', '--no-tags', '--depth=1', 'origin', '+refs/heads/base:refs/remotes/origin/base');
+    const r = run(clone, { GBRAIN_SURFACE_BASE_REF: 'origin/base', CI: 'true' });
+    expect(r.out).not.toContain('FAIL');
+    expect(r.code).toBe(0);
+  });
+
+  test('a shallow pull-request merge commit whose parent is the base tip needs no fetch', () => {
+    const origin = repo({}, { [MANIFEST]: manifest({ 'mcp-tool': ['search', 'think'] }) });
+    git(origin, 'checkout', '-q', 'base');
+    write(origin, { 'README.md': 'base moved\n' });
+    git(origin, 'commit', '-qam', 'base moves on');
+    git(origin, 'checkout', '-q', '-b', 'merge', 'base');
+    git(origin, 'merge', '-q', '--no-ff', '--no-edit', 'head');
+    const clone = mkdtempSync(join(tmpdir(), 'gbrain-public-surface-clone-'));
+    roots.push(clone);
+    git(clone, 'clone', '-q', '--depth=1', '--branch', 'merge', `file://${origin}`, '.');
+    git(clone, 'fetch', '-q', '--no-tags', '--depth=1', 'origin', '+refs/heads/base:refs/remotes/origin/base');
+    git(clone, 'remote', 'set-url', 'origin', join(clone, 'no-such-remote'));
+    const r = run(clone, { GBRAIN_SURFACE_BASE_REF: 'origin/base', CI: 'true' });
+    expect(r.out).not.toContain('FAIL');
+    expect(r.code).toBe(0);
+  });
+
+  test('a missing base ref fails under CI and skips locally', () => {
+    const root = repo({}, {});
+    const ci = run(root, { GBRAIN_SURFACE_BASE_REF: 'nope', CI: 'true' });
+    expect(ci.code).toBe(1);
+    expect(ci.out).toContain('base ref nope is not available');
+    const local = run(root, { GBRAIN_SURFACE_BASE_REF: 'nope' });
+    expect(local.code).toBe(0);
+    expect(local.out).toContain('GBRAIN_CHECK_SKIPPED: base ref nope unavailable');
   });
 });
 
@@ -100,6 +168,15 @@ describe('deprecation records', () => {
     expect(short.out).toContain('remove_after 2026-11-29 is less than 14 days away');
     expect(run(repo({}, { 'deprecations.d/search_limit_flag_1234.md': record('cli-flag', 'gbrain search --limit', '2026-11-30') })).code).toBe(0);
     expect(run(repo({ 'deprecations.d/search_limit_flag_1234.md': record('cli-flag', 'gbrain search --limit', '2026-11-29') }, {})).code).toBe(0);
+  });
+
+  test('an announced date can move later, never earlier', () => {
+    const path = 'deprecations.d/search_limit_flag_1234.md';
+    const early = run(repo({ [path]: record('cli-flag', 'gbrain search --limit', '2026-12-20') },
+      { [path]: record('cli-flag', 'gbrain search --limit', '2026-11-16'), [MANIFEST]: manifest({ 'cli-flag': ['gbrain search --match'] }) }));
+    expect(early.code).toBe(1);
+    expect(early.out).toContain(`${path}: remove_after moves from 2026-12-20 to 2026-11-16`);
+    expect(run(repo({ [path]: record('cli-flag', 'gbrain search --limit', '2026-11-20') }, { [path]: record('cli-flag', 'gbrain search --limit', '2026-12-20') })).code).toBe(0);
   });
 
   test('a record with a bad surface, no owner or no date is refused', () => {

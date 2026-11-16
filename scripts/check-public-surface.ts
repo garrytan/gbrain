@@ -5,18 +5,20 @@
  *
  *   bun scripts/check-public-surface.ts
  *
- * Against the base ref ($GBRAIN_SURFACE_BASE_REF, default origin/master) it refuses:
+ * Against the merge base with the base ref ($GBRAIN_SURFACE_BASE_REF, default origin/master; a shallow clone is
+ * deepened until it has one) it refuses:
  *   1. an entry of docs/contracts/public-surface.json that the base has and this tree drops (or an exit code whose
- *      number changed), unless deprecations.d/<id>.md names it (same surface and name) and its remove_after date has
- *      passed;
- *   2. a deprecations.d record added here whose remove_after is less than 14 days away, or any record with a bad field;
+ *      number changed), unless deprecations.d/<id>.md names it (same surface and name, or the command or MCP tool a
+ *      dropped flag or parameter belongs to) and its remove_after date has passed;
+ *   2. a deprecations.d record added here whose remove_after is less than 14 days away, a record whose remove_after
+ *      moved earlier, or any record with a bad field;
  *   3. a behavior-changes.d fragment added here with no `kind:`, or with `kind: breaking` and neither
  *      `exception: security|data-loss` nor `deprecation: <id>` naming a record whose remove_after has passed;
  *   4. a change to the CLI or agent-contract goldens with no new behavior-changes.d fragment and no changelog.d line
  *      `<!-- public-surface: no-behavior-change: <reason> -->`.
  * The manifest's freshness is regen:all's (scripts/build-public-surface.ts --check). Dates are UTC days;
- * GBRAIN_SURFACE_TODAY (YYYY-MM-DD) overrides today for tests. When the base ref is unavailable the check fails under
- * CI=true and skips locally. Exit: 0 ok or skipped, 1 refused.
+ * GBRAIN_SURFACE_TODAY (YYYY-MM-DD) overrides today for tests. When the base ref or a merge base is unavailable the
+ * check fails under CI=true and skips locally. Exit: 0 ok or skipped, 1 refused.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -78,7 +80,28 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
     log(`GBRAIN_CHECK_SKIPPED: base ref ${ref} unavailable`);
     return 0;
   }
-  const onBase = (path: string) => git('cat-file', '-e', `${ref}:${path}`).ok;
+  let mergeBase = git('merge-base', ref, 'HEAD');
+  if (!mergeBase.ok && git('rev-parse', '--is-shallow-repository').out.trim() === 'true') {
+    const tip = git('rev-parse', `${ref}^{commit}`).out.trim();
+    const parents = git('cat-file', '-p', 'HEAD').out.split('\n').filter(l => l.startsWith('parent ')).map(l => l.slice('parent '.length));
+    if (parents.includes(tip)) mergeBase = { ok: true, out: tip };
+    for (const depth of [200, 2000]) {
+      if (mergeBase.ok) break;
+      git('fetch', '--no-tags', '--quiet', `--deepen=${depth}`, 'origin', git('rev-parse', 'HEAD').out.trim(), tip);
+      mergeBase = git('merge-base', ref, 'HEAD');
+    }
+  }
+  if (!mergeBase.ok) {
+    if (env.CI === 'true') {
+      log(`FAIL: check-public-surface: no merge base between HEAD and ${ref}, even after deepening the clone.`);
+      log('Fix:  fetch more history in the workflow (actions/checkout fetch-depth: 0)');
+      return 1;
+    }
+    log(`GBRAIN_CHECK_SKIPPED: no merge base between HEAD and ${ref}`);
+    return 0;
+  }
+  const base = mergeBase.out.trim();
+  const onBase = (path: string) => git('cat-file', '-e', `${base}:${path}`).ok;
   const listDir = (dir: string) => (existsSync(join(root, dir)) ? readdirSync(join(root, dir)).filter(f => f.endsWith('.md') && f !== 'README.md').sort() : []);
   const problems: string[] = [];
 
@@ -96,18 +119,25 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
       !DATE.test(record.remove_after) && 'remove_after: must be a date (YYYY-MM-DD)',
     ].filter(Boolean);
     for (const b of bad) problems.push(`${path}: ${b}`);
-    if (!bad.length && !onBase(path) && record.remove_after < addDays(today, NOTICE_DAYS)) {
+    const baseDate = onBase(path) ? frontOf(git('show', `${base}:${path}`).out).remove_after ?? '' : null;
+    if (!bad.length && baseDate !== null && DATE.test(baseDate) && record.remove_after < baseDate) {
+      problems.push(`${path}: remove_after moves from ${baseDate} to ${record.remove_after}; an announced date can move later, never earlier`);
+    }
+    if (!bad.length && baseDate === null && record.remove_after < addDays(today, NOTICE_DAYS)) {
       problems.push(`${path}: remove_after ${record.remove_after} is less than ${NOTICE_DAYS} days away; a removal is announced at least ${NOTICE_DAYS} days ahead (${addDays(today, NOTICE_DAYS)} or later)`);
     }
     records.set(id, record);
   }
   const matured = (r: Deprecation | undefined) => !!r && DATE.test(r.remove_after) && r.remove_after <= today;
 
-  const baseManifest = git('show', `${ref}:${MANIFEST}`);
+  const baseManifest = git('show', `${base}:${MANIFEST}`);
   if (baseManifest.ok && existsSync(join(root, MANIFEST))) {
     const dropped = droppedEntries(JSON.parse(baseManifest.out), JSON.parse(readFileSync(join(root, MANIFEST), 'utf8')));
     for (const { surface, name } of dropped) {
-      const record = [...records.values()].find(r => r.surface === surface && r.name === name);
+      const parent = surface === 'cli-flag' ? { surface: 'cli-command', name: name.slice(0, name.lastIndexOf(' --')) }
+        : surface === 'mcp-param' ? { surface: 'mcp-tool', name: name.slice(0, name.indexOf('.')) } : null;
+      const record = [...records.values()].find(r => r.surface === surface && r.name === name)
+        ?? [...records.values()].find(r => parent && r.surface === parent.surface && r.name === parent.name);
       if (!record) problems.push(`${surface} \`${name}\` is removed or changed with no ${DEPRECATION_DIR}/<id>.md naming it (surface: ${surface}, name: ${name})`);
       else if (!matured(record)) problems.push(`${surface} \`${name}\` is removed before its record ${DEPRECATION_DIR}/${record.id}.md allows it (remove_after ${record.remove_after}); keep it working with a warning until then`);
     }
@@ -127,9 +157,7 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
     else if (!matured(record)) problems.push(`${path}: deprecation: ${front.deprecation} has not matured (remove_after ${record.remove_after})`);
   }
 
-  const mergeBase = git('merge-base', ref, 'HEAD');
-  const from = mergeBase.ok ? mergeBase.out.trim() : ref;
-  const goldens = git('diff', '--name-only', from, '--', ...GOLDEN_DIRS).out.split('\n').filter(Boolean);
+  const goldens = git('diff', '--name-only', base, '--', ...GOLDEN_DIRS).out.split('\n').filter(Boolean);
   if (goldens.length && !newNotices.length) {
     const waived = listDir(CHANGELOG_FRAGMENT_DIR).some(f => !onBase(`${CHANGELOG_FRAGMENT_DIR}/${f}`) && NO_BEHAVIOR_CHANGE.test(readFileSync(join(root, CHANGELOG_FRAGMENT_DIR, f), 'utf8')));
     if (!waived) problems.push(`CLI or agent-contract goldens changed (${goldens.slice(0, 3).join(', ')}${goldens.length > 3 ? `, +${goldens.length - 3} more` : ''}) with no new ${FRAGMENT_DIR} row; add one with its kind, or put <!-- public-surface: no-behavior-change: <reason> --> in your ${CHANGELOG_FRAGMENT_DIR} fragment`);

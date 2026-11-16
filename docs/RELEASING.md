@@ -225,7 +225,8 @@ every stamp back to master's version, moves the branch's CHANGELOG entry to
 `changelog.d/<branch-slug>.md` and its appended plain-text
 `BEHAVIOR_CHANGES` rows to `behavior-changes.d/` (with their markers),
 puts the notice file and its size-table row back to master's, and commits
-once. It refuses, with the fix, a branch with no entry of its own, one that
+once. The moved rows have no `kind:` yet: add one to each before pushing
+(`bun run check:public-surface` refuses a new row without it). It refuses, with the fix, a branch with no entry of its own, one that
 edits a released CHANGELOG section, one that carries other PRs' entries (land
 or convert those first), and notice rows it can't move (rows without an id,
 rows whose text is a function, edits other than appending). Plain
