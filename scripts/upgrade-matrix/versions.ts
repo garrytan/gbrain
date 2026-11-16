@@ -4,16 +4,23 @@
  * Resolved once per run from published release tags and recorded in the run
  * receipt: N-1, N-10 and N-50 (the 1st, 10th and 50th newest release older
  * than the candidate), the release published closest to 30 days before the
- * candidate, and the current stable tag when one exists and is older. The
- * pull-request profile keeps N-1 and N-50. A role that cannot be filled (too
- * few older releases, stable missing or not older) is recorded as skipped
- * with the reason, never silently dropped.
+ * candidate, the current stable tag when one exists and is older, and the
+ * stable releases in the promise window (stableWindow: the last 8 plus one per
+ * older month, back 6 months). The pull-request profile keeps N-1 and N-50. A
+ * role that cannot be filled (too few older releases, stable missing or not
+ * older) is recorded as skipped with the reason, never silently dropped.
  */
 import { isNewerVersion, isValidVersionString } from '../../src/core/semver.ts';
 
-export type FromRole = 'N-1' | 'N-10' | 'N-50' | '30d' | 'stable';
+export type FromRole = 'N-1' | 'N-10' | 'N-50' | '30d' | 'stable' | 'stable-window';
 export type Profile = 'full' | 'pr';
-export const PROFILE_ROLES: Record<Profile, FromRole[]> = { full: ['N-1', 'N-10', 'N-50', '30d', 'stable'], pr: ['N-1', 'N-50'] };
+export const PROFILE_ROLES: Record<Profile, FromRole[]> = { full: ['N-1', 'N-10', 'N-50', '30d', 'stable', 'stable-window'], pr: ['N-1', 'N-50'] };
+
+/** A stable record tag (stable-v<version>) and when it was created, which is when that release was promoted. */
+export interface StableRecordTag { version: string; promoted_at: string }
+/** How far back a stable user is still promised an upgrade (docs/STABILITY.md), and how many recent stable releases are all kept. */
+export const STABLE_WINDOW_DAYS = 183;
+export const STABLE_WINDOW_RECENT = 8;
 
 export interface Release { tag: string; version: string; published_at: string }
 export interface Candidate { tag: string | null; sha: string; tree: string; version: string; published_at: string }
@@ -33,7 +40,7 @@ export function olderReleases(releases: readonly Release[], candidateVersion: st
 export function resolveFromVersions(
   releases: readonly Release[],
   candidate: Pick<Candidate, 'version' | 'published_at'>,
-  opts: { profile: Profile; stableVersion?: string | null },
+  opts: { profile: Profile; stableVersion?: string | null; stableRecords?: readonly StableRecordTag[] },
 ): { from: FromVersion[]; skipped: SkippedRole[] } {
   const older = olderReleases(releases, candidate.version);
   const picked = new Map<string, FromVersion>();
@@ -56,6 +63,10 @@ export function resolveFromVersions(
         if (!best || d < Math.abs(Date.parse(best.published_at) - target)) best = r;
       }
       take(role, best, 'no published release is older than the candidate');
+    } else if (role === 'stable-window') {
+      const window = stableWindow(opts.stableRecords ?? [], candidate);
+      if (window.length === 0) skipped.push({ role, reason: 'no stable release older than the candidate is in the window' });
+      for (const v of window) take(role, older.find(r => r.version === v), 'stable ' + v + ' has no published release');
     } else {
       const stable = opts.stableVersion ?? null;
       if (!stable) { skipped.push({ role, reason: 'no stable tag exists' }); continue; }
@@ -64,6 +75,29 @@ export function resolveFromVersions(
     }
   }
   return { from: [...picked.values()], skipped };
+}
+
+/**
+ * The stable releases a stable user may still be upgrading from: every stable release older than the candidate
+ * that was stable at some point in the last STABLE_WINDOW_DAYS before the candidate (promoted inside the window, or
+ * the one that was stable when the window opened), capped at the newest STABLE_WINDOW_RECENT by promotion plus the
+ * newest one of each older calendar month (UTC). Newest first.
+ */
+export function stableWindow(records: readonly StableRecordTag[], candidate: Pick<Candidate, 'version' | 'published_at'>): string[] {
+  const horizon = Date.parse(candidate.published_at) - STABLE_WINDOW_DAYS * DAY_MS;
+  const older = records
+    .filter(r => isValidVersionString(r.version) && isNewerVersion(r.version, candidate.version) && Number.isFinite(Date.parse(r.promoted_at)))
+    .sort((a, b) => Date.parse(b.promoted_at) - Date.parse(a.promoted_at));
+  const inWindow = older.filter((_, i) => i === 0 || Date.parse(older[i - 1]!.promoted_at) >= horizon);
+  const months = new Set<string>();
+  const out: string[] = [];
+  inWindow.forEach((r, i) => {
+    const month = r.promoted_at.slice(0, 7);
+    if (i < STABLE_WINDOW_RECENT) out.push(r.version);
+    else if (!months.has(month)) out.push(r.version);
+    if (i >= STABLE_WINDOW_RECENT) months.add(month);
+  });
+  return [...new Set(out)];
 }
 
 function token(): string | undefined {
