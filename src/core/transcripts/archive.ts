@@ -417,6 +417,23 @@ export async function reconcileArchiveAudience(engine: BrainEngine, sourceId?: s
   return true;
 }
 
+/**
+ * The owner-only re-scope for every archive source written while the brain was personal, run by the commands that can
+ * turn a brain shared (gbrain access member add and member enable, gbrain access owner set, gbrain config set
+ * brain.audience) so earlier pages are kept to the owner before a second member reads them, not at the next archive
+ * run or maintenance pass. Returns each source whose re-scope was due, with why it could not apply (null when it did).
+ */
+export async function rescopeArchiveOnShared(engine: BrainEngine): Promise<Array<{ source_id: string; skipped: ArchiveRescopeSkip | null }>> {
+  const rows = await engine.executeRaw<{ key: string }>("SELECT key FROM config WHERE key LIKE $1 AND value = 'personal' ORDER BY key", [AUDIENCE_PREFIX + '%']);
+  const out: Array<{ source_id: string; skipped: ArchiveRescopeSkip | null }> = [];
+  for (const { key } of rows) {
+    const sourceId = key.slice(AUDIENCE_PREFIX.length);
+    if (!await reconcileArchiveAudience(engine, sourceId)) continue;
+    out.push({ source_id: sourceId, skipped: await archiveRescopeSkipped(engine, sourceId) });
+  }
+  return out;
+}
+
 /** Why the owner-only re-scope (reconcileAudience) has not run on a brain that became shared, or null. */
 export async function archiveRescopeSkipped(engine: BrainEngine, sourceId?: string): Promise<ArchiveRescopeSkip | null> {
   const configured = await configuredSource(engine, sourceId);
@@ -424,7 +441,7 @@ export async function archiveRescopeSkipped(engine: BrainEngine, sourceId?: stri
   const privacy = await resolvePrivacy(engine);
   if (!privacy.shared) return null;
   if (!privacy.owner) {
-    return { code: 'archive_rescope_owner_unset', message: 'Conversation archive pages written while this brain was personal are not yet kept to the owner, because the shared brain names no owner; run gbrain access owner set <member> and the next archive run applies the owner-only rules.' };
+    return { code: 'archive_rescope_owner_unset', message: 'Conversation archive pages written while this brain was personal are not yet kept to the owner, because the shared brain names no owner; run gbrain access owner set <member>, which applies the owner-only rules at once.' };
   }
   const policy = await import('../access/policy.ts');
   const pending: ArchiveRescopeSkip = { code: 'archive_rescope_pending', message: 'Conversation archive pages written while this brain was personal are not yet kept to the owner; the next maintenance pass applies the owner-only rules, or run gbrain transcripts archive run now.' };

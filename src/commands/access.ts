@@ -318,11 +318,31 @@ function print(json: boolean, value: unknown, human: () => string[]): void {
   console.log(json ? JSON.stringify(value, null, 2) : human().join('\n'));
 }
 
+/**
+ * After a command that can turn the brain shared: keep conversation archive pages written while it was personal to the
+ * owner now (rescopeArchiveOnShared) and say what happened on stderr, so stdout and --json stay the command's own.
+ */
+export async function rescopeArchiveAfter(engine: BrainEngine): Promise<void> {
+  const { rescopeArchiveOnShared } = await import('../core/transcripts/archive.ts');
+  let results: Awaited<ReturnType<typeof rescopeArchiveOnShared>>;
+  try {
+    results = await rescopeArchiveOnShared(engine);
+  } catch (e) {
+    process.exitCode = 1;
+    console.error('Conversation archive: keeping the pages written while this brain was personal to the owner failed (' + (e instanceof Error ? e.message : String(e)) + '); until it succeeds every member may read them. Run gbrain transcripts archive run now.');
+    return;
+  }
+  for (const r of results) {
+    console.error('Conversation archive (source ' + r.source_id + '): ' + (r.skipped ? r.skipped.message : 'pages written while this brain was personal are now kept to the owner.'));
+  }
+}
+
 async function memberCmd(engine: BrainEngine, sub: string | undefined, args: string[], json: boolean): Promise<void> {
   const id = positionals(args)[0];
   switch (sub) {
     case 'add': {
       const r = await addMember(engine, id, { name: flagValue(args, '--name'), email: flagValue(args, '--email'), groups: parseIdList(flagValue(args, '--groups'), 'group'), bindToken: flagValue(args, '--bind-token'), kind: flagValue(args, '--kind'), remote: false });
+      await rescopeArchiveAfter(engine);
       return print(json, r, () => [`Member added: ${r.member.id}`, memberLine(r.member),
         ...(r.groups_created.length ? [`  Groups created: ${r.groups_created.join(', ')}`] : []),
         ...(r.bound ? [`  Bound token: ${r.bound.name} (${r.bound.id})`] : ['  Bind a credential: gbrain auth rescope --token <name> --member ' + r.member.id]),
@@ -347,6 +367,7 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
     case 'disable':
     case 'enable': {
       const m = await (sub === 'disable' ? disableMember : enableMember)(engine, id);
+      if (sub === 'enable') await rescopeArchiveAfter(engine);
       return print(json, { member: m }, () => [`Member ${sub}d: ${m.id}`, memberLine(m),
         sub === 'disable' ? 'Its credentials are refused on their next request; gbrain access member enable undoes this.' : 'Its credentials read again on their next request.']);
     }
@@ -458,6 +479,7 @@ async function ownerCmd(engine: BrainEngine, sub: string | undefined, args: stri
     }
     case 'set': {
       const v = await setOwner(engine, positionals(args)[0]);
+      await rescopeArchiveAfter(engine);
       return print(json, v, () => ownerLines(v));
     }
     case 'clear': {

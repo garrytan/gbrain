@@ -198,6 +198,12 @@ database, so a repo-less brain works the same. The owner relaxation applies to a
 when it speaks for itself (no audience, or an audience of the owner alone); never to a shared-room audience or an
 attested call. `gbrain access owner clear` turns it off.
 
+When `gbrain access owner set`, `gbrain access member add` or `member enable` (a second enabled member), or
+`gbrain config set brain.audience shared` leaves the brain shared, the command also keeps the conversation archive
+pages written while it was personal to the owner before it returns, and says so on stderr. Three cases wait instead
+(the audience turning shared from client usage, a shared brain with no owner, and rules kept in git); see
+[when a personal brain becomes shared](conversation-archive.md#when-a-personal-brain-becomes-shared).
+
 **The owner's writes.** The owner's own credential with write scope, speaking for itself (no audience, not an
 attested call, not a subagent job, no slug fence, checked again when the write is published), may change a private page
 it reads with `put_page`, `edit_page` or `append_page`, or with `put_pages` and staged uploads (`begin_page_upload`
