@@ -123,9 +123,9 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
   const base = mergeBase.out.trim();
   let unreadable: { path: string; error: string } | null = null;
   const onBase = (path: string) => {
-    const listed = git('ls-tree', '--name-only', base, '--', path);
+    const listed = git('ls-tree', '-z', '--name-only', base, '--', path);
     if (!listed.ok) unreadable ??= { path, error: listed.err };
-    return listed.ok && listed.out.trim() === path;
+    return listed.ok && listed.out === `${path}\0`;
   };
   const readBase = (path: string) => {
     if (!onBase(path)) return null;

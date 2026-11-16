@@ -415,6 +415,15 @@ describe('golden changes', () => {
     expect(run(repo({ [golden]: 'old\n' }, { [golden]: 'new\n', 'changelog.d/x.md': 'Entry.\n\n<!-- public-surface: no-behavior-change: help text reflowed -->\n' })).code).toBe(0);
   });
 
+  test('a waiver already on the base does not cover a new golden change, whatever its file name', () => {
+    const waiver = 'Entry.\n\n<!-- public-surface: no-behavior-change: help text reflowed -->\n';
+    for (const name of ['changelog.d/x.md', 'changelog.d/café.md']) {
+      const r = run(repo({ [golden]: 'old\n', [name]: waiver }, { [golden]: 'new\n' }));
+      expect(r.code).toBe(1);
+      expect(r.out).toContain('CLI or agent-contract goldens changed (test/fixtures/goldens/cli/search-help.txt)');
+    }
+  });
+
   test('other goldens are not covered', () => {
     expect(run(repo({ 'test/fixtures/goldens/doctor/a.json': '1\n' }, { 'test/fixtures/goldens/doctor/a.json': '2\n' })).code).toBe(0);
   });
