@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+A migration that stopped three or more runs in a row on a conflict in one or more sources, and recorded that host work is still owed (today only v0.53.0, the shared-skills content migration), is no longer called history once a newer migration completes. gbrain apply-migrations --list, the notice other commands and gbrain serve print at startup, and gbrain doctor (as a warning) now all say the work is still owed and that it does not clear without a person, and they all name the same first step, gbrain apply-migrations --migration 0.53.0 --dry-run --json, which lists each source's conflict and changes nothing. The forced retry is offered only for after the conflict is resolved. That inspect command used to refuse a wedged version as not registered; it now works. Nothing runs the migration again by itself, and the exit status of apply-migrations, post-upgrade and upgrade does not change.

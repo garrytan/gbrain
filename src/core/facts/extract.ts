@@ -25,7 +25,7 @@
 
 import { observationDateLine, observationDateRule, parseExtractedEventDate, type ObservationDate } from '../ai/date-grounding.ts';
 import { chat, embedOne, isAvailable, getEmbeddingModel } from '../ai/gateway.ts';
-import { classifyGlobalLlmError } from '../ai/errors.ts';
+import { classifyGlobalLlmError, UNPARSEABLE_RESPONSE_CODE } from '../ai/errors.ts';
 import { stripReasoningBlocks } from '../llm-json.ts';
 import type { ChatResult } from '../ai/gateway.ts';
 import { INJECTION_PATTERNS, restoreNeutralized } from '../think/sanitize.ts';
@@ -543,7 +543,9 @@ export type ExtractFactsOutcome =
  * Bounded diagnostic breadcrumb for the message: the cause's CONSTRUCTOR name
  * (validated as a plain identifier — never `.name`, never `.message`) plus
  * the whole-run class `classifyGlobalLlmError` derives from the cause chain
- * (`auth` / `billing` / `rate_limit` / `model_not_found`, the same vocabulary ingest_log uses).
+ * (`auth` / `billing` / `rate_limit` / `model_not_found`, the same vocabulary ingest_log uses), or instead
+ * `provider_response_unparseable` when the provider's success response could not be parsed (#9466; that class
+ * would read `auth`, which sends an operator to a valid key).
  * Both are closed vocabularies with no interpolated provider text, so a 4xx
  * body echoing a key / org id cannot ride through. Defense-in-depth, not a
  * hard boundary: anything unexpected is dropped (never substituted), and a
@@ -557,7 +559,8 @@ function safeCauseLabel(cause: unknown): string | undefined {
       const name: unknown = typeof ctor === 'function' ? ctor.name : undefined;
       if (typeof name === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name)) ctorName = name;
     }
-    const label = [ctorName, classifyGlobalLlmError(cause)].filter(Boolean).join(' ');
+    const unparseable = (cause as { code?: unknown } | null)?.code === UNPARSEABLE_RESPONSE_CODE;
+    const label = [ctorName, unparseable ? UNPARSEABLE_RESPONSE_CODE : classifyGlobalLlmError(cause)].filter(Boolean).join(' ');
     return label || undefined;
   } catch {
     return undefined;

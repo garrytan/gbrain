@@ -1,7 +1,7 @@
 /**
  * GST-2768 PR 3: the transcript_archive_freshness doctor check. Off is ok with no noise; with the archive on it warns
- * when the newest archived day is more than transcripts.archive.stale_days behind the newest session day a reader
- * sees (fix: archive run, or backfill --from when the gap is wider than one run), when no maintenance pass has run
+ * when the newest archived day is more than transcripts.archive.stale_days behind the newest session day the last run
+ * read (fix: archive run, or backfill --from when the gap is wider than one run); the check itself reads no reader, when no maintenance pass has run
  * the archive in that long (fix: gbrain autopilot --install), and lists held days with their codes; a harness with
  * no readable sessions is informational. PGLite, synthetic sessions only.
  */
@@ -40,6 +40,16 @@ async function recordPass(atMs: number): Promise<void> {
   await engine.setConfig(ARCHIVE_MAINTENANCE_KEY, JSON.stringify({ at: new Date(atMs).toISOString(), runner: 'serve', status: 'ok', written: 0, held: 0, errors: [] }));
 }
 
+/** A run at NOW that read a conversation on `day` but could not read it again to write it, so the day stays unarchived. */
+async function runSawUnarchived(day: string): Promise<void> {
+  const ts = day + 'T08:00:00.000Z';
+  const reader: ArchiveReader = {
+    harness: 'codex', name: 'codex',
+    async *scan({ dayOf }) { yield { harness: 'codex', conversationKey: 'codex-new', sessionId: 'codex-new', days: [dayOf(ts)], newest: ts, load: async () => null }; },
+  };
+  await runTranscriptArchive(engine, { mode: 'run', now: NOW, readers: [reader] });
+}
+
 async function archiveDay(day: string): Promise<void> {
   await runTranscriptArchive(engine, { mode: 'run', now: new Date(day + 'T12:00:00Z'), readers: [staticReader('codex', [said('codex-old-' + day, day + 'T08:00:00.000Z')])] });
 }
@@ -62,6 +72,7 @@ describe('transcript_archive_freshness', () => {
 
   test('a 3-day gap warns with the run fix', async () => {
     await archiveDay('2026-11-07');
+    await runSawUnarchived('2026-11-10');
     await recordPass(NOW.getTime() - 60_000);
     const readers = [staticReader('codex', [said('codex-old-2026-11-07', '2026-11-07T08:00:00.000Z'), said('codex-new', '2026-11-10T08:00:00.000Z')])];
     const check = await checkTranscriptArchiveFreshness(engine, { readers, nowMs: NOW.getTime() });
@@ -74,6 +85,7 @@ describe('transcript_archive_freshness', () => {
 
   test('a gap wider than one run names the backfill with --from', async () => {
     await archiveDay('2026-11-01');
+    await runSawUnarchived('2026-11-09');
     await recordPass(NOW.getTime() - 60_000);
     const readers = [staticReader('codex', [said('codex-old-2026-11-01', '2026-11-01T08:00:00.000Z'), said('codex-new', '2026-11-09T08:00:00.000Z')])];
     const check = await checkTranscriptArchiveFreshness(engine, { readers, nowMs: NOW.getTime() });
@@ -87,6 +99,16 @@ describe('transcript_archive_freshness', () => {
     const readers = [staticReader('codex', [said('codex-old-2026-11-09', '2026-11-09T08:00:00.000Z')])];
     const check = await checkTranscriptArchiveFreshness(engine, { readers, nowMs: NOW.getTime() });
     expect(check.status).toBe('ok');
+  }, 60_000);
+
+  test('a reader no run has read in stale_days warns even when its archive matches the last read', async () => {
+    await archiveDay('2026-11-01');
+    await recordPass(NOW.getTime() - 60_000);
+    const readers = [staticReader('codex', [said('codex-old-2026-11-01', '2026-11-01T08:00:00.000Z')])];
+    const check = await checkTranscriptArchiveFreshness(engine, { readers, nowMs: NOW.getTime() });
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('codex: no archive run has read codex successfully since 2026-11-01T12:00:00.000Z');
+    expect(check.fix?.argv).toEqual(['gbrain', 'transcripts', 'archive', 'run']);
   }, 60_000);
 
   test('a harness with no readable sessions is informational', async () => {
