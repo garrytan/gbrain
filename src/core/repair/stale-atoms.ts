@@ -41,6 +41,7 @@ import { bumpAtomGeneration, managedAtomCompletedSql, managedAtomSession, publis
 import { atomGenerationAdapter, atomOwnerKey, readAtomInput } from '../generations/adapters/atoms.ts';
 import { publishGeneration } from '../generations/publish.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { keepingTierOnRetirement } from '../persistence/derived-retirement-hold.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
 
 export const STALE_ATOMS_RETIRED_BY = 'stale-atoms';
@@ -205,8 +206,8 @@ async function retireStaleAtom(ctx: OperationContext, atom: StaleAtom): Promise<
 }
 
 async function stampRetirement(tx: BrainEngine, atom: StaleAtom, stamp = true): Promise<void> {
-  if (stamp) await tx.executeRaw(`UPDATE pages SET frontmatter=frontmatter||jsonb_build_object('retired_by',$1::text,'retired_at',$2::text)
-    WHERE id=$3 AND source_id=$4 AND deleted_at IS NOT NULL`, [STALE_ATOMS_RETIRED_BY, new Date().toISOString(), atom.id, atom.source_id]);
+  if (stamp) await keepingTierOnRetirement(tx, () => tx.executeRaw(`UPDATE pages SET frontmatter=frontmatter||jsonb_build_object('retired_by',$1::text,'retired_at',$2::text)
+    WHERE id=$3 AND source_id=$4 AND deleted_at IS NOT NULL`, [STALE_ATOMS_RETIRED_BY, new Date().toISOString(), atom.id, atom.source_id]));
   if (atom.origin_page_id === null) return;
   const [{ incarnation }] = await tx.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [atom.source_id]);
   await bumpAtomGeneration(tx, atom.source_id, incarnation, atom.origin_page_id, atom.class === 'origin_changed' ? atom.origin_hash : null);

@@ -22,7 +22,7 @@ import type { WriteReceipt } from './types.ts';
 import { MAX_DETERMINISTIC_FAILURES, writeAtomPageState } from '../cycle/extract-atoms-page-state.ts';
 import { effectiveVisibility, withFolderRestricted } from '../search/private-visibility.ts';
 import { declareDerivation, deriveTrust, lowerToDerivedTier, recordTaintEdges } from '../trust/taint.ts';
-import type { DerivedRetiredBy } from './derived-retirement-hold.ts';
+import { keepingTierOnRetirement, type DerivedRetiredBy } from './derived-retirement-hold.ts';
 import type { GenerationKey, HeldReason } from '../generations/contract.ts';
 import { atomGenerationAdapter, atomPagePin, type AtomGenerationContext } from '../generations/adapters/atoms.ts';
 import { markdownItem } from '../generations/adapters/page.ts';
@@ -726,8 +726,8 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
     }, apply: async tx => {
       const result = await prepared.apply(tx);
       if (!prepared.noop) {
-        await tx.executeRaw(`UPDATE pages SET frontmatter=frontmatter||jsonb_build_object('retired_by',$1::text,'retired_at',$2::text)
-          WHERE id=$3 AND source_id=$4 AND deleted_at IS NOT NULL`, [p.retiredBy ?? ATOM_RETIRED_BY_REEXTRACT, new Date().toISOString(), row.page_id, row.source_id]);
+        await keepingTierOnRetirement(tx, () => tx.executeRaw(`UPDATE pages SET frontmatter=frontmatter||jsonb_build_object('retired_by',$1::text,'retired_at',$2::text)
+          WHERE id=$3 AND source_id=$4 AND deleted_at IS NOT NULL`, [p.retiredBy ?? ATOM_RETIRED_BY_REEXTRACT, new Date().toISOString(), row.page_id, row.source_id]));
         if (p.activationId) await settleMember(tx, p.activationId, row.slug);
         if (p.origin.kind === 'page' && p.origin.pageId !== null) {
           await bumpAtomGeneration(tx, row.source_id, row.source_incarnation, p.origin.pageId, p.origin.contentHash || null);
