@@ -1,4 +1,5 @@
 import { requireMaintainerPoliciesSql } from '../derived-state-maintainers.ts';
+import { ACTIVATION_SERVED_REVISION, protectedTextFilter, SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 
 /**
  * The page search-vector trigger fires on the columns its function reads:
@@ -62,9 +63,22 @@ export const PAGE_PROJECTION_SCHEMA_STATEMENTS = [
 ] as const;
 export const PAGE_PROJECTION_SCHEMA_SQL = PAGE_PROJECTION_SCHEMA_STATEMENTS.join(';\n') + ';\n';
 
-/** Run once at protocol activation, never on schema replay: old indexes are unverified. */
+/**
+ * Run once at protocol activation, never on schema replay: old indexes are unverified, so every page is queued for a
+ * rebuild. #9192: a Markdown or code page indexed at or after the safe-chunk fence keeps serving that index until its
+ * rebuild (ACTIVATION_SERVED_REVISION) when nothing the rebuild's projection removes can be in it: no facts or takes
+ * fence (withdrawn, held, purged and lower-tier rows), no private-key text (credential-safe projection) and no
+ * quarantine marker. Every other page waits for the drain. A page written before v150 gets its first revision in its
+ * own statement, whose trigger clears text_projection_revision.
+ */
 export const PAGE_PROJECTION_ACTIVATION_SQL = `
-  UPDATE pages SET text_projection_revision=NULL,embedding_signature=NULL;
+  UPDATE pages SET knowledge_revision=gen_random_uuid() WHERE knowledge_revision IS NULL;
+  UPDATE pages SET text_projection_revision=CASE WHEN deleted_at IS NULL AND page_kind IN ('markdown','code')
+      AND chunker_version >= ${SAFE_FENCE_CHUNKER_VERSION}
+      AND NOT (${protectedTextFilter('compiled_truth')} OR ${protectedTextFilter('timeline')})
+      AND strpos(compiled_truth || COALESCE(timeline,''),'PRIVATE KEY-----') = 0
+      AND NOT (COALESCE(frontmatter,'{}'::jsonb) ? 'quarantine')
+    THEN '${ACTIVATION_SERVED_REVISION}'::uuid END,embedding_signature=NULL;
   INSERT INTO page_projection_jobs(source_incarnation,slug,revision,reason)
     SELECT s.incarnation,p.slug,p.knowledge_revision,'protocol_activation'
     FROM pages p JOIN sources s ON s.id=p.source_id WHERE p.deleted_at IS NULL

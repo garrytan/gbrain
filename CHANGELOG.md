@@ -10,6 +10,55 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.732.0] - 2026-11-16
+
+**Every pull request is now checked against stable's promise: removing a command, flag, MCP tool or parameter, config key or exit code needs a deprecation record whose 14-day notice has passed.**
+
+### Added
+- `bun run check:public-surface`, part of `bun run verify`. It compares this tree with the merge base against `docs/contracts/public-surface.json`, a list built from the code by `scripts/build-public-surface.ts` (refreshed by `bun run regen:all`). It refuses a pull request that drops a listed entry, or changes an exit code, before a `deprecations.d/<id>.md` record for it has reached its `remove_after` date. A `cli-command` or `mcp-tool` record also covers that command's flags or that tool's parameters.
+- Removals the promise does not cover go through with no record. That means anything missing from the list at the current stable release (the `stable` tag), and any removal in a pull request that adds a `kind: breaking` row with `exception: security` or `exception: data-loss`. The check fetches the tag when the clone lacks it, and in CI a fetch that fails or takes more than 20 seconds fails the check. Until a stable release carries the list, the check says so and counts everything as on stable; a revert then adds a row with `exception: revert` that names the pull request it reverts.
+- New deprecation records must give at least 14 days of notice. An announced `remove_after` date can move later but never earlier, and a merged record keeps the surface and name it announced.
+- New `behavior-changes.d` rows need `kind:` front matter (`breaking`, `action`, `default`, `fix` or `add`). A `breaking` row needs an exception or a `deprecation: <id>` naming a record whose date has passed.
+- A change to the CLI or agent-contract goldens needs a new behaviour-change row, or a `<!-- public-surface: no-behavior-change: <reason> -->` line in the changelog fragment.
+
+### For contributors
+- `docs/STABILITY.md` "How it is checked" says what the check enforces and what still rests on review: `--json` fields, the page format, wording, behaviour beyond names, the two-stable-releases rule, and the flags of the 124 CLI-only commands without a curated help record.
+- A branch converted with `bun run release:unstamp` gets rows without `kind:`; add one to each before pushing (docs/RELEASING.md).
+
+**The public-surface check no longer fails with "no merge base … even after deepening the clone" on shallow CI checkouts whose head is more than one commit past master.**
+
+### Fixed
+- `bun run check:public-surface` deepened a depth-1 CI checkout with `--filter=tree:0`, which GitHub's server fails on for a shallow clone that is not partial. It now deepens with `--filter=blob:none`, and when a fetch fails it prints git's own error under the FAIL line.
+
+**The public-surface check no longer passes silently when it cannot read master's copy of a file it compares with.**
+
+### Fixed
+- After a shallow CI checkout is deepened with `--filter=blob:none`, `bun run check:public-surface` fetches file contents at the merge base on demand. When that fetch failed, it read master's manifest as missing and skipped the removal check. It now tells a file that is missing on the merge base from one it could not read. Under `CI=true` it fails with git's own error, and locally it skips.
+- A file already on master whose name git quotes (one with non-ASCII characters) now counts as on master, so an old `changelog.d` waiver no longer covers a new golden change.
+
+**A page its owner purged stays purged after a restore, even when the purge waited behind a private derived page.**
+
+When an owner purges a page that a derived page depends on for its privacy, the purge waits until that derived page can be labelled private. Before this change, if an automatic purge removed the page first, or the next purge run failed or was deferred, the page was deleted without the purge records that tell a restore to delete it again, so restoring an older backup brought its text back. gbrain now remembers that the owner's purge is owed, by page id only, and whichever run finally removes the page writes those records, on repo brains and on brains without a repository. Restoring the page clears the reminder, so a page its owner brings back is never purged later by it.
+
+A restore now also removes the same rows a live page purge removes. Replaying a purge from the purge mirror used to delete the page but leave its write requests, file rows, derived generation items and their effects, which still held the purged text. Replay and the live purge now share one sweep. If replay cannot finish a sweep (a store that does not exist on the brain aside), the restore stops with `purge_replay_incomplete` and names the purge it could not replay, instead of reporting success. A new doctor warning, `purge_mirror`, says when recent purges are missing from this machine's purge mirror (for example when gbrain runs in a home directory that is removed after each run), so a restore from an older backup would not replay them. The fix is to give every writer one durable `GBRAIN_HOME`. Thanks to @oakleaf for the replay and purge mirror findings (#9469).
+
+<!-- behavior-change: owner_purge_tombstones_survive_9469 -->
+
+### Fixed
+
+- An owner purge that waited behind a private derived page writes its purge records whichever later run removes the page (an automatic expiry, or a run after a failed or deferred one), on every brain.
+- Restore-time purge replay removes write requests, file rows, derived generation items and their effects, the same rows the live purge removes, and fails with `purge_replay_incomplete` instead of reporting a partial sweep as done.
+
+### Added
+
+- Doctor check `purge_mirror`: a warning (never a failure) when purges recorded in the last 30 days have no line in this machine's purge mirror. It prints counts and the mirror's path, never a page name or text.
+
+**An upgrade from before v0.51 keeps a page in search while the index rebuilds, when its old index can't hold withdrawn, held or redacted text, and says how long the rebuild will take.**
+
+### Fixed
+- Upgrading from a release before v0.51 used to take every page out of keyword and vector search until `gbrain projections drain` finished: about 9 hours on a 50,000-page brain behind an 18 ms database round trip. Now a Markdown or code page indexed at or after the safe-chunk fence keeps answering from its old index until its own rebuild, as long as it has no facts or takes fence, no private-key text and no quarantine marker. Pages with a facts or takes fence, pages with private-key text, quarantined pages, images and pages indexed before the safe-chunk fence still wait for the rebuild, so a brain made mostly of entity pages with a Facts fence gets little from this change. Access checks are unchanged, a page that changes after the upgrade leaves search until it is rebuilt, and no embedding calls are made. Reported by @jonahberg (#9192).
+- The upgrade's `[153]` line says how many pages keep answering, how many wait and why, and how long the rebuild takes at the round trip it measured to the database. `gbrain doctor` still counts every page waiting for the rebuild, and says results may be incomplete only while some page is out of search.
+
 ## [0.60.731.0] - 2026-11-16
 
 **docs/STABILITY.md now says what stays the same on the stable channel, and how much warning you get before something changes.**

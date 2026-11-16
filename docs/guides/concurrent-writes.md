@@ -42,7 +42,8 @@ Separate calls can observe different committed revisions. Search ranking,
 embeddings, and direct filesystem reads are outside this snapshot guarantee.
 
 Search reports `projection_pending` while visible canonical revisions still
-need a derived-text rebuild, including when other pages already produce hits.
+need a derived-text rebuild, including when other pages already produce hits
+(a page migration 153 left serving its pre-upgrade index does not count).
 The resident owner rebuilds queued Markdown and code using revision-checked
 snapshots. `gbrain reindex-code --force --no-embed` repairs code metadata through
 that owner without changing canonical files or revisions. Exact compatible

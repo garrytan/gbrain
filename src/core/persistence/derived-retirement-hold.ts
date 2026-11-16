@@ -12,6 +12,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { maintenanceTransaction } from './attribution.ts';
+import { withTrustKeep } from './context.ts';
 import { GENERATION_BOUNDS, RESTORE_DAYS_SQL } from '../generations/config.ts';
 
 /** The `retired_by` stamps derived writers put on the pages they retire. */
@@ -39,18 +40,23 @@ export function derivedRetirementPurgeHold(alias: string): string {
     AND ${alias}.deleted_at > now() - interval '1 day' * ${RESTORE_DAYS_SQL})`;
 }
 
-/** Stamps pages the caller soft-deleted in this transaction as retired by `retiredBy`. */
-async function stampDerivedRetirement(tx: BrainEngine, sourceId: string, slugs: readonly string[], retiredBy: DerivedRetiredBy): Promise<void> {
+/**
+ * Stamps pages the caller soft-deleted in this transaction as retired by `retiredBy`. A retirement authors no content, like
+ * the page delete it follows, so the stamp keeps each page's stored tier and write origin (#9456): written with no trust
+ * declaration it stored the page `unknown` with no origin, and the derived writer that later produced the page again
+ * could only keep or lower that tier, so the revived page stayed `unknown`.
+ */
+export async function stampDerivedRetirement(tx: BrainEngine, sourceId: string, slugs: readonly string[], retiredBy: DerivedRetiredBy): Promise<void> {
   if (!slugs.length) return;
-  await tx.executeRaw(`UPDATE pages SET frontmatter=frontmatter||jsonb_build_object('retired_by',$1::text,'retired_at',$2::text)
-    WHERE source_id=$3 AND slug=ANY($4::text[]) AND deleted_at IS NOT NULL`, [retiredBy, new Date().toISOString(), sourceId, [...slugs]]);
+  await withTrustKeep(tx, ['pages'], () => tx.executeRaw(`UPDATE pages SET frontmatter=frontmatter||jsonb_build_object('retired_by',$1::text,'retired_at',$2::text)
+    WHERE source_id=$3 AND slug=ANY($4::text[]) AND deleted_at IS NOT NULL`, [retiredBy, new Date().toISOString(), sourceId, [...slugs]]));
 }
 
 /** Versions, soft-deletes and stamps `slugs` as retired by `retiredBy` inside the caller's attributed transaction. */
 export async function retireDerivedPagesInTransaction(tx: BrainEngine, sourceId: string, slugs: readonly string[], retiredBy: DerivedRetiredBy): Promise<void> {
   if (!slugs.length) return;
   for (const slug of slugs) await tx.createVersion(slug, { sourceId });
-  await tx.softDeletePages([...slugs], { sourceId });
+  await withTrustKeep(tx, ['pages'], () => tx.softDeletePages([...slugs], { sourceId }));
   await stampDerivedRetirement(tx, sourceId, slugs, retiredBy);
 }
 

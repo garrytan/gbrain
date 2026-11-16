@@ -31,7 +31,7 @@ import { buildSnippetMarker } from './snippet-cap.ts';
 import { deliveredQuoteText, deliveredQuoteTitle, fenceTranscriptRows, neutralizeTranscriptRows } from './transcript-quote.ts';
 import { stampPageTrust } from '../eligibility/stamp.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
-import { chunkGenerationFilter, chunkManifestReads, currentTextProjectionFilter, safeChunksFilter, requiresSafeChunks } from './safe-chunks.ts';
+import { chunkGenerationFilter, chunkManifestReads, safeChunksFilter, requiresSafeChunks, servedTextProjectionFilter } from './safe-chunks.ts';
 import { resolveExcludePrivatePages } from './private-visibility.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import { loadFenceChunkOverlay, type FenceChunkOverlay } from '../eligibility/fence-overlay.ts';
@@ -416,7 +416,7 @@ export async function selectLongPages(engine: BrainEngine, plan: EvidencePlan | 
     const rows = await withTimeout(engine.executeRaw<{ id: number; chars: number; bytes: number }>(
       `SELECT p.id, char_length(COALESCE(p.compiled_truth, ''))${tl ? ` + ${tl}char_length(p.timeline) END` : ''} AS chars,
               octet_length(COALESCE(p.compiled_truth, ''))${tl ? ` + ${tl}octet_length(p.timeline) END` : ''} AS bytes FROM pages p
-        WHERE p.id = ANY($1::int[]) AND ${filter} AND ${currentTextProjectionFilter('p')}${requiresSafeChunks(scope) ? ` AND ${safeChunksFilter('p')}` : ''}`,
+        WHERE p.id = ANY($1::int[]) AND ${filter} AND ${servedTextProjectionFilter('p')}${requiresSafeChunks(scope) ? ` AND ${safeChunksFilter('p')}` : ''}`,
       params), LONG_PAGE_DEADLINE_MS);
     sizes = new Map(rows.map(r => [Number(r.id), { chars: Number(r.chars), bytes: Number(r.bytes) }]));
   } catch (e) {
@@ -1657,7 +1657,7 @@ export async function resolveFrozenHits(
        JOIN pages p ON p.source_id = h.source_id AND p.slug = h.slug
        LEFT JOIN content_chunks cc ON cc.page_id = p.id AND ${chunkGenerationFilter('p', 'cc', await chunkManifestReads(engine))}
             AND CASE WHEN h.chunk_id > 0 THEN cc.id = h.chunk_id ELSE cc.chunk_index = 0 END
-      WHERE ${filter} AND ${currentTextProjectionFilter('p')} ${safe}`,
+      WHERE ${filter} AND ${servedTextProjectionFilter('p')} ${safe}`,
     params,
   );
   const byOrd = new Map<number, Record<string, unknown>>();

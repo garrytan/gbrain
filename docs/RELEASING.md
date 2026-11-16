@@ -897,7 +897,10 @@ and keeps stable between one day and one week behind what matters:
   the weekly floor unless a maintainer promotes by hand. The rule: an
   important fix reaches stable within a day once it passes the full gate and
   soak; everything else rides a weekly cut; stable never sits more than seven
-  days behind gated changes on master.
+  days behind gated changes on master. It finds those PRs with GitHub's
+  search, so the workflow's token needs `pull-requests: read`; each run logs
+  how many labelled PRs the search returned, and if the search sees no merged
+  PR at all the check stops red and names that permission.
 - **Soak first.** The candidate is the newest release newer than stable whose
   commit is on master and whose exact tree passed a successful
   `STABLE_SOAK_WORKFLOW` run with the integrity gates (`privacy_leaks`,

@@ -18,6 +18,7 @@ import { catalogueError } from '../core/error-catalogue.ts';
 import type { LockHolderInfo } from '../core/pglite-lock.ts';
 import type { ProjectionBacklog, ProjectionDrainResult, ProjectionRebuildFailure } from '../core/page-state/projections.ts';
 import { IMAGE_SEAL_PAGES_PER_SECOND, TEXT_REBUILD_PAGES_PER_SECOND, projectionDrainLimit } from '../core/page-state/image-seal.ts';
+import { DEFAULT_DRAIN_CONCURRENCY } from '../core/page-state/rebuild-estimate.ts';
 // #6286: the drain lives in core so `migrate` can run it on its target before the config flip.
 export { drainProjections, previewProjectionDrain, type ProjectionDrainResult } from '../core/page-state/projections.ts';
 import { SERVE_LAUNCHD_LABEL, SERVE_SYSTEMD_UNIT } from '../core/serve-service.ts';
@@ -26,12 +27,14 @@ import { detectInstalledJob } from './autopilot/jobs.ts';
 
 export const PROJECTION_DRAIN_DOCS = 'docs/guides/repair.md#projection-drain';
 
-export const PROJECTIONS_HELP = `Usage: gbrain projections drain [--dry-run] [--limit <n>] [--json]
+export const PROJECTIONS_HELP = `Usage: gbrain projections drain [--dry-run] [--limit <n>] [--concurrency <n>] [--json]
 
 Rebuild queued Markdown and code text projections now, in batches of up to 100,
 until every row queued before the run started has been tried once. Pages stored
-in segments are built first, except one another gbrain process is building.
-Then seal the image pages the importer already attested safe (sealable). Keyless:
+in segments are built first, except one another gbrain process is building, then
+pages search does not answer for yet. Then seal the image pages the importer
+already attested safe (sealable), and last rebuild the pages search still answers
+for from the index they had before an upgrade. Keyless:
 no provider call, no file read, no re-embedding. Image pages it cannot seal
 (reimport) need their importer: preview with gbrain embed --stale --images --dry-run.
 Protected-OCR images and archived-source pages stay unsealed by design.
@@ -42,6 +45,9 @@ Protected-OCR images and archived-source pages stay unsealed by design.
   --limit <n>   Try at most n pages in this run (default: no cap); doctor's fix
                 sizes it to about a minute (${projectionDrainLimit()} images,
                 ${projectionDrainLimit(1)} while text pages wait)
+  --concurrency <n>  Postgres: rebuild n pages at once, each on its own pooled
+                connection (default ${DEFAULT_DRAIN_CONCURRENCY}; at most the pool size less 2). A refused
+                or dropped connection lowers it and the drain goes on. PGLite: 1
   --json        Print {rebuilt, superseded, failed, remaining, limited, sealed,
                 sealed_with_visual, sealed_text_only, statistics_refreshed,
                 remaining_by_class} to stdout (the class counts and rows with --dry-run)
