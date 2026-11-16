@@ -10,7 +10,7 @@
  *
  * Synthetic data only.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { ChatResult } from '../src/core/ai/gateway.ts';
@@ -55,28 +55,33 @@ async function drain(engine: BrainEngine): Promise<void> {
 }
 
 describe('unmanaged derived retirement keeps the tier and origin (PGLite)', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
   test('a retired atom stays agent_written with its derive:atoms origin, and a rewrite of the tombstone does not drop it', async () => {
-    const engine = new PGLiteEngine();
-    try {
-      await engine.connect({});
-      await engine.initSchema();
-      const slug = 'atoms/2026-01-01/ship-small-changes-0a1b2c3d';
-      const trust = { tier: 'agent_written' as const, origin: { channel: 'derive:atoms' } };
-      const write = (claim: string) => engine.transaction(tx => withWriteTrust(tx, trust, () => tx.putPage(slug,
-        { type: 'atom', title: 'Ship small changes', compiled_truth: claim, frontmatter: { type: 'atom', source_slug: 'notes/origin', source_hash: 'aaaaaaaaaaaaaaaa' } })));
-      await write('Ship small changes.');
+    const slug = 'atoms/2026-01-01/ship-small-changes-0a1b2c3d';
+    const trust = { tier: 'agent_written' as const, origin: { channel: 'derive:atoms' } };
+    const write = (claim: string) => engine.transaction(tx => withWriteTrust(tx, trust, () => tx.putPage(slug,
+      { type: 'atom', title: 'Ship small changes', compiled_truth: claim, frontmatter: { type: 'atom', source_slug: 'notes/origin', source_hash: 'aaaaaaaaaaaaaaaa' } })));
+    await write('Ship small changes.');
 
-      await retireDerivedPages(engine, 'default', [slug], 'extract-atoms');
-      const [retired] = await atomRows(engine);
-      expect(retired).toMatchObject({ live: false, retired_by: 'extract-atoms', trust_tier: 'agent_written', channel: 'derive:atoms' });
+    await retireDerivedPages(engine, 'default', [slug], 'extract-atoms');
+    const [retired] = await atomRows(engine);
+    expect(retired).toMatchObject({ live: false, retired_by: 'extract-atoms', trust_tier: 'agent_written', channel: 'derive:atoms' });
 
-      // The extraction that produces the atom again writes the same slug: the page is live again at the derived tier.
-      await write('Ship small changes, again.');
-      const [revived] = await atomRows(engine);
-      expect(revived).toMatchObject({ live: true, trust_tier: 'agent_written', channel: 'derive:atoms' });
-    } finally {
-      await engine.disconnect();
-    }
+    // The extraction that produces the atom again writes the same slug: the page is live again at the derived tier.
+    await write('Ship small changes, again.');
+    const [revived] = await atomRows(engine);
+    expect(revived).toMatchObject({ live: true, trust_tier: 'agent_written', channel: 'derive:atoms' });
   }, 120_000);
 });
 
