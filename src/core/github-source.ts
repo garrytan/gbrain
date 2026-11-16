@@ -3,6 +3,7 @@ import { resolveGitHubAccount } from './persistence/connector-account.ts';
 import { isValidRepoName } from './github-source-config.ts';
 import { connectorRender } from './connectors/connector-text.ts';
 import { ConnectorHoldSession, connectorHoldsResult } from './connectors/connector-hold-session.ts';
+import { connectorDryRunResult } from './connectors/api-source.ts';
 export { isValidRepoName, parseGitHubSourceConfig } from './github-source-config.ts';
 export { AppTokenProvider, mintAppInstallationToken } from './github-app-token.ts';
 import { AppTokenProvider } from './github-app-token.ts';
@@ -1091,7 +1092,7 @@ export async function runGitHubSync(
   fetchImpl?: FetchImpl,
 ): Promise<import('../commands/sync.ts').SyncResult> {
   return withConnectorSync(engine, sourceId, 'github', cfg, opts,
-    (managed, options) => runGitHubSyncInner(engine, sourceId, cfg, options, managed, fetchImpl), pendingConnectorResult);
+    async (managed, options) => options.dryRun ? connectorDryRunResult('github', sourceId) : runGitHubSyncInner(engine, sourceId, cfg, options, managed, fetchImpl), pendingConnectorResult);
 }
 
 async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: GitHubSourceConfig, opts: SyncOpts,
