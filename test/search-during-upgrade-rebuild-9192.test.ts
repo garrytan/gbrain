@@ -10,7 +10,7 @@ import { stampIfPageProvenanceComplete } from '../src/core/embed-stale.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { PAGE_PROJECTION_ACTIVATION_SQL } from '../src/core/page-state/projection-schema.ts';
 import { projectionBacklog, rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
-import { textRebuildDuration } from '../src/core/page-state/image-seal.ts';
+import { textRebuildDuration } from '../src/core/page-state/rebuild-estimate.ts';
 import { probeProjectionReadiness } from '../src/core/search/projection-readiness.ts';
 import { withCallerAccess, __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { ACTIVATION_SERVED_REVISION, currentTextProjectionFilter, servedTextProjectionFilter } from '../src/core/search/safe-chunks.ts';

@@ -1,7 +1,7 @@
 import type { Migration } from './types.ts';
 import { PAGE_PROJECTION_ACTIVATION_SQL, PAGE_PROJECTION_SCHEMA_SQL } from '../page-state/projection-schema.ts';
 import { ACTIVATION_SERVED_REVISION } from '../search/safe-chunks.ts';
-import { measuredRoundTripMs, textRebuildDuration } from '../page-state/image-seal.ts';
+import { measuredRoundTripMs, textRebuildDuration } from '../page-state/rebuild-estimate.ts';
 import { migrationNotice } from './helpers.ts';
 
 export const v153: Migration = {
