@@ -11,6 +11,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { pendingUpgradeMigrationsNotice } from '../src/cli/migrations-notice.ts';
 import { MIGRATION_VERSIONS } from '../src/core/migration-ledger.ts';
 import { appendCompletedMigration } from '../src/core/preferences.ts';
+import { noteSchemaVersion } from '../src/core/migrate-pending.ts';
 
 const engine = { getConfig: async () => null } as never;
 const homes: string[] = [];
@@ -65,12 +66,35 @@ describe('pendingUpgradeMigrationsNotice', () => {
   });
 
   test('commands that run or report the migrations themselves get no notice', async () => {
-    for (const command of ['apply-migrations', 'post-upgrade', 'upgrade', 'doctor', 'init', 'setup', 'serve']) {
+    for (const command of ['apply-migrations', 'post-upgrade', 'upgrade', 'doctor', 'init', 'setup']) {
       const notice = await inHome(async () => {
         appendCompletedMigration({ version: MIGRATION_VERSIONS[0]!, status: 'complete' } as never);
         return pendingUpgradeMigrationsNotice(engine, command, latest);
       });
       expect(notice).toBeNull();
     }
+  });
+
+  test('gbrain serve gets the notice, since a brain used only over MCP runs no other command', async () => {
+    const notice = await inHome(async () => {
+      appendCompletedMigration({ version: MIGRATION_VERSIONS[0]!, status: 'complete' } as never);
+      return pendingUpgradeMigrationsNotice(engine, 'serve', latest);
+    });
+    expect(notice).toMatchObject({ code: 'migrations_pending' });
+  });
+
+  test('an empty ledger on a brain whose schema already existed at connect still gets the notice', async () => {
+    const existing = { getConfig: async () => null } as never;
+    noteSchemaVersion(existing, 300);
+    const notice = await inHome(() => pendingUpgradeMigrationsNotice(existing, 'query', latest));
+    expect(notice).toMatchObject({ code: 'migrations_pending' });
+    expect(notice!.why).toContain(latest);
+  });
+
+  test('an empty ledger on a brain created in this run (schema version 1 at connect) gets no notice', async () => {
+    const created = { getConfig: async () => null } as never;
+    noteSchemaVersion(created, 1);
+    noteSchemaVersion(created, 316);
+    expect(await inHome(() => pendingUpgradeMigrationsNotice(created, 'query', latest))).toBeNull();
   });
 });
