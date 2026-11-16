@@ -250,6 +250,23 @@ describe('the base it compares with', () => {
     expect(r.out).toMatch(/git: .*(does not appear to be a git repository|not found|No such file)/);
   });
 
+  test('a base manifest that cannot be read fails under CI instead of counting as missing, and skips locally', () => {
+    const origin = repo({}, { [MANIFEST]: manifest({ 'mcp-tool': [] }) });
+    git(origin, 'config', 'uploadpack.allowFilter', 'true');
+    const clone = mkdtempSync(join(tmpdir(), 'gbrain-public-surface-clone-'));
+    roots.push(clone);
+    git(clone, 'clone', '-q', '--filter=blob:none', '--no-tags', '--branch', 'head', `file://${origin}`, '.');
+    git(clone, 'fetch', '-q', '--no-tags', 'origin', '+refs/heads/base:refs/remotes/origin/base');
+    git(clone, 'remote', 'set-url', 'origin', join(clone, 'no-such-remote'));
+    const ci = run(clone, { GBRAIN_SURFACE_BASE_REF: 'origin/base', CI: 'true' });
+    expect(ci.code).toBe(1);
+    expect(ci.out).toContain(`FAIL: check-public-surface: ${MANIFEST} could not be read at origin/base's merge base`);
+    expect(ci.out).toMatch(/\ngit: \S/);
+    const local = run(clone, { GBRAIN_SURFACE_BASE_REF: 'origin/base' });
+    expect(local.code).toBe(0);
+    expect(local.out).toContain(`GBRAIN_CHECK_SKIPPED: ${MANIFEST} could not be read at the merge base`);
+  });
+
   test('a shallow pull-request merge commit whose parent is the base tip needs no fetch', () => {
     const origin = repo({}, { [MANIFEST]: manifest({ 'mcp-tool': ['search', 'think'] }) });
     git(origin, 'checkout', '-q', 'base');
@@ -396,6 +413,15 @@ describe('golden changes', () => {
     expect(r.out).toContain('CLI or agent-contract goldens changed (test/fixtures/goldens/cli/search-help.txt)');
     expect(run(repo({ [golden]: 'old\n' }, { [golden]: 'new\n', 'behavior-changes.d/new_row_1234.md': '---\nkind: add\n---\nText.\n' })).code).toBe(0);
     expect(run(repo({ [golden]: 'old\n' }, { [golden]: 'new\n', 'changelog.d/x.md': 'Entry.\n\n<!-- public-surface: no-behavior-change: help text reflowed -->\n' })).code).toBe(0);
+  });
+
+  test('a waiver already on the base does not cover a new golden change, whatever its file name', () => {
+    const waiver = 'Entry.\n\n<!-- public-surface: no-behavior-change: help text reflowed -->\n';
+    for (const name of ['changelog.d/x.md', 'changelog.d/café.md']) {
+      const r = run(repo({ [golden]: 'old\n', [name]: waiver }, { [golden]: 'new\n' }));
+      expect(r.code).toBe(1);
+      expect(r.out).toContain('CLI or agent-contract goldens changed (test/fixtures/goldens/cli/search-help.txt)');
+    }
   });
 
   test('other goldens are not covered', () => {
