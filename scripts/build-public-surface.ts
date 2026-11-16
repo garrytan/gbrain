@@ -7,8 +7,10 @@
  *   bun scripts/build-public-surface.ts --check   read-only: exit 1 when the committed manifest is stale (regen:all)
  *
  * Documented surfaces only, each named the way a deprecations.d record names it:
- *   cli-command  `gbrain <command>`: every operation's CLI name and aliases (hidden ones excluded) and every CLI_COMMANDS record
- *   cli-flag     `gbrain <command> --<flag>`: an operation's parameters, and the curated help flags of CLI-only commands
+ *   cli-command  `gbrain <command>`: every operation's CLI name and aliases (hidden ones excluded) and every CLI_COMMANDS
+ *                record; an operation with no CLI name is an MCP tool only, never a command
+ *   cli-flag     `gbrain <command> --<flag>`: the parameters of an operation with a CLI name, and the curated help flags
+ *                of CLI-only commands
  *   mcp-tool     `<tool>`: every operation an MCP client can call (not cliOnly)
  *   mcp-param    `<tool>.<param>`
  *   config-key   `<key>`: KNOWN_CONFIG_KEYS
@@ -48,8 +50,8 @@ export async function buildSurface(): Promise<PublicSurface> {
       tools.push(op.name);
       for (const p of Object.keys(op.params)) params.push(`${op.name}.${p}`);
     }
-    if (op.cliHints?.hidden) continue;
-    for (const name of [op.cliHints?.name ?? op.name, ...(op.cliHints?.aliases ?? [])]) {
+    if (op.cliHints?.hidden || !op.cliHints?.name) continue;
+    for (const name of [op.cliHints.name, ...(op.cliHints.aliases ?? [])]) {
       commands.push(`gbrain ${name}`);
       for (const p of Object.keys(op.params)) flags.push(`gbrain ${name} ${flag(p)}`);
     }

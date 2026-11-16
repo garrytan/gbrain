@@ -9,7 +9,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { main } from '../../scripts/check-public-surface.ts';
-import { main as buildMain, MANIFEST } from '../../scripts/build-public-surface.ts';
+import { buildSurface, main as buildMain, MANIFEST } from '../../scripts/build-public-surface.ts';
 
 const roots: string[] = [];
 afterAll(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }); });
@@ -383,5 +383,21 @@ describe('the committed manifest', () => {
     expect(m['mcp-param']).toContain('search.query');
     expect(m['config-key']).toContain('engine');
     expect(typeof m['exit-code'].not_found).toBe('number');
+  });
+
+  test('lists only commands the CLI dispatches, and keeps MCP-only operations as tools', async () => {
+    const { cliOps, OPERATION_MANIFEST } = await import('../../src/cli/op-manifest.ts');
+    const { cliAliases } = await import('../../src/cli/flag-validation.ts');
+    const { CLI_COMMANDS } = await import('../../src/cli/command-table.ts');
+    const dispatched = (name: string) => cliOps.has(name) || cliAliases.has(name) || CLI_COMMANDS.some(r => r.name === name);
+    const m = await buildSurface();
+    expect(m['cli-command'].filter(c => !dispatched(c.slice('gbrain '.length)))).toEqual([]);
+    expect(m['cli-flag'].filter(f => !dispatched(f.slice('gbrain '.length, f.indexOf(' --'))))).toEqual([]);
+    const mcpOnly = OPERATION_MANIFEST.filter(op => !op.cliOnly && !op.cliHints?.name);
+    expect(mcpOnly.length).toBeGreaterThan(0);
+    for (const op of mcpOnly) {
+      expect(m['mcp-tool']).toContain(op.name);
+      for (const p of Object.keys(op.params)) expect(m['mcp-param']).toContain(`${op.name}.${p}`);
+    }
   });
 });
