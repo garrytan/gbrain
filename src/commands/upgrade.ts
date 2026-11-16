@@ -886,6 +886,8 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
       const state = JSON.parse(readFileSync(statePath, 'utf-8'));
       const from = state?.last_upgrade?.from;
       if (from) {
+        const summary = (await import('../core/upgrade-summary.ts')).upgradeSummary(from);
+        if (summary) console.log(['', ...summary, ''].join('\n'));
         const { migrations } = await import('./migrations/index.ts');
         for (const m of migrations) {
           if (isNewerThan(m.version, from)) {
