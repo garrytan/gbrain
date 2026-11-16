@@ -54,9 +54,12 @@ export function currentTextProjectionFilter(alias: string): string {
  */
 export const ACTIVATION_SERVED_REVISION = '00000000-0000-0000-0000-000000000153';
 
-/** What search serves: the current projection, or the pre-activation index of a page unchanged since (#9192). */
+/**
+ * What search serves: the current projection, or the pre-activation index of a page unchanged since (#9192). The
+ * current-projection term stays its own disjunct so the planner keeps reading pages_text_projection_current_stats.
+ */
 export function servedTextProjectionFilter(alias: string): string {
-  return `(${alias}.text_projection_revision = ${alias}.knowledge_revision OR ${alias}.text_projection_revision = '${ACTIVATION_SERVED_REVISION}'::uuid) IS TRUE`;
+  return `(${currentTextProjectionFilter(alias)} OR (${alias}.text_projection_revision = '${ACTIVATION_SERVED_REVISION}'::uuid) IS TRUE)`;
 }
 
 /**
