@@ -72,6 +72,22 @@ export async function lexicalContestCandidate(engine: BrainEngine, sourceId: str
   return best ? { id: best.id, trust_tier: best.trust_tier } : null;
 }
 
+/**
+ * GST-2875: the active non-world fact of `sourceId` stating exactly `claim`, more trusted than `writer`, while no active
+ * world fact states it. A world write of that claim restates it: the write is stored at the copy's visibility and its
+ * proposal carries the widening, which only the owner's accept applies (the fence rule of GST-2511, for every remember).
+ */
+export async function restatedPrivateCopy(engine: BrainEngine, sourceId: string, claim: string, writer: TrustTier):
+  Promise<{ id: number; visibility: string; trust_tier: TrustTier } | null> {
+  const [row] = await engine.executeRaw<{ id: number; visibility: string; trust_tier: string }>(
+    `SELECT f.id, f.visibility, f.trust_tier FROM facts f WHERE f.source_id = $1 AND f.fact = $2 AND f.visibility <> 'world'
+       AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND ${trustRankSql('f.trust_tier')} > ${trustRankSql('$3::text')}
+       AND NOT EXISTS (SELECT 1 FROM facts w WHERE w.source_id = $1 AND w.fact = $2 AND w.visibility = 'world' AND w.expired_at IS NULL
+         AND (w.valid_until IS NULL OR w.valid_until > now()))
+     ORDER BY f.id LIMIT 1`, [sourceId, claim, writer]);
+  return row ? { id: Number(row.id), visibility: row.visibility, trust_tier: storedTrustTier(row.trust_tier) } : null;
+}
+
 /** The pending supersede_fact proposal for a contested write, inside its publication transaction. */
 export async function recordContestedFact(tx: BrainEngine, input: { sourceId: string; oldId: number; oldTier: TrustTier; newId: number; newTier: TrustTier; guard: string;
   /** GST-2511: the widening the writer asked for; the new row is stored at `from` and the owner's accept sets `to`. */ visibility?: { from: string; to: string } }): Promise<{ proposal_ref: string }> {
@@ -188,6 +204,8 @@ async function requestedVisibility(engine: BrainEngine, id: number, newId: numbe
 async function fenceAsks(engine: BrainEngine, factId: number, visibility: string): Promise<boolean> {
   const [fact] = await engine.executeRaw<{ fact: string; row_num: number | null; slug: string | null; source_id: string }>(
     'SELECT fact, row_num, source_markdown_slug AS slug, source_id FROM facts WHERE id = $1', [factId]);
+  // GST-2875: a database-only restatement (no page) has no fence that could narrow it.
+  if (fact && !fact.slug && fact.row_num === null) return true;
   if (!fact?.slug || fact.row_num === null) return false;
   const snapshot = await engine.readPageSnapshot(fact.slug, { sourceId: fact.source_id });
   if (!snapshot) return false;

@@ -16,7 +16,7 @@ import { requestChannelTrust } from '../trust/channel.ts';
 import { gateField, gateInput, heldOutcome, loadWriteGateConfig } from '../trust/gate-outcomes.ts';
 import { decideFactWrite, recordFlaggedRow, recordWriteGateHold } from '../write-gate-store.ts';
 import { writeGateRejectedError } from '../write-gate.ts';
-import { lexicalContestCandidate, recordContestedFact, supersessionGuarded } from '../trust/supersede-handlers.ts';
+import { lexicalContestCandidate, recordContestedFact, restatedPrivateCopy, supersessionGuarded } from '../trust/supersede-handlers.ts';
 import { storedTrustTier } from '../trust/tier.ts';
 import { fenceAppendPendingTier } from '../eligibility/fence-overlay.ts';
 import { prepareFenceFactAppend, prepareFenceFactCreate, prepareFenceRowRetirement, requestReceiptFix, type FenceFactAppend } from '../facts/fence-fact-append.ts';
@@ -134,12 +134,17 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const lexical = (tx: BrainEngine) => decision.status === 'inserted' && !dedupEmbedding && replaces === null ? lexicalContestCandidate(tx, row.source_id, input, writerTier) : Promise.resolve(null);
   const lexicalOld = await lexical(engine);
   const contestedOld = contested ? decision.candidate! : lexicalOld;
+  // GST-2875: a world write restating a more trusted private claim is stored private; its proposal carries the widening.
+  const restated = (tx: BrainEngine) => decision.status !== 'duplicate' && input.visibility === 'world' ? restatedPrivateCopy(tx, row.source_id, input.fact, writerTier) : Promise.resolve(null);
+  const restatedOld = await restated(engine);
+  const widening = restatedOld ? { from: restatedOld.visibility, to: 'world' } : null;
   const validate = async (tx: BrainEngine) => {
     await assertFactNotWithdrawn(tx, row.source_id, input, { excludePrivate, remote: row.authority.remote === true });
     if (embedding && JSON.stringify(await tx.executeRaw(`${embeddingConfigSql} FOR SHARE`)) !== observedEmbeddingConfig) conflict(row);
     const current = await decide(tx, true);
     if (candidateState(current) !== candidateState(decision)) conflict(row);
     if ((await lexical(tx))?.id !== lexicalOld?.id) conflict(row);
+    if ((await restated(tx))?.id !== restatedOld?.id) conflict(row);
   };
   if (decision.status === 'duplicate') {
     const duplicate = decision.candidate!;
@@ -164,13 +169,13 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   let fence: FenceFactAppend | undefined;
   if (p.fence === true && (snapshot || isHoldingSlug(row.slug))) {
     const old = decision.candidate;
-    fence = await prepareFenceFactAppend(engine, row, config, snapshot, { fact, pendingTier: fenceAppendPendingTier(writerTier),
+    fence = await prepareFenceFactAppend(engine, row, config, snapshot, { fact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
       supersede: status === 'superseded' && old?.source_markdown_slug === row.slug && old.row_num != null ? { rowNum: Number(old.row_num), validUntil: retiredUntil } : undefined }, signal);
   } else if (p.fence === true && p.member_page === true) {
-    fence = await prepareFenceFactCreate(engine, row, config, { fact, pendingTier: fenceAppendPendingTier(writerTier),
+    fence = await prepareFenceFactCreate(engine, row, config, { fact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
       frontmatter: memberPageFrontmatter(row.slug.slice(MEMBER_PAGE_PREFIX.length)), heading: `# Memory of ${row.slug.slice(MEMBER_PAGE_PREFIX.length)}` }, signal);
   } else if (p.fence === true && p.scope_page === true) {
-    fence = await prepareFenceFactCreate(engine, row, config, { fact, pendingTier: fenceAppendPendingTier(writerTier),
+    fence = await prepareFenceFactCreate(engine, row, config, { fact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
       frontmatter: scopePageFrontmatter(), heading: '# Scope memory' }, signal);
   }
   // GBRA-190 G4: linking a fact saved without an entity retires its holding row in the same publication.
@@ -188,7 +193,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     if (fence) {
       ({ id, pageReceipt } = await fence.apply(tx));
     } else {
-      const inserted = await tx.insertFact(fact, { source_id: row.source_id }); // gbrain-allow-direct-insert: journaled source-scoped semantic publication for subjectless or unresolved entity memory
+      const inserted = await tx.insertFact(widening ? { ...fact, visibility: widening.from as NewFact['visibility'] } : fact, { source_id: row.source_id }); // gbrain-allow-direct-insert: journaled source-scoped semantic publication for subjectless or unresolved entity memory
       id = inserted.id;
     }
     if (status === 'superseded') {
@@ -198,12 +203,15 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     }
     const contestedBy = contestedOld ? await recordContestedFact(tx, { sourceId: row.source_id, oldId: contestedOld.id,
       oldTier: storedTrustTier(contestedOld.trust_tier), newId: id, newTier: writerTier,
-      guard: replaces !== null ? 'remember.replaces' : contested ? 'conflict_slot' : 'conflict_slot_lexical' }) : null;
+      guard: replaces !== null ? 'remember.replaces' : contested ? 'conflict_slot' : 'conflict_slot_lexical',
+      ...(widening && restatedOld!.id === contestedOld.id ? { visibility: widening } : {}) }) : null;
+    const widenedBy = restatedOld && restatedOld.id !== contestedOld?.id ? await recordContestedFact(tx, { sourceId: row.source_id, oldId: restatedOld.id,
+      oldTier: restatedOld.trust_tier, newId: id, newTier: writerTier, guard: 'remember.restated_private', visibility: widening! }) : null;
     const flagged = gateField(gate.assessment, `f${id}`, await recordFlaggedRow(tx, gate, { table: 'facts', id, sourceId: row.source_id }));
     const superseded = status === 'superseded' ? decision.candidate! : undefined;
     return { ...outcome(id, status, input.entity_slug, validUntil, degraded, p, superseded?.id,
       superseded !== undefined && superseded.entity_slug == null && input.entity_slug !== null), ...claimColumns(p), ...fence?.fencesNormalized,
-      ...(contestedBy ? { contested: contestedBy } : {}), ...(flagged ? { gate: flagged } : {}),
+      ...(contestedBy ?? widenedBy ? { contested: contestedBy ?? widenedBy } : {}), ...(flagged ? { gate: flagged } : {}),
       ...(pageReceipt?.size_state ? { size_state: pageReceipt.size_state } : {}) };
   } };
 }
