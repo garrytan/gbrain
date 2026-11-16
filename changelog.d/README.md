@@ -16,8 +16,11 @@ of the GitHub release notes.
 ```
 
 Optional front matter marks the change important for the stable channel
-(`important: security|regression|data-loss|blocker`), which makes the merge
-lane open a release right after it lands the PR. Releases are PATCH only, so
+(`important: security|regression|data-loss`, where regression means a
+regression in a release that is on stable), which makes the merge lane open a
+release right after it lands the PR. Any other class is refused
+(docs/RELEASING.md#daily-stable-check); a fix that only unblocks someone rides
+the weekly cut. Releases are PATCH only, so
 a `bump:` line other than `patch` is refused (scripts/build-behavior-changes.ts).
 A PR that changes behavior also names its behavior-changes.d row here
 (`<!-- behavior-change: <id> -->`, see behavior-changes.d/README.md).

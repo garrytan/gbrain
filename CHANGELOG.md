@@ -10,6 +10,59 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.731.0] - 2026-11-16
+
+**docs/STABILITY.md now says what stays the same on the stable channel, and how much warning you get before something changes.**
+
+### Added
+- A "What stays the same on stable" section in docs/STABILITY.md. It covers command names and their documented flags, MCP tools and their parameters, documented config keys, the page and frontmatter format, exit codes and the top-level `--json` fields of documented commands, and upgrades from any stable release of the last six months. A removal or rename is announced in a stable release first, keeps working with a warning, and is removed no sooner than 14 days and two stable releases later. Security and data-loss fixes are the one exception. The section also lists what the promise does not cover, including very large brains during an upgrade until #9192 is fixed.
+- `deprecations.d/README.md`, which says how a planned removal is recorded and announced before it happens.
+- The README's Stability section points to the new promise.
+
+**Stable now waits for a green upgrade test from every recent stable release.**
+
+### Changed
+- The daily stable check promotes a release only after the upgrade matrix ran green on that release's exact tag and tree. With no run yet it starts one; a red run holds stable with a warning and is not started again by the schedule.
+- The upgrade matrix's full run also upgrades from the stable releases users may still be on, which are the last 8 stable releases plus the newest one of each older month, back 6 months. A test run from before this change no longer counts.
+- While the upgrade matrix's own break issue is open, stable holds. Only a security or data-loss fix that fails on no from-version the issue doesn't name may pass it.
+- `promote-stable.yml` takes an optional `matrix_run_url`, checks it the same way and records it as `matrix_run` in `stable.json` and the stable tag. A maintainer can still promote without one, recorded as `matrix_run: null`.
+
+**Doctor, init, call import and gbrain serve report and record the right thing in seven small cases.**
+
+### Fixed
+- `gbrain doctor`'s grant check is ok when the only operations a grant misses are ones the owner adds by name, and its message names them with the command that adds them.
+- `gbrain import --calls` finds a call already imported from any folder above the one you import, and reports a call whose page is still being written as pending instead of writing a second copy; with `--accept-pending` it still exits 10 when that write waits on a stale owner host.
+- A folder whose `.git` is an empty file is no longer taken as a git checkout.
+- Release notes drop a trailing internal issue code, like `(ABC-12)`, from each line of the change list.
+- `gbrain init --force --embedding-model <model>` records the new model and width in the database as well as the config file, so the two agree (#9451).
+- `gbrain serve` names upgrade migrations that haven't run, once at startup on stderr, and `gbrain doctor` reports them too, also on a brain an older release last opened whose local upgrade ledger is empty.
+
+### For contributors
+- The key-files page `google-and-loops.md` was at its 60,000-byte cap, so its harness and MCP entries moved unchanged to `google-and-loops-more.md`; the Google source entry now says what an unmanaged `--dry-run` returns.
+
+Reported by @Loprz (#9451).
+
+**Stable moves within a day only for security, data-loss and stable-regression fixes; everything else waits for the weekly move.**
+
+### Changed
+- An important fix, the kind that moves the stable channel early, is now only a security fix, a data-loss fix or a fix for a regression in a release that is on stable. A fix that unblocks one setup, or a regression only alpha releases have, rides the weekly move unless a maintainer promotes by hand. `gbrain upgrade --help`, docs/STABILITY.md, docs/RELEASING.md ("Daily stable check") and changelog.d/README.md say so.
+- `scripts/build-behavior-changes.ts` (in `check:regen-all`) refuses a changelog fragment whose `important:` class is anything but `security`, `regression` or `data-loss`, naming the three and docs/RELEASING.md#daily-stable-check, the same way it refuses a `bump:` other than `patch`. A `# comment` after a front-matter value is no longer read as part of it.
+- Tests: `test/scripts/build-behavior-changes.test.ts` covers the refused and accepted `important:` values.
+
+<!-- behavior-change: stable_important_three_classes_gst2818 -->
+
+## [0.60.730.0] - 2026-11-16
+
+**A dry run of a Google or GitHub source no longer writes pages (#9449).**
+
+### Fixed
+- `gbrain sync --source <id> --dry-run` on a Google (Gmail, Calendar, Contacts) or GitHub source of a brain without managed persistence fetched from the provider and wrote what it fetched: pages, chunks and soft-deletes. It now fetches and writes nothing, prints that the source has no preview, and returns the `dry_run` result, as Slack and meetings sources already did. A brain with managed persistence still refuses a connector dry run before any provider call (#9449).
+- Tests: `test/sync-connector-dry-run-9449.test.ts` runs a dry run of every connector kind on PGLite and Postgres and checks that nothing was fetched or written.
+
+Reported by @kostjakla-del-ok. First fixed by @Masashi-Ono0611.
+
+Supersedes #9450
+
 ## [0.60.729.0] - 2026-11-15
 
 **Fifteen small fixes: the doctor's grant repair grants every operation it counted except the ones you approve by name, call import handles single files, look-alike names and pending writes, a folder whose own `.git` is not a repository is no longer taken as a checkout, storage adopt reports what it did, and doctor's type check reads through an index.**

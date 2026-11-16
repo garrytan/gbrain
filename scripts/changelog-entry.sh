@@ -8,7 +8,8 @@
 # with one line per change: for every changelog.d fragment a release commit
 # deleted since the newest v* tag before HEAD, in fold order (oldest release
 # first, then path order), the fragment's first bold line plus the "(#N)" of
-# the master commit that added it. The list goes on the GitHub release only;
+# the master commit that added it; a trailing internal issue code such as
+# "(GST-123)" is dropped from the line. The list goes on the GitHub release only;
 # CHANGELOG.md never carries it.
 #
 # Usage: changelog-entry.sh [--pr-list] <version> [changelog-file]
@@ -51,6 +52,7 @@ list_changes() {
       headline="${headline%.}"
       cited="$(printf '%s\n' "$headline" | sed -nE 's/.*[[:space:]]\((#[0-9]+(, #[0-9]+)*)\)$/\1/p')"
       if [ -n "$cited" ]; then headline="${headline% ("$cited")}"; fi
+      headline="$(printf '%s\n' "$headline" | sed -E 's/[[:space:]]+\([A-Z]{2,5}-[0-9]+\)$//')"
       if [ -n "$pr" ] && [[ ", $cited, " != *", #$pr, "* ]]; then cited="${cited:+$cited, }#$pr"; fi
       if [ -n "$cited" ]; then
         printf -- '- %s (%s)\n' "$headline" "$cited"
