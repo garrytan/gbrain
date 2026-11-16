@@ -122,7 +122,11 @@ async function reconcile(engine: BrainEngine, opts: { apply: boolean; record?: b
     if (row.status !== 'dead') continue;
     const cls = classifyDeadFactsAbsorb(row.error_text);
     const known = state.keys[row.idempotency_key];
-    if (cls === 'not_retryable' && !known) { result.not_retryable.push({ job_id: Number(row.id), slug: row.slug }); continue; }
+    if (cls === 'not_retryable' && known?.class !== 'not_retryable') {
+      delete state.keys[row.idempotency_key];
+      result.not_retryable.push({ job_id: Number(row.id), slug: row.slug });
+      continue;
+    }
     state.keys[row.idempotency_key] = known ?? newEntry(row, cls, opts.now);
   }
   const due: string[] = [];

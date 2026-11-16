@@ -11,7 +11,8 @@ import { chat, configureGateway, resetGateway } from '../../src/core/ai/gateway.
 import { AIConfigError, AITransientError, normalizeAIError } from '../../src/core/ai/errors.ts';
 import { getRecipe } from '../../src/core/ai/recipes/index.ts';
 import { FactsExtractionError } from '../../src/core/facts/extract.ts';
-import { classifyDeadFactsAbsorb } from '../../src/core/facts/dead-absorb-retry.ts';
+import { FACTS_ABSORB_RETRY_STATE_KEY, classifyDeadFactsAbsorb, factsAbsorbWriteKey, readDeadFactsAbsorbRetry } from '../../src/core/facts/dead-absorb-retry.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
 import { jobRefusal } from '../../src/core/minions/refusal.ts';
 
 const BODY_MARKER = 'streamed-body-text-9466';
@@ -67,6 +68,23 @@ describe('#9466 a success response whose body is not JSON', () => {
     expect(refusal).toMatchObject({ code: 'provider_response_unparseable' });
     expect(refusal!.message).not.toContain(BODY_MARKER);
     expect(classifyDeadFactsAbsorb(extraction.message)).toBe('not_retryable');
+  });
+
+  test('a page-write job the retry set already tracks is not re-submitted once it dies on an unparseable response', async () => {
+    const key = factsAbsorbWriteKey('request-9466');
+    const extraction = new FactsExtractionError('provider_error', model(), await streamedChat());
+    const tracked = { job_id: 7, slug: 'notes/alpha', source_id: 'default', class: 'provider', first_dead_at: '2026-01-01T00:00:00.000Z',
+      resubmits: 1, last_resubmit_at: null, cleared_at: null };
+    const config: Record<string, string> = { [FACTS_ABSORB_RETRY_STATE_KEY]: JSON.stringify({ version: 1, keys: { [key]: tracked } }) };
+    const engine = {
+      getConfig: async (name: string) => config[name] ?? null,
+      setConfig: async (name: string, value: string) => { config[name] = value; },
+      executeRaw: async () => [{ id: 7, idempotency_key: key, status: 'dead', error_text: extraction.message, slug: 'notes/alpha',
+        source_id: 'default', finished_at: '2026-01-01T00:00:00.000Z' }],
+    } as unknown as BrainEngine;
+    const result = await readDeadFactsAbsorbRetry(engine);
+    expect(result.pending).toBe(0);
+    expect(result.not_retryable).toEqual([{ job_id: 7, slug: 'notes/alpha' }]);
   });
 
   test('a bare SDK parse error is classed the same way, and its text is not carried', () => {
