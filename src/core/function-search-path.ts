@@ -16,6 +16,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
+import { failClosedLedgerGuards } from './guard-ledger-checks.ts';
 import { migrationStatementTimeoutMs } from './migration-timeout.ts';
 import { isLockTimeoutError } from './retry-matcher.ts';
 import { resolveSchemaLockTimeoutMs, schemaLockBlockedError } from './postgres-engine/schema-lock-timeout.ts';
@@ -93,8 +94,11 @@ function isConcurrentCatalogUpdate(error: unknown): boolean {
  * listing what it left failed. A pg_proc row lock it cannot take
  * becomes `schema_lock_blocked`; a concurrent update of the same pg_proc row (`apply-migrations --force-schema` beside
  * another process's boot) is retried, since the step is idempotent. Prints nothing: the caller decides who is told.
+ * It first re-creates any purge or withdrawal guard left without its ledger check that the role owns (guard-ledger-checks.ts,
+ * #7659), best-effort and silent: v318 names the ones another role owns, and every later migration run retries them.
  */
 export async function hardenFunctionSearchPaths(engine: BrainEngine, attempt = 1): Promise<string[] | null> {
+  if (attempt === 1) await failClosedLedgerGuards(engine).catch(() => undefined);
   if ((await legacySearchPathFunctions(engine)).length === 0) return [];
   const lockTimeoutMs = resolveSchemaLockTimeoutMs();
   try {

@@ -2,8 +2,9 @@
  * #7632/#7659: the purge and withdrawal guards refuse a writing role that row-level security keeps from their ledgers
  * (derived-state-maintainers.ts requireLedgerPoliciesSql). Migration v318 installs those bodies and every migration run
  * re-checks them, so a guard the migrating role could not re-create (another role owns it: CREATE OR REPLACE needs the
- * owner, #7659 question 8) never aborts the upgrade, is named, and is re-created by the first run of a role that owns it.
- * An older gbrain that replays its schema blob over the derivation guards is put right the same way. Each guard stays
+ * owner, #7659 question 8) never aborts the upgrade, is named, and is re-created by the first migration run of a role
+ * that owns it (hardenFunctionSearchPaths, which every run calls). An older gbrain that replays its schema blob over the
+ * derivation guards is put right the same way. Each guard stays
  * SECURITY INVOKER; nothing but the seven function bodies changes.
  */
 

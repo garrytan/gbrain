@@ -73,7 +73,7 @@
       "failClosedLedgerGuards": "dadd3ceb13286ca7ab969a911a310c87be313de6ec2c2c8e14d3f95b72901481",
       "getFtsLanguage": "0d790b4c4af1f67a2a1bbd59470beb13f434917b381931baf8404a41c5d903db",
       "grantFromRow": "e31bd308b413c11f2879ac4393fbc0362a1a974f937196f11029481e4dc64f69",
-      "hardenFunctionSearchPaths": "10c9c70c8d10002c30de6b0d0a15b13118732a7ac54dbf7e835db0f7325f2629",
+      "hardenFunctionSearchPaths": "fd4dbb5e6f42931b80b3b041dde4b22100d08a449bd2d8b9c4a6e555e8959dfa",
       "hnswMaxDimsForType": "a187cdcc520f813b7c39da97ce53da58509232ed9f851627ef41abfe1b68bd26",
       "identityIndexHasSource": "ab7e4cad64ebf233f3a884816c114b0c582f4f2166c3bcf19ed8d92bcfcf3807",
       "isLockTimeoutError": "52a3720e1ffb74ce381cc3269f78130c38a89c807e308283ec3d557bae2b89b1",
@@ -5191,7 +5191,7 @@
           "helpers": [
             "failClosedLedgerGuards"
           ],
-          "sha256": "678e8c785e892fd94988d7b52ccf38bac679b411831d22dc8b830cd4f78740da"
+          "sha256": "91dfb9029c2d14bbed0f3325ea2fe2c364d9aae52c788e86d9b218d18b8cc729"
         },
         "idempotent": true,
         "name": "guard_ledgers_fail_closed",

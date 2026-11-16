@@ -18,12 +18,18 @@ import { failClosedLedgerGuards } from '../guard-ledger-checks.ts';
 // DEFINER (#7659), no privilege change, no row read or written. Replaces only
 // the seven functions: their triggers already call them, and re-creating the
 // triggers would take ACCESS EXCLUSIVE locks on facts, pages and takes. A
-// function another role owns is left and named, never an abort; every later
-// migration run re-creates it once a role that owns it runs (migrate.ts).
+// function another role owns is left and named on stderr, never an abort;
+// every later migration run re-creates it once a role that owns it runs
+// (hardenFunctionSearchPaths, guard-ledger-checks.ts).
 export const v318: Migration = {
   version: 318,
   name: 'guard_ledgers_fail_closed',
   idempotent: true,
   sql: '',
-  handler: async engine => { await failClosedLedgerGuards(engine); },
+  handler: async engine => {
+    const { left, role } = await failClosedLedgerGuards(engine);
+    if (left.length === 0) return;
+    process.stderr.write(`  guards: ${left.length} purge or withdrawal guard(s) still read their ledgers as empty for a write role without ledger policies (${left.join(', ')}): `
+      + `CREATE OR REPLACE FUNCTION needs the owner. As that role run ALTER FUNCTION public.<name>() OWNER TO ${role}, or connect gbrain as it; the next migration run re-creates them (docs/ENGINES.md#purge-and-withdrawal-guards).\n`);
+  },
 };

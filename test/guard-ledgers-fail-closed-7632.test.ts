@@ -303,7 +303,7 @@ function docsRecipe(marker: string, role: string): string {
     }
   }, 120_000);
 
-  test('a guard another role owns is left and named, and a run of a role that owns it fails it closed', async () => {
+  test('a guard another role owns is left and named, and the next migration run of a role that owns it fails it closed', async () => {
     const closed = async (tx: Exec) => (await tx.executeRaw<{ closed: boolean }>(
       "SELECT strpos(prosrc, 'row_security_active(''fact_purges'')') > 0 AS closed FROM pg_proc WHERE proname = 'gbrain_refuse_purged_fact'"))[0]!.closed;
     try {
@@ -321,5 +321,9 @@ function docsRecipe(marker: string, role: string): string {
     } catch (error) {
       if ((error as Error).message !== ROLLBACK) throw error;
     }
+    await engine.executeRaw(`CREATE OR REPLACE FUNCTION gbrain_refuse_purged_fact() RETURNS trigger LANGUAGE plpgsql
+      SET search_path = pg_catalog, public, pg_temp AS $fn$ BEGIN RETURN NEW; END $fn$`);
+    expect((await runMigrations(engine)).applied).toBe(0);
+    expect(await closed(engine)).toBe(true);
   });
 });
