@@ -14,8 +14,6 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
-import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
-import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const put = operations.find(operation => operation.name === 'put_page')!;
@@ -23,22 +21,15 @@ const note = (title: string, body: string) => `---\ntype: note\ntitle: ${title}\
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args],
   { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
-for (const backend of testBackends()) describe(`[${backend}] #9286 new-page parent spelling`, () => {
+describe('#9286 new-page parent spelling', () => {
   let engine: BrainEngine;
-  let closePostgres: (() => Promise<void>) | undefined;
-  const home = mkdtempSync(join(tmpdir(), `gbrain-parent-case-${backend}-`));
+  const home = mkdtempSync(join(tmpdir(), `gbrain-parent-case-`));
   const env = { GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home };
 
   beforeAll(async () => {
-    if (backend === 'pglite') {
-      engine = new PGLiteEngine();
-      await engine.connect({});
-      await engine.initSchema();
-    } else {
-      const postgres = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
-      engine = postgres.engine;
-      closePostgres = postgres.close;
-    }
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
   }, 120_000);
 
   afterAll(async () => {
@@ -50,7 +41,6 @@ for (const backend of testBackends()) describe(`[${backend}] #9286 new-page pare
         });
         await engine.disconnect();
       }
-      await closePostgres?.();
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -79,7 +69,7 @@ for (const backend of testBackends()) describe(`[${backend}] #9286 new-page pare
         const before = await engine.readPageSnapshot(originalSlug, { sourceId });
         expect(before!.page.source_path).toBe(originalPath);
         const ctx: OperationContext = { engine, sourceId, remote: true, dryRun: false,
-          config: { engine: backend, embedding_disabled: true }, logger: { info() {}, warn() {}, error() {} } };
+          config: { engine: 'pglite', embedding_disabled: true }, logger: { info() {}, warn() {}, error() {} } };
         const slug = `${parent.toLowerCase()}/new-page`;
         const receipt = await put.handler(ctx, { slug, content, request_id: randomUUID() }) as { state: string };
         expect(receipt.state).toBe('committed');

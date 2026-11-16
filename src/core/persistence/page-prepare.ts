@@ -1,3 +1,4 @@
+import { readdirSync } from 'node:fs';
 import { isEmbedSkipped } from '../embed-skip.ts';
 import { appendPurgeCommitted } from '../belief/purge-mirror.ts';
 import { sizeStateField } from '../page-embedding-budget.ts';
@@ -11,7 +12,6 @@ import { syncExcludePatterns } from './sync-discovery.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { Page, PageVersion } from '../types.ts';
-import { readdirSync } from 'node:fs';
 import { importFromContent, verifyPageReadable, type ParsedPage } from '../import-file.ts';
 import { classifyImportHold, comparableFrontmatter, frontmatterHoldMessageWithoutKeys, parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, resolveSourceLocalFilePath, type ParsedMarkdown, type ParseOpts } from '../markdown.ts';
 import { alignWithStored } from './align-stored.ts';
