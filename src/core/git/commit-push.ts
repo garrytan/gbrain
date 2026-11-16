@@ -762,7 +762,7 @@ function untrackPaths(root: string, rel: string[], message: string, scope: Commi
 
 export interface PendingWriteThrough { path: string; since: string }
 
-const PENDING_NOTED = new Set(['commit_lock_busy', 'git_index_locked', 'git_index_stale', 'git_unavailable', 'git_command_stopped', 'git_operation_in_progress']);
+const PENDING_NOTED = new Set(['commit_lock_busy', 'git_index_locked', 'git_index_stale', 'git_unavailable', 'git_command_stopped', 'git_operation_in_progress', 'commit_paths_unmerged']);
 
 function readPendingFile(file: string, into: Map<string, string>): void {
   let text: string;

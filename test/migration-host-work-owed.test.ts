@@ -21,6 +21,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { getDbUrlSource } from '../src/core/config.ts';
 import { VERSION } from '../src/version.ts';
 import { SHARED_SKILLS_HOST_WORK_VERSION } from '../src/core/shared-skills/migration-host-work.ts';
+import { codeEntry } from '../src/core/error-catalogue.ts';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 const OWED = '0.53.0';
@@ -238,6 +239,19 @@ describe('the other surfaces say the same thing', () => {
     expect(notice?.why ?? '').not.toContain('does not clear without a person');
     const line = await scoped(true, () => describeMigrationFailure(new Error('exit 1'), VERSION), legacy);
     expect(line).not.toContain(`--migration ${LEGACY}`);
+  }, 120_000);
+
+  test('the doctor code has a registry row: gbrain errors explains it and its default fix is read-only', async () => {
+    const entry = codeEntry('migration_host_work_owed');
+    expect(entry?.class).toBe('host_only');
+    expect(entry?.retryable).toBe(false);
+    expect(entry!.fix!.argv).toEqual(['gbrain', 'apply-migrations', '--list', '--json']);
+    expect(entry!.suggestion).toContain('--dry-run --json');
+    expect(entry!.suggestion).toContain('--force-retry');
+    const out = await cli(['errors', 'migration_host_work_owed']);
+    expect(out.exitCode).toBe(0);
+    expect(out.stdout).toContain('migration_host_work_owed (host_only');
+    expect(out.stdout).toContain('does not clear without a person');
   }, 120_000);
 
   test('upgrade\'s failure line names the inspect step, never a forced retry first', async () => {

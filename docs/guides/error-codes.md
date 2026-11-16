@@ -1010,7 +1010,7 @@ More: [docs/guides/shared-checkout-git.md#outcomes](../../docs/guides/shared-che
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The commit was refused before staging: a named file still has unresolved merge conflicts in the index, so committing it would publish its conflict markers. | Git keeps the two sides of a conflicted file (after a merge, rebase or stash pop that stopped on a conflict) as unmerged index entries until someone resolves it; staging it would record the file with its markers as resolved. | Resolve each file (edit out the markers, or git checkout --ours/--theirs -- <file>), mark it resolved with git add -- <file>, then rerun the commit. | user | `repeat the read that failed` | 1 | no |
+| The commit was refused before staging: a named file still has unresolved merge conflicts in the index, so committing it would publish its conflict markers. | Git keeps the two sides of a conflicted file (after a merge, rebase or stash pop that stopped on a conflict) as unmerged index entries until someone resolves it; staging it would record the file with its markers as resolved. | Resolve each file with the user (edit out the markers and keep the changes from both sides that belong in the file, since one side may be a write gbrain made), mark it resolved with git add -- <file>, then rerun the commit. | user | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/shared-checkout-git.md#outcomes](../../docs/guides/shared-checkout-git.md#outcomes)
 
@@ -2252,7 +2252,7 @@ More: [docs/guides/repair.md#ghost-pages](../../docs/guides/repair.md#ghost-page
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A git command was stopped before it finished (its time limit, an output limit, or a signal from outside gbrain), so gbrain did not use its partial output. | Git itself works; the child ended without exiting on its own, and a cut-off listing read as the answer would stage, restore or report the wrong files. | Rerun the same command once. For a signal, check the machine first (the out-of-memory killer or a supervisor); if a time limit stops it again, tell the user which command and checkout. | agent | `repeat the read that failed` | 1 | yes |
+| A git command was stopped before it finished (its time limit, an output limit, a signal from outside gbrain, or git crashing on a signal such as SIGSEGV), so gbrain did not use its partial output. | The child ended without exiting on its own (unless it crashed, git itself works), and a cut-off listing read as the answer would stage, restore or report the wrong files. | Rerun the same command once. For a signal, check the machine first (the out-of-memory killer or a supervisor), or for a crash run git fsck on the checkout; if it stops again, tell the user which command and checkout. | agent | `repeat the read that failed` | 1 | yes |
 
 Reasons: `timeout`, `output_limit`, `signal`.
 
@@ -3383,6 +3383,16 @@ More: [docs/guides/write-refusals.md#merge_recommended](../../docs/guides/write-
 | A migration orchestrator failed, so the migration chain stopped; finished migrations stay recorded. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
 
 Reasons: `orchestrator_failed`, `orchestrator_threw`, `ledger_write_failed`, `preview_failed`, `schema_failed`.
+
+### migration_host_work_owed
+
+<a id="migration_host_work_owed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Doctor warning: a migration stopped three or more runs in a row on a conflict in one or more sources and recorded that host work is still owed (today only v0.53.0), so it is wedged even if a newer migration has completed since. | A newer migration completing does not do the work a wedged migration owes, and nothing reruns a wedged migration by itself, so it does not clear without a person. Each source's conflict needs the user's decision before a forced retry, or the retry stops on the same conflict again. | Run the read-only inspect `gbrain apply-migrations --migration <version> --dry-run --json` on the brain host to see each source's conflict. Once the user has reviewed each one, clear the wedge with `gbrain apply-migrations --force-retry <version>`, then run the command the inspect output names for each source, or `gbrain apply-migrations --yes`. Run: gbrain apply-migrations --list --json | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/shared-brain-skills.md#reviewed-changes-after-inventory](../../docs/guides/shared-brain-skills.md#reviewed-changes-after-inventory)
 
 ### migration_host_work_pending
 

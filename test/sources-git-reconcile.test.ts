@@ -293,6 +293,21 @@ test('a checkout that fails with a plain error is reported for that checkout and
   }
 }, 120_000);
 
+test('a commit-push child stopped before it finished (git_command_stopped) is a retryable failure, not a question for the user', async () => {
+  const engine = plain;
+  const r = repo('child-stopped');
+  const stoppedCli = join(dir, 'bin', 'gbrain-stopped');
+  const envelope = { code: 'git_command_stopped', message: 'git ls-files in the checkout did not finish: it ran past its 60 s limit and was stopped.', suggestion: 'Rerun the same command once.', reason: 'timeout' };
+  writeFileSync(stoppedCli, `#!/bin/sh\necho '${JSON.stringify(envelope)}'\nexit 1\n`);
+  chmodSync(stoppedCli, 0o755);
+  try {
+    await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::jsonb)', ['child-stopped', r.root, JSON.stringify({ remote_url: r.remote, managed_clone: true })]);
+    commit(r.root, 'notes/local.md', 'local\n');
+    const results = await withEnv({ ...identity, GBRAIN_JOB_CHILD_CLI: stoppedCli }, () => reconcileSources(engine, { sourceIds: ['child-stopped'] }));
+    expect(results).toMatchObject([{ status: 'failed', error: { code: 'git_command_stopped' } }]);
+  } finally { await resetPlain(); }
+}, 120_000);
+
 test('a checkout with a recorded remote that gbrain did not clone keeps its local commits by default', async () => {
   const engine = plain;
   const r = repo('recorded-remote');

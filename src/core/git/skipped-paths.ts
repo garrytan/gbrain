@@ -183,15 +183,15 @@ export function worktreeOfGitdir(top: string): string {
 
 /** Refuses, before anything is staged, named paths with unresolved merge conflicts in the index: staging one would commit its markers as resolved. */
 export function assertNoUnmergedPaths(root: string, rel: string[]): void {
-  const unmerged = [...new Set(git(root, ['ls-files', '-u', '-z', '--', ...literalPathspecs(rel)]).stdout.split('\0').filter(Boolean).map(l => l.slice(l.indexOf('\t') + 1)))];
+  const unmerged = [...new Set(gitOk(root, ['ls-files', '-u', '-z', '--', ...literalPathspecs(rel)], 'ls-files -u').split('\0').filter(Boolean).map(l => l.slice(l.indexOf('\t') + 1)))];
   if (unmerged.length) {
     const list = `${unmerged.slice(0, 10).join(', ')}${unmerged.length > 10 ? ', ...' : ''}`;
     throw opError('commit_paths_unmerged', `${unmerged.length} named file(s) still have unresolved merge conflicts in the index: ${list}.`,
-      `Nothing was staged or committed. Resolve each file first (edit out the conflict markers, or keep one side with git checkout --ours or --theirs -- <file>), mark it resolved with git add -- <file>, then rerun the commit. git ls-files -u -- <file> prints nothing once it is resolved.`,
+      `Nothing was staged or committed. Resolve each file first with the user: edit out the conflict markers, keeping the changes from both sides that belong in the file (one side may be a write gbrain made), and mark it resolved with git add -- <file>. Then rerun the commit. git ls-files -u -- <file> prints nothing once it is resolved.`,
       { detail: JSON.stringify({ paths: unmerged }), fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
         argv: ['git', '-C', root, 'diff', '--', ...literalPathspecs(unmerged)],
         why: 'Shows the conflict in each file; committing now would publish the conflict markers as the file content.',
-        user_message: `These files still have unresolved merge conflicts (${list}), for example after a merge, rebase or stash pop that stopped on a conflict. Resolve each one and mark it resolved with git add, then commit again?`,
+        user_message: `These files still have unresolved merge conflicts (${list}), for example after a merge, rebase or stash pop that stopped on a conflict. Resolve each one keeping the changes from both sides that belong in the file (one side may be a write gbrain made), mark it resolved with git add, then commit again?`,
         verify: { argv: ['git', '-C', root, 'ls-files', '-u', '--', ...literalPathspecs(unmerged)] },
         docs: 'docs/guides/shared-checkout-git.md#outcomes' } });
   }

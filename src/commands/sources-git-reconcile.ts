@@ -27,7 +27,7 @@ import { REFRESH_PUBLISH_DIVERGED_KEY, publishOptedOut, refreshWorktree } from '
 import { listSources } from '../core/sources-ops.ts';
 
 const USAGE = 'Usage: gbrain sources git-reconcile [<source-id>...] [--dry-run] [--wait <seconds>] [--json]';
-const RETRYABLE = new Set(['fetch_failed', 'push_unconfirmed', 'commit_lock_busy', 'refresh_in_progress', 'refresh_lock_timeout', 'refresh_drain_timeout', 'git_unavailable']);
+const RETRYABLE = new Set(['fetch_failed', 'push_unconfirmed', 'commit_lock_busy', 'refresh_in_progress', 'refresh_lock_timeout', 'refresh_drain_timeout', 'git_unavailable', 'git_command_stopped']);
 
 export type SourceReconcileStatus = CheckoutReconcileStatus | 'needs_user' | 'failed';
 
