@@ -15,7 +15,12 @@ export const HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE = 100;
  * (`page_versions.change_reason`), and whether the import consumed more than one commit for the page's file, or could
  * not tell (`pages.version_history_gap_at`).
  */
-export interface VersionHistory { reason?: string | null; historyGap?: boolean }
+export interface VersionHistory {
+  reason?: string | null;
+  historyGap?: boolean;
+  /** Git-relative identity that decided this imported reason; rechecked under the publication's source lock. */
+  reasonOrigin?: { commit: string; path: string };
+}
 
 /**
  * Version the same canonical view an API reader receives, including withdrawals.
@@ -25,12 +30,20 @@ export interface VersionHistory { reason?: string | null; historyGap?: boolean }
 export async function createPageVersion(engine: BrainEngine, slug: string, sourceId: string, preimage?: PageSnapshot, history: VersionHistory = {}): Promise<PageVersion> {
   const insert = async (tx: BrainEngine, snapshot: PageSnapshot) => {
     const { page, tags, revision } = snapshot;
+    // Page guards hold the source FOR SHARE, excluding purge's FOR UPDATE until this version commits.
+    // A pass's earlier trailer scan is not publication proof: purge may have tombstoned it during preparation.
+    let reason = history.reason ?? null;
+    if (reason !== null && history.reasonOrigin) {
+      const tombstones = await tx.executeRaw('SELECT 1 FROM reason_purge_tombstones WHERE source_id = $1 AND commit_sha = $2 AND path = $3',
+        [sourceId, history.reasonOrigin.commit, history.reasonOrigin.path]);
+      if (tombstones.length) reason = null;
+    }
     if (history.historyGap) await tx.executeRaw('UPDATE pages SET version_history_gap_at = now() WHERE id = $1', [page.id]);
-    if (isSegmentedPage(page)) return insertSegmentedVersion(tx, snapshot, history.reason ?? null);
+    if (isSegmentedPage(page)) return insertSegmentedVersion(tx, snapshot, reason);
     const rows = await tx.executeRaw<PageVersion>(`INSERT INTO page_versions
       (page_id,compiled_truth,frontmatter,knowledge_revision,timeline,title,type,tags,is_deleted,source_path,change_reason)
       VALUES ($1,$2,$3::text::jsonb,$4::uuid,$5,$6,$7,$8::text::jsonb,$9,$10,$11) RETURNING *`,
-    [page.id, page.compiled_truth, JSON.stringify(page.frontmatter), revision, page.timeline, page.title, page.type, JSON.stringify(tags), page.deleted_at != null, page.source_path ?? null, history.reason ?? null]);
+    [page.id, page.compiled_truth, JSON.stringify(page.frontmatter), revision, page.timeline, page.title, page.type, JSON.stringify(tags), page.deleted_at != null, page.source_path ?? null, reason]);
     if (isLargePageBytes(Buffer.byteLength(page.compiled_truth ?? '', 'utf-8') + Buffer.byteLength(page.timeline ?? '', 'utf-8'))) {
       const pruned = await tx.executeRaw<{ id: number }>(`DELETE FROM page_versions WHERE page_id = $1 AND id IN (SELECT id FROM page_versions WHERE page_id = $1
         AND octet_length(compiled_truth) + octet_length(COALESCE(timeline, '')) > $2 ORDER BY id DESC OFFSET $3) RETURNING id`,

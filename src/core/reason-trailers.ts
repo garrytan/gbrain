@@ -220,8 +220,10 @@ function repoPathOf(scan: SyncReasonScan, filePath: string): string {
 export function importHistoryFor(scan: SyncReasonScan | null | undefined, filePath: string): VersionHistory | undefined {
   if (!scan) return undefined;
   if (scan.status !== 'complete') return { reason: null, historyGap: true };
-  const decision = scan.byPath.get(repoPathOf(scan, filePath));
-  return { reason: decision?.reason ?? null, historyGap: (decision?.commits ?? 0) > 1 };
+  const path = repoPathOf(scan, filePath);
+  const decision = scan.byPath.get(path);
+  return { reason: decision?.reason ?? null, historyGap: (decision?.commits ?? 0) > 1,
+    ...(decision?.reason != null ? { reasonOrigin: { commit: decision.commit, path } } : {}) };
 }
 
 /** The pass's notices: a failed or capped scan (reasons stored as NULL, no backfill), and secrets found in pushed trailers. */

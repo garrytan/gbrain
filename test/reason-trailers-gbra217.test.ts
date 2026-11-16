@@ -161,6 +161,83 @@ afterAll(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
+describe('#8635: a purge between reason preparation and publication', () => {
+  test('publication rechecks an already prepared reason under its page/source guard', async () => inHome(async () => {
+    for (const engine of engines) {
+      const claim = `Synthetic prepared code ${++serial}`;
+      const s = await classicSource(engine, { 'notes/a.md': page('Stable body.') });
+      await sync(engine, s);
+      const from = git(s.root, 'rev-parse', 'HEAD');
+      write(s.root, { 'notes/a.md': page('Next body.') });
+      const to = commit(s.root, 'edit', [`notes/a.md: Changed after ${claim}.`]);
+      const history = importHistoryFor(await cachedSyncReasonScan(engine, { sourceId: s.id, sourceRoot: s.root, from, to }), join(s.root, 'notes/a.md'));
+      expect(history?.reason).toBe(`Changed after ${claim}.`);
+      const id = await seedFact(engine, s.id, `people/prepared-example-${serial}`, claim);
+      expect((await purge(engine, s.id, id)).state).toBe('committed');
+      await engine.transaction(async tx => {
+        await tx.lockPageKeys([{ sourceId: s.id, slug: 'notes/a' }]);
+        const preimage = await tx.readPageSnapshot('notes/a', { sourceId: s.id });
+        expect(preimage).not.toBeNull();
+        await tx.createVersion('notes/a', { sourceId: s.id, preimage: preimage!, ...history });
+        expect((await reasonsOf(tx, s.id, 'notes/a')).reasons.at(-1)).toBeNull();
+      });
+    }
+  }), 120_000);
+
+  for (const managed of [false, true]) test(`${managed ? 'managed' : 'classic'} sync cannot restore a tombstoned reason from its prepared scan`, async () => inHome(async () => {
+    for (const engine of engines) {
+      const claim = `Synthetic retired code ${++serial}`;
+      const s = await classicSource(engine, { 'notes/a.md': page('A one.'), 'notes/b.md': page('B one.') });
+      await sync(engine, s);
+      const id = await seedFact(engine, s.id, `people/race-example-${serial}`, claim);
+      if (managed) {
+        await claimWorktree(engine, s.id, s.root);
+        await engine.executeRaw('UPDATE persistence_brain SET enabled = true WHERE singleton = 1');
+      }
+      write(s.root, { 'notes/a.md': page('A two.'), 'notes/b.md': page('B two.') });
+      const pushed = commit(s.root, 'edit', [`notes/a.md: Changed after ${claim}.`, 'notes/b.md: Routine tidy-up.']);
+      const original = engine.executeRaw;
+      const originalConfig = engine.getConfig;
+      let armed = false;
+      let purges = 0;
+      engine.executeRaw = async function (this: BrainEngine, sql, params) {
+        const rows = await original.call(this, sql, params);
+        if (sql === 'SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1' && params?.[0] === s.id) armed = true;
+        // Managed preparation has consumed its cached reason before reading the import-screen tombstones.
+        if (managed && armed && purges === 0 && sql.startsWith('SELECT content_hash,slug FROM page_purges')) {
+          purges++;
+          expect((await purge(engine, s.id, id)).state).toBe('committed');
+        }
+        return rows;
+      } as BrainEngine['executeRaw'];
+      engine.getConfig = async function (this: BrainEngine, key) {
+        if (!managed && armed && purges === 0) {
+          purges++;
+          expect((await purge(engine, s.id, id)).state).toBe('committed');
+        }
+        return originalConfig.call(this, key);
+      };
+      try {
+        const result = managed ? await performManagedSync(engine, { sourceId: s.id, noPull: true }) : await sync(engine, s);
+        expect(result.status).not.toBe('failed');
+        expect(purges).toBe(1);
+        expect(await engine.executeRaw('SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1', [s.id]))
+          .toEqual([{ commit_sha: pushed, path: 'notes/a.md' }]);
+        expect(await bodyOf(engine, s.id, 'notes/a')).toContain('A two.');
+        expect((await reasonsOf(engine, s.id, 'notes/a')).reasons.at(-1)).toBeNull();
+        expect((await reasonsOf(engine, s.id, 'notes/b')).reasons.at(-1)).toBe('Routine tidy-up.');
+      } finally {
+        engine.executeRaw = original;
+        engine.getConfig = originalConfig;
+        if (managed) {
+          await disposePersistenceConsumer(engine);
+          await engine.executeRaw('UPDATE persistence_brain SET enabled = false WHERE singleton = 1');
+        }
+      }
+    }
+  }), 180_000);
+});
+
 describe('A6: sync mirrors gbrain-reason trailers', () => {
   test('an outside commit\'s reason lands on the archived snapshot; malformed and secret trailers store nothing', async () => inHome(async () => {
     for (const engine of engines) {
@@ -272,7 +349,7 @@ describe('A6: sync mirrors gbrain-reason trailers', () => {
     const scan = await scanSyncReasons(engines[0]!, { sourceId: 'none', sourceRoot: root, from: base, to: head });
     expect(scan?.status).toBe('complete');
     expect(scan!.byPath.size).toBe(5000);
-    expect(importHistoryFor(scan, join(root, 'bulk/f4321.md'))).toEqual({ reason: 'Only this file has a reason.', historyGap: false });
+    expect(importHistoryFor(scan, join(root, 'bulk/f4321.md'))).toEqual({ reason: 'Only this file has a reason.', historyGap: false, reasonOrigin: { commit: head, path: 'bulk/f4321.md' } });
     expect(importHistoryFor(scan, join(root, 'bulk/f0001.md'))).toEqual({ reason: null, historyGap: false });
   }), 120_000);
 
@@ -310,7 +387,7 @@ describe('A6: sync mirrors gbrain-reason trailers', () => {
     await otherBrain.executeRaw('INSERT INTO reason_purge_tombstones(source_id, commit_sha, path) VALUES ($1, $2, $3)', [id, to, 'notes/a.md']);
     const range = { sourceId: id, sourceRoot: root, from, to };
     const file = join(root, 'notes/a.md');
-    expect(importHistoryFor(await cachedSyncReasonScan(engines[0]!, range), file)).toEqual({ reason: 'Canary reason for source-a.', historyGap: false });
+    expect(importHistoryFor(await cachedSyncReasonScan(engines[0]!, range), file)).toEqual({ reason: 'Canary reason for source-a.', historyGap: false, reasonOrigin: { commit: to, path: 'notes/a.md' } });
     expect(importHistoryFor(await cachedSyncReasonScan(otherBrain, range), file)).toEqual({ reason: null, historyGap: false });
   }), 120_000);
 });
@@ -498,7 +575,7 @@ describe('A7: purge reaches change reasons', () => {
       const to = commit(s.root, 'edit', [`notes/a.md: Changed once ${claim} was rotated.`]);
       const range = { sourceId: s.id, sourceRoot: s.root, from, to };
       const file = join(s.root, 'notes/a.md');
-      expect(worker.importHistoryFor(await worker.cachedSyncReasonScan(engine, range), file)).toEqual({ reason: `Changed once ${claim} was rotated.`, historyGap: false });
+      expect(worker.importHistoryFor(await worker.cachedSyncReasonScan(engine, range), file)).toEqual({ reason: `Changed once ${claim} was rotated.`, historyGap: false, reasonOrigin: { commit: to, path: 'notes/a.md' } });
       await sync(engine, s);
       const id = await seedFact(engine, s.id, `people/safe-example-${engines.indexOf(engine)}`, claim);
       expect((await purge(engine, s.id, id)).state).toBe('committed');
