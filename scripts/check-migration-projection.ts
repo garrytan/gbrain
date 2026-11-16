@@ -9,14 +9,15 @@
  * This guard loads the migration registry and fails on a migration whose SQL, or
  * whose handler's own source text, does either of:
  *
- *   1. 'UPDATE pages ... SET' assigning a watched column: source_id, slug, type,
- *      page_kind, title, compiled_truth, timeline, frontmatter, deleted_at,
- *      body_generation, knowledge_revision or text_projection_revision;
+ *   1. 'UPDATE pages ... SET' or 'INSERT INTO pages ... DO UPDATE SET' assigning
+ *      a watched column: source_id, slug, type, page_kind, title, compiled_truth,
+ *      timeline, frontmatter, deleted_at, body_generation, knowledge_revision or
+ *      text_projection_revision;
  *   2. 'INSERT INTO tags', 'UPDATE tags' or 'DELETE FROM tags' (the tags trigger
  *      advances the page revision).
  *
- * The body of a CREATE FUNCTION or CREATE PROCEDURE is skipped, since defining a
- * trigger function changes no row; a DO block is read.
+ * The dollar-quoted body of a CREATE FUNCTION or CREATE PROCEDURE is skipped, since
+ * defining a trigger function changes no row; a DO block is read.
  *
  * Unless scripts/migration-projection-baseline.tsv lists it with the reason
  * search keeps answering, or why it cannot. A listed migration that no longer
@@ -40,10 +41,18 @@ const WATCHED = new Set(['source_id', 'slug', 'type', 'page_kind', 'title', 'com
 
 type Migration = { version: number; name: string; sql?: string; sqlFor?: { postgres?: string; pglite?: string }; handler?: unknown };
 
-/** Drops line comments and the bodies of CREATE FUNCTION / PROCEDURE: defining a trigger function changes no row (a DO block still counts). */
+/** Drops line comments outside quotes and the dollar-quoted bodies of CREATE FUNCTION / PROCEDURE: defining a trigger function changes no row (a DO block still counts). */
 function stripComments(text: string): string {
-  return text.replace(/--[^\n]*/g, ' ')
-    .replace(/\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\b[\s\S]*?(\$\w*\$)[\s\S]*?\1/gi, ' ');
+  let out = '';
+  let quote: string | null = null;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (quote) { if (c === quote) quote = null; out += c; continue; }
+    if (c === "'" || c === '"') { quote = c; out += c; continue; }
+    if (c === '-' && text[i + 1] === '-') { while (i < text.length && text[i] !== '\n') i++; out += ' \n'; continue; }
+    out += c;
+  }
+  return out.replace(/\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\b[^;]*?(\$\w*\$)[\s\S]*?\1/gi, ' ');
 }
 
 /** The SET list after an 'UPDATE pages [alias] SET', cut at the first top-level WHERE, FROM, RETURNING or ';'. */
@@ -78,7 +87,7 @@ function assigned(list: string): string[] {
   items.push(list.slice(start));
   const cols: string[] = [];
   for (const item of items) {
-    const m = /^\s*(\([^)]*\)|"?\w+"?)\s*=/.exec(item);
+    const m = /^\s*(\([^)]*\)|"?\w+"?)\s*(?:\[[^\]]*\]\s*|\.\s*"?\w+"?\s*)*=/.exec(item);
     if (m) for (const col of m[1]!.replace(/[()"]/g, '').split(',')) cols.push(col.trim().toLowerCase());
   }
   return cols;
@@ -87,7 +96,8 @@ function assigned(list: string): string[] {
 function findings(text: string): string[] {
   const out: string[] = [];
   const body = stripComments(text);
-  const update = /\bUPDATE\s+(?:ONLY\s+)?(?:public\.)?pages\b(?:\s+(?:AS\s+)?(?!SET\b)\w+)?\s+SET\b/gi;
+  const pages = String.raw`(?:"?public"?\.)?(?:"pages"|pages\b)`;
+  const update = new RegExp(String.raw`\bUPDATE\s+(?:ONLY\s+)?${pages}(?:\s+(?:AS\s+)?(?!SET\b)\w+)?\s+SET\b|\bINSERT\s+INTO\s+${pages}[^;]*?\bDO\s+UPDATE\s+SET\b`, 'gi');
   for (let m: RegExpExecArray | null; (m = update.exec(body));) {
     const hit = assigned(setList(body, m.index + m[0].length)).filter(col => WATCHED.has(col));
     if (hit.length) out.push('UPDATE pages SET ' + [...new Set(hit)].join(', '));
