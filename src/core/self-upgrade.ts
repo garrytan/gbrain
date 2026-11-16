@@ -421,7 +421,7 @@ export interface CacheWriteOptions {
 }
 
 const STABLE_CODES = new Set(['stable_missing', 'stable_invalid', 'stable_unreadable']);
-/** How far ahead of this clock a stored check time or cache mtime may be (NTP or shared-filesystem skew); further ahead means the clock moved back since the write, so it is ignored (#8795). */
+/** How far ahead of this clock a stored check time may be (NTP skew); further ahead means the clock moved back since the write, so it is ignored (#8795). The file's mtime is not checked: a network home's file server sets it by its own clock. */
 const CACHE_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 let _tmpCounter = 0;
@@ -508,7 +508,7 @@ export function clearUpdateCache(): void {
 
 export function isCacheFresh(entry: CacheEntry, now: number): boolean {
   const ttl = entry.marker?.kind === 'upgrade_available' && !entry.error ? CACHE_TTL_UPGRADE_AVAILABLE_MS : CACHE_TTL_UP_TO_DATE_MS;
-  return entry.mtimeMs <= now + CACHE_FUTURE_SKEW_MS && now - entry.mtimeMs < ttl;
+  return entry.checkedAt <= now + CACHE_FUTURE_SKEW_MS && now - entry.mtimeMs < ttl;
 }
 
 /**

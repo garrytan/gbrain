@@ -210,6 +210,16 @@ for (const brain of ['repo-less', 'repo'] as const) {
       expect(readUpdateCache('stable')?.latest).toBe(AHEAD2);
     });
 
+    test('#8795: a cache file a network home\'s file server stamped ahead, checked by this clock, stays fresh', () => {
+      writeConfig({}, brain);
+      const path = join(dotG(), 'update-check.stable.json');
+      writeUpdateCache({ kind: 'upgrade_available', current: VERSION, latest: AHEAD }, { channel: 'stable' });
+      const mtime = (Date.now() + 10 * 60_000) / 1000;
+      utimesSync(path, mtime, mtime);
+      expect(isCacheFresh(readUpdateCache('stable')!, Date.now())).toBe(true);
+      expect(pendingUpgradeVersion(VERSION)).toBe(AHEAD);
+    });
+
     test('an invalid configured channel checks and offers nothing', async () => {
       writeConfig({ self_upgrade: { channel: 'nightly' } }, brain);
       writeUpdateCache({ kind: 'upgrade_available', current: VERSION, latest: AHEAD }, { channel: 'stable' });
