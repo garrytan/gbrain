@@ -62,6 +62,8 @@ export function queryTerms(query: string): string[] {
 }
 
 export const DATED_BONUS = 0.1;
+/** What a term matched only through its stem (Rogers for Roger, lives for live) adds to the score, as a share of an exact match. */
+const STEM_ONLY_WEIGHT = 0.9;
 /** valid_from this far from created_at means the writer supplied the date. */
 const DATED_MIN_MS = 24 * 60 * 60 * 1000;
 /** A fact with more content terms than this many times the question's has its term share scaled down (term stuffing). */
@@ -349,19 +351,23 @@ export const isDatedFact = (f: Pick<FactCandidate, 'valid_from' | 'created_at'>)
 /**
  * Score every candidate (cosine + term share + DATED_BONUS when dated), ordered by score, newest valid_from, then id.
  * With `stems` (the pool's) a term matches a fact word sharing a lexeme, and a word with none is a stopword; dates,
- * years and auxiliaries count on neither side.
+ * years and auxiliaries count on neither side. A stem-only match adds STEM_ONLY_WEIGHT of an exact one to the score
+ * (never to termShare, which admission reads), so "Roger" ranks the Roger fact above the Rogers one.
  */
 export function scoreFactCandidates(question: string, candidates: FactCandidate[], terms = queryTerms(question), stems: WordStems | null = null): ScoredFact[] {
   const lexemes = (w: string) => stems?.get(w) ?? [w];
   const counted = (w: string) => w.length >= 3 && !STOPWORDS.has(w) && !neutralWord(w) && lexemes(w).length > 0;
-  const asked = terms.filter(counted).map(lexemes);
+  const asked = terms.filter(counted);
   return candidates.map(c => {
     const words = [...wordsOf(c)].filter(counted);
     const held = new Set(words.flatMap(lexemes));
-    const matched = asked.filter(t => t.some(l => held.has(l))).length;
-    const termShare = asked.length ? matched / Math.max(asked.length, Math.ceil(words.length / TERM_STUFFING_RATIO)) : 0;
+    const hits = asked.filter(t => lexemes(t).some(l => held.has(l)));
+    const exact = hits.filter(t => words.includes(t)).length;
+    const denominator = Math.max(asked.length, Math.ceil(words.length / TERM_STUFFING_RATIO));
+    const termShare = asked.length ? hits.length / denominator : 0;
+    const scoredShare = asked.length ? (exact + STEM_ONLY_WEIGHT * (hits.length - exact)) / denominator : 0;
     const cosine = c.similarity ?? 0;
-    return { candidate: c, cosine, matched, terms: asked.length, termShare, score: cosine + termShare + (isDatedFact(c) ? DATED_BONUS : 0) };
+    return { candidate: c, cosine, matched: hits.length, terms: asked.length, termShare, score: cosine + scoredShare + (isDatedFact(c) ? DATED_BONUS : 0) };
   }).sort((a, b) => b.score - a.score
     || new Date(b.candidate.valid_from).getTime() - new Date(a.candidate.valid_from).getTime()
     || b.candidate.id - a.candidate.id);
