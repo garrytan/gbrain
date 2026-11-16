@@ -37,7 +37,7 @@ import { readOnlyCatalogPackSourceIds } from '../../../core/shared-skills/adopte
 import { connectorAuthorities } from '../../../core/persistence/connector-authority.ts';
 import { parseSourceConfig } from '../../../core/sources-load.ts';
 import { checkError } from '../check-fix.ts';
-import { checkpointMovedFix, firstSyncRunning, noSuccessfulSync, stoppedConnectorIssues, type SyncOutcomeEntry } from '../sync-outcome.ts';
+import { checkpointMovedFix, firstSyncRunning, noSuccessfulSync, receiptContentDirectory, stoppedConnectorIssues, type SyncOutcomeEntry } from '../sync-outcome.ts';
 import { haltReasonsWithUnknown, readRecordedHaltReasons7d, topHaltReason } from '../../../core/extract/rollup-writer.ts';
 
 /** Local alias; the shared warn-once memo lives in core so it can't fork per module. */
@@ -1213,7 +1213,7 @@ export async function checkSyncFreshness(
     // #6076: an adopted read-only catalog pack (no commit history) has nothing to sync.
     const catalogPacks = await readOnlyCatalogPackSourceIds(engine, sources, localOnly);
     let writer_owned_count = 0, read_only_pack_count = 0;
-    // #9471: roots inside gbrain's own content directory, which sync refuses (a receipt-claimed root stays writer-owned above).
+    // #9471: roots inside gbrain's own content directory, which sync refuses (a receipt-claimed root is writer-owned above while persistence is on, else fails naming the import).
     const contentDirectories: Array<{ id: string; keyless: boolean }> = [];
     // v0.41.27.0: D6 count math. Every source falls into
     // EXACTLY ONE bucket per iteration. Invariant pinned by unit test:
@@ -1329,7 +1329,7 @@ export async function checkSyncFreshness(
       const stopped = stoppedConnectors.get(source.id);
       if (stopped) { issues.push(stopped.issue); stale_count++; hasFailures ||= stopped.fail; hasWarnings ||= !stopped.fail; continue; }
       if (!source.last_sync_at) {
-        const never = await noSuccessfulSync(engine, source.id, display, managed);
+        const never = contentDirectory ? receiptContentDirectory(contentDirectory, display) : await noSuccessfulSync(engine, source.id, display, managed);
         issues.push(never.issue); outcomes.push(never.entry);
         hasFailures = true;
         stale_count++;
