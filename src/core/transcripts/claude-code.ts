@@ -95,6 +95,11 @@ export function isClaudeCodeRemoteControlStateFile(path: string): boolean {
   return base.endsWith(CCR_TIP_SUFFIX) || base === CCR_BRIDGE_POINTER;
 }
 
+/** True for Claude Code's per-project session index (`sessions-index.json`), which lists sessions and holds no turns. */
+export function isClaudeCodeSessionsIndexFile(path: string): boolean {
+  return (path.split(/[/\\]/).pop() ?? '') === 'sessions-index.json';
+}
+
 /** Keys that mark a Claude Code project transcript. */
 function looksLikeClaudeLine(obj: Record<string, unknown>): boolean {
   if (

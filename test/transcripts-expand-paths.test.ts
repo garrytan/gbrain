@@ -142,6 +142,21 @@ describe('expandPaths Claude Code Remote Control state files (#5597)', () => {
   });
 });
 
+describe('expandPaths Claude Code sessions-index.json (#9115)', () => {
+  test('directory expansion drops the per-project sessions index and keeps the session; a near-miss name stays', async () => {
+    const d = tdir();
+    const proj = join(d, '.claude', 'projects', 'proj-slug');
+    mkdirSync(proj, { recursive: true });
+    const session = join(proj, '18c0ffee-1234-4321-9999-abcdefabcdef.jsonl');
+    writeFileSync(session, JSON.stringify({ sessionId: 's1', type: 'user', message: { role: 'user', content: 'hi' } }) + '\n');
+    writeFileSync(join(proj, 'sessions-index.json'), '{"version":1,"entries":[]}');
+    const nearMiss = join(proj, 'my-sessions-index.json');
+    writeFileSync(nearMiss, '[]');
+    expect((await expandPaths([proj])).sort()).toEqual([session, nearMiss].sort());
+    expect(await expandPaths([join(proj, 'sessions-index.json')])).toEqual([]);
+  });
+});
+
 describe('expandPaths tilde expansion', () => {
   test('expandTilde: bare ~ and ~/x resolve to the home dir; a mid-string ~ is untouched', () => {
     expect(expandTilde('~')).toBe(homedir());
