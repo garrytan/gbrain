@@ -161,7 +161,8 @@ describe('golden changes', () => {
 describe('the committed manifest', () => {
   test('is fresh and lists documented surfaces by the names deprecations.d uses', async () => {
     expect(await buildMain(['--check'], join(import.meta.dir, '..', '..'))).toBe(0);
-    const m = JSON.parse(await Bun.file(join(import.meta.dir, '..', '..', MANIFEST)).text());
+    expect(MANIFEST).toBe('docs/contracts/public-surface.json');
+    const m = JSON.parse(await Bun.file(join(import.meta.dir, '..', '..', 'docs/contracts/public-surface.json')).text());
     expect(m['cli-command']).toContain('gbrain search');
     expect(m['cli-flag']).toContain('gbrain search --limit');
     expect(m['mcp-param']).toContain('search.query');
