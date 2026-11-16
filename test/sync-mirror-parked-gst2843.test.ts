@@ -11,14 +11,18 @@
  * PGLite always; Postgres when DATABASE_URL is set (managedBrain). Synthetic content only.
  */
 import { describe, expect, setSystemTime, spyOn, test } from 'bun:test';
+import { randomUUID } from 'node:crypto';
 import * as gitStream from '../src/core/persistence/sync-git-stream.ts';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
+import type { OperationContext } from '../src/core/ops/contract.ts';
 import { RECOVERY_VERSION } from '../src/core/markdown.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { PASS_BATCH_KEY_PREFIX, readPassBatch } from '../src/core/persistence/sync-pass-batch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { FILE_DRIFT_VERSION, writeGitHold } from '../src/core/persistence/sync-holds.ts';
 import { readPassRow } from '../src/core/persistence/sync-pass-row.ts';
@@ -31,6 +35,7 @@ import { repairRunner } from '../src/core/repair/registry.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
+import { waitFor } from './helpers/wait-for.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid',
@@ -242,4 +247,75 @@ describe.each(testBackends())('GST-2843: a pass that settled one re-check among 
       [rows.map(([fingerprint]) => fingerprint), rows.map(([, keys]) => keys)]);
     expect(await passBanked(engine, 'default', inc, { pass_id: 'pass-1', started_at: started })).toBe(true);
   }, { databaseUrl }), 120_000);
+});
+
+describe.each(testBackends())('GST-2843: a held page that keeps moving under killed passes (%s)', backend => {
+  const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
+  const SLUG = 'people/alice-example', PATH = 'people/alice-example.md';
+  const person = (body: string, extra = '') => `---\ntype: person\ntitle: Alice Example\n${extra}---\n\n${body}\n`;
+  const setup = ({ root }: { root: string }) => { git(root, 'init', '-q'); files(root, { 'people/alice-example': person('Works at acme-example.') }); commitAll(root, 'pages'); };
+  const theHold = async (engine: BrainEngine) => (await holdRows(engine)).find(h => h.path === PATH)!;
+  /** A database-only write raced the import of a newer Git version (#6194), then eight files claim the page's slug, so every pass re-checks them. */
+  async function movingHold(engine: BrainEngine, ctx: OperationContext, root: string) {
+    await engine.setConfig('sync.write_through', 'false');
+    const put = async (text: string) => {
+      const id = randomUUID(), current = await engine.readPageSnapshot(SLUG, { sourceId: 'default' });
+      await submitPageMutation(ctx, { operation: 'put_page', params: { slug: SLUG, request_id: id, expected_revision: current!.revision, content: person(text) } });
+      await waitFor(async () => (await engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [id]))[0]?.state === 'committed', { timeoutMs: 20_000, label: 'put commits' });
+    };
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    files(root, { 'people/alice-example': person('Works at acme-example; the Git edit.') });
+    commitAll(root, 'git edit');
+    let fired = false;
+    installFaultHook(async (point, detail) => {
+      if (point !== 'sync:mid_checkpoint' || detail.sourceId !== 'default' || fired) return;
+      const [row] = await engine.executeRaw<{ pass_id: string | null }>("SELECT completed_keys->0->'telemetry'->>'pass_id' AS pass_id FROM op_checkpoints WHERE op='managed-sync-pass' AND completed_keys->0->>'source_id'='default'");
+      if (!row?.pass_id || !Array.from({ length: 8 }, (_, b) => readPassBatch<{ pending?: { slug?: string } | null }>(`${PASS_BATCH_KEY_PREFIX}${row.pass_id}:${b}`)?.pending?.slug).includes(SLUG)) return;
+      fired = true;
+      await put('A database edit.');
+    });
+    try { expect((await performManagedSync(engine, OPTS)).held?.[0]?.code).toBe('concurrent_write'); } finally { installFaultHook(undefined); }
+    files(root, Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`people/clash${i}`, person('Slug conflict.', `slug: ${SLUG}\n`)])));
+    commitAll(root, 'upstream adds conflicting slugs');
+    await performManagedSync(engine, OPTS);
+    return put;
+  }
+
+  test('passes that only re-hold a page edited before each of them build the streak, end abandoned, and status names the page with its ask', () => managedBrain(async ({ engine, ctx, root }) => {
+    const put = await movingHold(engine, ctx as OperationContext, root);
+    const inc = await incarnation(engine);
+    const passes: Array<{ code: string; rewritten: boolean; moved: unknown; banked: boolean }> = [];
+    for (let pass = 0; pass < 3; pass++) {
+      await put(`A database edit before pass ${pass}.`);
+      await stoppedSync(engine, 6);
+      const telemetry = (await readPassRow(engine, 'default', inc))!.value.telemetry, hold: any = (await engine.executeRaw<{ r: unknown }>(
+        "SELECT completed_keys->0 AS r FROM op_checkpoints WHERE op='sync-hold' AND completed_keys->0->>'path'=$1", [PATH]))[0]!.r;
+      passes.push({ code: hold.code, rewritten: hold.run_id === telemetry.pass_id, moved: hold.meta.basis_moved, banked: await passBanked(engine, 'default', inc, telemetry) });
+    }
+    const status: any = await readSyncStatus(engine, 'default');
+    expect([status.state, status.reason]).toEqual(['blocked', 'pass_abandoned']);
+    expect(status.needs_human).toBe(true);
+    const hold = status.holds.find((h: { path: string }) => h.path === PATH);
+    expect(hold.needs_human).toBe(true);
+    expect(status.needs_human_from).toEqual({ kind: 'hold', path: PATH, slug: SLUG, code: hold.code });
+    expect(status.human_reason).toBe(hold.human_reason);
+    expect(status.next.user_message).toContain(`needs a decision: page ${SLUG}`);
+    // Each pass re-checked the page because it moved, and rewrote its hold marked so; none of them counts as saved work.
+    expect(passes).toEqual(Array.from({ length: 3 }, () => ({ code: hold.code, rewritten: true, moved: true, banked: false })));
+  }, { databaseUrl, setup }), 600_000);
+
+  test('a later re-check that is not a move clears the mark, so that hold counts as saved work again', () => managedBrain(async ({ engine, ctx, root }) => {
+    const put = await movingHold(engine, ctx as OperationContext, root);
+    const inc = await incarnation(engine);
+    await put('A second database edit.');
+    await stoppedSync(engine, 6);
+    expect((await theHold(engine)).meta).toMatchObject({ basis_moved: true });
+    // The page stops moving; an older drift screen's version makes the hold due for one re-check that is not a move.
+    await coordinated(engine, "UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,meta,drift_version}','1'::jsonb) WHERE op='sync-hold' AND completed_keys->0->>'path'=$1", [PATH]);
+    await stoppedSync(engine, 6);
+    const hold = await theHold(engine);
+    expect(hold.meta.drift_version).toBe(FILE_DRIFT_VERSION);
+    expect(hold.meta.basis_moved).toBeUndefined();
+    expect(await passBanked(engine, 'default', inc, (await readPassRow(engine, 'default', inc))!.value.telemetry)).toBe(true);
+  }, { databaseUrl, setup }), 600_000);
 });

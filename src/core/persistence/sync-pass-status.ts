@@ -79,19 +79,22 @@ const RESCREEN_PAGE = 500;
  * GST-2843: or it re-screened a held path and the rewrite settled it: the hold is no longer due for a re-screen (an older
  * gbrain's hold now carries this screen's versions) and a drift hold names the page's current revision. A re-screen that
  * leaves the hold due (a code every pass re-screens) is not progress, so passes that only re-hold those still build the streak.
+ * Nor is a rewrite marked `basis_moved`: the pass re-checked the path because its page or file moved again, so passes that
+ * only re-hold a page that keeps moving build the streak too.
  */
 export async function passBanked(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, incarnation: string, telemetry: { pass_id: string; started_at: string }): Promise<boolean> {
   const [row] = await engine.executeRaw<{ banked: boolean }>(`SELECT EXISTS (SELECT 1 FROM persistence_requests r JOIN persistence_source_bindings b ON b.worktree_id=r.worktree_id
       WHERE b.source_id=$1 AND b.source_incarnation::text=$6 AND r.source_incarnation=b.source_incarnation AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
         AND r.completed_at >= $5::timestamptz AND r.intent->>'passId'=$2)
-    OR EXISTS (SELECT 1 FROM op_checkpoints WHERE op=$3 AND left(fingerprint, length($4))=$4 AND completed_keys->0->>'run_id'=$2 AND (completed_keys->0->>'held_at')::timestamptz >= $5::timestamptz) AS banked`,
+    OR EXISTS (SELECT 1 FROM op_checkpoints WHERE op=$3 AND left(fingerprint, length($4))=$4 AND completed_keys->0->>'run_id'=$2 AND (completed_keys->0->>'held_at')::timestamptz >= $5::timestamptz
+        AND completed_keys->0->'meta'->'basis_moved' IS NULL) AS banked`,
     [sourceId, telemetry.pass_id, GIT_HOLD_OP, `${sourceId}:${incarnation}:`, telemetry.started_at, incarnation]);
   if (row?.banked === true) return true;
   for (let after = ''; ;) {
     const rewritten = await engine.executeRaw<{ fingerprint: string; record: GitHoldRecord; revision: string | null }>(`SELECT h.fingerprint, h.completed_keys->0 AS record, p.knowledge_revision::text AS revision
       FROM op_checkpoints h LEFT JOIN pages p ON p.source_id=$1 AND p.id=(h.completed_keys->0->>'page_id')::bigint
       WHERE h.op=$2 AND left(h.fingerprint, length($3))=$3 AND h.completed_keys->0->>'run_id'=$4 AND (h.completed_keys->0->>'updated_at')::timestamptz >= $5::timestamptz
-        AND NOT (h.completed_keys->0->>'code' = ANY($6::text[])) AND h.fingerprint > $7 ORDER BY h.fingerprint LIMIT $8`,
+        AND NOT (h.completed_keys->0->>'code' = ANY($6::text[])) AND h.completed_keys->0->'meta'->'basis_moved' IS NULL AND h.fingerprint > $7 ORDER BY h.fingerprint LIMIT $8`,
     [sourceId, GIT_HOLD_OP, `${sourceId}:${incarnation}:`, telemetry.pass_id, telemetry.started_at, [...EVERY_PASS_RESCREEN_CODES], after, RESCREEN_PAGE]);
     if (rewritten.some(({ record, revision }) => !holdRescreenDue(record, false)
       && (record.code !== 'file_drift' || record.page_id == null || (record.meta.page_revision ?? null) === revision))) return true;

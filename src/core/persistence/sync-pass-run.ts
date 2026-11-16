@@ -237,7 +237,7 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
   for (const entry of imports) {
     if (step.due()) await step.pause();
     const paths = entryPaths(level, entry.path);
-    const base = { ...paths, ...committedOnly, action: 'import' as const, working: working(entry), level: entry.state.level, ...(entry.result.cls === 'drift' && entry.result.side && entry.result.side !== 'deleted' ? { drift: entry.result.side, ...(driftBaseline(entry) ? { driftBaseline: driftBaseline(entry) } : {}) } : {}) };
+    const base = { ...paths, ...committedOnly, action: 'import' as const, working: working(entry), level: entry.state.level, ...(entry.state.hold?.moved ? { basisMoved: true as const } : {}), ...(entry.result.cls === 'drift' && entry.result.side && entry.result.side !== 'deleted' ? { drift: entry.result.side, ...(driftBaseline(entry) ? { driftBaseline: driftBaseline(entry) } : {}) } : {}) };
     if (entry.state.page) {
       const built: PassEntry = { ...base, slug: entry.slug!, pageId: entry.pageId, revision: entry.revision };
       if (entry.result.cls === 'drift' && entry.result.side === 'unknown' && entry.pageId !== null && entry.state.hold?.unscreened) historyOwed.set(built, entry);

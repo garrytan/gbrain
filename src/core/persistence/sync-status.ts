@@ -447,7 +447,11 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
     ? await passBanked(engine, sourceId, source.incarnation, passRow.value.telemetry).catch(() => undefined) : undefined;
   const passState = passRow ? passStatusState(passRow, withheld, source.writeback_failed, passReadClock(passRow), interrupted, banked) : null;
   const resume = !header && passRow ? passResumeArgs(sourceId, passRow) : managedSyncResumeArgs({ sourceId, processingOptions: header?.processingOptions, syncOptions: header?.syncOptions });
-  const human = holds.find(hold => hold.needs_human) ?? (liveError?.needs_human ? liveError : undefined);
+  // GST-2843: passes parked because they only re-hold a page that keeps moving under them (each rewrote its hold for a moved basis,
+  // up to the attempt cap): that hold's own ask is the decision, not the pass step.
+  const moving = passState?.[1] === 'pass_abandoned' ? holds.find((hold, i) => hold.needs_human && hold.attempts >= HOLD_ATTEMPTS_NEEDS_HUMAN
+    && records[i]!.meta.basis_moved && records[i]!.run_id === passRow!.value.telemetry.pass_id) : undefined;
+  const human = moving ?? holds.find(hold => hold.needs_human) ?? (liveError?.needs_human ? liveError : undefined);
   const refreshRow = typeof source.refresh === 'string' ? JSON.parse(source.refresh) as RefreshProbeRow : source.refresh;
   const worktreeRefresh = refreshRow ? { refresh_id: refreshRow.id, state: refreshRow.state, updated_at: new Date(refreshRow.updated_at).toISOString(),
     ...await (await import('./worktree-refresh.ts')).refreshHolderReport(engine, refreshRow) } : null;
@@ -500,7 +504,7 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
     { stored: source.admission_stored, row_value: source.admission_row_value, set_at: source.admission_set_at, pinned: source.admission_pinned, destructive: source.admission_destructive });
   const passNext = passRow && passState && passState[1] === stateReason ? passStatusNext(sourceId, passState[1], passRow, resume, source.writeback_failed, interrupted, banked) : null;
   // GST-2843: while the pass is what keeps the source from converging, its step leads; a held page's decision stays in holds and human_reason.
-  const passLeads = passNext !== null && liveJob === null && (!!human || (!refreshFix && actionable.length > 0));
+  const passLeads = passNext !== null && liveJob === null && !moving && (!!human || (!refreshFix && actionable.length > 0));
   return { source_id: sourceId, last_commit: source.last_commit, last_sync_at: iso(source.last_sync_at), last_committed_at: iso(committed?.last_committed_at), live: holder ? { ...holder, job_id: holderJob, stalled: holderStalled(holder, lease?.db_now) } : null,
     interrupted: interrupted && passRow ? { pass_id: passRow.value.telemetry.pass_id, since: passRow.updated_at, holder: lease?.holder ?? null } : null, run_id: header?.runId ?? null,
     cursor: header ? { index: Number(header.index), total: Number(header.total), pinned_target: header.target ?? null, last_advance_at: p ? new Date(p.lastAt).toISOString() : null, done: !!header.done } : null,
