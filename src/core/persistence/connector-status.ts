@@ -18,7 +18,7 @@ import { classifySyncFault, type SyncFaultVerdict } from './sync-fault-class.ts'
 import { cliRenderContext, renderAction, type Action } from '../agent-output.ts';
 import { managedBrain, readAllSourceHolds } from '../connectors/item-holds-store.ts';
 import type { ItemHoldRecord } from '../connectors/item-holds.ts';
-import { fenceAutoRepairFor, gitHoldItem, readGitHoldListing, readSyncConversions, readSyncHoldPolicy, type GitHoldItem, type SyncConversion } from './sync-holds.ts';
+import { fenceAutoRepairFor, gitHoldItem, readGitHoldCodeCounts, readGitHoldListing, readSyncConversions, readSyncHoldPolicy, type GitHoldItem, type SyncConversion } from './sync-holds.ts';
 import { holdLine } from '../../commands/sync-diagnostics.ts';
 import { pageSortedRows, type ListingRequest } from '../bounded-listing.ts';
 
@@ -150,6 +150,8 @@ export interface GitHoldStatus {
   count: number;
   items: GitHoldItem[];
   truncated?: true;
+  /** GST-2843: holds per code over every hold of a truncated listing; absent when the listing is complete (its items count) or the count read failed. */
+  code_counts?: Record<string, number>;
   /** Blocked sync requests a recent run converted in place (held or re-frozen) instead of staying blocked. */
   recent_conversions?: SyncConversion[];
   /** The command that runs the next sync of this source (managed brains sync with --no-pull). */
@@ -169,11 +171,14 @@ export async function readGitHoldStatuses(engine: Pick<BrainEngine, 'executeRaw'
   const managed = await managedBrain(engine);
   const auto = await fenceAutoRepairFor(engine, sources.flatMap(source => source.holds));
   const counts = new Map(sources.map(source => [source.sourceId, source]));
+  const truncated = sources.filter(source => source.count > source.holds.length).map(source => source.sourceId);
+  const codeCounts = truncated.length ? await readGitHoldCodeCounts(engine, truncated).catch(() => null) : null;
   for (const sourceId of sourceIds) {
     const source = counts.get(sourceId), converted = conversions.get(sourceId);
     if (!source && !converted) continue;
     const items = (source?.holds ?? []).map(hold => gitHoldItem(hold, auto));
-    out.set(sourceId, { count: source?.count ?? 0, items, ...((source?.count ?? 0) > items.length ? { truncated: true as const } : {}),
+    const perCode = codeCounts?.get(sourceId);
+    out.set(sourceId, { count: source?.count ?? 0, items, ...((source?.count ?? 0) > items.length ? { truncated: true as const, ...(perCode ? { code_counts: perCode } : {}) } : {}),
       ...(converted ? { recent_conversions: converted } : {}),
       sync_argv: ['gbrain', 'sync', '--source', sourceId, ...(managed ? ['--no-pull'] : [])] });
   }
@@ -187,23 +192,28 @@ export async function readGitHoldStatuses(engine: Pick<BrainEngine, 'executeRaw'
  */
 export type GitHoldListing = { mode: 'summary' } | { mode: 'all' } | { mode: 'page'; request: ListingRequest };
 
-/** Held items per code, largest first, each with its first item as the example (its fix and docs apply to the rest). */
-function holdsByCode<T extends { code: string }>(items: readonly T[]): Array<{ code: string; count: number; example: T }> {
-  const groups = new Map<string, { code: string; count: number; example: T }>();
+/**
+ * Held items per code, largest first, each with its first item as the example (its fix and docs apply to the rest). GST-2843:
+ * `counts` (every hold per code) replaces the listed items' counts, so a truncated listing still counts each code in full; a code
+ * none of the listed items has carries no example.
+ */
+function holdsByCode<T extends { code: string }>(items: readonly T[], counts?: Record<string, number>): Array<{ code: string; count: number; example?: T }> {
+  const groups = new Map<string, { code: string; count: number; example?: T }>();
   for (const item of items) {
     const group = groups.get(item.code);
     if (group) group.count++;
     else groups.set(item.code, { code: item.code, count: 1, example: item });
   }
+  if (counts) for (const [code, count] of Object.entries(counts)) groups.set(code, { ...groups.get(code), code, count });
   return [...groups.values()].sort((a, b) => b.count - a.count || (a.code < b.code ? -1 : 1));
 }
 
 /** A source's `git_holds` for `sources status --json`, summary first and items last, bounded by `listing`; each fix rendered with the CLI routing pin (#9319). */
 export function gitHoldStatusJson(sourceId: string, status: GitHoldStatus, listing: GitHoldListing) {
   const ctx = cliRenderContext();
-  const { items: held, ...rest } = status;
+  const { items: held, code_counts: codeCounts, ...rest } = status;
   const items = held.map(item => ({ ...item, fix: renderAction(item.fix, ctx) }));
-  const head = { ...rest, by_code: holdsByCode(items) };
+  const head = { ...rest, by_code: holdsByCode(items, codeCounts), ...(rest.truncated && !codeCounts ? { by_code_complete: false } : {}) };
   if (listing.mode === 'all') return { ...head, items };
   if (listing.mode === 'page') {
     const page = pageSortedRows(items, item => [item.path], listing.request, `sources_status_git_holds:${sourceId}`);

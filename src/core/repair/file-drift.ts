@@ -97,6 +97,7 @@ import { authorizeReconcile, runReconcileApply } from '../persistence/reconcile.
 import { discardedFilePaths, unimportedFile, unimportedFileText, type UnimportedFile } from '../persistence/unimported-file.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { recordsNoFileOrigin } from '../persistence/unbound-pages.ts';
+import { sourceMirrorReadOnly } from '../persistence/mirror-read-only.ts';
 import { comparedListing, comparePage, linesNotCarried, newerPageParagraph, readDriftEvidence, type ComparedPage } from './file-drift-compare.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope } from './core.ts';
@@ -789,7 +790,8 @@ function item(page: ApprovedPage, index: number, hash: string, last: boolean, pr
 async function compareSelection(engine: BrainEngine, sourceId: string, opts: RepairPlanOptions): Promise<RepairPlan> {
   const held = opts.held ? await selectHeld(engine, sourceId, opts) : null;
   const selected = held ? null : await selectSlugs(engine, sourceId, opts);
-  const targets: { slug: string | null; hold?: GitHoldRecord }[] = held ? [...held.legacy.map(hold => ({ slug: hold.slug, hold })), ...held.targets.slice(0, HELD_WINDOW_PAGES).map(target => ({ slug: target.hold.slug, hold: target.hold }))]
+  const mirror = held ? await sourceMirrorReadOnly(engine, sourceId) : false;
+  const targets: { slug: string | null; hold?: GitHoldRecord; mirror?: boolean }[] = held ? [...held.legacy.map(hold => ({ slug: hold.slug, hold, mirror })), ...held.targets.slice(0, HELD_WINDOW_PAGES).map(target => ({ slug: target.hold.slug, hold: target.hold, mirror }))]
     : selected!.slugs.map(slug => ({ slug }));
   const residuals: Record<string, number> = { ...(held?.notSelected || selected?.notSelected ? { not_selected: held?.notSelected ?? selected!.notSelected } : {}), ...(held?.before ? { before_cursor: held.before } : {}) };
   const count = (key: string) => { residuals[key] = (residuals[key] ?? 0) + 1; };
@@ -816,9 +818,9 @@ async function compareSelection(engine: BrainEngine, sourceId: string, opts: Rep
   const filesNewer = pages.filter(page => page.would === 'prefer_file').length;
   const next = [...(filesNewer ? [`Preview the file side for the ${filesNewer} page(s) whose file is newer: ${previewCommand(sourceId, { ...opts, prefer: 'file' })} (pages newer than their file are left held, kept_newer_page)`] : []),
     ...(nextCursor ? [`Compare the next window: ${shellQuote(compareArgv(sourceId, { ...opts, cursor: nextCursor }).slice(0, -1))}`] : [])];
-  return { items: [], residuals, listing, details: { compare: true, writes: 'none',
-    pages: pages.map(({ item: _item, ...page }) => page), ...(next.length ? { next_actions: next } : {}),
-    ...(held ? { window: { previewed: windowed, remaining, complete: remaining === 0, ...(nextCursor ? { next_cursor: nextCursor } : {}) } } : {}),
+  return { items: [], residuals, listing, ...(held ? { complete: remaining === 0 } : {}), details: { compare: true, writes: 'none',
+    pages: pages.map(({ item: _item, ...page }) => ({ evidence: null, ...page })), ...(next.length ? { next_actions: next } : {}),
+    ...(held ? { window: { previewed: windowed, remaining, complete: remaining === 0, ...(nextCursor ? { next_cursor: nextCursor, next_command: shellQuote(compareArgv(sourceId, { ...opts, cursor: nextCursor })) } : {}) } } : {}),
     evidence: 'newer compares the file\'s last commit time at HEAD with the page\'s updated_at; unknown when the file has uncommitted bytes or either time is missing.' } };
 }
 
@@ -1051,7 +1053,7 @@ export const fileDriftRepair: RepairHandler = {
         artifact_digest: digest(page), selection })));
     }
     return { items: pages.map((page, index) => item({ source_id: sourceId, slug: page.slug, artifact_digest: digest(page), selection }, index, hash, index === pages.length - 1, opts.prefer)),
-      preview_hash: hash, residuals, listing, ...(warnings.length ? { warnings } : {}),
+      preview_hash: hash, residuals, listing, ...(held ? { complete: remaining === 0 } : {}), ...(warnings.length ? { warnings } : {}),
       details: { prefer: opts.prefer, ...(artifact ? { artifact } : {}),
         ...(undoneBySync ? { undone_by_next_sync_unless_committed: undoneBySync } : {}),
         ...(held ? { window: { previewed, remaining, complete: remaining === 0, ...(nextCursor ? { next_cursor: nextCursor, next_command: nextCommand } : {}) } } : {}),

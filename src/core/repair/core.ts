@@ -99,6 +99,8 @@ export interface RepairPlan {
   llm?: { usd: number | null; cap_remaining_usd: number | null };
   /** Discovery kinds: when the scan the plan read last finished (`fresh_at`) and whether it is still partial. */
   scan?: { fresh_at: string | null; partial: boolean };
+  /** GST-2843: a windowed dry run whose selection holds more than this window: false, so its result is not complete. Applies ignore it. */
+  complete?: boolean;
   /**
    * The items whose write re-embeds, when the kind knows which do (GBRA-443: private-labels re-embeds only a page stored
    * under per-chunk synopsis); the cost counts the pending ones among them. Default: every pending item, none under embeds: false.
@@ -462,7 +464,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
     if (plan.listing) result.listing = plan.listing;
     if (plan.preview_hash) result.preview_hash = plan.preview_hash;
     if (plan.details) result.details = plan.details;
-    result.complete = pending.length === plan.items.length;
+    result.complete = pending.length === plan.items.length && plan.complete !== false;
     return finish();
   }
   // A resumed run keeps its id, so work it authorized is replayed, not authorized twice.
