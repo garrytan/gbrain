@@ -1,6 +1,0 @@
-**A stuck shared-skills migration is reported as owed work everywhere, with a read-only first step, instead of being called history.**
-
-### Fixed
-- A migration that stopped three or more runs in a row on a source conflict and still owes host work (v0.53.0 today) is no longer called "history, not outstanding work" because a newer migration completed. `gbrain apply-migrations --list`, the notice on other commands and `gbrain serve` startup, and `gbrain doctor` (a warning) now say the same thing: the work is still owed, it does not clear without a person, and the first step is `gbrain apply-migrations --migration 0.53.0 --dry-run --json`, which lists each source's conflict and changes nothing. They give the order that works: review each conflict, clear the wedge with `gbrain apply-migrations --force-retry 0.53.0`, then run the command the inspect output names for that source, or `gbrain apply-migrations --yes`. That inspect command no longer refuses a wedged version as "not registered", and running a wedged migration by name (for example the accept command a conflict message names) still exits 2 but says it is wedged and names those steps. Nothing runs the migration again by itself, and no exit status changes.
-
-<!-- behavior-change: migration_host_work_owed -->

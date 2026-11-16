@@ -10,6 +10,89 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.733.0] - 2026-11-16
+
+**The conversation archive reads OpenClaw's Gateway in far fewer process starts, and `gbrain transcripts archive status` no longer reads any session.**
+
+### Changed
+- The OpenClaw Gateway reader asks `chat.history` for pages of up to 1,000 messages within a 4 MiB budget, and reads up to 4 sessions at once. Each `openclaw gateway call` is its own process, so on a test install with 350 sessions a read went from 162 process starts and 164 s to 52 starts and 16 s. A Gateway older than 2026.10 that refuses the byte budget is asked again without it. Pages of one session stay in order, conversations keep their `sessions.list` order, and a failed session still fails the whole read before any day is written.
+- `gbrain transcripts archive status` and `gbrain doctor --only transcript_archive_freshness` report what the last archive run read for each reader (conversations, newest session day, time and any error) instead of running the readers. They start no `openclaw` process and parse no session file. A reader no run has read yet says so. Each real run records this in `transcripts.archive.last_read.<source>`; a dry run records nothing.
+
+### Fixed
+- Doctor warns when no archive run has read a reader successfully within `transcripts.archive.stale_days`, for example when maintenance passes keep stopping at their deadline before that reader, and suggests `gbrain transcripts archive run`.
+
+**A keyword search that timed out on a cold Postgres cache comes back within about a minute instead of ten.**
+
+### Fixed
+- After hybrid search's keyword statement hits the keyword statement timeout, `gbrain serve` and MCP sessions still skip that exact statement (`keyword_arm_failed: skipped_after_timeout`), and now also re-run it once in the background 30 seconds later, then after 60, 120 and so on seconds while it keeps failing, never past `search.keyword_timeout_negative_cache_seconds` (default 600, unchanged). The first re-run that answers ends the skip. A re-run uses the same statement, scope and bound, starts only when the pool has no waiting query and keeps a connection free for other queries, runs one at a time per brain, throws its rows away, writes no timeout counter row and is not recorded as a search. Before, one timeout on a cold cache left every identical search keyword-less for ten minutes even after the cache had warmed (#7082).
+
+<!-- behavior-change: keyword_skip_rerun_7082 -->
+
+**A stuck shared-skills migration is reported as owed work everywhere, with a read-only first step, instead of being called history.**
+
+### Fixed
+- A migration that stopped three or more runs in a row on a source conflict and still owes host work (v0.53.0 today) is no longer called "history, not outstanding work" because a newer migration completed. `gbrain apply-migrations --list`, the notice on other commands and `gbrain serve` startup, and `gbrain doctor` (a warning) now say the same thing: the work is still owed, it does not clear without a person, and the first step is `gbrain apply-migrations --migration 0.53.0 --dry-run --json`, which lists each source's conflict and changes nothing. They give the order that works: review each conflict, clear the wedge with `gbrain apply-migrations --force-retry 0.53.0`, then run the command the inspect output names for that source, or `gbrain apply-migrations --yes`. That inspect command no longer refuses a wedged version as "not registered", and running a wedged migration by name (for example the accept command a conflict message names) still exits 2 but says it is wedged and names those steps. Nothing runs the migration again by itself, and no exit status changes.
+
+<!-- behavior-change: migration_host_work_owed -->
+
+**`bun run verify` now fails when a schema migration would take every page it touches out of search until `gbrain projections drain` rebuilds them, unless the migration is listed with the reason search keeps answering (#9192).**
+
+### For contributors
+- `bun run check:migration-projection`, part of `bun run verify`, fails on a migration whose SQL, or whose handler's own source, updates a page column the page revision trigger watches (`UPDATE pages ... SET` or an `INSERT INTO pages ... DO UPDATE SET` upsert) or writes `tags`. The dollar-quoted body of a `CREATE FUNCTION` or `CREATE PROCEDURE` is skipped; a `DO` block is read.
+- A migration that has to do this goes in `scripts/migration-projection-baseline.tsv` with the reason search keeps answering, or why it cannot. v153 and v189 are listed. A listed migration that no longer matches fails as stale.
+- The guard cannot see a handler that changes pages through helpers or functions defined elsewhere, SQL assembled at run time, or writes made by a database function the migration calls. Review those by hand.
+
+**After an upgrade from before v0.51, `gbrain projections drain` rebuilds the pages that are out of search first, and on Postgres it rebuilds 4 pages at once by default, so every page answers search much sooner.**
+
+### Fixed
+- The search-index rebuild that an upgrade from before v0.51 starts used to work through pages in queue order, so pages with a facts fence could wait hours behind pages that were still answering from their old index. `gbrain projections drain` now rebuilds the pages that are out of search first, then seals images, then rebuilds the pages still answering from their pre-upgrade index. `--dry-run` lists rows in the same order. A follow-up to #9192.
+- On Postgres the drain rebuilds several pages at once, each on its own pooled connection: 4 by default, or fewer when the pool is small, and `--concurrency N` goes up to the pool size less 2. On a 50,000-page test brain with 30,000 fenced pages behind an 18 ms round trip, every page was searchable after about 86 minutes at the default. PGLite, `gbrain serve` on PGLite and the drain inside `gbrain migrate --to` still rebuild one page at a time.
+- A refused or dropped extra connection lowers the width by one and the drain carries on; stderr names the new width. It never fails the drain.
+- The upgrade's `[153]` line gives the rebuild time at the default width, names the faster `--concurrency` command with its time, and counts only the Markdown and code pages the drain rebuilds, not images.
+
+**The check that runs before every search stays fast while a large brain's pages wait to be rebuilt after an upgrade from before v0.51.**
+
+### Fixed
+- After an upgrade from before v0.51, pages still answering from their old index were walked one by one by the readiness check that runs before every search, so the check cost 21 ms on a test brain with 20,000 such pages and 126 to 149 ms with 200,000. A new partial index (migration v317) holds only the pages that are out of search, so the check now takes about 2 ms and the index is empty once the rebuild finishes. On Postgres the index builds without blocking writes; nothing is rewritten. Follow-up to #9472 (#9192).
+
+**`gbrain doctor` checks for facts left behind by purged pages in about a second per million facts, instead of timing out on a large brain.** The `purged_page_facts` check used to run its exclusion tests (a withdrawal lookup that fingerprints each claim, plus the superseded and open-loop checks) on every active fact before asking whether the fact's page was gone, so on a brain with a few million facts it ran past its 15-second budget and reported nothing. It now finds the facts whose page is gone first and runs those tests only on them. It counts exactly what it counted before, and `gbrain repair purged-page-facts` is unchanged.
+
+### Fixed
+
+- Doctor `purged_page_facts`: on a generated brain with 1,000,000 active facts and nothing to report, the check took 6.7 to 7.0 s on Postgres and 24 to 26 s on PGLite, and now takes about 1.0 s on both.
+
+**A release's list of changes shows each change's headline alone, even when its changelog entry continues on the headline's line.**
+
+### Fixed
+- `scripts/changelog-entry.sh --pr-list` cuts each fragment's first bold line at its closing `**`. Before, a fragment whose body text followed the headline on the same line put that whole paragraph, with a stray `**`, into the release notes.
+
+### For contributors
+- `test/release-workflow.test.ts` covers a fragment with body text after its headline.
+
+**Three fixes from outside bug reports: retired atoms keep their trust tier, a provider answer that cannot be parsed is no longer retried, and doctor stops recommending a sync that refuses a source.**
+
+### Fixed
+- An atom a re-extraction retires keeps the trust tier and write origin its extraction gave it, and comes back at that tier when a later extraction produces it again. It used to be stored as `unknown` with no origin, and a revived atom stayed `unknown`. Every derived retirement (chronicle events, synthesis outputs, `gbrain repair stale-atoms`) now stamps its pages this way. Reported and first fixed by @howardpark (#9456).
+- A model provider that answers with a success status and a body that is not one JSON document now fails with the non-retryable code `provider_response_unparseable`. A facts job that hits it ends on its first attempt instead of paying for the same failing call again, `gbrain facts retry-dead` leaves it alone, and its recorded error names the parse failure without keeping any response text. Reported by @haumanto and first fixed by @Masashi-Ono0611 (#9466).
+- `gbrain doctor`'s `sync_freshness` no longer fails a source whose folder sits inside gbrain's own content directory, and no longer tells you to run `gbrain sync` for it, which refuses such a source with `sync_not_applicable`. It counts the source as a content directory and names `gbrain import <dir> --source <id>` instead. Reported by @railsloes and first fixed by @Masashi-Ono0611 (#9471).
+
+<!-- behavior-change: atom_retirement_keeps_tier_9456 -->
+<!-- behavior-change: provider_response_unparseable_9466 -->
+<!-- behavior-change: sync_freshness_content_directory_9471 -->
+
+**The daily stable check sees merged important fixes again, and stops with a clear error if it ever loses access to pull requests.**
+
+### Fixed
+- The daily stable check's GitHub token can read pull requests again. A recent permissions change had left it unable to see any pull request, so the search for merged `stable:important` fixes came back empty and the check reported nothing to promote.
+- Each run now logs how many labelled pull requests the search found. If the search sees no merged pull request at all, the check stops red and names the missing `pull-requests: read` permission instead of quietly reporting nothing.
+
+**`gbrain upgrade` and the stable release notes now start with a short summary of the behaviour changes since the version you had.**
+
+### Added
+- Once the new version is installed, `gbrain upgrade` (through `gbrain post-upgrade`) prints the summary before its migrations run: the changes that need you first, then changed defaults, then a count of fixes and additions, and a pointer to `gbrain doctor --only behavior_changes` for the full text. Each change shows its first sentence. Under `--json` the summary goes to stderr with the other human lines, so the JSON document on stdout is unchanged.
+- When stable moves, its GitHub release notes open with the same summary for the range since the previous stable release, above the changelog entries. A summary too long for the page by itself is left out, so the notes always fit.
+- Rows written before `kind:` existed are counted as not classified yet. The generated behaviour-change table now carries each row's `kind`, so new rows land in the right group.
+
 ## [0.60.732.0] - 2026-11-16
 
 **Every pull request is now checked against stable's promise: removing a command, flag, MCP tool or parameter, config key or exit code needs a deprecation record whose 14-day notice has passed.**
