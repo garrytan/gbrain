@@ -125,6 +125,20 @@ const CSS = `
   a:hover { text-decoration: underline; }
   strong { font-weight: 600; }
   code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+  .code-block { position: relative; margin: 1rem 0; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 0.9rem 1rem; overflow-x: auto; line-height: 1.5; }
+  .code-block pre { margin: 0; padding-right: 3rem; }
+  pre code { background: none; padding: 0; border-radius: 0; font-size: 0.85em; white-space: pre; }
+  .copy-btn {
+    position: absolute; top: 8px; right: 8px; display: inline-flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--card-bg); color: var(--muted); cursor: pointer;
+    opacity: 0.85; transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .copy-btn:hover, .copy-btn:focus-visible { opacity: 1; color: var(--fg); border-color: var(--accent); }
+  .copy-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .copy-btn.copied { color: var(--accent); border-color: var(--accent); opacity: 1; }
+  .copy-btn svg { width: 16px; height: 16px; pointer-events: none; }
   hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
   table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 14px; }
   th, td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; }
@@ -247,6 +261,71 @@ async function unlock(pw, remember) {
 })();
 `;
 
+// Adds a copy button to the top right of every fenced code block once the
+// markdown is rendered. Wired with addEventListener because sanitizeHtml strips
+// inline on* attributes. Falls back to execCommand('copy') where the async
+// Clipboard API is unavailable (file:// pages and plain-http hosts).
+const COPY_JS = `
+const COPY_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+const CHECK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+  return new Promise((resolve, reject) => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch {}
+    ta.remove();
+    ok ? resolve() : reject(new Error('copy failed'));
+  });
+}
+
+function addCopyButtons(root) {
+  root.querySelectorAll('pre').forEach(pre => {
+    if (pre.parentElement && pre.parentElement.classList.contains('code-block')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'code-block';
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(pre);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'copy-btn';
+    btn.title = 'Copy';
+    btn.setAttribute('aria-label', 'Copy code to clipboard');
+    btn.innerHTML = COPY_ICON;
+    let timer;
+    btn.addEventListener('click', () => {
+      const code = pre.querySelector('code') || pre;
+      copyText(code.textContent.replace(/\\n$/, '')).then(() => {
+        btn.classList.add('copied');
+        btn.innerHTML = CHECK_ICON;
+        btn.title = 'Copied';
+        btn.setAttribute('aria-label', 'Copied');
+      }, () => {
+        btn.title = 'Copy failed. Select the text and copy it.';
+      }).finally(() => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          btn.classList.remove('copied');
+          btn.innerHTML = COPY_ICON;
+          btn.title = 'Copy';
+          btn.setAttribute('aria-label', 'Copy code to clipboard');
+        }, 1500);
+      });
+    });
+    wrap.appendChild(btn);
+  });
+}
+`;
+
 function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -298,13 +377,14 @@ export function generateHtml({ title, markdown, encrypted }: GenerateHtmlOptions
   `;
 
   const contentScript = encrypted
-    ? `<script>${sanitizeScript}${DECRYPT_JS.replace(
-        'document.getElementById(\'content\').innerHTML = marked.parse(result)',
-        'document.getElementById(\'content\').innerHTML = sanitizeHtml(marked.parse(result))'
+    ? `<script>${sanitizeScript}${COPY_JS}${DECRYPT_JS.replace(
+        'document.getElementById(\'content\').innerHTML = marked.parse(result);',
+        'document.getElementById(\'content\').innerHTML = sanitizeHtml(marked.parse(result));\n    addCopyButtons(document.getElementById(\'content\'));'
       )}<\/script>`
-    : `<script>${sanitizeScript}
+    : `<script>${sanitizeScript}${COPY_JS}
         const md = ${JSON.stringify(markdown)};
         document.getElementById('content').innerHTML = sanitizeHtml(marked.parse(md));
+        addCopyButtons(document.getElementById('content'));
       <\/script>`;
 
   return `<!DOCTYPE html>
