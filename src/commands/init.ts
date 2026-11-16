@@ -18,7 +18,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { readPrimaryEmbeddingStores, readStoredEmbeddingIdentity } from '../core/stored-embedding-identity.ts';
 import { deferInitJsonError, flushInitJsonResult, initJsonError, setInitJsonResult, writeDeferredInitJsonError } from './init-json.ts';
 import { deferredEmbeddingHint, firstRunBundle, firstRunJson, harnessRegistrationCommand } from './init-first-run.ts';
-import { keptEmbeddingIdentity, keptEmbeddingNotice } from './init-embedding-plane.ts';
+import { keptEmbeddingIdentity, keptEmbeddingNotice, recordInitEmbedding } from './init-embedding-plane.ts';
 import { writeCliNotices } from '../core/interop-notices.ts';
 import { exitCodeForCode } from '../core/error-catalogue.ts';
 import { promptLineStderr } from '../core/interaction.ts';
@@ -1237,7 +1237,7 @@ export async function initPGLite(opts: {
     // disables embedding at runtime.
     if (!opts.aiOpts?.noEmbedding && resolvedModel && resolvedDim) {
       delete config.embedding_disabled;
-      await engine.unsetConfig('embedding_disabled');
+      await recordInitEmbedding(engine, resolvedModel, resolvedDim);
     }
     // PR1: new installs publish their skill catalog over MCP by default
     // (existing config wins on re-init, so a prior opt-out is preserved).
@@ -1579,7 +1579,7 @@ export async function initPostgresCore(opts: {
     // disables embedding at runtime.
     if (!opts.aiOpts?.noEmbedding && resolvedModel && resolvedDim) {
       delete config.embedding_disabled;
-      await engine.unsetConfig('embedding_disabled');
+      await recordInitEmbedding(engine, resolvedModel, resolvedDim);
     }
     // PR1: new installs publish their skill catalog over MCP by default
     // (existing config wins on re-init, so a prior opt-out is preserved).

@@ -120,3 +120,21 @@ test('control: a real repository that tracks the root stays its checkout', () =>
   git('-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'wiki');
   expect(checkoutGitMetadata(wiki)).toBe(join(base, 'repo', '.git'));
 });
+
+for (const tracked of [false, true]) {
+  test(`a root whose own .git is an empty file is no checkout, even inside a repository (${tracked ? 'tracked' : 'untracked'} directory)`, () => {
+    const base = mkdtempSync(join(tmpdir(), 'gbrain-9430-empty-file-'));
+    bases.push(base);
+    const repo = join(base, 'repo'), root = join(repo, 'source-a');
+    mkdirSync(root, { recursive: true });
+    const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { stdio: 'ignore' });
+    git('init', '-q');
+    writeFileSync(join(repo, 'README.md'), 'Repository.\n');
+    if (tracked) writeFileSync(join(root, 'alice-example.md'), 'Notes.\n');
+    git('add', '.');
+    git('-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'initial');
+    writeFileSync(join(root, '.git'), '');
+    expect(checkoutGitMetadata(root)).toBeNull();
+  });
+}
+
