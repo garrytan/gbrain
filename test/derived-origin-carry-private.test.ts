@@ -561,6 +561,7 @@ for (const kind of testBackends()) {
       expect((await purgeDeletedPagesCoordinated(engine, 0, { automatic: true })).slugs).not.toContain(origin);
       expect((await row(origin))?.deleted_at).toBeNull();
       await softDelete(origin);
+      await backdate(origin);
       expect((await purgeDeletedPagesCoordinated(engine, 0, { automatic: true })).slugs).toContain(origin);
       const [{ n }] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_purges WHERE source_id=$1 AND slug=$2', [SRC, origin]);
       expect(n).toBe(0);
@@ -577,6 +578,7 @@ for (const kind of testBackends()) {
       expect({ error: restored.isError, text: restored.text }).toMatchObject({ error: false });
       expect(await owedRows(id)).toEqual([]);
       await softDelete(origin);
+      await backdate(origin);
       const first = await purgeDeletedPagesCoordinated(engine, 0, { automatic: true });
       const second = await purgeDeletedPagesCoordinated(engine, 0, { automatic: true });
       expect([...first.slugs, ...second.slugs]).toContain(origin);
@@ -593,6 +595,7 @@ for (const kind of testBackends()) {
       await parkByFailedLabel(origin);
       expect(await engine.restorePage(origin, { sourceId: SRC })).toBe(true);
       await softDelete(origin);
+      await backdate(origin);
       const first = await purgeDeletedPagesCoordinated(engine, 0, { automatic: true });
       expect((await readDerivedOriginParks(engine)).filter(park => park.page_id === id).map(park => park.held_request_id ?? null)).not.toContainEqual(expect.any(String));
       const second = await purgeDeletedPagesCoordinated(engine, 0, { automatic: true });
