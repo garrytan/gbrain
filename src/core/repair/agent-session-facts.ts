@@ -16,8 +16,8 @@
  *     compared on path boundaries).
  *   - ambiguous: the session's first user turn (whitespace-normalized,
  *     lowercased, at least 40 characters) shares its first 160 characters with
- *     the first user turn of at least 3 other retained sessions (a template
- *     brief). Listed fact by fact; re-attributed only with
+ *     the first user turn of at least 3 other retained sessions with no
+ *     speaker sidecar (a template brief). Listed fact by fact; re-attributed only with
  *     `--include-ambiguous` and the hash of that preview.
  *   - excluded: an evidenced or ambiguous row whose claim and entity also have
  *     an active user-attributed row from a session that is not suspect (the
@@ -61,7 +61,7 @@ import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, sa
 import { corpusFileSessionId, corpusSpoolDir, parseWbFileName, speakerFileName } from '../context/corpus-segments.ts';
 import { readSessionSource } from '../context/corpus-source.ts';
 import { parseCorpusTurns } from '../context/corpus-turns.ts';
-import { DETECTED_PRINCIPAL, readSpeakerSidecar, speakerContextNote } from '../context/session-speaker.ts';
+import { DETECTED_PRINCIPAL, readSpeakerSidecar, speakerContextNote, type SpeakerSidecar } from '../context/session-speaker.ts';
 import { stripPastedContent } from '../transcripts/pasted-content.ts';
 import { wholeBodySnapshot } from '../persistence/segmented-apply.ts';
 import { shellQuote } from '../shell-quote.ts';
@@ -206,21 +206,28 @@ function corpusIndex(corpusDir: string | null): CorpusIndex {
     if (key === 'unread') { index.unreadSessions.add(session); continue; }
     if (!key) continue;
     index.openings.set(session, key);
+    if (sessionSidecar(corpusDir, paths, session)) continue;
     index.openingSessions.set(key, (index.openingSessions.get(key) ?? new Set<string>()).add(session));
   }
   return index;
 }
 
+/** A session's speaker sidecar, read in the corpus root, the spool dir and beside each of its corpus files. */
+function sessionSidecar(corpusDir: string, paths: string[], session: string): { dir: string; sidecar: SpeakerSidecar } | null {
+  for (const dir of new Set([corpusDir, corpusSpoolDir(corpusDir), ...paths.map(path => dirname(path))])) {
+    const sidecar = readSpeakerSidecar(dir, session);
+    if (sidecar) return { dir, sidecar };
+  }
+  return null;
+}
+
 function sessionVerdict(session: string, index: CorpusIndex, opts: AgentSessionOptions, cwdPrefixes: string[]): Verdict {
   const fallbackPrincipal = opts.principal ?? DETECTED_PRINCIPAL;
   const corpusDir = index.corpusDir;
-  const dirs = corpusDir ? [...new Set([corpusDir, corpusSpoolDir(corpusDir), ...(index.files.get(session) ?? []).map(path => dirname(path))])] : [];
-  for (const dir of dirs) {
-    const sidecar = readSpeakerSidecar(dir, session);
-    if (sidecar) {
-      return { klass: 'evidenced', reason: 'speaker_sidecar', principal: sidecar.principal,
-        evidence: `${relative(corpusDir!, join(dir, speakerFileName(session)))} (principal ${sidecar.principal})` };
-    }
+  const found = corpusDir ? sessionSidecar(corpusDir, index.files.get(session) ?? [], session) : null;
+  if (found) {
+    return { klass: 'evidenced', reason: 'speaker_sidecar', principal: found.sidecar.principal,
+      evidence: `${relative(corpusDir!, join(found.dir, speakerFileName(session)))} (principal ${found.sidecar.principal})` };
   }
   if (opts.sessions?.includes(session)) return { klass: 'evidenced', reason: 'operator_session', principal: fallbackPrincipal, evidence: `--session ${session}` };
   const record = corpusDir ? readSessionSource(corpusSpoolDir(corpusDir), session) : null;
