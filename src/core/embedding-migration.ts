@@ -1158,6 +1158,19 @@ export async function verifyMigrationComplete(
     // blocker for THIS target; readMigrationStatus surfaces it.
   }
 
+  // DB plane: the embedding_model/embedding_dimensions rows must agree with
+  // the target, else doctor and --status keep targeting the old model while
+  // this verify claims convergence. Unset rows are not a disagreement.
+  try {
+    const dbModel = await engine.getConfig('embedding_model');
+    const dbDims = await engine.getConfig('embedding_dimensions');
+    if ((dbModel && dbModel !== target.toModel) || (dbDims && Number(dbDims) !== target.toDims)) {
+      blockers.push(`DB-plane embedding config is ${dbModel ?? '(unset)'} (${dbDims ?? '?'}d), target is ${target.toModel} (${target.toDims}d)`);
+    }
+  } catch {
+    // Config probe failure: report-only, don't block on it.
+  }
+
   const fp = opts.filePlane;
   const filePlaneOk = fp
     ? fp.model === target.toModel && Number(fp.dims) === target.toDims
