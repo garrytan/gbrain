@@ -52,9 +52,10 @@ import { classifyItemFailure, ItemRun, type ItemFailure } from '../item-failure.
 import type { ProgressReporter } from '../progress.ts';
 import type { GenerationsSelection } from '../generations/repair.ts';
 import type { PrivateLabelsLedger } from './private-labels.ts';
+import type { OpenFactsRequest } from './open-facts.ts';
 import type { ReadersRequest } from './readers.ts';
 
-export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'accepted-takes', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'google-file-modes', 'stale-atoms', 'atoms-restore', 'atom-fence-rows', 'extractor-facts', 'unwithdrawn-facts', 'purged-page-facts', 'conversation-labels', 'captured-facts', 'agent-session-facts', 'redacted-facts', 'loop-facts', 'ontology-facts', 'facts-rehome', 'consolidate-ties', 'duplicate-facts', 'orphan-children', 'failed-writes', 'split-facts', 'frontmatter', 'fences', 'slug-conflicts', 'timeline-comments', 'timeline-order', 'contact-rows', 'managed-sync-orphans', 'content-receipt-root', 'frontmatter-keys', 'file-drift', 'stuck-recovery', 'ghost-pages', 'origin-twins', 'moved-pages', 'receipt-compaction', 'aliases', 'rename-identity', 'overwritten-edits', 'legacy-twins', 'missing-tables', 'url-clone-fences', 'segmented-mirror', 'segmented-tiling', 'uncommitted-deletions', 'generations', 'lost-fence-rows', 'fact-claim-dates', 'provenance', 'secret-spans', 'rows-behind', 'facts-home', 'access', 'private-labels'] as const;
+export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'accepted-takes', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'google-file-modes', 'stale-atoms', 'atoms-restore', 'atom-fence-rows', 'extractor-facts', 'unwithdrawn-facts', 'purged-page-facts', 'conversation-labels', 'captured-facts', 'agent-session-facts', 'redacted-facts', 'loop-facts', 'ontology-facts', 'facts-rehome', 'consolidate-ties', 'duplicate-facts', 'orphan-children', 'failed-writes', 'split-facts', 'frontmatter', 'fences', 'slug-conflicts', 'timeline-comments', 'timeline-order', 'contact-rows', 'managed-sync-orphans', 'content-receipt-root', 'frontmatter-keys', 'file-drift', 'stuck-recovery', 'ghost-pages', 'origin-twins', 'moved-pages', 'receipt-compaction', 'aliases', 'rename-identity', 'overwritten-edits', 'legacy-twins', 'missing-tables', 'url-clone-fences', 'segmented-mirror', 'segmented-tiling', 'uncommitted-deletions', 'generations', 'lost-fence-rows', 'fact-claim-dates', 'provenance', 'secret-spans', 'rows-behind', 'facts-home', 'access', 'private-labels', 'open-facts'] as const;
 export type RepairKind = typeof REPAIR_KINDS[number];
 
 export interface RepairScope { brain_id: string; source_ids: string[] }
@@ -99,6 +100,8 @@ export interface RepairPlan {
   llm?: { usd: number | null; cap_remaining_usd: number | null };
   /** Discovery kinds: when the scan the plan read last finished (`fresh_at`) and whether it is still partial. */
   scan?: { fresh_at: string | null; partial: boolean };
+  /** GST-2843: a windowed dry run whose selection holds more than this window: false, so its result is not complete. Applies ignore it. */
+  complete?: boolean;
   /**
    * The items whose write re-embeds, when the kind knows which do (GBRA-443: private-labels re-embeds only a page stored
    * under per-chunk synopsis); the cost counts the pending ones among them. Default: every pending item, none under embeds: false.
@@ -149,6 +152,8 @@ export interface RepairPlanOptions { apply: boolean; expect?: string; includeAmb
   cwdPrefixes?: string[]; sessions?: string[]; principal?: string;
   /** `private-labels`: the undo ledger the CLI keeps (its path, lines for --class restore, and the append). */
   privateLabelsLedger?: PrivateLabelsLedger;
+  /** `open-facts` (#8194): the selection the CLI parsed and its undo ledger. */
+  openFacts?: OpenFactsRequest;
   /** `visibility` (GST-2476): set the named pages' readers (`--readers`, `--allow-without-owner`, `--slugs-file`; repair/readers.ts). */
   readers?: ReadersRequest }
 
@@ -377,7 +382,7 @@ export async function runRepair(ctx: OperationContext, handler: RepairHandler, s
     prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string;
     provenance?: string; cursor?: string; progress?: ProgressReporter;
     keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection; day?: string; rules?: string[];
-    cwdPrefixes?: string[]; sessions?: string[]; principal?: string; privateLabelsLedger?: PrivateLabelsLedger; readers?: ReadersRequest;
+    cwdPrefixes?: string[]; sessions?: string[]; principal?: string; privateLabelsLedger?: PrivateLabelsLedger; readers?: ReadersRequest; openFacts?: OpenFactsRequest;
     spec?: Pick<RepairKindSpec, 'explicit_only' | 'consent' | 'spends'>; maxLlmUsd?: number; deadline?: number; now?: () => number;
     /** GBRA-133: the CLI's termination signal; the apply stops before the next item with a result instead of dying mid-run. */
     stop?: AbortSignal;
@@ -411,7 +416,8 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
     ...(opts.limit !== undefined ? { limit: opts.limit } : {}), ...(opts.generations ? { generations: opts.generations } : {}),
     ...(opts.day ? { day: opts.day } : {}), ...(opts.rules?.length ? { rules: opts.rules } : {}),
     ...(opts.cwdPrefixes?.length ? { cwdPrefixes: opts.cwdPrefixes } : {}), ...(opts.sessions?.length ? { sessions: opts.sessions } : {}), ...(opts.principal ? { principal: opts.principal } : {}),
-    ...(opts.privateLabelsLedger ? { privateLabelsLedger: opts.privateLabelsLedger } : {}), ...(opts.readers ? { readers: opts.readers } : {}) };
+    ...(opts.privateLabelsLedger ? { privateLabelsLedger: opts.privateLabelsLedger } : {}), ...(opts.readers ? { readers: opts.readers } : {}),
+    ...(opts.openFacts ? { openFacts: opts.openFacts } : {}) };
   const plan = await handler.plan(ctx.engine, scope, resumed, planOpts);
   const pending = opts.limit !== undefined ? plan.items.slice(0, opts.limit) : plan.items;
   const counters = await capacity(ctx);
@@ -462,7 +468,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
     if (plan.listing) result.listing = plan.listing;
     if (plan.preview_hash) result.preview_hash = plan.preview_hash;
     if (plan.details) result.details = plan.details;
-    result.complete = pending.length === plan.items.length;
+    result.complete = pending.length === plan.items.length && plan.complete !== false;
     return finish();
   }
   // A resumed run keeps its id, so work it authorized is replayed, not authorized twice.

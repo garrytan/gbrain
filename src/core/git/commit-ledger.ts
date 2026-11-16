@@ -41,9 +41,9 @@ export type LedgerRecord =
   | { v: 1; e: 'intent'; t: string; writer: LedgerWriter; head_before: string | null; msg_sha256: string; worktree: string | null; pid: number; host: string | null };
 
 interface Location { common: string; gitDir: string; worktree: string | null }
-const locations = new Map<string, Location | null>();
+const locations = new Map<string, Location>();
 
-/** The repository's common dir, this checkout's git dir and toplevel (null for a bare repository); null outside git. */
+/** The repository's common dir, this checkout's git dir and toplevel (null for a bare repository); null outside git. Only a found location is remembered. */
 export function ledgerLocation(root: string): Location | null {
   let key = resolve(root);
   try { key = realpathSync(key); } catch { /* resolved below */ }
@@ -59,7 +59,7 @@ export function ledgerLocation(root: string): Location | null {
       found = { gitDir, common, worktree };
     }
   } catch { found = null; }
-  locations.set(key, found);
+  if (found) locations.set(key, found);
   return found;
 }
 

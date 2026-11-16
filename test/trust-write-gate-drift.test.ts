@@ -75,6 +75,7 @@ const EXEMPT: Record<string, string> = {
   'src/core/repair/atoms-restore.ts': 'restores an owner-approved retired atom to its own earlier version (lifecycle); no new text',
   'src/core/repair/take-supersession.ts': 'owner repair of take supersession pointers',
   'src/core/repair/timeline-comments.ts': 'owner repair of timeline comment markup',
+  'src/core/repair/open-facts.ts': 'operator-only local CLI repair (remote callers and member mode refused) behind a preview hash and --expect: only flips existing fact rows from private to world, and back on --undo (no new text); fenced rows rewrite only the visibility cell of their page through the label write (writeLabelFile, importAtRevision)',
   'src/core/repair/visibility.ts': 'owner repair behind a preview: only tightens existing fact rows from world to private (no new text); fenced rows and page labels publish through put_page, which runs the gate',
   'src/core/schema-pack/page-to-alias.ts': 'schema-pack retype of existing pages',
   'src/core/schema-pack/page-to-link.ts': 'schema-pack retype of existing pages',

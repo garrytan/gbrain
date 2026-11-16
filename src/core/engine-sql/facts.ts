@@ -136,7 +136,7 @@ export async function insertFact(
         `)).rows;
         const id = Number(ins[0].id);
         (await tx.run(sqlFragment`UPDATE facts SET expired_at = now(), superseded_by = ${id},
-                   valid_until = CASE WHEN valid_from < ${validFrom}::timestamptz AND (valid_until IS NULL OR valid_until > ${validFrom}::timestamptz) THEN ${validFrom}::timestamptz ELSE valid_until END
+                   valid_until = CASE WHEN valid_from < ${validFrom}::timestamptz AND ${validFrom}::timestamptz < COALESCE(valid_until, now()) THEN ${validFrom}::timestamptz ELSE GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now())) END
                  WHERE id = ${supersedeId} AND expired_at IS NULL`)).rows;
         return id;
       });
@@ -171,11 +171,16 @@ export async function insertFact(
     return { id, status: 'inserted' };
   }
 
-export async function expireFact(exec: SqlExecutor, id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean> {
+/** With `successorFrom` (a supersession) the row's validity ends by supersede-interval.ts's rule; a plain expiry leaves valid_until as stored. */
+export async function expireFact(exec: SqlExecutor, id: number, opts?: { supersededBy?: number; at?: Date; successorFrom?: Date }): Promise<boolean> {
     const at = opts?.at ?? new Date();
     const supersededBy = opts?.supersededBy ?? null;
+    const successor = opts?.successorFrom ?? null;
     const result = await exec.run(sqlFragment`
-      UPDATE facts SET expired_at = ${at}, superseded_by = COALESCE(${supersededBy}, superseded_by)
+      UPDATE facts SET expired_at = ${at}, superseded_by = COALESCE(${supersededBy}, superseded_by),
+        valid_until = CASE WHEN ${successor}::timestamptz IS NULL THEN valid_until
+          WHEN valid_from < ${successor}::timestamptz AND ${successor}::timestamptz < COALESCE(valid_until, now()) THEN ${successor}::timestamptz
+          ELSE GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now())) END
       WHERE id = ${id} AND expired_at IS NULL
     `);
     return result.affectedRows > 0;
