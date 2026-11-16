@@ -36,6 +36,9 @@ import {
   isPendingFreshInstall,
   hostWorkInspectArgv,
   hostWorkPendingForVersion,
+  hostWorkOwedFix,
+  hostWorkOwedForVersion,
+  hostWorkOwedMessage,
   MAX_CONSECUTIVE_PARTIALS,
   wedgedLedgerHint,
 } from '../core/migration-ledger.ts';
@@ -261,6 +264,8 @@ interface Plan {
   wedged: Migration[];
   /** #6696 C5: wedged in the ledger, but a newer migration ran past it (doctor's forward-progress rule): history, not outstanding work. */
   wedged_superseded: Migration[];
+  /** Wedged with host work still owed (its latest row records apply_migrations_pending): never superseded and never run by itself; a person resolves the conflict first. */
+  wedged_host_work: Migration[];
   /** #6466: declined by the brain's config (`Migration.optOut`); never run, listed as `declined`. */
   declined: Migration[];
 }
@@ -283,7 +288,7 @@ interface Plan {
  * skip v0.11.0 when running v0.11.1. Compare against completed.jsonl.
  */
 function buildPlan(idx: CompletedIndex, installed: string, filterVersion?: string, declined: ReadonlySet<string> = new Set(), hostWork: ReadonlySet<string> = new Set()): Plan {
-  const plan: Plan = { applied: [], applied_pending_host_work: [], partial: [], pending: [], pending_fresh_install: [], skippedFuture: [], wedged: [], wedged_superseded: [], declined: [] };
+  const plan: Plan = { applied: [], applied_pending_host_work: [], partial: [], pending: [], pending_fresh_install: [], skippedFuture: [], wedged: [], wedged_superseded: [], wedged_host_work: [], declined: [] };
   const ledger = [...idx.byVersion.values()].flat();
   for (const m of migrations) {
     if (filterVersion && m.version !== filterVersion) continue;
@@ -297,6 +302,7 @@ function buildPlan(idx: CompletedIndex, installed: string, filterVersion?: strin
       plan.applied.push(m);
       if (hostWork.has(m.version) && hostWorkPendingForVersion(m.version, idx.byVersion)) plan.applied_pending_host_work.push(m);
     } else if (status === 'partial') plan.partial.push(m);
+    else if (status === 'wedged' && hostWorkOwedForVersion(m.version, idx.byVersion)) plan.wedged_host_work.push(m);
     else if (status === 'wedged') (forwardProgressPast(m.version, ledger) === null ? plan.wedged : plan.wedged_superseded).push(m);
     else if (isPendingFreshInstall(m.version, idx.freshVersion)) plan.pending_fresh_install.push(m);
     else plan.pending.push(m);
@@ -330,7 +336,7 @@ function listRows(plan: Plan): Array<{ status: string; m: Migration }> {
   return [
     ...plan.applied.map(m => ({ status: plan.applied_pending_host_work.includes(m) ? 'applied_pending_host_work' : 'applied', m })),
     ...plan.partial.map(m => ({ status: 'partial', m })),
-    ...[...plan.wedged, ...plan.wedged_superseded].map(m => ({ status: 'wedged', m })),
+    ...[...plan.wedged, ...plan.wedged_host_work, ...plan.wedged_superseded].map(m => ({ status: 'wedged', m })),
     ...plan.pending.map(m => ({ status: 'pending', m })),
     ...plan.pending_fresh_install.map(m => ({ status: 'pending_fresh_install', m })),
     ...plan.declined.map(m => ({ status: 'declined', m })),
@@ -355,11 +361,12 @@ function printList(plan: Plan, installed: string, dbProbe: DbProbeOutcome): void
   const setup = plan.pending_fresh_install.length;
   for (const m of plan.declined) console.log(`v${m.version} is declined by config (${m.optOut?.key} is false); turn it back on: gbrain config set ${m.optOut?.key} true`);
   for (const m of plan.wedged) console.log(`v${m.version} is wedged (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partial runs). Read ${wedgedLedgerHint()}, fix the cause, then: ${shellQuote(forceRetryArgv(m.version))}`);
+  if (plan.wedged_host_work.length) console.log(hostWorkOwedMessage(plan.wedged_host_work.map(m => m.version)));
   for (const m of plan.applied_pending_host_work) {
     console.log(`v${m.version} is applied_pending_host_work: its mechanical checkpoint is recorded, but host publication or client activation is not done. `
       + `Inspect each source's next step: ${shellQuote(hostWorkInspectArgv(m.version))}; once that work is done, \`gbrain apply-migrations --yes\` records it in the migration's report.`);
   }
-  if (needsWork === 0 && setup === 0 && plan.wedged.length === 0) {
+  if (needsWork === 0 && setup === 0 && plan.wedged.length === 0 && plan.wedged_host_work.length === 0) {
     if (plan.applied_pending_host_work.length === 0) console.log('All migrations up to date.');
     return;
   }
@@ -386,6 +393,8 @@ function listJson(plan: Plan, idx: CompletedIndex, installed: string, dbProbe: D
     })),
     needs_action: plan.pending.length + plan.partial.length,
     ...(plan.wedged.length ? { wedged: plan.wedged.map(m => ({ version: m.version, fix: { argv: forceRetryArgv(m.version), command: shellQuote(forceRetryArgv(m.version)) } })) } : {}),
+    ...(plan.wedged_host_work.length ? { wedged_host_work: plan.wedged_host_work.map(m => ({ version: m.version,
+      fix: { argv: hostWorkInspectArgv(m.version), command: shellQuote(hostWorkInspectArgv(m.version)) } })) } : {}),
     pending_fresh_install: plan.pending_fresh_install.length,
     ...(plan.applied_pending_host_work.length ? { applied_pending_host_work: plan.applied_pending_host_work.map(m => ({ version: m.version,
       fix: { argv: hostWorkInspectArgv(m.version), command: shellQuote(hostWorkInspectArgv(m.version)) } })) } : {}),
@@ -420,6 +429,11 @@ function printDryRun(plan: Plan, installed: string, dbProbe: DbProbeOutcome): vo
   if (plan.declined.length) {
     console.log('Declined by config (not run; turn one back on with gbrain config set <key> true):');
     for (const m of plan.declined) console.log(`  ⊘ v${m.version} — ${m.optOut?.key} is false`);
+    console.log('');
+  }
+  if (plan.wedged_host_work.length) {
+    console.log('Wedged with host work owed (not run; a person resolves each source\'s conflict first):');
+    for (const m of plan.wedged_host_work) console.log(`  ✗ v${m.version} — inspect each source: ${shellQuote(hostWorkInspectArgv(m.version))}`);
     console.log('');
   }
   if (plan.skippedFuture.length) {
@@ -494,6 +508,10 @@ interface RunReport {
   failure?: OperationError;
   /** #6696 C5: wedged migrations the run cannot clear itself; a run that otherwise succeeds fails `migrations_pending` reason `wedged`. */
   wedged?: readonly Migration[];
+  /** Wedged with host work owed and no newer migration past it: fails like `wedged`, with the read-only inspect as its fix. */
+  wedgedHostWork?: readonly Migration[];
+  /** Every wedged migration with host work owed, past a newer migration or not: the run never says all migrations are up to date while one is listed. */
+  hostWorkOwed?: readonly Migration[];
 }
 
 function unknownMigrationError(version: string): OperationError {
@@ -729,9 +747,12 @@ async function runLockedMigrations(
   doc.database = dbProbe;
   doc.plan = Object.fromEntries(Object.entries(plan).map(([state, entries]) => [state, entries.map((migration: Migration) => migration.version)]));
   report.wedged = plan.wedged;
-  reportWedgedMigrations(plan.wedged, plan.wedged_superseded, completed);
+  report.hostWorkOwed = plan.wedged_host_work;
+  report.wedgedHostWork = plan.wedged_host_work.filter(m => forwardProgressPast(m.version, completed) === null);
+  reportWedgedMigrations(plan.wedged, plan.wedged_superseded, plan.wedged_host_work, completed);
 
-  if (cli.specificMigration && plan.applied.length + plan.partial.length + plan.pending.length + plan.pending_fresh_install.length + plan.skippedFuture.length + plan.declined.length === 0) {
+  const readOnlyWedged = cli.list || cli.dryRun ? plan.wedged.length + plan.wedged_superseded.length + plan.wedged_host_work.length : 0;
+  if (cli.specificMigration && plan.applied.length + plan.partial.length + plan.pending.length + plan.pending_fresh_install.length + plan.skippedFuture.length + plan.declined.length + readOnlyWedged === 0) {
     console.error(`No migration registered with version "${cli.specificMigration}". Run \`gbrain apply-migrations --list\` to see registered versions.`);
     fail('invalid', unknownMigrationError(cli.specificMigration));
     return 2;
@@ -751,7 +772,7 @@ async function runLockedMigrations(
   if (cli.list) { printList(plan, installed, dbProbe); return listExit; }
   if (cli.dryRun) {
     const previews: Array<{ version: string; preview?: unknown; error?: string }> = [];
-    for (const migration of [...plan.applied, ...plan.partial, ...plan.pending, ...plan.pending_fresh_install, ...plan.wedged, ...plan.wedged_superseded]) {
+    for (const migration of [...plan.applied, ...plan.partial, ...plan.pending, ...plan.pending_fresh_install, ...plan.wedged, ...plan.wedged_host_work, ...plan.wedged_superseded]) {
       if (!migration.preview) continue;
       try { previews.push({ version: migration.version, preview: await migration.preview(orchestratorOptsFrom(cli)) }); }
       catch (error) { previews.push({ version: migration.version, error: error instanceof Error ? error.message : 'Inventory unavailable.' }); }
@@ -790,7 +811,7 @@ async function runLockedMigrations(
     .sort((left, right) => compareVersions(left.version, right.version));
   if (toRun.length === 0) return upToDateOrWedged(report);
   if (!schemaBehind && pendingWork.length === 0) {
-    console.log('All migrations up to date. This covers orchestrator checkpoints only; host publication and client activation are being rechecked.');
+    console.log(`${report.hostWorkOwed?.length ? othersUpToDate(report.hostWorkOwed) : 'All migrations up to date.'} This covers orchestrator checkpoints only; host publication and client activation are being rechecked.`);
   }
 
   // A4: a migration whose orchestrator performs a consent effect (v0.11.0's
@@ -1031,14 +1052,30 @@ function forceRetryArgv(version: string): string[] { return ['gbrain', COMMAND, 
 function upToDateOrWedged(report: RunReport): number {
   const wedged = failWedged(report);
   if (wedged !== undefined) return wedged;
-  console.log('All migrations up to date.');
   report.doc.status = 'up_to_date';
+  const owed = report.hostWorkOwed ?? [];
+  if (owed.length) report.doc.wedged_host_work = owed.map(m => m.version);
+  console.log(owed.length ? othersUpToDate(owed) : 'All migrations up to date.');
   return 0;
+}
+
+/** Said instead of "All migrations up to date" while a wedged migration still owes host work (reported above; the exit status is unchanged). */
+function othersUpToDate(owed: readonly Migration[]): string {
+  return `Every other migration is up to date; ${owed.map(m => `v${m.version}`).join(', ')} still owes host work a person has to resolve (see above).`;
 }
 
 /** #6696 C5: a run that leaves a wedged migration fails `migrations_pending` (reason `wedged`, exit 1); undefined when none is wedged. */
 function failWedged(report: RunReport): number | undefined {
   const wedged = report.wedged ?? [];
+  const owed = report.wedgedHostWork ?? [];
+  if (!wedged.length && owed.length) {
+    report.doc.status = 'wedged';
+    report.doc.wedged = owed.map(m => m.version);
+    report.failure = opError('migrations_pending', hostWorkOwedMessage(owed.map(m => m.version)),
+      'Run the read-only inspect in the fix, show the user each source\'s conflict, and clear the wedge only after they resolve it.',
+      { reason: 'wedged', fix: hostWorkOwedFix(owed.map(m => m.version)) });
+    return 1;
+  }
   if (!wedged.length) return undefined;
   const versions = wedged.map(m => `v${m.version}`).join(', ');
   report.doc.status = 'wedged';
@@ -1060,7 +1097,8 @@ export function wedgedMigrationFix(wedged: readonly string[]): Action {
 }
 
 /** Bug 3 — surface wedged migrations as a loud, actionable error; the run continues (applied/partial/pending are still reported and run). */
-function reportWedgedMigrations(wedged: readonly Migration[], superseded: readonly Migration[], completed: readonly CompletedMigrationEntry[]): void {
+function reportWedgedMigrations(wedged: readonly Migration[], superseded: readonly Migration[], owed: readonly Migration[], completed: readonly CompletedMigrationEntry[]): void {
+  if (owed.length) console.error(`\n${hostWorkOwedMessage(owed.map(m => m.version))}`);
   for (const m of superseded) {
     console.error(`\nMigration v${m.version} has ${MAX_CONSECUTIVE_PARTIALS}+ consecutive partial runs, but v${forwardProgressPast(m.version, completed)} completed after it, `
       + 'so it is history, not outstanding work. Nothing to do.');

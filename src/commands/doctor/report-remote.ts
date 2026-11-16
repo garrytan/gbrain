@@ -13,7 +13,7 @@ import type { BrainEngine } from '../../core/engine.ts';
 import { LATEST_VERSION } from '../../core/migrate.ts';
 import { loadConfig } from '../../core/config.ts';
 import { loadCompletedMigrations } from '../../core/preferences.ts';
-import { indexCompletedEntries, isFreshInstallStamp, migrationLedgerSummary, trailingPartialCount } from '../../core/migration-ledger.ts';
+import { hostWorkOwedForVersion, hostWorkOwedMessage, indexCompletedEntries, isFreshInstallStamp, migrationLedgerSummary, trailingPartialCount } from '../../core/migration-ledger.ts';
 import { VERSION } from '../../version.ts';
 import { pendingFreshInstallCheck } from './checks/pending-fresh-install.ts';
 import { compareVersions } from '../migrations/index.ts';
@@ -234,10 +234,12 @@ export async function doctorReportRemote(
     const completedVersions = Array.from(byVersion.entries()).filter(([, s]) => s.ran).map(([v]) => v);
     // A trailing retry marker makes the version pending (same rule as the local doctor and get_health).
     const history = indexCompletedEntries(completed);
+    const owed = [...history.keys()].filter(v => compareVersions(v, VERSION) <= 0 && hostWorkOwedForVersion(v, history)).sort(compareVersions);
     const stuck = Array.from(byVersion.entries())
       .filter(([v, s]) => {
         if (!s.partial || s.complete) return false;
         if (history.get(v)?.at(-1)?.status === 'retry') return false;
+        if (owed.includes(v)) return false;
         const supersededBy = completedVersions.find(cv => compareVersions(cv, v) >= 0);
         return supersededBy === undefined;
       })
@@ -274,6 +276,8 @@ export async function doctorReportRemote(
       const setup = pendingFreshInstallCheck();
       if (setup) checks.push(setup);
     }
+    if (owed.length > 0) checks.push({ name: 'minions_migration', status: 'warn', message: `On the brain host: ${hostWorkOwedMessage(owed)}`,
+      details: { code: 'migration_host_work_owed', wedged_host_work: owed } });
   } catch {
     // Best-effort. A broken JSONL on the brain server should not stop the
     // remote doctor.
