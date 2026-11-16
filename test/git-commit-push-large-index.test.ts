@@ -7,7 +7,8 @@
  * failed: exit -1"), or a stopped child returns its partial output.
  * Seams: none; real git, a generated index of 15,000 tracked files with long names, and a local bare remote.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
+import * as childProcess from 'node:child_process';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -81,6 +82,24 @@ describe('a git child that does not exit on its own', () => {
     try { run(brain, killed); } catch (e) { error = e; }
     expect(error).toMatchObject({ code: 'git_command_stopped', reason: 'signal' });
     expect(error.message).toContain('SIGKILL');
+  });
+
+  test('a child that crashes is git_command_stopped (signal) worded as a crash, not a kill from outside', () => {
+    let error: any;
+    try { run(brain, ['-c', 'alias.crash=!kill -SEGV $PPID', 'crash']); } catch (e) { error = e; }
+    expect(error).toMatchObject({ code: 'git_command_stopped', reason: 'signal' });
+    expect(error.message).toContain('crashed with SIGSEGV');
+    expect(error.message).not.toContain('from outside gbrain');
+    expect(error.suggestion).not.toContain('Something on this machine stopped git');
+  });
+
+  test('output too large for one string is git_command_stopped (output_limit), never an empty listing', () => {
+    const tooLong = Object.assign(new Error('Cannot create a string longer than 2147483647 characters'), { code: 'ERR_STRING_TOO_LONG' });
+    const spy = spyOn(childProcess, 'execFileSync').mockImplementation((() => ({ toString() { throw tooLong; } })) as never);
+    let error: any;
+    try { run(brain, ['ls-files', '-z']); } catch (e) { error = e; } finally { spy.mockRestore(); }
+    expect(error).toMatchObject({ code: 'git_command_stopped', reason: 'output_limit' });
+    expect(error.message).not.toContain('undefined');
   });
 
   test('a remote call can take the stop as its result instead', () => {

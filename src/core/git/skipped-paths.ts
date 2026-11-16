@@ -181,17 +181,32 @@ export function worktreeOfGitdir(top: string): string {
   return top;
 }
 
+/** The named paths with unresolved merge conflicts in the index; a failed listing throws git_unavailable, never reads as none. */
+export function unmergedPaths(root: string, rel: string[]): string[] {
+  return [...new Set(gitOk(root, ['ls-files', '-u', '-z', '--', ...literalPathspecs(rel)], 'ls-files -u').split('\0').filter(Boolean).map(l => l.slice(l.indexOf('\t') + 1)))];
+}
+
+/**
+ * The named paths without those an unresolved merge conflict holds, so a pending-ledger sweep still commits the rest. Asks git in
+ * batches of 500 paths; a listing that fails leaves the list whole, so the commit's own check refuses it and the caller's fallback runs.
+ */
+export function withoutUnmergedPaths(root: string, rel: string[]): string[] {
+  const unmerged = new Set<string>();
+  try { for (let i = 0; i < rel.length; i += 500) for (const p of unmergedPaths(root, rel.slice(i, i + 500))) unmerged.add(p); } catch { return rel; }
+  return rel.filter(p => !unmerged.has(p));
+}
+
 /** Refuses, before anything is staged, named paths with unresolved merge conflicts in the index: staging one would commit its markers as resolved. */
 export function assertNoUnmergedPaths(root: string, rel: string[]): void {
-  const unmerged = [...new Set(git(root, ['ls-files', '-u', '-z', '--', ...literalPathspecs(rel)]).stdout.split('\0').filter(Boolean).map(l => l.slice(l.indexOf('\t') + 1)))];
+  const unmerged = unmergedPaths(root, rel);
   if (unmerged.length) {
     const list = `${unmerged.slice(0, 10).join(', ')}${unmerged.length > 10 ? ', ...' : ''}`;
     throw opError('commit_paths_unmerged', `${unmerged.length} named file(s) still have unresolved merge conflicts in the index: ${list}.`,
-      `Nothing was staged or committed. Resolve each file first (edit out the conflict markers, or keep one side with git checkout --ours or --theirs -- <file>), mark it resolved with git add -- <file>, then rerun the commit. git ls-files -u -- <file> prints nothing once it is resolved.`,
+      `Nothing was staged or committed. Resolve each file first with the user: edit out the conflict markers, keeping the changes from both sides that belong in the file (one side may be a write gbrain made), and mark it resolved with git add -- <file>. Then rerun the commit. git ls-files -u -- <file> prints nothing once it is resolved.`,
       { detail: JSON.stringify({ paths: unmerged }), fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
         argv: ['git', '-C', root, 'diff', '--', ...literalPathspecs(unmerged)],
         why: 'Shows the conflict in each file; committing now would publish the conflict markers as the file content.',
-        user_message: `These files still have unresolved merge conflicts (${list}), for example after a merge, rebase or stash pop that stopped on a conflict. Resolve each one and mark it resolved with git add, then commit again?`,
+        user_message: `These files still have unresolved merge conflicts (${list}), for example after a merge, rebase or stash pop that stopped on a conflict. Resolve each one keeping the changes from both sides that belong in the file (one side may be a write gbrain made), mark it resolved with git add, then commit again?`,
         verify: { argv: ['git', '-C', root, 'ls-files', '-u', '--', ...literalPathspecs(unmerged)] },
         docs: 'docs/guides/shared-checkout-git.md#outcomes' } });
   }

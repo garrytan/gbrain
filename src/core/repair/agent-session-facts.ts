@@ -131,7 +131,6 @@ interface PageItem extends RepairItem { page: ApprovedPage; hash: string; last: 
 interface FactRow {
   id: number | string; source_id: string; source_session: string | null; fact: string; visibility: string; entity_slug: string | null;
   row_num: number | null; source_markdown_slug: string | null; attributed_to: string | null; context: string | null;
-  owner_twin: boolean; twin_sessions: Array<string | null> | null;
 }
 
 type Verdict = { klass: 'evidenced' | 'ambiguous'; reason: string; evidence: string; principal: string } | 'not_suspect' | 'unclassifiable';
@@ -241,17 +240,15 @@ const factHash = (row: FactRow) => digest(['agent-session-fact-v1', row.fact, ro
   row.attributed_to, row.context]);
 const targetSlug = (row: Pick<FactRow, 'source_markdown_slug' | 'entity_slug'>) => row.source_markdown_slug ?? row.entity_slug ?? 'memory/unattributed';
 
-/** Read-only: every user-attributed (or unattributed) capture-lane fact of these sources from a suspect session, classified, in (source, page, id) order. */
+/**
+ * Read-only: every user-attributed (or unattributed) capture-lane fact of these sources from a suspect session, classified, in (source, page, id) order.
+ * Owner twins are looked up only for facts of suspect sessions, each through idx_facts_withdrawal_fingerprint (every visibility is named so the
+ * index's middle column binds), so the cost follows the facts the preview lists, not the size of the facts table (#9503).
+ */
 export async function classifyAgentSessionFacts(db: BrainEngine, sourceIds: string[],
   opts: AgentSessionOptions & { corpusDir?: string | null; ids?: number[]; indexes?: Map<string | null, CorpusIndex> } = {}): Promise<AgentSessionFactsClassification> {
   const rows = await db.executeRaw<FactRow>(`
-    SELECT f.id, f.source_id, f.source_session, f.fact, f.visibility, f.entity_slug, f.row_num, f.source_markdown_slug, f.attributed_to, f.context,
-           EXISTS (SELECT 1 FROM facts a WHERE a.source_id=f.source_id AND a.id<>f.id AND a.expired_at IS NULL AND a.superseded_by IS NULL
-             AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug AND gbrain_fact_fingerprint(a.fact)=gbrain_fact_fingerprint(f.fact)
-             AND (a.attributed_to IS NULL OR a.attributed_to='user') AND COALESCE(a.source,'') <> ALL($2::text[])) AS owner_twin,
-           ARRAY(SELECT DISTINCT COALESCE(a.source_session,'') FROM facts a WHERE a.source_id=f.source_id AND a.id<>f.id AND a.expired_at IS NULL
-             AND a.superseded_by IS NULL AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug AND gbrain_fact_fingerprint(a.fact)=gbrain_fact_fingerprint(f.fact)
-             AND (a.attributed_to IS NULL OR a.attributed_to='user') AND a.source=ANY($2::text[])) AS twin_sessions
+    SELECT f.id, f.source_id, f.source_session, f.fact, f.visibility, f.entity_slug, f.row_num, f.source_markdown_slug, f.attributed_to, f.context
       FROM facts f
      WHERE f.source_id=ANY($1::text[]) AND f.source=ANY($2::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
        AND (f.attributed_to IS NULL OR f.attributed_to='user') AND ($3::bigint[] IS NULL OR f.id=ANY($3::bigint[]))
@@ -268,18 +265,32 @@ export async function classifyAgentSessionFacts(db: BrainEngine, sourceIds: stri
     if (!verdicts.has(session)) verdicts.set(session, sessionVerdict(session, index, opts, cwdPrefixes));
     return verdicts.get(session)!;
   };
-  const candidates: AgentSessionFactCandidate[] = [];
+  const suspect: Array<{ row: FactRow; hit: Exclude<Verdict, string> }> = [];
   let unclassifiable = 0;
   let notSuspect = 0;
   for (const row of rows) {
     const hit = verdict(row.source_session);
-    if (hit === 'unclassifiable') { unclassifiable++; continue; }
-    if (hit === 'not_suspect') { notSuspect++; continue; }
-    const owner = row.owner_twin || (row.twin_sessions ?? []).some(s => typeof verdict(s) === 'string');
-    candidates.push({ id: Number(row.id), source_id: row.source_id, slug: targetSlug(row), row_num: row.row_num === null ? null : Number(row.row_num),
-      class: owner ? 'excluded' : hit.klass, reason: owner ? 'excluded:owner_also_said' : hit.reason, session: captureSessionId(row.source_session)!,
-      evidence: hit.evidence, principal: hit.principal, fact_hash: factHash(row) });
+    if (hit === 'unclassifiable') unclassifiable++;
+    else if (hit === 'not_suspect') notSuspect++;
+    else suspect.push({ row, hit });
   }
+  const twins = new Map(!suspect.length ? [] : (await db.executeRaw<{ id: number | string; owner_twin: boolean; twin_sessions: Array<string | null> | null }>(`
+    SELECT f.id,
+           EXISTS (SELECT 1 FROM facts a WHERE a.source_id=f.source_id AND a.visibility IN ('private','world') AND gbrain_fact_fingerprint(a.fact)=gbrain_fact_fingerprint(f.fact)
+             AND a.id<>f.id AND a.expired_at IS NULL AND a.superseded_by IS NULL AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug
+             AND (a.attributed_to IS NULL OR a.attributed_to='user') AND COALESCE(a.source,'') <> ALL($2::text[])) AS owner_twin,
+           ARRAY(SELECT DISTINCT COALESCE(a.source_session,'') FROM facts a WHERE a.source_id=f.source_id AND a.visibility IN ('private','world')
+             AND gbrain_fact_fingerprint(a.fact)=gbrain_fact_fingerprint(f.fact) AND a.id<>f.id AND a.expired_at IS NULL AND a.superseded_by IS NULL
+             AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug AND (a.attributed_to IS NULL OR a.attributed_to='user') AND a.source=ANY($2::text[])) AS twin_sessions
+      FROM facts f
+     WHERE f.id=ANY($1::bigint[])`, [suspect.map(({ row }) => Number(row.id)), [...CAPTURE_LANES]])).map(row => [Number(row.id), row]));
+  const candidates: AgentSessionFactCandidate[] = suspect.map(({ row, hit }) => {
+    const twin = twins.get(Number(row.id));
+    const owner = !!twin && (twin.owner_twin || (twin.twin_sessions ?? []).some(s => typeof verdict(s) === 'string'));
+    return { id: Number(row.id), source_id: row.source_id, slug: targetSlug(row), row_num: row.row_num === null ? null : Number(row.row_num),
+      class: owner ? 'excluded' : hit.klass, reason: owner ? 'excluded:owner_also_said' : hit.reason, session: captureSessionId(row.source_session)!,
+      evidence: hit.evidence, principal: hit.principal, fact_hash: factHash(row) };
+  });
   candidates.sort((a, b) => a.source_id.localeCompare(b.source_id) || a.slug.localeCompare(b.slug) || a.id - b.id);
   return { candidates, unclassifiable, not_suspect: notSuspect,
     unreadable_corpus_files: index.unreadable.map(path => !corpusDir ? path : relative(corpusDir, path) || basename(path)) };
@@ -288,19 +299,24 @@ export async function classifyAgentSessionFacts(db: BrainEngine, sourceIds: stri
 /**
  * Active, unresolved `kind: fact` / `holder: self` takes whose every contributing fact is non-user once the facts in
  * `reattributed` are: at least one of them must be in that set or already carry a speaker note, so takes this repair
- * has nothing to do with are never listed.
+ * has nothing to do with are never listed. Contributing facts are grouped in one pass over the facts table, never one
+ * pass per take (#9503).
  */
 export async function agentSessionTakes(db: BrainEngine, sourceIds: string[], reattributed: ReadonlySet<number>, ids?: number[]): Promise<AgentSessionTake[]> {
   const rows = await db.executeRaw<{ id: number | string; source_id: string; slug: string; row_num: number | string; claim: string;
     fact_ids: Array<number | string>; user_fact_ids: Array<number | string>; noted: boolean }>(`
-    SELECT t.id, p.source_id, p.slug, t.row_num, t.claim,
-           ARRAY(SELECT f.id FROM facts f WHERE f.consolidated_into=t.id ORDER BY f.id) AS fact_ids,
-           ARRAY(SELECT f.id FROM facts f WHERE f.consolidated_into=t.id AND (f.attributed_to IS NULL OR f.attributed_to='user') ORDER BY f.id) AS user_fact_ids,
-           EXISTS (SELECT 1 FROM facts f WHERE f.consolidated_into=t.id AND f.attributed_to='other' AND position($3::text in COALESCE(f.context,''))>0) AS noted
-      FROM takes t JOIN pages p ON p.id=t.page_id
+    WITH contributing AS (
+      SELECT f.consolidated_into AS take_id, array_agg(f.id ORDER BY f.id) AS fact_ids,
+             COALESCE(array_agg(f.id ORDER BY f.id) FILTER (WHERE f.attributed_to IS NULL OR f.attributed_to='user'), '{}'::bigint[]) AS user_fact_ids,
+             COALESCE(bool_or(f.attributed_to='other' AND position($3::text in COALESCE(f.context,''))>0), false) AS noted,
+             min(f.consolidated_at) AS first_consolidated_at
+        FROM facts f
+       WHERE f.consolidated_into IS NOT NULL AND ($2::bigint[] IS NULL OR f.consolidated_into=ANY($2::bigint[]))
+       GROUP BY f.consolidated_into)
+    SELECT t.id, p.source_id, p.slug, t.row_num, t.claim, c.fact_ids, c.user_fact_ids, c.noted
+      FROM contributing c JOIN takes t ON t.id=c.take_id JOIN pages p ON p.id=t.page_id
      WHERE p.source_id=ANY($1::text[]) AND t.kind='fact' AND t.holder='self' AND t.active AND t.resolved_at IS NULL
-       AND ($2::bigint[] IS NULL OR t.id=ANY($2::bigint[])) AND EXISTS (SELECT 1 FROM facts f WHERE f.consolidated_into=t.id)
-       AND t.created_at >= (SELECT min(f.consolidated_at) FROM facts f WHERE f.consolidated_into=t.id) - interval '1 second'
+       AND t.created_at >= c.first_consolidated_at - interval '1 second'
      ORDER BY p.source_id, p.slug, t.id`, [sourceIds, ids ?? null, NOTE_MARK]);
   return rows.filter(row => row.user_fact_ids.every(id => reattributed.has(Number(id))) && (row.noted || row.user_fact_ids.length > 0))
     .map(row => {

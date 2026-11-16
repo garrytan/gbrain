@@ -26,6 +26,7 @@ import { hostWorkOwedFix, hostWorkOwedMessage } from '../src/core/migration-ledg
 import { minionsMigrationEntry } from '../src/commands/doctor/checks/local-runtime.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import type { Check } from '../src/commands/doctor.ts';
+import { codeEntry } from '../src/core/error-catalogue.ts';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 const OWED = '0.53.0';
@@ -252,6 +253,20 @@ describe('the other surfaces say the same thing', () => {
     quietAboutWedge((await scoped(true, () => pendingUpgradeMigrationsNotice({ getConfig: async () => null } as never, 'serve', VERSION), legacy))?.why ?? '');
     const line = await scoped(true, () => describeMigrationFailure(new Error('exit 1'), VERSION), legacy);
     expect(line).not.toContain(`--migration ${LEGACY}`);
+  }, 120_000);
+
+  test('the doctor code has a registry row: gbrain errors explains it, its default fix is read-only and it never advises a forced retry', async () => {
+    const entry = codeEntry('migration_host_work_owed');
+    expect(entry?.class).toBe('host_only');
+    expect(entry?.retryable).toBe(false);
+    expect(entry!.fix!.argv).toEqual(['gbrain', 'apply-migrations', '--list', '--json']);
+    expect(entry!.suggestion).toContain('--dry-run --json');
+    expect(entry!.suggestion).toContain('shared_skills_unmanifested');
+    expect(JSON.stringify(entry)).not.toContain(FORCE_RETRY);
+    const out = await cli(['errors', 'migration_host_work_owed']);
+    expect(out.exitCode).toBe(0);
+    expect(out.stdout).toContain('migration_host_work_owed (host_only');
+    expect(out.stdout).not.toContain(FORCE_RETRY);
   }, 120_000);
 
   test('upgrade\'s failure line names the inspect step and no forced retry', async () => {

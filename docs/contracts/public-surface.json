@@ -2743,6 +2743,7 @@
     "method_not_allowed": 1,
     "migration_declined": 3,
     "migration_failed": 1,
+    "migration_host_work_owed": 1,
     "migration_host_work_pending": 1,
     "migration_lease_lost": 1,
     "migrations_pending": 1,

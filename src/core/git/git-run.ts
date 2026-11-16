@@ -30,7 +30,7 @@ export function git(root: string, args: string[], opts: GitOpts = {}): GitRun {
     return { code: 0, stdout, stderr: '' };
   } catch (e) {
     const err = e as { status?: number | null; signal?: string | null; code?: string; stdout?: Buffer | string; stderr?: Buffer | string; message?: string };
-    const reason: GitStop['reason'] | null = err.code === 'ETIMEDOUT' ? 'timeout' : err.code === 'ENOBUFS' ? 'output_limit' : typeof err.status !== 'number' && err.signal ? 'signal' : null;
+    const reason: GitStop['reason'] | null = err.code === 'ETIMEDOUT' ? 'timeout' : err.code === 'ENOBUFS' || err.code === 'ERR_STRING_TOO_LONG' ? 'output_limit' : typeof err.status !== 'number' && err.signal ? 'signal' : null;
     const stopped = reason ? { reason, ...(err.signal ? { signal: err.signal } : {}) } : undefined;
     if (stopped && !opts.returnStopped) throw stoppedError(root, args, stopped, timeoutMs, opts.maxBuffer);
     return {
@@ -42,13 +42,20 @@ export function git(root: string, args: string[], opts: GitOpts = {}): GitRun {
   }
 }
 
+/** Signals a process raises on itself when it crashes; any other signal came from outside the child. */
+export const CRASH_SIGNALS = new Set(['SIGSEGV', 'SIGBUS', 'SIGILL', 'SIGFPE', 'SIGABRT']);
+
 function stoppedError(root: string, args: string[], stop: GitStop, timeoutMs: number, maxBuffer?: number): OperationError {
   const what = `git ${args.filter(a => !a.startsWith('-c') && !a.includes('=')).slice(0, 2).join(' ')}`;
+  const crashed = stop.reason === 'signal' && CRASH_SIGNALS.has(stop.signal ?? '');
   const how = stop.reason === 'timeout' ? `it ran past its ${Math.round(timeoutMs / 1000)} s limit and was stopped`
-    : stop.reason === 'output_limit' ? `its output passed the ${maxBuffer} byte limit and it was stopped`
+    : stop.reason === 'output_limit' ? `its output passed ${maxBuffer ? `the ${maxBuffer} byte limit` : 'the largest string this runtime can hold'} and it was stopped`
+    : crashed ? `it crashed with ${stop.signal}`
     : `it was killed by ${stop.signal}, from outside gbrain`;
-  return opError('git_command_stopped', `${what} in ${root} did not finish: ${how}. Git itself is working; gbrain did not use its partial output.`,
-    stop.reason === 'signal'
+  return opError('git_command_stopped', `${what} in ${root} did not finish: ${how}. ${crashed ? 'Its partial output was not used' : 'Git itself is working; gbrain did not use its partial output'}.`,
+    crashed
+      ? `Git crashed (a corrupt repository or a git bug can cause it). Run git -C ${root} fsck, then rerun the same command once; if it crashes again, tell the user that ${what} in ${root} crashes.`
+      : stop.reason === 'signal'
       ? 'Something on this machine stopped git (often the out-of-memory killer or a process supervisor). Check the machine, then rerun the same command once.'
       : `Rerun the same command once. If it stops again, tell the user that ${what} in ${root} does not finish within the limit.`,
     { reason: stop.reason, detail: JSON.stringify({ command: what, ...stop }) });
