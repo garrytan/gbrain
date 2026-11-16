@@ -5,7 +5,7 @@
  * Opt-in bench code, never run in CI.
  *
  *   bun scripts/bench/retrieval-scale/keyword-broad.ts --url <direct postgres url> [--terms a,b,c] [--n 10]
- *     [--calls arm,arm_phrase,arm_remote,arm_all_sources,arm_small_source,arm_person,pages,pages_remote,count] [--explain <dir>] [--label <name>] [--out results.jsonl]
+ *     [--calls arm,arm_phrase,arm_remote,arm_all_sources,arm_small_source,arm_person,pages,pages_remote,count,count_remote,vector,vector_remote,titles,titles_remote] [--explain <dir>] [--label <name>] [--out results.jsonl]
  *     [--rows rows.jsonl] [--tree <checkout>] [--no-share]
  *
  * Without --terms it picks one term per band from a 1% sample of chunks
@@ -49,7 +49,9 @@ async function pickTerms(): Promise<Array<{ band: string; term: string }>> {
 }
 
 const terms = flag('--terms') ? flag('--terms')!.split(',').map(t => ({ band: 'given', term: t })) : await pickTerms();
-const [{ chunks }] = await sql.unsafe('SELECT count(*)::int AS chunks FROM content_chunks') as any;
+const [{ chunks }] = await sql.unsafe(argv.includes('--no-share') ? "SELECT reltuples::bigint::int AS chunks FROM pg_class WHERE relname = 'content_chunks'" : 'SELECT count(*)::int AS chunks FROM content_chunks') as any;
+let queryVector: Float32Array | undefined;
+const vectorFor = async () => queryVector ??= new Float32Array(JSON.parse((await sql.unsafe("SELECT embedding::text AS e FROM content_chunks WHERE embedding IS NOT NULL ORDER BY id LIMIT 1 OFFSET 4242") as any)[0].e));
 const liveSources = (await sql.unsafe('SELECT id FROM sources WHERE NOT archived ORDER BY id') as Array<{ id: string }>).map(r => r.id);
 
 const { createEngine } = await import(join(tree, 'src/core/engine-factory.ts'));
@@ -79,6 +81,11 @@ const calls: Record<string, (term: string) => Promise<unknown[] | number>> = {
   pages: term => engine.searchKeywordPages(term, undefined, { limit: 20 }),
   pages_remote: term => engine.searchKeywordPages(term, { excludePrivate: true, requireSafeChunks: true }, { limit: 20 }),
   count: term => engine.countKeywordPages(term, {}),
+  count_remote: term => engine.countKeywordPages(term, { excludePrivate: true, requireSafeChunks: true, sourceIds: liveSources }),
+  vector: async () => engine.searchVector(await vectorFor(), { limit: 50 }),
+  vector_remote: async () => engine.searchVector(await vectorFor(), { limit: 50, excludePrivate: true, requireSafeChunks: true, sourceIds: liveSources }),
+  titles: term => engine.searchTitles(term, { limit: 50 }),
+  titles_remote: term => engine.searchTitles(term, { limit: 50, excludePrivate: true, requireSafeChunks: true, sourceIds: liveSources }),
 };
 const only = flag('--calls')?.split(',');
 if (only) for (const name of Object.keys(calls)) if (!only.includes(name)) delete calls[name];

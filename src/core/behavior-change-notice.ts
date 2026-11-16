@@ -231,7 +231,7 @@ const releasedIn = (id: string): string => (Object.hasOwn(BEHAVIOR_CHANGE_RELEAS
  * row is a behavior-changes.d/<id>.md fragment (RELEASED_BEHAVIOR_CHANGES once a release dates it); a new function row
  * goes here as `{ since: releasedIn('<id>'), id: '<id>', text: ... }`.
  */
-export const BEHAVIOR_CHANGES: ReadonlyArray<{ since: string; text: ChangeText; id?: string }> = [
+export const BEHAVIOR_CHANGES: ReadonlyArray<{ since: string; text: ChangeText; id?: string; kind?: string }> = [
   { since: '0.60.68.0', text: (chain, remote) => {
     if (!chain) return null;
     if (remote) return 'A chat fallback chain is configured on this brain host: when a chat call\'s own model fails it is retried on other models. Its entries and providers are visible to the brain host operator in gbrain doctor --only chat_fallback_chain.';

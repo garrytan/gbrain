@@ -19,13 +19,17 @@ export function migrationsNotice(why: string): Notice {
 export async function pendingUpgradeMigrationsNotice(engine: BrainEngine, command: string, version: string): Promise<Notice | null> {
   if (ORCHESTRATOR_MIGRATION_OWNERS.has(command)) return null;
   try {
-    const { declinedMigrations, migrationLedgerSummary, upgradeLedgerApplies } = await import('../core/migration-ledger.ts');
-    if (!upgradeLedgerApplies(engine)) return null;
-    const summary = migrationLedgerSummary(version, await declinedMigrations(engine));
-    if (summary.wedged.length > 0) {
+    const ledger = await import('../core/migration-ledger.ts');
+    if (!ledger.upgradeLedgerApplies(engine)) return null;
+    const summary = ledger.migrationLedgerSummary(version, await ledger.declinedMigrations(engine));
+    const history = ledger.indexCompletedEntries((await import('../core/preferences.ts')).loadCompletedMigrations());
+    const owed = summary.wedged.filter(v => ledger.hostWorkOwedForVersion(v, history));
+    const wedged = summary.wedged.filter(v => !owed.includes(v));
+    if (wedged.length > 0) {
       const { wedgedMigrationFix } = await import('../commands/apply-migrations.ts');
-      return { ...migrationsNotice(`Upgrade migration(s) ${summary.wedged.join(', ')} failed several runs in a row and are wedged; the command ran, and apply-migrations --yes will not clear them until the cause is fixed.`), fix: wedgedMigrationFix(summary.wedged) };
+      return { ...migrationsNotice(`Upgrade migration(s) ${wedged.join(', ')} failed several runs in a row and are wedged; the command ran, and apply-migrations --yes will not clear them until the cause is fixed.`), fix: wedgedMigrationFix(wedged) };
     }
+    if (owed.length > 0) return { ...migrationsNotice(`${ledger.hostWorkOwedMessage(owed)} The command ran.`), fix: ledger.hostWorkOwedFix(owed) };
     const pending = [...summary.pending, ...summary.partial];
     if (pending.length === 0) return null;
     const notice = migrationsNotice(`${pending.length} upgrade migration(s) have not finished on this brain yet (${pending.join(', ')}); the command ran, and gbrain apply-migrations --yes --no-autopilot-install finishes the upgrade.`);

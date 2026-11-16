@@ -7,6 +7,7 @@ import { describe, expect, spyOn, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PAGE_PROJECTION_ACTIVATION_SQL } from '../src/core/page-state/projection-schema.ts';
 import { rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
+import { drainConcurrency } from '../src/core/page-state/rebuild-estimate.ts';
 import { v153 } from '../src/core/schema-migrations/v153-verified-text-projection-activation.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
@@ -56,7 +57,12 @@ for (const backend of testBackends()) {
       try { await v153.handler!(engine); } finally { spy.mockRestore(); }
       const lines = writes.filter(w => w.includes('[153]'));
       expect(lines).toHaveLength(1);
-      expect(lines[0]).toMatch(/^ {2}\[153\] 2 page\(s\) queued for a keyless search index rebuild \(no embedding calls\)\. Search keeps answering from the index 0 of them already had; 2 \(images, pages indexed before the safe-chunk fence, and pages with a facts or takes fence, private-key text or a quarantine marker\) stay out of search until rebuilt\. At the [\d.]+ ms round trip measured to this database the rebuild takes about 1 minute\(s\): gbrain projections drain\. Progress: gbrain doctor --only text_projection_readiness\n$/);
+      expect(lines[0]).toMatch(/^ {2}\[153\] 2 page\(s\) queued for a keyless search index rebuild \(no embedding calls\)\. Search keeps answering from the index 0 of them already had; 2 \(images, pages indexed before the safe-chunk fence, and pages with a facts or takes fence, private-key text or a quarantine marker\) stay out of search until rebuilt\. At the [\d.]+ ms round trip measured to this database, rebuilding its 2 Markdown and code page\(s\) takes about 1 minute\(s\)(?<atOnce>, \d+ pages at once)?, pages out of search first: gbrain projections drain(?<faster> \(about 1 minute\(s\) with gbrain projections drain --concurrency \d+\))?\. Progress: gbrain doctor --only text_projection_readiness\n$/);
+      const width = drainConcurrency(engine);
+      const groups = lines[0]!.match(/(?<atOnce>, (?<n>\d+) pages at once)?, pages out of search first: gbrain projections drain(?<faster> \(about 1 minute\(s\) with gbrain projections drain --concurrency (?<max>\d+)\))?\./)!.groups!;
+      expect(groups.n === undefined ? 1 : Number(groups.n)).toBe(width.default);
+      expect(groups.max === undefined ? width.default : Number(groups.max)).toBe(width.max);
+      if (engine.kind === 'pglite') expect(groups.atOnce ?? groups.faster).toBeUndefined();
     }, url), 120_000);
   });
 }
