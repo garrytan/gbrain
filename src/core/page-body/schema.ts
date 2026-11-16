@@ -1,3 +1,5 @@
+import { requireLedgerPoliciesSql } from '../derived-state-maintainers.ts';
+
 /**
  * Segmented page storage (Wave B) DDL shared by migration v248 and both schema
  * blobs (src/schema.sql regions; `bun run build:schema`).
@@ -255,6 +257,45 @@ export function derivationScopeLockSql(sourceId: string): string {
 }
 
 /**
+ * The derivation purge triggers (see PAGE_SEGMENT_DERIVATIONS_SQL below) read page_segment_derivation_purges, and the
+ * scope-entry note writes page_segment_derivation_purge_pages, as the writing role. #7632/#7659: a role that RLS keeps
+ * from them is refused (derived-state-maintainers.ts requireLedgerPoliciesSql) instead of reading no sweep, which let a
+ * purged claim be stored again and a page leave a sweep's scope unnoted. Migration v318 re-creates the functions alone.
+ */
+export const DERIVATION_SCOPE_ENTRY_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gbrain_mark_derivation_scope_entry() RETURNS trigger SET search_path = pg_catalog, public, pg_temp AS $func$
+DECLARE
+  src TEXT;
+  page INTEGER;
+BEGIN
+  ${requireLedgerPoliciesSql('page_segment_derivation_purges', ['SELECT'])}
+  ${requireLedgerPoliciesSql('page_segment_derivation_purge_pages', ['INSERT'])}
+  IF TG_TABLE_NAME = 'pages' THEN
+    src := NEW.source_id;
+    page := NEW.id;
+  ELSE
+    src := OLD.source_id;
+    page := OLD.page_id;
+  END IF;
+  PERFORM pg_advisory_xact_lock_shared(${derivationScopeLockSql('src')});
+  INSERT INTO page_segment_derivation_purge_pages (request_id, page_id)
+    SELECT x.request_id, page FROM page_segment_derivation_purges x WHERE x.source_id = src ON CONFLICT DO NOTHING;
+  RETURN NULL;
+END
+$func$ LANGUAGE plpgsql`;
+export const REFUSE_PURGING_DERIVATION_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gbrain_refuse_purging_derivation() RETURNS trigger SET search_path = pg_catalog, public, pg_temp AS $func$
+BEGIN
+  ${requireLedgerPoliciesSql('page_segment_derivation_purges', ['SELECT'])}
+  ${requireLedgerPoliciesSql('pages', ['SELECT'])}
+  IF EXISTS (SELECT 1 FROM page_segment_derivation_purges x JOIN pages p ON p.source_id = x.source_id
+    WHERE p.id = NEW.page_id AND ${derivationSweepScopeSql('NEW', 'p', 'x.page_ids')}
+      AND ${derivationHoldsClaimSql('NEW', 'x.needles', 'x.patterns')}) THEN
+    RETURN NULL;
+  END IF;
+  RETURN NEW;
+END
+$func$ LANGUAGE plpgsql`;
+
+/**
  * Per-segment derivation watermarks (migration v273): one row per page, pipeline and manifest occurrence, recording
  * the segment text and the context (`context_hash`: entry state plus the page-level inputs the pipeline reads) it was
  * derived from, the pipeline version, the outcome and a bounded per-segment output. A pipeline's work on a page is the
@@ -328,24 +369,7 @@ CREATE TABLE IF NOT EXISTS page_segment_derivation_purge_pages (
   page_id    INTEGER NOT NULL,
   PRIMARY KEY (request_id, page_id)
 );
-CREATE OR REPLACE FUNCTION gbrain_mark_derivation_scope_entry() RETURNS trigger SET search_path = pg_catalog, public, pg_temp AS $func$
-DECLARE
-  src TEXT;
-  page INTEGER;
-BEGIN
-  IF TG_TABLE_NAME = 'pages' THEN
-    src := NEW.source_id;
-    page := NEW.id;
-  ELSE
-    src := OLD.source_id;
-    page := OLD.page_id;
-  END IF;
-  PERFORM pg_advisory_xact_lock_shared(${derivationScopeLockSql('src')});
-  INSERT INTO page_segment_derivation_purge_pages (request_id, page_id)
-    SELECT x.request_id, page FROM page_segment_derivation_purges x WHERE x.source_id = src ON CONFLICT DO NOTHING;
-  RETURN NULL;
-END
-$func$ LANGUAGE plpgsql;
+${DERIVATION_SCOPE_ENTRY_FUNCTION_SQL};
 DROP TRIGGER IF EXISTS page_body_manifest_derivation_scope_retire ON page_body_manifest;
 CREATE TRIGGER page_body_manifest_derivation_scope_retire AFTER UPDATE OF gen_to ON page_body_manifest
   FOR EACH ROW WHEN (OLD.gen_to IS NULL AND NEW.gen_to IS NOT NULL AND OLD.staging_id IS NULL) EXECUTE FUNCTION gbrain_mark_derivation_scope_entry();
@@ -355,16 +379,7 @@ CREATE TRIGGER page_body_manifest_derivation_scope_delete AFTER DELETE ON page_b
 DROP TRIGGER IF EXISTS pages_derivation_scope_delete ON pages;
 CREATE TRIGGER pages_derivation_scope_delete AFTER UPDATE OF deleted_at ON pages
   FOR EACH ROW WHEN (OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL) EXECUTE FUNCTION gbrain_mark_derivation_scope_entry();
-CREATE OR REPLACE FUNCTION gbrain_refuse_purging_derivation() RETURNS trigger SET search_path = pg_catalog, public, pg_temp AS $func$
-BEGIN
-  IF EXISTS (SELECT 1 FROM page_segment_derivation_purges x JOIN pages p ON p.source_id = x.source_id
-    WHERE p.id = NEW.page_id AND ${derivationSweepScopeSql('NEW', 'p', 'x.page_ids')}
-      AND ${derivationHoldsClaimSql('NEW', 'x.needles', 'x.patterns')}) THEN
-    RETURN NULL;
-  END IF;
-  RETURN NEW;
-END
-$func$ LANGUAGE plpgsql;
+${REFUSE_PURGING_DERIVATION_FUNCTION_SQL};
 DROP TRIGGER IF EXISTS page_segment_derivations_refuse_purging ON page_segment_derivations;
 CREATE TRIGGER page_segment_derivations_refuse_purging BEFORE INSERT OR UPDATE OF output, receipt ON page_segment_derivations
   FOR EACH ROW EXECUTE FUNCTION gbrain_refuse_purging_derivation();`;

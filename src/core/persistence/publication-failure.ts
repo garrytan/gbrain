@@ -135,8 +135,12 @@ const RELATIONSHIP_TEXT: Record<string, string> = {
   topology_outside_administration: 'a source topology change outside writer administration',
   unreadable_state: 'writer state this database role cannot fully read (row-level security hides it or applies to the role, or a singleton row is missing)',
 };
-/** #7780: the tables an unreadable_state raise names in its DETAIL `state` (writer-guard-schema.ts, git-canonical-schema.ts). */
-const UNREADABLE_STATES: ReadonlySet<unknown> = new Set(['persistence_brain', 'git_canonical_brain', 'sources', 'pages', 'guest_sources']);
+/**
+ * #7780: the tables an unreadable_state raise names in its DETAIL `state` (writer-guard-schema.ts, git-canonical-schema.ts),
+ * and since #7632 the ledgers the purge and withdrawal guards read (derived-state-maintainers.ts requireLedgerPoliciesSql).
+ */
+const UNREADABLE_STATES: ReadonlySet<unknown> = new Set(['persistence_brain', 'git_canonical_brain', 'sources', 'pages', 'guest_sources',
+  'facts', 'fact_purges', 'fact_withdrawals', 'take_purges', 'page_purges', 'page_segment_derivation_purges', 'page_segment_derivation_purge_pages']);
 
 /**
  * #7777: the persistence protocol guards (shared-skills/persistence-schema.ts) raise SQLSTATE 42501, which is also

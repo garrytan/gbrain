@@ -41,7 +41,12 @@
  * only the insert half moves here. A statement trigger sees only the rows the
  * statement wrote: a row ON CONFLICT DO NOTHING skipped is not checked (it is
  * not saved either). Installed by migration v264.
+ *
+ * #7632/#7659: a writing role that RLS keeps from reading a ledger, or from updating the rows it inserted when a
+ * withdrawal matches, is refused (derived-state-maintainers.ts requireLedgerPoliciesSql) instead of reading the ledger as
+ * empty.
  */
+import { requireLedgerPoliciesSql } from '../derived-state-maintainers.ts';
 import { FACT_WITHDRAWAL_STAMP_SETTING } from '../persistence/attribution-schema.ts';
 
 export const FACT_INSERT_GUARD_TRIGGER = 'facts_guard_inserted';
@@ -65,6 +70,7 @@ CREATE OR REPLACE FUNCTION gbrain_guard_inserted_facts() RETURNS trigger
   LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
   DECLARE purged TEXT; stamp_setting TEXT;
   BEGIN
+    ${requireLedgerPoliciesSql('fact_purges', ['SELECT'], '    ')}
     PERFORM s.id FROM sources s WHERE s.id IN (SELECT i.source_id FROM inserted_facts i) ORDER BY s.id FOR SHARE OF s;
     IF EXISTS (SELECT 1 FROM fact_purges p WHERE p.source_id IN (SELECT i.source_id FROM inserted_facts i)) THEN
       WITH n AS MATERIALIZED (
@@ -80,7 +86,11 @@ CREATE OR REPLACE FUNCTION gbrain_guard_inserted_facts() RETURNS trigger
           DETAIL = json_build_object('table', 'facts', 'hash8', left(purged, 8))::text;
       END IF;
     END IF;
+    IF EXISTS (SELECT 1 FROM inserted_facts i WHERE i.expired_at IS NULL) THEN
+      ${requireLedgerPoliciesSql('fact_withdrawals', ['SELECT'], '      ')}
+    END IF;
     IF EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id IN (SELECT i.source_id FROM inserted_facts i WHERE i.expired_at IS NULL)) THEN
+      ${requireLedgerPoliciesSql('facts', ['SELECT', 'UPDATE'], '      ')}
       stamp_setting := current_setting('${FACT_WITHDRAWAL_STAMP_SETTING}', true);
       PERFORM set_config('${FACT_WITHDRAWAL_STAMP_SETTING}', 'on', true);
       WITH n AS MATERIALIZED (

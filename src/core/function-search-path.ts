@@ -12,7 +12,7 @@
  * it so), so a schema replay keeps pg_temp. Historical migration bodies still pin the legacy settings, and so does a
  * brain created before the change, which is what the hardening below completes: ALTER FUNCTION only, no body rewritten,
  * so every guard keeps master's body, SECURITY INVOKER and BEFORE ROW timing.
- * A write role with no policy on a ledger still reads it empty under its own RLS; that fail-open stays open (#7659).
+ * A write role that RLS keeps from a ledger is refused by the guard itself since v318 (#7659, requireLedgerPoliciesSql).
  */
 
 import type { BrainEngine } from './engine.ts';

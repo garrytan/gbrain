@@ -18,6 +18,7 @@ import {
 } from './retry-matcher.ts';
 import { repairTimelineDedupIndex } from './timeline-dedup-repair.ts';
 import { hardenFunctionSearchPaths } from './function-search-path.ts';
+import { failClosedLedgerGuards } from './guard-ledger-checks.ts';
 import { resumePageRevisionBackfill } from './page-state/revision-backfill-schema.ts';
 import { repairPagesUpsertArbiter } from './pages-upsert-arbiter.ts';
 import { repairLinkSourceCheck, LINK_SOURCE_GATE_MIGRATION_VERSION } from './link-source-check-repair.ts';
@@ -467,8 +468,23 @@ async function runMigrationsLocked(engine: BrainEngine): Promise<{ applied: numb
       process.stderr.write(`  search_path: pg_temp not restored on gbrain functions (${e instanceof Error ? e.message : String(e)}); gbrain doctor (function_search_path) names them\n`);
     }
   };
+  // #7632/#7659: a purge or withdrawal guard v318 could not re-create (another role owns it) or an older binary's
+  // schema replay put back without its ledger check is re-created by any run of a role that owns it. Best-effort, like
+  // the hardening: it never aborts a run, and names what is left only when migrations were pending.
+  const failClosed = async (nameLeftovers: boolean): Promise<void> => {
+    try {
+      const { left, role } = await failClosedLedgerGuards(engine);
+      if (nameLeftovers && left.length > 0) {
+        process.stderr.write(`  guards: ${left.length} purge or withdrawal guard(s) still read their ledgers as empty for a write role without ledger policies (${left.join(', ')}): `
+          + `CREATE OR REPLACE FUNCTION needs the owner. As that role run ALTER FUNCTION public.<name>() OWNER TO ${role}, or connect gbrain as it; the next gbrain run re-creates them (docs/ENGINES.md#purge-and-withdrawal-guards).\n`);
+      }
+    } catch (e) {
+      process.stderr.write(`  guards: purge and withdrawal guards not re-checked (${e instanceof Error ? e.message : String(e)}); the next gbrain run retries\n`);
+    }
+  };
   if (pending.length === 0) {
     await harden(false);
+    await failClosed(false);
     await backfill();
     return { applied: 0, current };
   }
@@ -537,6 +553,7 @@ async function runMigrationsLocked(engine: BrainEngine): Promise<{ applied: numb
     else await harden(true);
   }
   await clearMigrationTimeout(engine);
+  await failClosed(true);
   await backfill();
   return { applied, current: LATEST_VERSION };
 }

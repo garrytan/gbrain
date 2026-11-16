@@ -1,3 +1,5 @@
+import { requireLedgerPoliciesSql } from '../derived-state-maintainers.ts';
+
 /**
  * Characters folded to a space before hashing, so punctuation variants of one
  * claim share a fingerprint. Explicit (not [[:punct:]]) so the SQL and the JS
@@ -51,13 +53,16 @@ export const FACT_FINGERPRINT_FUNCTION_STATEMENTS = [
  * The insert and update guard that stamps a row matching a withdrawal as withdrawn. GST-2346: a row on a member page
  * (memory/members/<id>) matches only that page's own withdrawals: it is its member's own, a withdrawal made later still expires it, and the member's
  * save checks the withdrawals of claims that member reads (facts/single-prepare.ts), so a claim it never read cannot
- * expire the row it saves. Re-created alone by the member_page_withdrawal_scope migration.
+ * expire the row it saves. #7632/#7659: a writing role that RLS keeps from reading fact_withdrawals is refused
+ * (derived-state-maintainers.ts requireLedgerPoliciesSql) instead of saving the row active. Re-created alone by the
+ * member_page_withdrawal_scope and guard_ledgers_fail_closed migrations.
  */
 export const FACT_WITHDRAWAL_PRESERVE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gbrain_preserve_fact_withdrawal() RETURNS trigger
     LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
     DECLARE withdrawn TIMESTAMPTZ;
     BEGIN
       IF NEW.expired_at IS NULL THEN
+        ${requireLedgerPoliciesSql('fact_withdrawals', ['SELECT'], '        ')}
         -- Serializes insertion with source-locked withdrawal, including a
         -- concurrent reimport. Ordinary row locks work on both engines.
         PERFORM id FROM sources WHERE id = NEW.source_id FOR SHARE;
