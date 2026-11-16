@@ -324,7 +324,8 @@ const recall: Operation = {
   verb: true,
   annotations: { title: 'recall (memory read)', readOnlyHint: true },
   handler: async (ctx, p) => {
-    const maxChars = p.max_chars === undefined || p.max_chars === null ? null : parseMaxChars(p.max_chars);
+    // A remote caller (claude.ai / ChatGPT connectors cap the answer size) gets the memory_recall default when it sends no max_chars.
+    const maxChars = p.max_chars === undefined || p.max_chars === null ? (ctx.remote === false ? null : MEMORY_RECALL_MAX_CHARS.default) : parseMaxChars(p.max_chars);
     const sourceId = ctx.sourceId ?? 'default';
     const limit = clampRecallLimit(p.limit);
     const includeExpired = p.include_expired === true;
