@@ -1,5 +1,5 @@
 /**
- * #9192: v153's activation takes every page out of the search index until the projection drain rebuilds it. While that
+ * #9192: v153's activation takes a page indexed before the safe-chunk fence out of search until the projection drain rebuilds it. While that
  * rebuild runs, search and query say how far it is (pages done of total, the rate measured since it started) and which
  * command shows progress, and the upgrade says so once when the activation runs.
  */
@@ -22,6 +22,9 @@ async function activated(run: (engine: BrainEngine) => Promise<void>, databaseUr
       await engine.putPage(slug, { type: 'note', title: 'Quokka harmonica', compiled_truth: TEXT });
       await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: TEXT }]);
     }
+    // Indexed before the safe-chunk fence, so activation takes them out of search (an index built after it stays
+    // served: search-during-upgrade-rebuild-9192.test.ts).
+    await engine.executeRaw('UPDATE pages SET chunker_version = 3');
     for (const statement of PAGE_PROJECTION_ACTIVATION_SQL.split(';').map(s => s.trim()).filter(Boolean)) await engine.executeRaw(statement);
     await run(engine);
   } finally { await close(); }
@@ -47,13 +50,13 @@ for (const backend of testBackends()) {
       expect(await answer(engine, 'search')).not.toContain('the search index rebuild an upgrade started');
     }, url), 120_000);
 
-    test('the v153 handler prints the queued count and the progress command once', () => activated(async engine => {
+    test('the v153 handler prints what stays served, what waits, the measured estimate and the progress command once', () => activated(async engine => {
       const writes: string[] = [];
       const spy = spyOn(process.stderr, 'write').mockImplementation(((chunk: string) => { writes.push(String(chunk)); return true; }) as typeof process.stderr.write);
       try { await v153.handler!(engine); } finally { spy.mockRestore(); }
-      expect(writes.filter(w => w.includes('[153]'))).toEqual([
-        '  [153] 2 page(s) queued for a search index rebuild; search and query results stay partial and say so until it finishes. Progress: gbrain doctor --only text_projection_readiness\n',
-      ]);
+      const lines = writes.filter(w => w.includes('[153]'));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/^ {2}\[153\] 2 page\(s\) queued for a keyless search index rebuild \(no embedding calls\)\. Search keeps answering from the index 0 of them already had; 2 \(images, pages indexed before the safe-chunk fence, and pages with a facts or takes fence, private-key text or a quarantine marker\) stay out of search until rebuilt\. At the [\d.]+ ms round trip measured to this database the rebuild takes about 1 minute\(s\): gbrain projections drain\. Progress: gbrain doctor --only text_projection_readiness\n$/);
     }, url), 120_000);
   });
 }
