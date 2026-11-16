@@ -66,6 +66,7 @@
       "checkpointKey": "337ef776b18f428542093e27c4d570249d6a5856e5a17e4499d26a22877af34b",
       "chunkSearchVectorTriggerFnSql": "9ac61adf64b64fdef7c0b786d093bc7aeb51c561fd680823d2fc4fc720b2bc33",
       "clampOAuthTokenTtls": "b1e94ea8f5b3c3870a56b0f6d00d0a274c2e9dcad912b828848aec250732645f",
+      "drainConcurrency": "cc9ad7c1c52f503c765eff106f9ac06ab3cb926d2dbced37ebc9a8682cdbada7",
       "dropInvalidConcurrentIndex": "6864d844b7dfb2fbecdd0fb9c73e06248473376feb794b3fe58f036c70d2d44c",
       "enableRlsSql": "b7901b3d5231fcfacd3260ce0f59d4701d8c0bee902808ff48b1d8affbd444b6",
       "ensureFactsFtsIndex": "95e723314ac30cea2db48e0e167c554ef1fa06df80cae765faa2a080a3a655c2",
@@ -98,7 +99,7 @@
       "sqlQueryForEngine": "71fb1ccec1b22cdc1662876dbd8c17ed81e9ab83485c6965cdf5caa4fc4a4ab5",
       "swapIdentityIndex": "84ac62b697a16d244b2e0eecc962fb0558a24c2a26123bc7e77f1c7bec7c1066",
       "tableRows": "906d2413b13d76a06d5910885e47ed5c544be4ff3a2266e83146715721b24270",
-      "textRebuildDuration": "cffe5e296f8dbdd2552a4993d0e6dbf6ddef5604fef75dc1d327d4172b66211e",
+      "textRebuildDuration": "72e388f0ffa80b1892a314ec7690ed196259ec396ddda3c729662cc17313ed45",
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67",
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
@@ -2323,12 +2324,13 @@
           "form": "arrow",
           "helpers": [
             "ACTIVATION_SERVED_REVISION",
+            "drainConcurrency",
             "measuredRoundTripMs",
             "migrationNotice",
             "quietMigrationNotices",
             "textRebuildDuration"
           ],
-          "sha256": "4db3224e2165b8d654bb19cdc8653840ac363f2d9ac1ea6f910304784ceb4cf2"
+          "sha256": "71f3c55940d2df4e75ea88bc106f433c4973855cc92a0e8f6ff26bccc76c6c27"
         },
         "idempotent": true,
         "name": "verified_text_projection_activation",

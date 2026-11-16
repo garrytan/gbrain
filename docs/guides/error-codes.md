@@ -4074,6 +4074,14 @@ More: [docs/guides/qm.md#proposed-writes](../../docs/guides/qm.md#proposed-write
 |---|---|---|---|---|---|---|
 | provenance is required and must be non-empty. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### provider_response_unparseable
+
+<a id="provider_response_unparseable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A model provider answered with a success status, but its response body could not be parsed as one JSON document; no response text is kept. | The same request gets the same body, so retrying spends another paid call on the same failure. The common cause is a provider route that streams (Server-Sent Events) when a request omits `stream`; a job that hits it ends on its first attempt. | Ask the operator to make the route return one JSON body for a non-streaming request, for example with gbrain config set provider_chat_options.<provider>:<model> '{"stream": false}', then retry the job. | host_admin | `gbrain doctor --json` | 1 | no |
+
 ### publication_pending
 
 <a id="publication_pending"></a>
@@ -4141,6 +4149,16 @@ More: [docs/guides/write-refusals.md#purge_lookup_timeout](../../docs/guides/wri
 | A purge could not append its intent line to the purge mirror (<brain home>/.gbrain/purge-events.jsonl), so it was refused; nothing was removed, tombstoned or redacted. | Restore replays the purges recorded in that text-free mirror; a purge that committed without its line would come back silently from an older backup. | Do not assume the requested content was erased. Make the mirror a writable regular file owned by the brain's user (mode 0600), then run the purge again with a new request_id. | host_admin | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#purge_mirror_unwritable](../../docs/guides/write-refusals.md#purge_mirror_unwritable)
+
+### purge_replay_incomplete
+
+<a id="purge_replay_incomplete"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A restore stopped because the replay of a purge could not sweep every stored request that carries the purged page; that purge was not replayed and nothing was restored. | A replayed purge removes what the live purge removed, the request journal included; reporting a partial sweep as replayed would leave purged text in the restored brain. | Do not use the restored copy. Report the purge request named in the message with the output of gbrain doctor --json; restore again once it is fixed. | host_admin | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#purge_replay_incomplete](../../docs/guides/write-refusals.md#purge_replay_incomplete)
 
 ### purged_content
 

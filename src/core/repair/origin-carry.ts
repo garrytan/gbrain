@@ -21,7 +21,7 @@ import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import type { LabelEdit } from '../persistence/label-edit.ts';
 import { maintenancePreflight, publishMaintenancePages } from '../persistence/prepared-maintenance.ts';
-import { clearDerivedOriginParks, DERIVED_ORIGIN_PARKED_CODE, derivedOriginPurgeHold, finishPurgeNote, parkDerivedOrigin, pruneDerivedOriginParks, readDerivedOriginParks, type DerivedOriginPark } from '../persistence/derived-origin-hold.ts';
+import { clearDerivedOriginParks, DERIVED_ORIGIN_PARKED_CODE, derivedOriginPurgeHold, finishPurgeNote, parkDerivedOrigin, pruneDerivedOriginParks, readDerivedOriginParks, recordOwedPurge, type DerivedOriginPark } from '../persistence/derived-origin-hold.ts';
 import { privacyPartSql, readHonorAliases, withoutCallerAccess } from '../search/private-visibility.ts';
 import { faultPoint } from '../persistence/fault-points.ts';
 import { filesInCheckout, importAtRevision, writeLabelFile } from './label-write.ts';
@@ -167,6 +167,7 @@ export async function deletePageCarryingPrivate(ctx: OperationContext, p: Record
   await parkDerivedOrigin(ctx.engine, { ...parked(origin, block), held_request_id: String(p.request_id) });
   const result = origin.deleted ? { status: 'held', slug: origin.slug, source_id: sourceId, request_id: p.request_id }
     : await submitPageMutation(ctx, { operation: 'delete_page', params: { ...p, purge: false, request_id: derivedRequestId(String(p.request_id)) } });
+  await recordOwedPurge(ctx.engine, origin.id, String(p.request_id));
   return { ...result, purge_held: { code: DERIVED_ORIGIN_PARKED_CODE,
     message: `Not purged: ${block.slug ?? 'a page derived from it'} is private only through ${origin.slug} and could not be labelled private (${block.code ?? 'error'}: ${block.reason}). `
       + `${origin.slug} is soft-deleted and parked: no purge removes it until that page carries its own label; gbrain doctor names it as derived_origin_parked. `
