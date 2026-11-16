@@ -13,7 +13,7 @@ operator knows what to do next.
 ### 1. Confirm the deterministic pointer layer is healthy
 
 ```bash
-gbrain doctor --json | jq '.checks[] | select(.name=="retrieval_reflex_health")'
+gbrain doctor --only retrieval_reflex_health --json
 ```
 
 The pointer layer lives in the gbrain context engine (zero-LLM, on by
