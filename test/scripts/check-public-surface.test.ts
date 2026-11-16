@@ -250,6 +250,23 @@ describe('the base it compares with', () => {
     expect(r.out).toMatch(/git: .*(does not appear to be a git repository|not found|No such file)/);
   });
 
+  test('a base manifest that cannot be read fails under CI instead of counting as missing, and skips locally', () => {
+    const origin = repo({}, { [MANIFEST]: manifest({ 'mcp-tool': [] }) });
+    git(origin, 'config', 'uploadpack.allowFilter', 'true');
+    const clone = mkdtempSync(join(tmpdir(), 'gbrain-public-surface-clone-'));
+    roots.push(clone);
+    git(clone, 'clone', '-q', '--filter=blob:none', '--no-tags', '--branch', 'head', `file://${origin}`, '.');
+    git(clone, 'fetch', '-q', '--no-tags', 'origin', '+refs/heads/base:refs/remotes/origin/base');
+    git(clone, 'remote', 'set-url', 'origin', join(clone, 'no-such-remote'));
+    const ci = run(clone, { GBRAIN_SURFACE_BASE_REF: 'origin/base', CI: 'true' });
+    expect(ci.code).toBe(1);
+    expect(ci.out).toContain(`FAIL: check-public-surface: ${MANIFEST} could not be read at origin/base's merge base`);
+    expect(ci.out).toMatch(/\ngit: \S/);
+    const local = run(clone, { GBRAIN_SURFACE_BASE_REF: 'origin/base' });
+    expect(local.code).toBe(0);
+    expect(local.out).toContain(`GBRAIN_CHECK_SKIPPED: ${MANIFEST} could not be read at the merge base`);
+  });
+
   test('a shallow pull-request merge commit whose parent is the base tip needs no fetch', () => {
     const origin = repo({}, { [MANIFEST]: manifest({ 'mcp-tool': ['search', 'think'] }) });
     git(origin, 'checkout', '-q', 'base');

@@ -21,9 +21,9 @@
  *   4. a change to the CLI or agent-contract goldens with no new behavior-changes.d fragment and no changelog.d line
  *      `<!-- public-surface: no-behavior-change: <reason> -->`.
  * The manifest's freshness is regen:all's (scripts/build-public-surface.ts --check). Dates are UTC days;
- * GBRAIN_SURFACE_TODAY (YYYY-MM-DD) overrides today for tests. When the base ref or a merge base is unavailable the
- * check fails under CI=true and skips locally. Fetches (the stable ref, deepening a shallow clone with
- * --filter=blob:none, since GitHub's pack-objects crashes on tree:0 for a shallow clone that is not partial) stop after
+ * GBRAIN_SURFACE_TODAY (YYYY-MM-DD) overrides today for tests. When the base ref, a merge base or a file on the merge
+ * base is unavailable the check fails under CI=true and skips locally. Fetches (the stable ref, deepening a shallow
+ * clone with --filter=blob:none, since GitHub's pack-objects crashes on tree:0 for a shallow clone that is not partial) stop after
  * 20 s and 30 s, or $GBRAIN_SURFACE_FETCH_TIMEOUT_S; a failed fetch prints git's own error. Exit: 0 ok or skipped,
  * 1 refused.
  */
@@ -75,7 +75,7 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
   const today = env.GBRAIN_SURFACE_TODAY || new Date().toISOString().slice(0, 10);
   const git = (...args: string[]) => {
     const r = spawnSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-    return { ok: r.status === 0, out: r.stdout ?? '' };
+    return { ok: r.status === 0, out: r.stdout ?? '', err: (r.stderr ?? '').trim() };
   };
   const fetchTimeout = (seconds: number) => Number(env.GBRAIN_SURFACE_FETCH_TIMEOUT_S) || seconds;
   let fetchError = '';
@@ -121,7 +121,18 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
     return 0;
   }
   const base = mergeBase.out.trim();
-  const onBase = (path: string) => git('cat-file', '-e', `${base}:${path}`).ok;
+  let unreadable: { path: string; error: string } | null = null;
+  const onBase = (path: string) => {
+    const listed = git('ls-tree', '--name-only', base, '--', path);
+    if (!listed.ok) unreadable ??= { path, error: listed.err };
+    return listed.ok && listed.out.trim() === path;
+  };
+  const readBase = (path: string) => {
+    if (!onBase(path)) return null;
+    const shown = git('show', `${base}:${path}`);
+    if (!shown.ok) unreadable ??= { path, error: shown.err };
+    return shown.ok ? shown.out : null;
+  };
   const listDir = (dir: string) => (existsSync(join(root, dir)) ? readdirSync(join(root, dir)).filter(f => f.endsWith('.md') && f !== 'README.md').sort() : []);
   const problems: string[] = [];
 
@@ -139,7 +150,8 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
       !DATE.test(record.remove_after) && 'remove_after: must be a date (YYYY-MM-DD)',
     ].filter(Boolean);
     for (const b of bad) problems.push(`${path}: ${b}`);
-    const baseFront = onBase(path) ? frontOf(git('show', `${base}:${path}`).out) : null;
+    const baseText = readBase(path);
+    const baseFront = baseText === null ? null : frontOf(baseText);
     const baseDate = baseFront ? baseFront.remove_after ?? '' : null;
     if (!bad.length && baseFront?.surface && baseFront.name && (baseFront.surface !== record.surface || baseFront.name !== record.name)) {
       problems.push(`${path}: it named ${baseFront.surface} \`${baseFront.name}\` on ${ref}; a record keeps the surface and name it was announced with, so add a new record for ${record.surface} \`${record.name}\``);
@@ -158,10 +170,25 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
     .map(f => ({ path: `${FRAGMENT_DIR}/${f}`, ...parseNoticeFragment(readFileSync(join(root, FRAGMENT_DIR, f), 'utf8')) }));
   const exceptions = new Set(newNotices.filter(n => n.front.kind === 'breaking' && n.front.exception).map(n => n.front.exception));
 
-  const baseManifest = git('show', `${base}:${MANIFEST}`);
-  if (baseManifest.ok && existsSync(join(root, MANIFEST))) {
+  const unreadableBase = (): number | null => {
+    if (!unreadable) return null;
+    const { path, error } = unreadable;
+    if (env.CI === 'true') {
+      log(`FAIL: check-public-surface: ${path} could not be read at ${ref}'s merge base ${base.slice(0, 12)}, so the check cannot compare with it.`);
+      if (error) log(`git: ${error.split('\n').filter(Boolean).slice(-4).join(' / ').slice(-600)}`);
+      log('Fix:  rerun once origin answers, or fetch full history in the workflow (actions/checkout fetch-depth: 0)');
+      return 1;
+    }
+    log(`GBRAIN_CHECK_SKIPPED: ${path} could not be read at the merge base ${base.slice(0, 12)}`);
+    return 0;
+  };
+
+  const baseManifest = readBase(MANIFEST);
+  const manifestUnread = unreadableBase();
+  if (manifestUnread !== null) return manifestUnread;
+  if (baseManifest !== null && existsSync(join(root, MANIFEST))) {
     const head: PublicSurface = JSON.parse(readFileSync(join(root, MANIFEST), 'utf8'));
-    const dropped = exceptions.has('security') || exceptions.has('data-loss') ? [] : droppedEntries(JSON.parse(baseManifest.out), head);
+    const dropped = exceptions.has('security') || exceptions.has('data-loss') ? [] : droppedEntries(JSON.parse(baseManifest), head);
     const stableRef = env.GBRAIN_SURFACE_STABLE_REF || 'refs/tags/stable';
     const resolveStable = () => git('rev-parse', '--verify', '-q', `${stableRef}^{commit}`);
     let stableCommit = resolveStable();
@@ -191,7 +218,7 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
       if (!record) problems.push(`${surface} \`${name}\` is removed or changed with no ${DEPRECATION_DIR}/<id>.md naming it (surface: ${surface}, name: ${name})${exceptions.has('revert') ? '; it is on stable, so exception: revert does not cover it' : ''}`);
       else if (!matured(record)) problems.push(`${surface} \`${name}\` is removed before its record ${DEPRECATION_DIR}/${record.id}.md allows it (remove_after ${record.remove_after}); keep it working with a warning until then`);
     }
-  } else if (!baseManifest.ok) {
+  } else if (baseManifest === null) {
     log(`check-public-surface: ${ref} has no ${MANIFEST} yet; the removal check starts once it does`);
   }
 
@@ -205,12 +232,16 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
     else if (!matured(record)) problems.push(`${path}: deprecation: ${front.deprecation} has not matured (remove_after ${record.remove_after})`);
   }
 
-  const goldens = git('diff', '--name-only', base, '--', ...GOLDEN_DIRS).out.split('\n').filter(Boolean);
+  const goldenDiff = git('diff', '--name-only', base, '--', ...GOLDEN_DIRS);
+  if (!goldenDiff.ok) unreadable ??= { path: GOLDEN_DIRS.join(', '), error: goldenDiff.err };
+  const goldens = goldenDiff.out.split('\n').filter(Boolean);
   if (goldens.length && !newNotices.length) {
     const waived = listDir(CHANGELOG_FRAGMENT_DIR).some(f => !onBase(`${CHANGELOG_FRAGMENT_DIR}/${f}`) && NO_BEHAVIOR_CHANGE.test(readFileSync(join(root, CHANGELOG_FRAGMENT_DIR, f), 'utf8')));
     if (!waived) problems.push(`CLI or agent-contract goldens changed (${goldens.slice(0, 3).join(', ')}${goldens.length > 3 ? `, +${goldens.length - 3} more` : ''}) with no new ${FRAGMENT_DIR} row; add one with its kind, or put <!-- public-surface: no-behavior-change: <reason> --> in your ${CHANGELOG_FRAGMENT_DIR} fragment`);
   }
 
+  const goldensUnread = unreadableBase();
+  if (goldensUnread !== null) return goldensUnread;
   if (!problems.length) {
     log(`check-public-surface: ok against ${ref} (${records.size} deprecation record(s), ${newNotices.length} new behaviour-change row(s))`);
     return 0;
