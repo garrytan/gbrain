@@ -148,15 +148,35 @@ function entryPaths(level: ShadowLevel, gitPath: string): { path: string; source
 }
 
 /**
+ * #7199 / GST-2843: the earlier committed versions of each entry of `chunk` whose held page is re-screened against them
+ * (`historyOwed`), read in one batched Git read for the batch that drains next and reported per path, so the read never
+ * looks stalled and a pass over many such holds commits each batch before it reads the next one's history. While it reads,
+ * the pass row's `telemetry.step` says how far it got (the beat saves it), so status can name the step a killed pass stopped in.
+ */
+async function readDriftHistories(level: ShadowLevel, chunk: PassEntry[], owed: ReadonlyMap<PassEntry, ShadowPath>, value: ManagedSyncPassValue, onHistoryRead: () => void): Promise<void> {
+  const due = chunk.flatMap(entry => { const shadow = owed.get(entry); return shadow ? [[entry, shadow] as const] : []; });
+  if (!due.length) return;
+  let done = 0;
+  const read = await pathBlobHistories(level.gitRoot, level.baselineCommit ?? level.head, due.map(([, shadow]) => shadow.path), DRIFT_HISTORY_DEPTH, () => {
+    value.telemetry.step = { name: 'drift_history', at: new Date().toISOString(), done: ++done, total: due.length };
+    onHistoryRead();
+  }).finally(() => { delete value.telemetry.step; });
+  for (const [entry, shadow] of due) {
+    const versions = [...new Set(read.get(shadow.path) ?? [])].filter(oid => oid !== shadow.state.level && oid !== shadow.state.baseline).slice(0, DRIFT_HISTORY_VERSIONS);
+    if (versions.length) entry.driftHistory = versions;
+  }
+}
+
+/**
  * The round's candidates as batch entries, with the identities discovery resolves (`discoverManagedSync`): a live page
  * at the origin is the import's page; a new origin takes the slug its path names, and the page holding that slug is
  * taken over when its own origin leaves in this pass (`renameFrom`, its deletion retired), a collision when its origin
  * stays; one new origin whose bytes equal a page leaving at another origin is that page's Git rename (`renameFrom`, the
  * page moves to the new slug). Deletes first, then imports.
  */
-async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: ShadowPath[], imports: ShadowPath[], onHistoryRead?: (path: string) => void):
+async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: ShadowPath[], imports: ShadowPath[]):
   Promise<{ entries: PassEntry[]; collisions: SyncSlugCollision[]; skipped: ShadowPath[]; downgrades: DowngradedRename[];
-    identity: Array<{ entry: ShadowPath; origin: ShadowPath | null; slug: string; ids: { page: string; file: string } }> }> {
+    identity: Array<{ entry: ShadowPath; origin: ShadowPath | null; slug: string; ids: { page: string; file: string } }>; historyOwed: Map<PassEntry, ShadowPath> }> {
   await faultPoint('sync:batch_entries', { sourceId: level.sourceId });
   const working = (entry: ShadowPath) => level.mode === 'working' && entry.state.level !== entry.state.tree;
   const committedOnly = level.strict ? { committedOnly: true as const } : {};
@@ -209,18 +229,20 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
     : entry.result.side === 'unknown' ? entry.state.baseline ?? undefined : undefined;
   // #7199: a side-`unknown` hold an older gbrain wrote after the pass that held it moved the source's last commit past the one
   // the classic sync read; its re-screen also compares the page with the file's last few committed versions before the held one.
-  // GST-2515: one batched read for all of them, reporting each path it finished, so thousands of such holds neither start a Git
-  // process each nor read as a stalled pass.
-  const unscreened = imports.filter(entry => entry.result.side === 'unknown' && entry.pageId !== null && entry.state.hold?.unscreened);
-  const read = unscreened.length ? await pathBlobHistories(level.gitRoot, level.baselineCommit ?? level.head, unscreened.map(entry => entry.path), DRIFT_HISTORY_DEPTH, onHistoryRead) : null;
-  const history = new Map(unscreened.map(entry => [entry.path, [...new Set(read?.get(entry.path) ?? [])].filter(oid => oid !== entry.state.level && oid !== entry.state.baseline).slice(0, DRIFT_HISTORY_VERSIONS)]));
+  // GST-2843: those versions are read per batch, just before the batch drains (readDriftHistories), so a pass over tens of
+  // thousands of such holds commits each batch's holds before it reads the next batch's history.
+  const historyOwed = new Map<PassEntry, ShadowPath>();
   const entries: PassEntry[] = [], collisions: SyncSlugCollision[] = [], skipped: ShadowPath[] = [], identity: Array<{ entry: ShadowPath; origin: ShadowPath | null; slug: string; ids: { page: string; file: string } }> = [];
   const claims = new Map<string, ShadowPath[]>();
   for (const entry of imports) {
     if (step.due()) await step.pause();
     const paths = entryPaths(level, entry.path);
-    const base = { ...paths, ...committedOnly, action: 'import' as const, working: working(entry), level: entry.state.level, ...(entry.result.cls === 'drift' && entry.result.side && entry.result.side !== 'deleted' ? { drift: entry.result.side, ...(driftBaseline(entry) ? { driftBaseline: driftBaseline(entry) } : {}), ...(history.get(entry.path)?.length ? { driftHistory: history.get(entry.path) } : {}) } : {}) };
-    if (entry.state.page) { entries.push({ ...base, slug: entry.slug!, pageId: entry.pageId, revision: entry.revision }); continue; }
+    const base = { ...paths, ...committedOnly, action: 'import' as const, working: working(entry), level: entry.state.level, ...(entry.state.hold?.moved ? { basisMoved: true as const } : {}), ...(entry.result.cls === 'drift' && entry.result.side && entry.result.side !== 'deleted' ? { drift: entry.result.side, ...(driftBaseline(entry) ? { driftBaseline: driftBaseline(entry) } : {}) } : {}) };
+    if (entry.state.page) {
+      const built: PassEntry = { ...base, slug: entry.slug!, pageId: entry.pageId, revision: entry.revision };
+      if (entry.result.cls === 'drift' && entry.result.side === 'unknown' && entry.pageId !== null && entry.state.hold?.unscreened) historyOwed.set(built, entry);
+      entries.push(built); continue;
+    }
     const slug = slugOf.get(entry.path);
     if (!slug) { skipped.push(entry); continue; }
     claims.set(slug, [...claims.get(slug) ?? [], entry]);
@@ -304,7 +326,7 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
   const batch = [...deleteEntries.values(), ...entries.sort((a, b) => a.path.localeCompare(b.path))];
   // The drain freezes the batch's first entry (and reads its blob window) right after: it starts on a turn of its own too.
   await step.pause();
-  return { entries: batch, collisions, skipped, downgrades, identity };
+  return { entries: batch, collisions, skipped, downgrades, identity, historyOwed };
 }
 
 /**
@@ -791,7 +813,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
     }
     value.telemetry = { ...value.telemetry, outcome, stop_reason: stopReason, settled: S.size + (yieldSettled || roundSettled + inBatch), counts: { ...counts, ...passApplyCounts(applied) },
       classes: applied.classes, ...(applied.summary ? { summary: applied.summary } : {}),
-      ...(ended ? { ended_at: new Date().toISOString(), duration_ms: Date.now() - started } : {}) };
+      ...(ended ? { ended_at: new Date().toISOString(), duration_ms: Date.now() - started, step: undefined } : {}) };
     if (outcome === 'blocked' || stopReason === 'not_converged') value.obligations.stuck_since ??= new Date().toISOString();
     await engine.transaction(async tx => { if (fenced) await assertDrainLease(tx, sourceId); await writePassRow(tx, value, { pin, onlyOpen }); });
   };
@@ -892,8 +914,8 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
         writeIds: value.obligations.converged?.writeback ?? [] })) return synced(true);
       const levelInput = { sourceId, context, workingTree: mode === 'working',
         pass: { noSchemaPack: processingOptions.noSchemaPack, episodeFullId: episode?.full_id ?? null, retryConsumed: round > 1 ? retryConsumed : undefined, exclude: opts.exclude, includeHidden: opts.includeHidden, strategy: opts.strategy, bootstrap: markersOwed(),
-          slugMode: value.obligations.slug_mode, cache: levelCache, levelReuse, passId, recorded: applied.recorded, onProgress: beat.report, assertActive, ...(opts.conversionBinding ? { conversion: opts.conversionBinding } : {}) } };
-      const level = await readLevelReporting(engine, levelInput, round, opts.onProgress);
+          slugMode: value.obligations.slug_mode, cache: levelCache, levelReuse, passId, recorded: applied.recorded, onProgress: () => { value.telemetry.step = { name: 'level_read', at: new Date().toISOString() }; beat.report(); }, assertActive, ...(opts.conversionBinding ? { conversion: opts.conversionBinding } : {}) } };
+      const level = await readLevelReporting(engine, levelInput, round, opts.onProgress).finally(() => { delete value.telemetry.step; });
       await faultPoint('sync:level_read', { sourceId, round, level: level ? { statements: level.statements, confirm: level.confirm ?? null, reused: level.reused ?? 0, shadow: level, input: levelInput } : undefined });
       assertActive();
       if (!level) throw new Error(`Source ${sourceId} became a company-brain source during its sync pass.`);
@@ -970,7 +992,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
         return synced(false);
       }
       opts.onProgress?.({ phase: 'managed_sync.round_admit', round: { round, target: head, paths: level.paths.length, imports: imports.length, deletes: deletes.length, in_flight: inFlight.length } });
-      const built = await batchEntries(engine, level, deletes, imports, () => { assertActive(); beat.report(); }).catch(async (error: unknown) => {
+      const built = await batchEntries(engine, level, deletes, imports).catch(async (error: unknown) => {
         if ((error as { code?: string } | null | undefined)?.code === 'page_identity_changed') await save('blocked', 'page_identity_changed');
         throw error;
       });
@@ -992,7 +1014,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
       for (let i = 0; i < built.entries.length; i += PASS_BATCH_MAX) {
         const chunk = built.entries.slice(i, i + PASS_BATCH_MAX), last = !!fold && i + chunk.length >= built.entries.length; opts.onProgress?.({ phase: 'managed_sync.round_batch', round: { round, target: head, paths: level.paths.length, batch: i / PASS_BATCH_MAX + 1, batches: Math.ceil(built.entries.length / PASS_BATCH_MAX), base: i } });
         // A folded stamp writes the pass row with the obligations as they stand when its import is frozen.
-        const stopped = await drain(chunk, last ? { ...await stampFor(level), fold: { ...fold, obligations: structuredClone(value.obligations), batch: chunk.length } } : undefined);
+        const stopped = await readDriftHistories(level, chunk, built.historyOwed, value, () => { assertActive(); beat.report(); }).then(async () => drain(chunk, last ? { ...await stampFor(level), fold: { ...fold, obligations: structuredClone(value.obligations), batch: chunk.length } } : undefined));
         if (stopped) return stop(stopped);
         await consumeRetry(chunk.map(entry => entry.path));
         value.telemetry.remaining = Math.max(0, built.entries.length - i - chunk.length) + inFlight.length + owed.length + mismatch.length;

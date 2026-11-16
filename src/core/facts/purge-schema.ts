@@ -24,6 +24,8 @@
  * purged to someone who already knows it, never what it said.
  */
 
+import { requireLedgerPoliciesSql } from '../derived-state-maintainers.ts';
+
 const RLS = (table: string) => `DO $rls$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
     ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;
@@ -113,10 +115,16 @@ ${FACT_PURGES_SUBJECT_INDEX.sql};
 ${FACT_PURGES_ALL_SUBJECTS_INDEX.sql};
 `;
 
-export const MEMORY_PURGE_GUARD_SQL = `
-CREATE OR REPLACE FUNCTION gbrain_refuse_purged_fact() RETURNS trigger
+/**
+ * The three resurrection guards. Each refuses with writer_coordinator_required (unreadable_state) when row-level
+ * security applies to the writing role on a table it reads and no permissive policy of the role covers it, so an empty
+ * read under RLS never counts as "not purged" (#7632/#7659, derived-state-maintainers.ts). Migration v318 re-creates
+ * the functions alone.
+ */
+export const REFUSE_PURGED_FACT_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gbrain_refuse_purged_fact() RETURNS trigger
   LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
   BEGIN
+    ${requireLedgerPoliciesSql('fact_purges', ['SELECT'], '    ')}
     PERFORM id FROM sources WHERE id = NEW.source_id FOR SHARE;
     IF EXISTS (SELECT 1 FROM fact_purges
       WHERE source_id = NEW.source_id AND visibility = NEW.visibility
@@ -128,14 +136,13 @@ CREATE OR REPLACE FUNCTION gbrain_refuse_purged_fact() RETURNS trigger
     END IF;
     RETURN NEW;
   END
-  $fn$;
-DROP TRIGGER IF EXISTS facts_refuse_purged ON facts;
-CREATE TRIGGER facts_refuse_purged BEFORE INSERT OR UPDATE OF fact, source_id, visibility, entity_slug ON facts
-  FOR EACH ROW EXECUTE FUNCTION gbrain_refuse_purged_fact();
-CREATE OR REPLACE FUNCTION gbrain_refuse_purged_take() RETURNS trigger
+  $fn$`;
+export const REFUSE_PURGED_TAKE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gbrain_refuse_purged_take() RETURNS trigger
   LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
   DECLARE src TEXT; subj TEXT;
   BEGIN
+    ${requireLedgerPoliciesSql('pages', ['SELECT'], '    ')}
+    ${requireLedgerPoliciesSql('take_purges', ['SELECT'], '    ')}
     SELECT p.source_id, p.slug INTO src, subj FROM pages p WHERE p.id = NEW.page_id;
     IF src IS NOT NULL AND EXISTS (SELECT 1 FROM take_purges
       WHERE source_id = src AND (subject = '*' OR subject = subj)
@@ -146,24 +153,34 @@ CREATE OR REPLACE FUNCTION gbrain_refuse_purged_take() RETURNS trigger
     END IF;
     RETURN NEW;
   END
-  $fn$;
-DROP TRIGGER IF EXISTS takes_refuse_purged ON takes;
-CREATE TRIGGER takes_refuse_purged BEFORE INSERT OR UPDATE OF claim, page_id ON takes
-  FOR EACH ROW EXECUTE FUNCTION gbrain_refuse_purged_take();
-CREATE OR REPLACE FUNCTION gbrain_refuse_purged_page() RETURNS trigger
+  $fn$`;
+export const REFUSE_PURGED_PAGE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gbrain_refuse_purged_page() RETURNS trigger
   LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
   BEGIN
     -- No column list on the trigger: a column-scoped trigger would pin pages.source_id and content_hash.
     IF NEW.content_hash IS NOT NULL
-      AND (TG_OP = 'INSERT' OR NEW.content_hash IS DISTINCT FROM OLD.content_hash OR NEW.source_id IS DISTINCT FROM OLD.source_id)
-      AND EXISTS (SELECT 1 FROM page_purges WHERE source_id = NEW.source_id AND content_hash = NEW.content_hash) THEN
-      RAISE EXCEPTION USING ERRCODE = 'P0001',
-        MESSAGE = 'purged_content: this page content was purged from this source and cannot be saved again',
-        DETAIL = json_build_object('table', 'pages', 'hash8', left(NEW.content_hash, 8))::text;
+      AND (TG_OP = 'INSERT' OR NEW.content_hash IS DISTINCT FROM OLD.content_hash OR NEW.source_id IS DISTINCT FROM OLD.source_id) THEN
+      ${requireLedgerPoliciesSql('page_purges', ['SELECT'], '      ')}
+      IF EXISTS (SELECT 1 FROM page_purges WHERE source_id = NEW.source_id AND content_hash = NEW.content_hash) THEN
+        RAISE EXCEPTION USING ERRCODE = 'P0001',
+          MESSAGE = 'purged_content: this page content was purged from this source and cannot be saved again',
+          DETAIL = json_build_object('table', 'pages', 'hash8', left(NEW.content_hash, 8))::text;
+      END IF;
     END IF;
     RETURN NEW;
   END
-  $fn$;
+  $fn$`;
+
+export const MEMORY_PURGE_GUARD_SQL = `
+${REFUSE_PURGED_FACT_FUNCTION_SQL};
+DROP TRIGGER IF EXISTS facts_refuse_purged ON facts;
+CREATE TRIGGER facts_refuse_purged BEFORE INSERT OR UPDATE OF fact, source_id, visibility, entity_slug ON facts
+  FOR EACH ROW EXECUTE FUNCTION gbrain_refuse_purged_fact();
+${REFUSE_PURGED_TAKE_FUNCTION_SQL};
+DROP TRIGGER IF EXISTS takes_refuse_purged ON takes;
+CREATE TRIGGER takes_refuse_purged BEFORE INSERT OR UPDATE OF claim, page_id ON takes
+  FOR EACH ROW EXECUTE FUNCTION gbrain_refuse_purged_take();
+${REFUSE_PURGED_PAGE_FUNCTION_SQL};
 DROP TRIGGER IF EXISTS pages_refuse_purged ON pages;
 CREATE TRIGGER pages_refuse_purged BEFORE INSERT OR UPDATE ON pages
   FOR EACH ROW EXECUTE FUNCTION gbrain_refuse_purged_page();
