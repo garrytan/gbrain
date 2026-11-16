@@ -16,7 +16,7 @@ import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { __setTitleWholeVectorCandidatesForTests, titleWholeVectorCandidates } from '../../src/core/search/title-statement.ts';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
-import { TIMELINE_TITLE_PAGES } from '../fixtures/retrieval-quality/timeline-titles/corpus.ts';
+import { TIMELINE_TITLE_PAGES, TIMELINE_TITLE_QUERIES } from '../fixtures/retrieval-quality/timeline-titles/corpus.ts';
 
 let engine: PGLiteEngine;
 const defaultCap = titleWholeVectorCandidates();
@@ -54,7 +54,27 @@ const titles = async (q: string, remote: boolean) => {
   return { slugs: rows.map(r => r.slug), cut };
 };
 
+const words = (q: string) => q.toLowerCase().split(/\s+/);
+const timelineOnly = (q: string) => TIMELINE_TITLE_PAGES
+  .filter(p => words(q).every(w => p.timeline.toLowerCase().includes(w)) && !words(q).every(w => p.title.toLowerCase().includes(w)))
+  .map(p => p.slug);
+
 describe('title arm: whole-vector candidate cap for local callers (#7082)', () => {
+  for (const q of TIMELINE_TITLE_QUERIES) {
+    test(`under the cap, the local title arm keeps every timeline-only match and remote keeps none: "${q}"`, async () => {
+      const local = (await titles(q, false)).slugs, remote = (await titles(q, true)).slugs;
+      for (const slug of timelineOnly(q)) {
+        expect(local).toContain(slug);
+        expect(remote).not.toContain(slug);
+      }
+    });
+
+    test(`hybrid search returns every timeline-only match: "${q}"`, async () => {
+      const top = (await hybridSearch(engine, q, { limit: 10 })).map(r => r.slug);
+      for (const slug of timelineOnly(q)) expect(top).toContain(slug);
+    });
+  }
+
   test('a term under the cap keeps its timeline matches and reports no cut', async () => {
     const { slugs, cut } = await titles('zircon quarry', false);
     expect(slugs[0]).toBe('projects/zircon-quarry-survey');
