@@ -16,8 +16,8 @@
  *     compared on path boundaries).
  *   - ambiguous: the session's first user turn (whitespace-normalized,
  *     lowercased, at least 40 characters) shares its first 160 characters with
- *     the first user turn of at least 3 other retained sessions (a template
- *     brief). Listed fact by fact; re-attributed only with
+ *     the first user turn of at least 3 other retained sessions with no
+ *     speaker sidecar (a template brief). Listed fact by fact; re-attributed only with
  *     `--include-ambiguous` and the hash of that preview.
  *   - excluded: an evidenced or ambiguous row whose claim and entity also have
  *     an active user-attributed row from a session that is not suspect (the
@@ -61,7 +61,7 @@ import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, sa
 import { corpusFileSessionId, corpusSpoolDir, parseWbFileName, speakerFileName } from '../context/corpus-segments.ts';
 import { readSessionSource } from '../context/corpus-source.ts';
 import { parseCorpusTurns } from '../context/corpus-turns.ts';
-import { DETECTED_PRINCIPAL, readSpeakerSidecar, speakerContextNote } from '../context/session-speaker.ts';
+import { DETECTED_PRINCIPAL, readSpeakerSidecar, speakerContextNote, type SpeakerSidecar } from '../context/session-speaker.ts';
 import { stripPastedContent } from '../transcripts/pasted-content.ts';
 import { wholeBodySnapshot } from '../persistence/segmented-apply.ts';
 import { shellQuote } from '../shell-quote.ts';
@@ -205,21 +205,28 @@ function corpusIndex(corpusDir: string | null): CorpusIndex {
     if (key === 'unread') { index.unreadSessions.add(session); continue; }
     if (!key) continue;
     index.openings.set(session, key);
+    if (sessionSidecar(corpusDir, paths, session)) continue;
     index.openingSessions.set(key, (index.openingSessions.get(key) ?? new Set<string>()).add(session));
   }
   return index;
 }
 
+/** A session's speaker sidecar, read in the corpus root, the spool dir and beside each of its corpus files. */
+function sessionSidecar(corpusDir: string, paths: string[], session: string): { dir: string; sidecar: SpeakerSidecar } | null {
+  for (const dir of new Set([corpusDir, corpusSpoolDir(corpusDir), ...paths.map(path => dirname(path))])) {
+    const sidecar = readSpeakerSidecar(dir, session);
+    if (sidecar) return { dir, sidecar };
+  }
+  return null;
+}
+
 function sessionVerdict(session: string, index: CorpusIndex, opts: AgentSessionOptions, cwdPrefixes: string[]): Verdict {
   const fallbackPrincipal = opts.principal ?? DETECTED_PRINCIPAL;
   const corpusDir = index.corpusDir;
-  const dirs = corpusDir ? [...new Set([corpusDir, corpusSpoolDir(corpusDir), ...(index.files.get(session) ?? []).map(path => dirname(path))])] : [];
-  for (const dir of dirs) {
-    const sidecar = readSpeakerSidecar(dir, session);
-    if (sidecar) {
-      return { klass: 'evidenced', reason: 'speaker_sidecar', principal: sidecar.principal,
-        evidence: `${relative(corpusDir!, join(dir, speakerFileName(session)))} (principal ${sidecar.principal})` };
-    }
+  const found = corpusDir ? sessionSidecar(corpusDir, index.files.get(session) ?? [], session) : null;
+  if (found) {
+    return { klass: 'evidenced', reason: 'speaker_sidecar', principal: found.sidecar.principal,
+      evidence: `${relative(corpusDir!, join(found.dir, speakerFileName(session)))} (principal ${found.sidecar.principal})` };
   }
   if (opts.sessions?.includes(session)) return { klass: 'evidenced', reason: 'operator_session', principal: fallbackPrincipal, evidence: `--session ${session}` };
   const record = corpusDir ? readSessionSource(corpusSpoolDir(corpusDir), session) : null;
@@ -229,7 +236,8 @@ function sessionVerdict(session: string, index: CorpusIndex, opts: AgentSessionO
     if (prefix) return { klass: 'evidenced', reason: 'operator_cwd', principal: fallbackPrincipal, evidence: `cwd ${record.cwd} under --cwd ${prefix}` };
   }
   const key = index.openings.get(session);
-  const others = key ? index.openingSessions.get(key)!.size - 1 : 0;
+  const group = key ? index.openingSessions.get(key) : undefined;
+  const others = group ? group.size - (group.has(session) ? 1 : 0) : 0;
   if (others >= OPENING_MIN_OTHERS) {
     return { klass: 'ambiguous', reason: 'repeated_opening', principal: fallbackPrincipal, evidence: `first user turn shared with ${others} other session(s)` };
   }
@@ -299,8 +307,9 @@ export async function classifyAgentSessionFacts(db: BrainEngine, sourceIds: stri
 /**
  * Active, unresolved `kind: fact` / `holder: self` takes whose every contributing fact is non-user once the facts in
  * `reattributed` are: at least one of them must be in that set or already carry a speaker note, so takes this repair
- * has nothing to do with are never listed. Contributing facts are grouped in one pass over the facts table, never one
- * pass per take (#9503).
+ * has nothing to do with are never listed. Contributing facts are grouped in one pass over the listed sources' facts,
+ * never one pass per take (#9503) and never over other sources: consolidation only links a fact to a take on a page of
+ * the fact's own source.
  */
 export async function agentSessionTakes(db: BrainEngine, sourceIds: string[], reattributed: ReadonlySet<number>, ids?: number[]): Promise<AgentSessionTake[]> {
   const rows = await db.executeRaw<{ id: number | string; source_id: string; slug: string; row_num: number | string; claim: string;
@@ -311,7 +320,7 @@ export async function agentSessionTakes(db: BrainEngine, sourceIds: string[], re
              COALESCE(bool_or(f.attributed_to='other' AND position($3::text in COALESCE(f.context,''))>0), false) AS noted,
              min(f.consolidated_at) AS first_consolidated_at
         FROM facts f
-       WHERE f.consolidated_into IS NOT NULL AND ($2::bigint[] IS NULL OR f.consolidated_into=ANY($2::bigint[]))
+       WHERE f.source_id=ANY($1::text[]) AND f.consolidated_into IS NOT NULL AND ($2::bigint[] IS NULL OR f.consolidated_into=ANY($2::bigint[]))
        GROUP BY f.consolidated_into)
     SELECT t.id, p.source_id, p.slug, t.row_num, t.claim, c.fact_ids, c.user_fact_ids, c.noted
       FROM contributing c JOIN takes t ON t.id=c.take_id JOIN pages p ON p.id=t.page_id
