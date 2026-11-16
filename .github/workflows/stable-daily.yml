@@ -43,6 +43,7 @@ permissions:
   contents: write  # push the stable-v<version> and stable tags and the stable-record branch (stable.json)
   actions: write   # read soak and upgrade matrix runs and their artifacts; dispatch a soak or the matrix
   issues: read     # find the upgrade matrix's open break issue, which holds stable
+  pull-requests: read  # search merged stable:important PRs; without it the search returns no pull requests
 
 concurrency:
   group: promote-stable
