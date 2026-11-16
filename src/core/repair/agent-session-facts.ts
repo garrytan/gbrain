@@ -236,7 +236,8 @@ function sessionVerdict(session: string, index: CorpusIndex, opts: AgentSessionO
     if (prefix) return { klass: 'evidenced', reason: 'operator_cwd', principal: fallbackPrincipal, evidence: `cwd ${record.cwd} under --cwd ${prefix}` };
   }
   const key = index.openings.get(session);
-  const others = key ? index.openingSessions.get(key)!.size - 1 : 0;
+  const group = key ? index.openingSessions.get(key) : undefined;
+  const others = group ? group.size - (group.has(session) ? 1 : 0) : 0;
   if (others >= OPENING_MIN_OTHERS) {
     return { klass: 'ambiguous', reason: 'repeated_opening', principal: fallbackPrincipal, evidence: `first user turn shared with ${others} other session(s)` };
   }
