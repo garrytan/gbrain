@@ -16,6 +16,7 @@
 import type { BrainEngine } from './engine.ts';
 import { loadCompletedMigrations, preferencesPaths, type CompletedMigrationEntry } from './preferences.ts';
 import { schemaVersionAtConnect } from './migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from './schema-migrations/latest.generated.ts';
 
 /**
  * Version strings of every registered host migration, in registry order.
@@ -54,11 +55,13 @@ export async function declinedMigrations(engine: Pick<BrainEngine, 'getConfig'>)
 
 /**
  * Whether this host's upgrade-migration ledger speaks for the brain. The ledger lives under GBRAIN_HOME, so an empty one
- * is a fresh brain only when the brain's schema is new too: an existing brain (schema version above 1 when this process
- * connected) opened from a new machine or with a ledger an older release never wrote still has its upgrade migrations to run.
+ * is a fresh brain only when the brain's schema is new too: an existing brain an older release last opened (its schema
+ * version above 1 and behind this release when this process connected) still has its upgrade migrations to run. A brain
+ * whose schema is already current was opened by this release before, so a new or rebuilt GBRAIN_HOME stays quiet there.
  */
 export function upgradeLedgerApplies(engine: object): boolean {
-  return loadCompletedMigrations().length > 0 || (schemaVersionAtConnect(engine) ?? 0) > 1;
+  const atConnect = schemaVersionAtConnect(engine) ?? 0;
+  return loadCompletedMigrations().length > 0 || (atConnect > 1 && atConnect < LATEST_SCHEMA_VERSION);
 }
 
 /** Bug 3 attempt cap — consecutive partials before a version counts wedged. */

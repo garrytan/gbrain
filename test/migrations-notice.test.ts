@@ -12,6 +12,7 @@ import { pendingUpgradeMigrationsNotice } from '../src/cli/migrations-notice.ts'
 import { MIGRATION_VERSIONS } from '../src/core/migration-ledger.ts';
 import { appendCompletedMigration } from '../src/core/preferences.ts';
 import { noteSchemaVersion } from '../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../src/core/schema-migrations/latest.generated.ts';
 
 const engine = { getConfig: async () => null } as never;
 const homes: string[] = [];
@@ -83,12 +84,18 @@ describe('pendingUpgradeMigrationsNotice', () => {
     expect(notice).toMatchObject({ code: 'migrations_pending' });
   });
 
-  test('an empty ledger on a brain whose schema already existed at connect still gets the notice', async () => {
+  test('an empty ledger on a brain an older release last opened still gets the notice', async () => {
     const existing = { getConfig: async () => null } as never;
-    noteSchemaVersion(existing, 300);
+    noteSchemaVersion(existing, LATEST_SCHEMA_VERSION - 1);
     const notice = await inHome(() => pendingUpgradeMigrationsNotice(existing, 'query', latest));
     expect(notice).toMatchObject({ code: 'migrations_pending' });
     expect(notice!.why).toContain(latest);
+  });
+
+  test('an empty ledger on a brain whose schema is already current (a new or rebuilt GBRAIN_HOME) gets no notice', async () => {
+    const current = { getConfig: async () => null } as never;
+    noteSchemaVersion(current, LATEST_SCHEMA_VERSION);
+    expect(await inHome(() => pendingUpgradeMigrationsNotice(current, 'query', latest))).toBeNull();
   });
 
   test('an empty ledger on a brain created in this run (schema version 1 at connect) gets no notice', async () => {

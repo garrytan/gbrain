@@ -6,7 +6,7 @@
 - A folder whose `.git` is an empty file is no longer taken as a git checkout.
 - Release notes drop a trailing internal issue code, like `(ABC-12)`, from each line of the change list.
 - `gbrain init --force --embedding-model <model>` records the new model and width in the database as well as the config file, so the two agree (#9451).
-- `gbrain serve` names upgrade migrations that haven't run, once at startup on stderr, and `gbrain doctor` reports them too, also on an existing brain whose local upgrade ledger is empty.
+- `gbrain serve` names upgrade migrations that haven't run, once at startup on stderr, and `gbrain doctor` reports them too, also on a brain an older release last opened whose local upgrade ledger is empty.
 
 ### For contributors
 - The key-files page `google-and-loops.md` was at its 60,000-byte cap, so its harness and MCP entries moved unchanged to `google-and-loops-more.md`; the Google source entry now says what an unmanaged `--dry-run` returns.

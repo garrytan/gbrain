@@ -181,7 +181,7 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
     // Registered host migrations get_health lists as `pending` (no ledger
     // entry, or reset by a retry marker) that a NEWER migration already ran
     // past were skipped, not merely not reached yet. Versions above the newest
-    // run are the next apply-migrations' ordinary work and stay quiet here.
+    // run are the next apply-migrations' ordinary work and stay out of this list.
     // #8720: without an engine (--fast) the config that declines an opt-out
     // migration is unreadable, so such a version is unknown, never pending.
     const newestRun = completedVersions.reduce<string | null>((a, v) => (a === null || compareVersions(v, a) > 0 ? v : a), null);
