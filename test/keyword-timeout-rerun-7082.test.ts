@@ -7,16 +7,16 @@
  * the entry's TTL (`search.keyword_timeout_negative_cache_seconds`, still the longest skip). A re-run whose
  * statement answers ends the skip, so the next search runs the keyword statement again. At most one re-run is
  * in flight per engine, a re-run starts only when the gate reports an idle connection (otherwise it waits for
- * the next step instead of queueing), its rows are thrown away, it writes no timeout counter row, and it runs
+ * the next step instead of queueing), none starts once shutdown begins, its rows are thrown away, it writes no timeout counter row, and it runs
  * outside the async context of the search that recorded the timeout. Regression that fails it: master keeps
  * the skip for the whole TTL even when the statement would now answer, so a cold-cache timeout costs every
  * search its keyword results for ten minutes.
  *
- * Unit arm: the cache over a manual scheduler and clock. Postgres arm (DATABASE_URL): a held lock makes the
+ * Unit arm: the cache over a manual scheduler and clock, and the engine's pool gate. Postgres arm (DATABASE_URL): a held lock makes the
  * real keyword statement time out; once the lock is released the re-run answers through the real pool gate.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import postgres from '#postgres';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import {
@@ -24,6 +24,8 @@ import {
   KEYWORD_TIMEOUT_STATS_KEY,
   KeywordSkippedAfterTimeoutError,
   KeywordTimeoutNegativeCache,
+  keywordRerunPoolIdle,
+  setKeywordTimeoutReruns,
   type KeywordRerunScheduler,
 } from '../src/core/postgres-engine/keyword-timeout-cache.ts';
 import { KEYWORD_STATEMENT_TIMEOUT_KEY } from '../src/core/postgres-engine/keyword-statement-timeout.ts';
@@ -61,16 +63,18 @@ function manualScheduler() {
 function setup(opts: { ttlSeconds?: number; canRerun?: () => boolean; serving?: boolean } = {}) {
   let clock = 1_000_000;
   const sched = manualScheduler();
-  const cache = new KeywordTimeoutNegativeCache(() => clock, sched.schedule);
+  const cache = new KeywordTimeoutNegativeCache(() => clock, sched.schedule, opts.canRerun ?? (() => true));
   const writes: string[] = [];
   const db = { executeRaw: async (sql: string) => { writes.push(sql); return sql.includes('SELECT value FROM config') ? [{ value: String(opts.ttlSeconds ?? 600) }] : []; } };
-  if (opts.serving !== false) cache.enableReruns({ canRerun: opts.canRerun ?? (() => true) });
+  setKeywordTimeoutReruns(opts.serving !== false);
   const run = <T>(key: string, exec: () => Promise<T>) => cache.run(true, db as never, [key], exec);
   const outcome = async (key: string, exec: () => Promise<unknown>) => {
     try { await run(key, exec); return 'ran'; } catch (e) { return e instanceof KeywordSkippedAfterTimeoutError ? 'skipped' : 'failed'; }
   };
   return { cache, sched, run, outcome, writes, advance: (ms: number) => { clock += ms; } };
 }
+
+afterEach(() => setKeywordTimeoutReruns(false));
 
 describe('keyword timeout re-run (#7082): serving process', () => {
   test('a successful background re-run ends the skip, and its rows reach no caller', async () => {
@@ -146,14 +150,15 @@ describe('keyword timeout re-run (#7082): serving process', () => {
     expect(reruns).toBe(2);
   });
 
-  test('shutdown cancels every scheduled re-run and starts no new one', async () => {
+  test('once shutdown begins no scheduled re-run starts and none is scheduled', async () => {
     const s = setup();
     let calls = 0;
     const exec = async () => { calls++; throw TIMEOUT; };
     await s.outcome('q', exec);
     expect(s.sched.pending()).toHaveLength(1);
-    s.cache.disableReruns();
-    expect(s.sched.pending()).toEqual([]);
+    setKeywordTimeoutReruns(false);
+    await s.sched.fire();
+    expect(calls).toBe(1);
     await s.outcome('other', exec);
     expect(s.sched.pending()).toEqual([]);
     expect(calls).toBe(2);
@@ -182,14 +187,14 @@ describe('keyword timeout re-run (#7082): one-shot processes', () => {
     expect(await s.outcome('q', async () => [])).toBe('ran');
   });
 
-  test('the engine gate refuses while the engine is not connected', () => {
-    const engine = new PostgresEngine();
-    let gate: { canRerun(): boolean } | undefined;
-    (engine as unknown as { keywordTimeouts: { enableReruns: (g: { canRerun(): boolean }) => void; disableReruns: () => void } }).keywordTimeouts = {
-      enableReruns: g => { gate = g; }, disableReruns: () => {},
-    };
-    engine.enableKeywordTimeoutReruns();
-    expect(gate?.canRerun()).toBe(false);
+  test('the engine gate needs an open pool with an idle connection and no waiting query', () => {
+    const pool = (busy: number, queued: number) => ({ pool: { max: 3, open: 3 - busy, busy, full: 0, reserved: 0, connecting: 0, closed: 0, ended: 0, queued } });
+    expect(keywordRerunPoolIdle(null, null)).toBe(false);
+    expect(keywordRerunPoolIdle(pool(0, 0), null)).toBe(true);
+    expect(keywordRerunPoolIdle(pool(0, 0), Promise.resolve())).toBe(false);
+    expect(keywordRerunPoolIdle(pool(3, 0), null)).toBe(false);
+    expect(keywordRerunPoolIdle(pool(1, 2), null)).toBe(false);
+    expect(keywordRerunPoolIdle({}, null)).toBe(false);
   });
 });
 
@@ -216,8 +221,9 @@ if (testBackends().includes('postgres')) {
       const serving = new PostgresEngine();
       await serving.connect({ database_url: databaseUrl, poolSize: 3 });
       const sched = manualScheduler();
-      (serving as unknown as { keywordTimeouts: KeywordTimeoutNegativeCache }).keywordTimeouts = new KeywordTimeoutNegativeCache(Date.now, sched.schedule);
-      serving.enableKeywordTimeoutReruns();
+      const priv = serving as unknown as { keywordTimeouts: KeywordTimeoutNegativeCache; _sql: unknown; _disconnectPromise: unknown };
+      priv.keywordTimeouts = new KeywordTimeoutNegativeCache(Date.now, sched.schedule, () => keywordRerunPoolIdle(priv._sql, priv._disconnectPromise));
+      setKeywordTimeoutReruns(true);
       let release!: () => void;
       const released = new Promise<void>(resolve => { release = resolve; });
       let locked!: () => void;

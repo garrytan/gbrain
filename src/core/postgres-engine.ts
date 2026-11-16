@@ -163,7 +163,7 @@ import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyS
 import type { SegmentDerivationInput, SegmentDerivationKind, SegmentDerivationRow } from './page-body/derivations.ts';
 import { hasCJK } from './cjk.ts';
 import { searchKeywordCJK as searchKeywordCJKImpl } from './engine-sql/cjk-search.ts';
-import { KeywordTimeoutNegativeCache } from './postgres-engine/keyword-timeout-cache.ts';
+import { KeywordTimeoutNegativeCache, keywordRerunPoolIdle } from './postgres-engine/keyword-timeout-cache.ts';
 import * as titlesImpl from './engine-sql/titles.ts';
 import * as keywordPagesImpl from './engine-sql/keyword-pages.ts';
 import type { CjkKeywordCtx } from './search/cjk-keyword-sql.ts';
@@ -219,7 +219,7 @@ export class PostgresEngine implements BrainEngine {
   readonly [ENGINE_ROOT]: object = this;
   private vectorIterativeScan?: Promise<boolean>;
   private keywordStatementTimeout?: Promise<string>;
-  private keywordTimeouts = new KeywordTimeoutNegativeCache();
+  private keywordTimeouts = new KeywordTimeoutNegativeCache(Date.now, undefined, () => keywordRerunPoolIdle(this._sql, this._disconnectPromise)); // #7082
   private readonly vectorScope = vectorScopeLoader(() => this.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL), ids => this.executeRaw<ScopeChunkCount>(SCOPE_CHUNKS_SQL, [ids]));
   /** Transaction clones keep chunk invalidation and replacement atomic. */
   private _chunkWritesInTransaction = false;
@@ -230,24 +230,6 @@ export class PostgresEngine implements BrainEngine {
   registerBeforeDisconnect(stop: () => Promise<void>): () => void {
     this._beforeDisconnect.add(stop);
     return () => { this._beforeDisconnect.delete(stop); };
-  }
-
-  /**
-   * #7082: a serving process lets the keyword timeout cache re-run a timed-out statement in the background
-   * (postgres-engine/keyword-timeout-cache.ts), only while this engine is open and its pool has an idle connection
-   * and no waiting query. Disconnecting, or disableKeywordTimeoutReruns at shutdown, turns them off again.
-   */
-  enableKeywordTimeoutReruns(): void {
-    this.keywordTimeouts.enableReruns({ canRerun: () => {
-      if (!this._sql || this._disconnectPromise) return false;
-      const pool = driverPoolStats(this._sql);
-      return pool !== null && pool.checked_out < pool.max && pool.waiters === 0;
-    } });
-    this.registerBeforeDisconnect(async () => this.keywordTimeouts.disableReruns());
-  }
-
-  disableKeywordTimeoutReruns(): void {
-    this.keywordTimeouts.disableReruns();
   }
 
   private _sql: ReturnType<typeof postgres> | null = null;
