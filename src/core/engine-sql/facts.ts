@@ -176,12 +176,11 @@ export async function expireFact(exec: SqlExecutor, id: number, opts?: { superse
     const at = opts?.at ?? new Date();
     const supersededBy = opts?.supersededBy ?? null;
     const successor = opts?.successorFrom ?? null;
-    const result = await exec.run(successor ? sqlFragment`
+    const result = await exec.run(sqlFragment`
       UPDATE facts SET expired_at = ${at}, superseded_by = COALESCE(${supersededBy}, superseded_by),
-        valid_until = CASE WHEN valid_from < ${successor}::timestamptz AND ${successor}::timestamptz < COALESCE(valid_until, now()) THEN ${successor}::timestamptz ELSE LEAST(COALESCE(valid_until, now()), now()) END
-      WHERE id = ${id} AND expired_at IS NULL
-    ` : sqlFragment`
-      UPDATE facts SET expired_at = ${at}, superseded_by = COALESCE(${supersededBy}, superseded_by)
+        valid_until = CASE WHEN ${successor}::timestamptz IS NULL THEN valid_until
+          WHEN valid_from < ${successor}::timestamptz AND ${successor}::timestamptz < COALESCE(valid_until, now()) THEN ${successor}::timestamptz
+          ELSE LEAST(COALESCE(valid_until, now()), now()) END
       WHERE id = ${id} AND expired_at IS NULL
     `);
     return result.affectedRows > 0;

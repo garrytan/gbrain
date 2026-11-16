@@ -1131,10 +1131,8 @@ export interface SearchResult {
    * entity's page, or a page that links to it or names it (newest first).
    */
   entity_anchored?: 'entity' | 'linked';
-  /** Set on a saved-fact row the `search.query_facts_arm` arm added (search/facts-arm.ts); page_id is 0. */
-  fact_row?: { id: number; valid_from: string; valid_until: string | null; source?: string; from_quoted_page?: true;
-    /** GBRA-574 A1: when the fact was said (its source page's observation date, under the caller's read policy); `observed_unavailable` when that read failed. */
-    observed?: string; observed_unavailable?: true };
+  /** Set on a saved-fact row the `search.query_facts_arm` arm added (search/facts-arm.ts); page_id is 0. `observed`: when it was said; `observed_unavailable`: that read failed. */
+  fact_row?: { id: number; valid_from: string; valid_until: string | null; source?: string; from_quoted_page?: true; observed?: string; observed_unavailable?: true };
   /** Fact rows only, and what callers see of them: never a page (no slug or id); follow with `follow_up`, read `page_slug` when the entity page exists. */
   result_type?: 'fact'; fact_id?: string; page_slug?: string; follow_up?: { op: 'recall'; args: Record<string, string> };
   /** #7600, #8042: a row of third-party text (a chat page or a fact saved from one), returned fenced as quoted source material with its tool-call blocks summarized (search/transcript-quote.ts). */
@@ -2107,8 +2105,7 @@ export const DEGRADED_STAGES = [
   'keyword_candidates_incomplete',
   'projection_pending', 'projection_by_design',
   'projection_status_unknown',
-  'keyword_count_unavailable', 'saved_facts_withheld',
-  'fact_observed_date_unavailable', // GBRA-574 A1: fact rows show observed unknown because the source-page read failed
+  'keyword_count_unavailable', 'saved_facts_withheld', 'fact_observed_date_unavailable',
 ] as const;
 export type DegradedStage = (typeof DEGRADED_STAGES)[number];
 

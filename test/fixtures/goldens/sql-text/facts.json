@@ -83,10 +83,14 @@
             "params": [
               "Date",
               "null",
+              "null",
+              "null",
+              "null",
+              "null",
               "number"
             ],
-            "sql": "UPDATE facts SET expired_at = $1, superseded_by = COALESCE($2, superseded_by) WHERE id = $3 AND expired_at IS NULL",
-            "textSha256": "38221fd054ba68ba27987a96d101fc7b5b74a790b8b7c01dca3f2a8dd32c4629"
+            "sql": "UPDATE facts SET expired_at = $1, superseded_by = COALESCE($2, superseded_by), valid_until = CASE WHEN $3::timestamptz IS NULL THEN valid_until WHEN valid_from < $4::timestamptz AND $5::timestamptz < COALESCE(valid_until, now()) THEN $6::timestamptz ELSE LEAST(COALESCE(valid_until, now()), now()) END WHERE id = $7 AND expired_at IS NULL",
+            "textSha256": "e97a0fd01fd4604c55927277dac76239fabd3eed23462b55896244908fcf79ec"
           }
         ],
         "supersededBy": [
@@ -95,10 +99,14 @@
             "params": [
               "Date",
               "number",
+              "null",
+              "null",
+              "null",
+              "null",
               "number"
             ],
-            "sql": "UPDATE facts SET expired_at = $1, superseded_by = COALESCE($2, superseded_by) WHERE id = $3 AND expired_at IS NULL",
-            "textSha256": "38221fd054ba68ba27987a96d101fc7b5b74a790b8b7c01dca3f2a8dd32c4629"
+            "sql": "UPDATE facts SET expired_at = $1, superseded_by = COALESCE($2, superseded_by), valid_until = CASE WHEN $3::timestamptz IS NULL THEN valid_until WHEN valid_from < $4::timestamptz AND $5::timestamptz < COALESCE(valid_until, now()) THEN $6::timestamptz ELSE LEAST(COALESCE(valid_until, now()), now()) END WHERE id = $7 AND expired_at IS NULL",
+            "textSha256": "e97a0fd01fd4604c55927277dac76239fabd3eed23462b55896244908fcf79ec"
           }
         ]
       },
