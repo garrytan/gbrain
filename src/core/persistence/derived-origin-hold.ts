@@ -17,7 +17,7 @@ export const DERIVED_ORIGIN_PARKED_CODE = 'derived_origin_parked';
  * `blocking_slug`: the derived page whose label write failed; null when its dependents could not be read. `held_request_id`: the owner's
  * explicit purge this park held (a retention purge leaves it unset); a later park of the same page keeps it.
  */
-export interface DerivedOriginPark { source_id: string; slug: string; page_id: number; blocking_slug: string | null; code: string | null; reason: string; parked_at: string; held_request_id?: string }
+export interface DerivedOriginPark { source_id: string; slug: string; page_id: number; blocking_slug: string | null; code: string | null; reason: string; parked_at: string; held_request_id?: string; held_deleted_us?: string }
 
 /** The command that finishes an owner purge a park held: `gbrain delete` makes a new request_id, and an explicit purge writes the purge tombstones. */
 export const finishPurgeArgv = (sourceId: string, slug: string): string[] => ['gbrain', 'delete', slug, '--purge', '--source-id', sourceId];
@@ -36,7 +36,8 @@ export async function parkDerivedOrigin(engine: SqlEngine, park: Omit<DerivedOri
   const row: DerivedOriginPark = { ...park, parked_at: new Date().toISOString() };
   await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
     ON CONFLICT (op,fingerprint) DO UPDATE SET updated_at=now(), completed_keys=CASE WHEN (op_checkpoints.completed_keys->0) ? 'held_request_id' AND NOT (EXCLUDED.completed_keys->0) ? 'held_request_id'
-      THEN jsonb_set(EXCLUDED.completed_keys, '{0,held_request_id}', op_checkpoints.completed_keys->0->'held_request_id') ELSE EXCLUDED.completed_keys END`, [DERIVED_ORIGIN_PARK_OP, String(park.page_id), JSON.stringify([row])]);
+      THEN jsonb_build_array((EXCLUDED.completed_keys->0) || jsonb_strip_nulls(jsonb_build_object('held_request_id', op_checkpoints.completed_keys->0->'held_request_id',
+        'held_deleted_us', op_checkpoints.completed_keys->0->'held_deleted_us'))) ELSE EXCLUDED.completed_keys END`, [DERIVED_ORIGIN_PARK_OP, String(park.page_id), JSON.stringify([row])]);
 }
 
 /**
@@ -52,13 +53,27 @@ export interface OwedPurge { source_id: string; page_id: number; deleted_us: str
 const DELETED_US = (alias: string) => `floor(extract(epoch FROM ${alias}.deleted_at)*1000000)::bigint::text`;
 const OWED_TOMBSTONE = `EXISTS (SELECT 1 FROM pages p WHERE p.id::text = o.fingerprint AND p.deleted_at IS NOT NULL AND ${DELETED_US('p')} = o.completed_keys->0->>'deleted_us')`;
 
-/** Records that the owner's purge `requestId` is owed for page `pageId`'s current tombstone; a page that is not a tombstone records nothing. */
+/**
+ * Records that the owner's purge `requestId` is owed for page `pageId`'s current tombstone; a page that is not a tombstone
+ * records nothing. The page's park, when it holds that purge, is bound to the same tombstone (`held_deleted_us`), so a page
+ * restored and deleted again never inherits the old hold (releaseStaleHolds).
+ */
 export async function recordOwedPurge(engine: SqlEngine, pageId: number, requestId: string): Promise<void> {
   await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
     SELECT $1, p.id::text, jsonb_build_array(jsonb_build_object('source_id', p.source_id, 'page_id', p.id, 'deleted_us', ${DELETED_US('p')}, 'request_id', $3::text))
     FROM pages p WHERE p.id = $2 AND p.deleted_at IS NOT NULL
     ON CONFLICT (op,fingerprint) DO UPDATE SET updated_at=now(), completed_keys=EXCLUDED.completed_keys
       WHERE op_checkpoints.completed_keys->0->>'deleted_us' IS DISTINCT FROM EXCLUDED.completed_keys->0->>'deleted_us'`, [OWED_PURGE_OP, pageId, requestId]);
+  await engine.executeRaw(`UPDATE op_checkpoints o SET updated_at=now(), completed_keys=jsonb_set(o.completed_keys, '{0,held_deleted_us}', to_jsonb(${DELETED_US('p')}))
+    FROM pages p WHERE o.op=$1 AND o.fingerprint=p.id::text AND p.id=$2 AND p.deleted_at IS NOT NULL AND o.completed_keys->0->>'held_request_id' = $3::text`,
+    [DERIVED_ORIGIN_PARK_OP, pageId, requestId]);
+}
+
+/** Drops the owner purge a park holds once its page's tombstone is not the one the hold was recorded for (restored, deleted again). */
+export async function releaseStaleHolds(engine: SqlEngine): Promise<void> {
+  await engine.executeRaw(`UPDATE op_checkpoints o SET updated_at=now(), completed_keys=jsonb_build_array((o.completed_keys->0) - 'held_request_id' - 'held_deleted_us')
+    FROM pages p WHERE o.op=$1 AND o.fingerprint=p.id::text AND (o.completed_keys->0) ? 'held_deleted_us'
+      AND (p.deleted_at IS NULL OR ${DELETED_US('p')} <> o.completed_keys->0->>'held_deleted_us')`, [DERIVED_ORIGIN_PARK_OP]);
 }
 
 /** Read-only: every owed purge whose tombstone still exists as recorded. */

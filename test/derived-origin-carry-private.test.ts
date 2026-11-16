@@ -567,7 +567,7 @@ for (const kind of testBackends()) {
       expect(await owedRows(id)).toEqual([]);
     }, 240_000);
 
-    test('a held owner purge the owner restores and deletes again before any purge run owes nothing: the restore drops the park that held it, so a later run purges the page as retention without tombstones (GST-2766)', async () => {
+    test('a held owner purge the owner restores and deletes again before any purge run owes nothing: the hold is bound to the tombstone it held, so a later run purges the page as retention without tombstones (GST-2766)', async () => {
       const k = 'owedredelete';
       await seed(k);
       const origin = slugOf(k, 'origin');
@@ -578,6 +578,23 @@ for (const kind of testBackends()) {
       expect(await owedRows(id)).toEqual([]);
       await softDelete(origin);
       const first = await purgeDeletedPagesCoordinated(engine, 0, { automatic: true });
+      const second = await purgeDeletedPagesCoordinated(engine, 0, { automatic: true });
+      expect([...first.slugs, ...second.slugs]).toContain(origin);
+      const [{ n }] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_purges WHERE source_id=$1 AND slug=$2', [SRC, origin]);
+      expect(n).toBe(0);
+      expect(await owedRows(id)).toEqual([]);
+    }, 240_000);
+
+    test('a held owner purge whose page comes back through the engine restore (the large-page, guest and atoms restores share it) and is deleted again owes nothing, and the park no longer names the old request (GST-2766)', async () => {
+      const k = 'owedengine';
+      await seed(k);
+      const origin = slugOf(k, 'origin');
+      const id = Number((await row(origin))!.id);
+      await parkByFailedLabel(origin);
+      expect(await engine.restorePage(origin, { sourceId: SRC })).toBe(true);
+      await softDelete(origin);
+      const first = await purgeDeletedPagesCoordinated(engine, 0, { automatic: true });
+      expect((await readDerivedOriginParks(engine)).filter(park => park.page_id === id).map(park => park.held_request_id ?? null)).not.toContainEqual(expect.any(String));
       const second = await purgeDeletedPagesCoordinated(engine, 0, { automatic: true });
       expect([...first.slugs, ...second.slugs]).toContain(origin);
       const [{ n }] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_purges WHERE source_id=$1 AND slug=$2', [SRC, origin]);
