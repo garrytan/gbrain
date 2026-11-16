@@ -10,6 +10,9 @@
  *   read-scope bands, else the structured handoff `doctor_tier_unavailable`.
  * - `/admin/api/ops` is served from one ops run a minute.
  * - Capacity fixes verify through MCP `get_brain_health` as well as the CLI.
+ * - A known check omitted by the focused report is explicitly unmeasured;
+ *   it cannot turn a single or mixed selection into a clean bill of health.
+ *   The registered operation tests below fail on the former filter-only path.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { createServer, type Server } from 'http';
@@ -25,6 +28,7 @@ import { capacityVerify } from '../src/core/persistence/capacity-view.ts';
 import { runScopedRemoteDoctor } from '../src/core/doctor-remote-tier.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
+import type { DoctorReport } from '../src/commands/doctor.ts';
 
 let engine: PGLiteEngine;
 
@@ -122,6 +126,8 @@ describe('get_brain_health bands', () => {
 });
 
 describe('run_doctor tier / only', () => {
+  const selected = async (only: string[]) => await operations.find(o => o.name === 'run_doctor')!.handler(ctx(), { only }) as DoctorReport;
+
   test('tier ops runs only the ops sections on the serve', async () => {
     const report = await runRemoteDoctorTier(ctx({ remote: false }), { tier: 'ops' });
     const ops = opsCheckNames();
@@ -135,6 +141,58 @@ describe('run_doctor tier / only', () => {
     const report = await runRemoteDoctorTier(ctx(), { only: ['persistence_capacity'] });
     expect(report.checks.map((c) => c.name)).toEqual(['persistence_capacity']);
   });
+
+  test('a known check missing from the focused report is explicitly unmeasured', async () => {
+    const report = await selected(['person_title_duplicates']);
+    expect(report.status).toBe('warnings');
+    expect(report.complete).toBeUndefined();
+    expect(report.unknown_count).toBeUndefined();
+    expect(report.checks.map(c => c.name)).toEqual(['person_title_duplicates']);
+    expect(report.checks[0]).toMatchObject({
+      status: 'warn', details: { health: 'unknown', reason: 'not_measured', exact: false },
+    });
+  });
+
+  test('a mixed selection preserves measured checks and names every unmeasured check once', async () => {
+    const measured = await operations.find(o => o.name === 'run_doctor')!.handler(ctx(), {}) as DoctorReport;
+    const measuredConnection = measured.checks.find(c => c.name === 'connection');
+    if (!measuredConnection) throw new Error('The focused report did not produce the connection control');
+    const report = await selected(['connection', 'person_title_duplicates', 'person_title_duplicates']);
+    expect(report.status).toBe('warnings');
+    expect(report.complete).toBeUndefined();
+    expect(report.unknown_count).toBeUndefined();
+    expect(report.checks.map(c => c.name)).toEqual(['connection', 'person_title_duplicates']);
+    expect(report.checks[0]).toEqual(measuredConnection);
+    expect(report.checks[1]).toMatchObject({
+      status: 'warn', details: { health: 'unknown', reason: 'not_measured', exact: false },
+    });
+  });
+
+  test('an actually measured focused check remains healthy', async () => {
+    const report = await selected(['connection']);
+    expect(report.status).toBe('healthy');
+    expect(report.checks.map(c => c.name)).toEqual(['connection']);
+    expect(report.checks[0]!.status).toBe('ok');
+    expect(report.checks[0]!.details?.health).not.toBe('unknown');
+  });
+
+  for (const only of [['person_title_duplicates'], ['connection', 'person_title_duplicates']]) {
+    test(`ops refuses a selection outside its tier: ${only.join(', ')}`, async () => {
+      await expect(operations.find(o => o.name === 'run_doctor')!.handler(ctx(), { tier: 'ops', only }))
+        .rejects.toMatchObject({ code: 'invalid_params' });
+    });
+  }
+
+  for (const name of ['connection', 'pgbouncer_prepare', 'db_repair_recurrence']) {
+    test(`an explicit ops selection still accepts the connection lane: ${name}`, async () => {
+      expect(opsCheckNames().has(name)).toBe(false);
+      const report = await operations.find(o => o.name === 'run_doctor')!.handler(ctx(), { tier: 'ops', only: [name] }) as DoctorReport;
+      expect(report.status).toBe('healthy');
+      expect(report.complete).toBe(true);
+      expect(report.checks.map(c => c.name)).toEqual([name]);
+      expect(report.checks[0]!.status).toBe('ok');
+    });
+  }
 
   test('other tiers and unknown names are invalid_params', async () => {
     await expect(runRemoteDoctorTier(ctx(), { tier: 'deep' })).rejects.toMatchObject({ code: 'invalid_params' });

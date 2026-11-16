@@ -5,6 +5,11 @@
  * safety notice whose fix applies them (the remediate consent path already
  * connects this way, test/agent-journey.serial.test.ts).
  *
+ * #8450: remediate dry-runs must preserve that same pre-migration state.
+ * Reverting their probe-only startup changes the stored version before the
+ * preview runs. Existing consent/plan tests miss the dry-run dispatch arm;
+ * these cases use the existing real CLI fixture, with no production seam.
+ *
  * Serial: real CLI subprocesses against a temp PGLite brain.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -55,6 +60,32 @@ describe('doctor --remediation-plan on a pending-migration brain', () => {
     expect(r.stdout).toContain('apply: gbrain apply-migrations --yes');
     await withBrain(home, async engine => expect(await engine.getConfig('version')).toBe(pending));
   }, 150_000);
+
+  for (const extra of [[], ['--include-repairs', '--no-embed']]) {
+    test(`--remediate --dry-run ${extra.join(' ')} preserves pending migrations and queues no work`, async () => {
+      const before = await withBrain(home, async engine => {
+        await engine.setConfig('version', pending);
+        return {
+          config: await engine.executeRaw('SELECT key, value FROM config ORDER BY key'),
+          jobs: await engine.executeRaw('SELECT id, status FROM minion_jobs ORDER BY id'),
+        };
+      });
+      const args = ['doctor', '--remediate', '--dry-run', ...extra, '--json'];
+      const r = await gb(home, args);
+      expect(r.exitCode, r.stderr.slice(-2000)).toBe(0);
+      const doc = oneDocument(r, args.join(' '));
+      expect(typeof doc.brain_score_initial).toBe('number');
+      expect(doc.repairs_completed).toBe(0);
+      expect(doc.healthy).toBe(false);
+      expect(doc.submitted.every((step: { status: string }) => step.status === 'dry_run')).toBe(true);
+      await withBrain(home, async engine => {
+        expect(await engine.getConfig('version')).toBe(pending);
+        expect(await hasPendingMigrations(engine)).toBe(true);
+        expect(await engine.executeRaw('SELECT key, value FROM config ORDER BY key')).toEqual(before.config);
+        expect(await engine.executeRaw('SELECT id, status FROM minion_jobs ORDER BY id')).toEqual(before.jobs);
+      });
+    }, 150_000);
+  }
 
   test('following the notice fix migrates; the next plan has no notice', async () => {
     const applied = await gb(home, ['apply-migrations', '--yes', '--no-autopilot-install'], { timeoutMs: 240_000 });

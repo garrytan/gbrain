@@ -10,11 +10,12 @@ import type { OperationContext } from '../../core/ops/contract.ts';
 import { sourceScopeOpts } from '../../core/ops/context.ts';
 import { invalidParam } from '../../core/ops/op-fix.ts';
 import { computeDoctorReport, doctorReportRemote, buildChecks, type DoctorReport } from '../doctor.ts';
-import { doctorCheckNames, opsCheckNames } from './registry.ts';
+import { doctorCheckNames, opsCheckNames, opsTierCheckNames } from './registry.ts';
 import { startDoctorDeadline } from './budget.ts';
 import { ALERT_BUDGET_MS_DEFAULT, alertRanChecks } from './alert.ts';
 import { PAGE_CHECK_NAMES } from '../../core/doctor-categories.ts';
 import { redactForTransport } from '../../core/agent-output.ts';
+import { checkError } from './check-fix.ts';
 
 export async function runRemoteDoctorTier(ctx: OperationContext, p: Record<string, unknown>): Promise<DoctorReport> {
   if (p.tier !== undefined && p.tier !== 'ops') {
@@ -31,6 +32,10 @@ export async function runRemoteDoctorTier(ctx: OperationContext, p: Record<strin
   const transport = ctx.remote === false ? 'cli' : ctx.transport ?? 'http';
   const render = { transport, isCallable: (op: string) => op === 'run_doctor' || op === 'get_brain_health', preapproved: () => false } as const;
   const ops = opsCheckNames();
+  const opsTier = opsTierCheckNames();
+  const outsideOps = p.tier === 'ops' ? (only ?? []).filter(n => !opsTier.has(n)) : [];
+  if (outsideOps.length) throw invalidParam(ctx, 'run_doctor', 'only',
+    `run_doctor: tier "ops" does not include ${[...new Set(outsideOps)].join(', ')}. Select checks in the ops tier.`, { example: ['persistence_capacity'] });
   if (p.tier === 'ops' || (only && only.every((n) => ops.has(n)))) {
     const args = ['--json', '--tier', 'ops', ...(only ? ['--only', only.join(',')] : [])];
     const deadline = startDoctorDeadline(args);
@@ -48,5 +53,12 @@ export async function runRemoteDoctorTier(ctx: OperationContext, p: Record<strin
   }
   const report = await doctorReportRemote(ctx.engine, { sourceIds, remote: ctx.remote, render });
   const kept = report.checks.filter((c) => only!.includes(c.name));
+  // A known name may not be measured by this focused report. Account for it
+  // without executing another check or widening the caller's source grant.
+  const measured = new Set(kept.map(c => c.name));
+  for (const name of new Set(only)) {
+    if (!measured.has(name)) kept.push(checkError(name, 'measure this check in the selected remote report', undefined,
+      { details: { health: 'unknown', reason: 'not_measured', exact: false } }));
+  }
   return computeDoctorReport(kept, { engine: report.engine, render });
 }

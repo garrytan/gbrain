@@ -415,6 +415,11 @@ export function opsCheckNames(): Set<string> {
   return new Set(DOCTOR_CHECK_REGISTRY.filter((e) => e.tier === 'ops').flatMap((e) => e.emits));
 }
 
+/** Names accepted by an explicit ops selection, including the connection lane that runs at every tier. */
+export function opsTierCheckNames(): Set<string> {
+  return new Set([...opsCheckNames(), ...[...CONNECTION_LANE].flatMap(entry => entry.emits)]);
+}
+
 /** #7142: what the doctor-refresh job runs: the connection lane, then every standard-tier entry after the connection gate (filesystem entries depend on the caller's environment, so only the CLI records them). */
 export function doctorRefreshRegistry(): DoctorEntry[] {
   const gateAt = DOCTOR_CHECK_REGISTRY.indexOf(connectionGateEntry);

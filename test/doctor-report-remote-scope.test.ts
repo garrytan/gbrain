@@ -18,6 +18,8 @@ import { MIGRATION_STATE_KEY, migrationSignature } from '../src/core/embedding-m
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { operations } from '../src/core/operations.ts';
+import type { OperationContext } from '../src/core/ops/contract.ts';
 
 const MINE = 'scope-mine-src';
 const OTHER = 'scope-other-src';
@@ -200,6 +202,27 @@ for (const kind of testBackends()) {
         expect(check(await report(), 'brainstorm_health').message).toContain('3 bias tag(s)');
         expect(check(await report([MINE]), 'brainstorm_health').message).toContain('Calibration profile not yet generated');
       });
+    });
+
+    test('unmeasured requested checks preserve the registered operation source grant', async () => {
+      const op = operations.find(o => o.name === 'run_doctor')!;
+      const run = (scope: Partial<OperationContext>) => inHome(async () => await op.handler({
+        engine, config: {} as never, logger: { info() {}, warn() {}, error() {} },
+        remote: true, transport: 'http', ...scope,
+      } as OperationContext, { only: ['connection', 'person_title_duplicates'] }) as DoctorReport);
+      const unscoped = await run({});
+      expect(check(unscoped, 'connection').message).toBe(`Connected, ${ALL_PAGES} pages`);
+      for (const scope of [{ sourceId: MINE }, { auth: { allowedSources: [MINE] } as OperationContext['auth'] }]) {
+        const selected = await run(scope);
+        expect(check(selected, 'connection').message).toBe(`Connected, ${MINE_PAGES.length} pages`);
+        expect(check(selected, 'person_title_duplicates')).toMatchObject({
+          status: 'warn', details: { health: 'unknown', reason: 'not_measured', exact: false },
+        });
+        const wire = JSON.stringify(selected);
+        expect(wire).not.toContain(OTHER);
+        expect(wire).not.toContain(OTHER_NAME);
+        expect(wire).not.toContain('other-leak');
+      }
     });
 
     test('the whole scoped report carries no trace of the excluded source', async () => {
