@@ -2330,7 +2330,7 @@
             "quietMigrationNotices",
             "textRebuildDuration"
           ],
-          "sha256": "9512cb025e2be5142cacdf8d2601b042336a18bf2b50ae0841b7540a085bf12a"
+          "sha256": "71f3c55940d2df4e75ea88bc106f433c4973855cc92a0e8f6ff26bccc76c6c27"
         },
         "idempotent": true,
         "name": "verified_text_projection_activation",
