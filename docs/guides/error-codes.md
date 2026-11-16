@@ -1004,6 +1004,16 @@ Reasons: `assume_unchanged`, `skip_worktree`, `not_staged`.
 
 More: [docs/guides/shared-checkout-git.md#outcomes](../../docs/guides/shared-checkout-git.md#outcomes)
 
+### commit_paths_unmerged
+
+<a id="commit_paths_unmerged"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The commit was refused before staging: a named file still has unresolved merge conflicts in the index, so committing it would publish its conflict markers. | Git keeps the two sides of a conflicted file (after a merge, rebase or stash pop that stopped on a conflict) as unmerged index entries until someone resolves it; staging it would record the file with its markers as resolved. | Resolve each file (edit out the markers, or git checkout --ours/--theirs -- <file>), mark it resolved with git add -- <file>, then rerun the commit. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-checkout-git.md#outcomes](../../docs/guides/shared-checkout-git.md#outcomes)
+
 ### commit_prestaged_paths
 
 <a id="commit_prestaged_paths"></a>
@@ -2236,6 +2246,18 @@ More: [docs/guides/repair.md#ghost-pages](../../docs/guides/repair.md#ghost-page
 |---|---|---|---|---|---|---|
 | The canonical root is not inside a Git checkout, so its Git effects have nothing to commit to. | Only the operator of the brain host can change what blocks this. | Initialize the root as a Git repository with a first commit and a remote on the brain host, then rerun; a database-only source needs no Git durability. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### git_command_stopped
+
+<a id="git_command_stopped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A git command was stopped before it finished (its time limit, an output limit, or a signal from outside gbrain), so gbrain did not use its partial output. | Git itself works; the child ended without exiting on its own, and a cut-off listing read as the answer would stage, restore or report the wrong files. | Rerun the same command once. For a signal, check the machine first (the out-of-memory killer or a supervisor); if a time limit stops it again, tell the user which command and checkout. | agent | `repeat the read that failed` | 1 | yes |
+
+Reasons: `timeout`, `output_limit`, `signal`.
+
+More: [docs/guides/shared-checkout-git.md#outcomes](../../docs/guides/shared-checkout-git.md#outcomes)
+
 ### git_conversion_blocked
 
 <a id="git_conversion_blocked"></a>
@@ -3058,7 +3080,7 @@ More: [docs/guides/multi-language-fts.md#cjk-keyword-budget](../../docs/guides/m
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Hybrid search's Postgres keyword arm skipped a statement that hit the keyword statement timeout within the negative-cache TTL; the search reports keyword_arm_failed with reason skipped_after_timeout and the vector arm still answers. | Running the same broad keyword statement again would hold a backend for the whole search.keyword_statement_timeout_ms and fail the same way. The skip covers that exact statement and scope only, lasts search.keyword_timeout_negative_cache_seconds (default 600, 0 turns it off) and is per serving process. A skipped keyword arm is not evidence of absence. | Narrow the search (source_id, types, since or until) to run keyword search now, or wait for the entry to expire; the user may raise search.keyword_statement_timeout_ms or change the TTL. Run: gbrain doctor --only keyword_plan --json | agent | `gbrain doctor --only keyword_plan --json` | 1 | no |
+| Hybrid search's Postgres keyword arm skipped a statement that hit the keyword statement timeout within the negative-cache TTL; the search reports keyword_arm_failed with reason skipped_after_timeout and the vector arm still answers. | Running the same broad keyword statement again would hold a backend for the whole search.keyword_statement_timeout_ms and fail the same way. The skip covers that exact statement and scope only, lasts at most search.keyword_timeout_negative_cache_seconds (default 600, 0 turns it off), ends as soon as a background re-run of the statement in the serve answers, and is per serving process. A skipped keyword arm is not evidence of absence. | Narrow the search (source_id, types, since or until) to run keyword search now, or wait for the entry to expire; the user may raise search.keyword_statement_timeout_ms or change the TTL. Run: gbrain doctor --only keyword_plan --json | agent | `gbrain doctor --only keyword_plan --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#keyword-search-times-out-on-a-large-postgres-brain](../../docs/guides/troubleshooting.md#keyword-search-times-out-on-a-large-postgres-brain)
 

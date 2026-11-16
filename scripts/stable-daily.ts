@@ -193,9 +193,14 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
 
   const since = new Date((Number.isFinite(promotedAt) ? promotedAt : deps.now().getTime()) - 14 * DAY_MS).toISOString().slice(0, 10);
   const q = `repo:${deps.repo} is:pr is:merged label:"${IMPORTANT_LABEL}" merged:>=${since}`;
-  const found = await deps.ghApi(`search/issues?q=${encodeURIComponent(q)}&per_page=100`) as { items?: Array<{ number: number }> };
+  const labelled = ((await deps.ghApi(`search/issues?q=${encodeURIComponent(q)}&per_page=100`)) as { items?: Array<{ number: number }> }).items ?? [];
+  deps.log(`[stable-daily] the ${IMPORTANT_LABEL} search returned ${labelled.length} merged PR${labelled.length === 1 ? '' : 's'} since ${since}.`);
+  if (labelled.length === 0) {
+    const any = (await deps.ghApi(`search/issues?q=${encodeURIComponent(`repo:${deps.repo} is:pr is:merged`)}&per_page=1`)) as { items?: unknown[] };
+    if ((any.items ?? []).length === 0) throw new Refusal(`the pull-request search sees no merged pull request at all in ${deps.repo}, so this token cannot read pull requests and every ${IMPORTANT_LABEL} fix would be missed; give the workflow's GITHUB_TOKEN \`pull-requests: read\` (.github/workflows/stable-daily.yml permissions).`);
+  }
   const important: Array<{ pr: number; version: string; passesBreak: boolean }> = [];
-  for (const { number } of found.items ?? []) {
+  for (const { number } of labelled) {
     const pr = await deps.ghApi(`repos/${deps.repo}/pulls/${number}`) as { merge_commit_sha?: string | null };
     const sha = pr.merge_commit_sha;
     if (!sha || (await treeOf(deps, sha)) === null || await isAncestor(deps, sha, stableCommit)) continue;

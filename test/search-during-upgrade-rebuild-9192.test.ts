@@ -19,6 +19,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const TEXT = 'The okapi theremin appears in this synthetic note.';
 const SLUGS = ['notes/okapi-one', 'notes/okapi-two'];
@@ -31,7 +32,7 @@ const drain = async (engine: BrainEngine) => { while ((await rebuildPendingPageP
 const count = async (engine: BrainEngine, where: string) =>
   Number((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages p WHERE ${where}`))[0]?.n);
 
-async function activated(run: (engine: BrainEngine) => Promise<void>, databaseUrl?: string, opts: { belowFence?: string; preRevision?: boolean; code?: string; extra?: Record<string, { body: string; frontmatter?: Record<string, unknown> }> } = {}) {
+async function activated(run: (engine: BrainEngine) => Promise<void>, databaseUrl?: string, opts: { belowFence?: string; preRevision?: boolean; code?: string; image?: string; extra?: Record<string, { body: string; timeline?: string; frontmatter?: Record<string, unknown> }> } = {}) {
   const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
   try {
     for (const [i, slug] of SLUGS.entries()) {
@@ -39,11 +40,12 @@ async function activated(run: (engine: BrainEngine) => Promise<void>, databaseUr
       await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: TEXT, embedding: vector(i) }]);
     }
     for (const [slug, page] of Object.entries(opts.extra ?? {})) {
-      await engine.putPage(slug, { type: 'note', title: 'Okapi theremin', compiled_truth: page.body, ...(page.frontmatter ? { frontmatter: page.frontmatter } : {}) });
+      await engine.putPage(slug, { type: 'note', title: 'Okapi theremin', compiled_truth: page.body, ...(page.timeline ? { timeline: page.timeline } : {}), ...(page.frontmatter ? { frontmatter: page.frontmatter } : {}) });
       await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: TEXT }]);
     }
     if (opts.belowFence) await engine.executeRaw('UPDATE pages SET chunker_version = 3 WHERE slug = $1', [opts.belowFence]);
     if (opts.code) await engine.executeRaw("UPDATE pages SET page_kind = 'code', source_path = NULL WHERE slug = $1", [opts.code]);
+    if (opts.image) await engine.executeRaw("UPDATE pages SET page_kind = 'image' WHERE slug = $1", [opts.image]);
     if (opts.preRevision) {
       // Pages written before v150 reach v153 with no knowledge_revision (the upgrade #9192 reported, from v145).
       await engine.executeRaw('ALTER TABLE pages ALTER COLUMN knowledge_revision DROP NOT NULL');
@@ -139,12 +141,14 @@ for (const backend of testBackends()) {
       expect(served.map(r => r.slug)).toEqual(SLUGS);
       expect(await keywordSlugs(engine)).toEqual(SLUGS);
       expect((await probeProjectionReadiness(engine)).status).toBe('projection_pending');
-      expect((await projectionBacklog(engine)).pending).toBe(6);
+      expect((await projectionBacklog(engine)).pending).toBe(8);
     }, url, { extra: {
       'notes/facts': { body: `${TEXT}\n\n<!--- gbrain:facts:begin -->\n| # | claim |\n|---|---|\n| 1 | okapi |\n<!--- gbrain:facts:end -->` },
       'notes/takes': { body: `${TEXT}\n\n<!--- gbrain:takes:begin -->\nokapi take\n<!--- gbrain:takes:end -->` },
       'notes/key': { body: [TEXT, ['-----BEGIN', ' RSA PRIVATE KEY', '-----'].join(''), 'MIIEexample', ['-----END', ' RSA PRIVATE KEY', '-----'].join('')].join('\n') },
       'notes/quarantined': { body: TEXT, frontmatter: { quarantine: 'junk' } },
+      'notes/timeline-key': { body: TEXT, timeline: ['- 2020-01-01: pasted', ['-----BEGIN', ' RSA PRIVATE KEY', '-----'].join(''), 'MIIEexample'].join('\n') },
+      'notes/timeline-takes': { body: TEXT, timeline: '- 2020-01-01: noted\n\n<!--- gbrain:takes:begin -->\nokapi take\n<!--- gbrain:takes:end -->' },
     } }), 120_000);
 
     test('a restricted caller gets no marker page it cannot read, and a soft-deleted marker page is not returned', () => accessActivated(async (engine, seen) => {
@@ -207,6 +211,19 @@ for (const backend of testBackends()) {
       expect((await projectionBacklog(engine)).pending).toBe(2);
     }, url), 120_000);
 
+    test('the readiness probe reads the index of pages waiting for a rebuild, which leaves out pages served from their old index (v317)', () => activated(async engine => {
+      const captured: Array<{ sql: string; params?: unknown[] }> = [];
+      const recording = { executeRaw: (sql: string, params?: unknown[]) => { captured.push({ sql, params }); return engine.executeRaw(sql, params); } } as unknown as BrainEngine;
+      expect((await withEnv({ GBRAIN_PROJECTION_READINESS_CACHE: '0' }, () => probeProjectionReadiness(recording))).status).toBe('ready');
+      const probe = captured.find(call => call.sql.includes('IS DISTINCT FROM'));
+      expect(probe).toBeDefined();
+      const plan = await engine.transaction(async tx => {
+        await tx.executeRaw('SET LOCAL enable_seqscan = off');
+        return (await tx.executeRaw<Record<string, string>>(`EXPLAIN ${probe!.sql}`, probe!.params)).map(row => Object.values(row)[0]).join('\n');
+      });
+      expect(plan).toContain('idx_pages_projection_waiting');
+    }, url), 120_000);
+
     test('the v153 handler says which pages stay served and which wait', () => activated(async engine => {
       const writes: string[] = [];
       const spy = spyOn(process.stderr, 'write').mockImplementation(((chunk: string) => { writes.push(String(chunk)); return true; }) as typeof process.stderr.write);
@@ -215,5 +232,14 @@ for (const backend of testBackends()) {
       expect(line).toContain('Search keeps answering from the index 1 of them already had; 1 (images, pages indexed before the safe-chunk fence, and pages with a facts or takes fence, private-key text or a quarantine marker) stay out of search until rebuilt.');
       expect(line).toContain('gbrain projections drain');
     }, url, { belowFence: SLUGS[0] }), 120_000);
+
+    test('the v153 estimate times the Markdown and code pages the drain rebuilds, not images', () => activated(async engine => {
+      const writes: string[] = [];
+      const spy = spyOn(process.stderr, 'write').mockImplementation(((chunk: string) => { writes.push(String(chunk)); return true; }) as typeof process.stderr.write);
+      try { await v153.handler!(engine); } finally { spy.mockRestore(); }
+      const line = writes.find(w => w.includes('[153]')) ?? '';
+      expect(line).toContain('3 page(s) queued');
+      expect(line).toContain('rebuilding its 2 Markdown and code page(s) takes about');
+    }, url, { image: 'notes/okapi-image', extra: { 'notes/okapi-image': { body: TEXT } } }), 120_000);
   });
 }

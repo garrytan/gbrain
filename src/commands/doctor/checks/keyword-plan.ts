@@ -119,7 +119,7 @@ export async function keywordPlanCheck(engine: BrainEngine, probe: KeywordPlanPr
     const negativeCache = { ttl_seconds: ttlSeconds, timeouts: stats?.timeouts ?? 0, skips: stats?.skips ?? 0, last_timeout_at: stats?.last_timeout_at ?? null };
     const recorded = negativeCache.timeouts > 0
       ? ` Hybrid search's keyword arm hit this bound ${negativeCache.timeouts} time(s) (last ${negativeCache.last_timeout_at ?? 'unknown'}); ${negativeCache.skips} later search(es) skipped the timed-out statement (counted at each timeout write). `
-        + (ttlSeconds > 0 ? `A serving process skips the exact statement that timed out for ${ttlSeconds} s (${KEYWORD_TIMEOUT_NEGATIVE_CACHE_KEY}; 0 turns it off), reporting keyword_arm_failed: skipped_after_timeout.` : `The skip is off (${KEYWORD_TIMEOUT_NEGATIVE_CACHE_KEY} = 0).`)
+        + (ttlSeconds > 0 ? `A serving process skips the exact statement that timed out for at most ${ttlSeconds} s (${KEYWORD_TIMEOUT_NEGATIVE_CACHE_KEY}; 0 turns it off), reporting keyword_arm_failed: skipped_after_timeout, and ends the skip once a background re-run of the statement answers.` : `The skip is off (${KEYWORD_TIMEOUT_NEGATIVE_CACHE_KEY} = 0).`)
       : '';
     const base = { timeout_ms: timeoutMs, canary_timeout_ms: KEYWORD_PLAN_CANARY_TIMEOUT_MS, docs: DOCS, negative_cache: negativeCache };
     const chunks = await probe.chunkEstimate();

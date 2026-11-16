@@ -81,6 +81,11 @@ async function setup(b: Box, extra: string[], env: Record<string, string | undef
   return { ...r, doc, resolver: doc?.skill_resolver };
 }
 
+/** Assert a setup run's exit code; a mismatch prints the run's stdout and stderr, so the failure names its cause. */
+function expectExit(r: { exitCode: number; stdout: string; stderr: string }, code: number): void {
+  expect(r.exitCode, `setup exited ${r.exitCode}, expected ${code}\n--- stdout\n${r.stdout}\n--- stderr\n${r.stderr}`).toBe(code);
+}
+
 const calls = (b: Box) => (existsSync(b.calls) ? readFileSync(b.calls, 'utf8').trim().split('\n').filter((l) => l.includes('gbrain-skill-resolver')) : []);
 const gbrainHome = (b: Box) => join(b.home, '.gbrain');
 const statePath = (b: Box) => join(gbrainHome(b), 'openclaw-skill-resolver.json');
@@ -130,7 +135,7 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
   test('shadow installs once; a flip to live runs no OpenClaw command and keeps the plugin files', async () => {
     const b = box();
     const first = await setup(b, ['--skill-loading', 'shadow']);
-    expect(first.exitCode).toBe(0);
+    expectExit(first, 0);
     expect(first.resolver.error).toBeUndefined();
     expect(first.resolver.steps.map((s: any) => s.step)).toEqual(['catalog', 'library', 'state', 'plugin', 'install', 'verify', 'self-test']);
     expect(calls(b)).toEqual([
@@ -144,7 +149,7 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
     const index = readFileSync(join(pluginDir(b), 'index.js'), 'utf8');
     const before = calls(b).length;
     const flip = await setup(b, ['--skill-loading', 'resolve', '--live-fraction', '0.5']);
-    expect(flip.exitCode).toBe(0);
+    expectExit(flip, 0);
     expect(calls(b).length).toBe(before);
     expect(flip.resolver.steps.find((s: any) => s.step === 'install')).toMatchObject({ action: 'skip' });
     expect(readFileSync(join(pluginDir(b), 'index.js'), 'utf8')).toBe(index);
@@ -155,7 +160,7 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
   test('no openclaw on PATH: exit 3, skill_resolver_plugin_not_installed, the commands still to run', async () => {
     const b = box({ openclaw: false });
     const r = await setup(b, ['--skill-loading', 'resolve']);
-    expect(r.exitCode).toBe(3);
+    expectExit(r, 3);
     expect(r.resolver.error.code).toBe('skill_resolver_plugin_not_installed');
     expect(r.resolver.error.commands).toHaveLength(3);
     expect(r.resolver.error.recovery).toContain('0 of 3 commands ran');
@@ -166,7 +171,7 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
   test('a failed openclaw step: exit 3 naming it, with only the remaining commands', async () => {
     const b = box();
     const r = await setup(b, ['--skill-loading', 'resolve'], { FAIL_STEP: 'plugins enable' });
-    expect(r.exitCode).toBe(3);
+    expectExit(r, 3);
     expect(r.resolver.error.code).toBe('skill_resolver_plugin_not_installed');
     expect(r.resolver.error.message).toContain('boom: plugins enable failed');
     expect(r.resolver.error.commands).toEqual(['openclaw plugins enable gbrain-skill-resolver', 'openclaw config set plugins.entries.gbrain-skill-resolver.hooks.allowConversationAccess true'].map((c) => join(b.root, 'bin') + '/' + c));
@@ -176,7 +181,7 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
   test('plugins inspect not showing it loaded: exit 3, never success', async () => {
     const b = box();
     const r = await setup(b, ['--skill-loading', 'resolve'], { INSPECT_BROKEN: '1' });
-    expect(r.exitCode).toBe(3);
+    expectExit(r, 3);
     expect(r.resolver.error.code).toBe('skill_resolver_plugin_not_installed');
   });
 
@@ -193,7 +198,7 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
     const b = box();
     mkdirSync(gbrainHome(b), { recursive: true });
     writeFileSync(join(gbrainHome(b), 'config.json'), JSON.stringify({ skills: { resolver: { pinned: ['email-triage'], per_harness: { openclaw: { top_k: 2 } } } } }));
-    expect((await setup(b, ['--skill-loading', 'resolve'])).exitCode).toBe(0);
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
     expect(readState(b).agents.main).toMatchObject({ top_k: 2, min_match: 'description', exclude_ids: ['email-triage'] });
     const out = drive(b, [['turn', { text: 'deploy the service to production and triage the email inbox', id: 'm1' }]]);
     expect(out[0].appendContext).toContain('deploy-service');
@@ -204,7 +209,7 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
     const b = box();
     mkdirSync(gbrainHome(b), { recursive: true });
     writeFileSync(join(gbrainHome(b), 'config.json'), JSON.stringify({ skills: { resolver: { per_harness: { openclaw: { top_gate: 100 } } } } }));
-    expect((await setup(b, ['--skill-loading', 'resolve'])).exitCode).toBe(0);
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
     expect(readState(b).agents.main).toMatchObject({ top_gate: 100 });
     const out = drive(b, [['turn', { text: 'deploy the service to production', id: 'g1' }]]);
     expect(out[0]?.appendContext ?? '').not.toContain('deploy-service');
@@ -212,23 +217,30 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
     const off = box();
     mkdirSync(gbrainHome(off), { recursive: true });
     writeFileSync(join(gbrainHome(off), 'config.json'), JSON.stringify({ skills: { resolver: { top_gate: 0 } } }));
-    expect((await setup(off, ['--skill-loading', 'resolve'])).exitCode).toBe(0);
+    expectExit(await setup(off, ['--skill-loading', 'resolve']), 0);
     expect(readState(off).agents.main).toMatchObject({ top_gate: 0 });
     const weak = 'what runs in production today';
     const shown = drive(off, [['turn', { text: weak, id: 'g2' }]]);
     expect(shown[0]?.appendContext ?? '').toContain('deploy-service');
 
     const dflt = box();
-    expect((await setup(dflt, ['--skill-loading', 'resolve'])).exitCode).toBe(0);
+    expectExit(await setup(dflt, ['--skill-loading', 'resolve']), 0);
     expect(readState(dflt).agents.main.top_gate).toBeUndefined();
     const gated = drive(dflt, [['turn', { text: weak, id: 'g3' }]]);
     expect(gated[0]?.appendContext ?? '').not.toContain('deploy-service');
   });
 
+  test('the setup self-test checks that a turn resolves, not that it beats a live turn\'s deadline (a slow machine still installs)', async () => {
+    const b = box();
+    const r = await setup(b, ['--skill-loading', 'resolve'], { GBRAIN_TEST_OPENCLAW_SKILL_DEADLINE_MS: '1' });
+    expectExit(r, 0);
+    expect(r.resolver.steps.map((s: { step: string }) => s.step)).toContain('self-test');
+  });
+
   test('--dry-run writes nothing', async () => {
     const b = box();
     const r = await setup(b, ['--skill-loading', 'resolve', '--dry-run']);
-    expect(r.exitCode).toBe(0);
+    expectExit(r, 0);
     expect(existsSync(statePath(b))).toBe(false);
     expect(existsSync(pluginDir(b))).toBe(false);
     expect(calls(b)).toEqual([]);
@@ -254,7 +266,7 @@ describe.skipIf(!NODE)('the OpenClaw eligibility filter', () => {
       { name: 'weather', eligible: false, modelVisible: false },
     ]);
     const r = await setup(b, ['--skill-loading', 'resolve'], env);
-    expect(r.exitCode).toBe(0);
+    expectExit(r, 0);
     expect([...readState(b).agents.main.exclude_ids].sort()).toEqual(['calendar-sync', 'email-triage']);
     expect(r.resolver.agents[0]).toMatchObject({ id: 'main', skills: 1 });
     const notes = r.resolver.notes.join('\n');
@@ -270,7 +282,7 @@ describe.skipIf(!NODE)('the OpenClaw eligibility filter', () => {
   test('a list naming none of the catalog' + "'" + 's skills filters nothing and says so', async () => {
     const b = box();
     const r = await setup(b, ['--skill-loading', 'resolve'], listed(b, [{ name: 'weather', eligible: true, modelVisible: true }]));
-    expect(r.exitCode).toBe(0);
+    expectExit(r, 0);
     expect(readState(b).agents.main.exclude_ids).toEqual([]);
     expect(r.resolver.agents[0].skills).toBe(3);
     expect(r.resolver.notes.join('\n')).toContain('lists none of openclaw-main' + "'" + 's skills for this agent, so the catalog was not filtered');
@@ -279,11 +291,11 @@ describe.skipIf(!NODE)('the OpenClaw eligibility filter', () => {
   test('a failed list, or no openclaw on PATH, filters nothing', async () => {
     const b = box();
     const r = await setup(b, ['--skill-loading', 'resolve']);
-    expect(r.exitCode).toBe(0);
+    expectExit(r, 0);
     expect(readState(b).agents.main.exclude_ids).toEqual([]);
     expect(r.resolver.notes.join('\n')).toContain('--agent main' + String.fromCharCode(96) + ' failed, so skills OpenClaw hides from this agent were not filtered');
     const none = box({ openclaw: false });
-    expect((await setup(none, ['--skill-loading', 'resolve'])).exitCode).toBe(3);
+    expectExit(await setup(none, ['--skill-loading', 'resolve']), 3);
     expect(readState(none).agents.main.exclude_ids).toEqual([]);
   });
 });
@@ -307,7 +319,7 @@ describe.skipIf(!NODE)('gbrain skills pin', () => {
     expect(st.pinned_block).toContain('id: "deploy-service" when: "Before any production deploy"');
     expect(st.pinned_block).toContain('skills_read({name})');
     const off = await setup(b, ['--skill-loading', 'off']);
-    expect(off.exitCode).toBe(0);
+    expectExit(off, 0);
     expect(existsSync(statePath(b))).toBe(false);
     expect(existsSync(pluginDir(b))).toBe(false);
     expect(calls(b).at(-1)).toBe('plugins uninstall gbrain-skill-resolver --force');
@@ -378,7 +390,7 @@ describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
     const skills = join(b.state, 'workspace', 'skills');
     mkdirSync(join(skills, 'zeta-notes'), { recursive: true });
     writeFileSync(join(skills, 'zeta-notes', 'SKILL.md'), '---\nname: zeta-notes\ndescription: Use when you keep a journal\n---\nAlso covers quarterly xylophone tuning.\n');
-    expect((await setup(b, ['--skill-loading', 'resolve'])).exitCode).toBe(0);
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
     const out = drive(b, [
       ['turn', { text: 'xylophone tuning', id: 'm1' }],
       ['turn', { text: 'triage the email inbox and the xylophone tuning', id: 'm2', session: 'agent:main:s2' }],
@@ -476,7 +488,7 @@ describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
 describe.skipIf(!NODE)('doctor skill_resolver: the OpenClaw plugin', () => {
   test('reports the deadline-miss rate from the daily logs and warns above 5% once there are 20 turns', async () => {
     const b = box();
-    expect((await setup(b, ['--skill-loading', 'shadow'])).exitCode).toBe(0);
+    expectExit(await setup(b, ['--skill-loading', 'shadow']), 0);
     const dir = join(gbrainHome(b), 'skill-index', 'logs');
     mkdirSync(dir, { recursive: true });
     const at = new Date().toISOString();
