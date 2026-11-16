@@ -78,14 +78,16 @@ export function conversationHash8(harness: TranscriptFormat, conversationKey: st
 }
 
 export function conversationLabel(harness: TranscriptFormat, conversationKey: string, channel?: ArchiveChannel): string {
-  if (channel?.cronJob) return 'cron-' + (slugifySegment(channel.cronJob).slice(0, 24) || conversationHash8(harness, conversationKey));
+  if (channel?.cronJob) return 'cron-' + (slugifySegment(channel.cronJob).slice(0, 24).replace(/-+$/, '') || conversationHash8(harness, conversationKey));
   if (channel?.verified && (channel.chatType === 'group' || channel.chatType === 'room')) return channel.chatType + '-' + conversationHash8(harness, conversationKey);
   if (channel?.verified && channel.chatType === 'direct') return 'dm';
   return harness;
 }
 
+/** The day page's slug; the label's hyphen runs fold and its edge hyphens drop, so the write gate never refuses it (slug_hyphen_run). */
 export function archiveDayBaseSlug(harness: TranscriptFormat, day: string, label: string, conversationKey: string): string {
-  return 'conversations/' + harness + '/' + day + '/' + label + '-' + transcriptSlugId(conversationKey).slice(0, 8);
+  const safe = label.replace(/-+/g, '-').replace(/^-|-$/g, '') || harness;
+  return 'conversations/' + harness + '/' + day + '/' + safe + '-' + transcriptSlugId(conversationKey).slice(0, 8);
 }
 
 export function archiveDayId(harness: TranscriptFormat, conversationKey: string, day: string, part: number): string {
