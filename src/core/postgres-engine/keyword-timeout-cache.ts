@@ -33,7 +33,7 @@
  * the entry's expiry, so the TTL stays the longest skip. The first re-run that
  * answers deletes the entry. Foreground searches skip exactly as before while
  * the entry stands. A re-run starts only when the gate reports an open engine
- * with an idle pooled connection and no waiting query (otherwise it waits for
+ * whose pool keeps a connection free beside it and has no waiting query (otherwise it waits for
  * the next step instead of queueing), at most one runs per engine, its rows
  * are thrown away, it writes no counter row, and it runs in the serve's
  * start-up async context, never in the request that recorded the timeout, so
@@ -52,7 +52,7 @@
  */
 import { AsyncResource } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
-import { driverPoolStats } from './pool-stats.ts';
+import type { DriverPoolStats } from './pool-stats.ts';
 
 export const KEYWORD_TIMEOUT_NEGATIVE_CACHE_KEY = 'search.keyword_timeout_negative_cache_seconds';
 export const KEYWORD_TIMEOUT_NEGATIVE_CACHE_DEFAULT_S = 600;
@@ -146,10 +146,12 @@ export function setKeywordTimeoutReruns(on: boolean): void {
   if (on) detached = AsyncResource.bind((fn: () => void) => fn());
 }
 
-/** The engine's gate: an open pool with an idle connection and no waiting query. */
-export function keywordRerunPoolIdle(sql: unknown, disconnecting: unknown): boolean {
-  const pool = sql && !disconnecting ? driverPoolStats(sql) : null;
-  return pool !== null && pool.checked_out < pool.max && pool.waiters === 0;
+/**
+ * The engine's gate: an open engine whose pool (its own, or the process pool a serve opens) has no waiting query and
+ * keeps a connection free for foreground queries while the re-run holds one.
+ */
+export function keywordRerunPoolIdle(pool: DriverPoolStats | null, disconnecting: unknown): boolean {
+  return pool !== null && !disconnecting && pool.checked_out + 1 < pool.max && pool.waiters === 0;
 }
 
 interface Entry { expiresAt: number; rerunAfterMs: number; exec: () => Promise<unknown>; cancel?: () => void }
@@ -224,7 +226,7 @@ export class KeywordTimeoutNegativeCache {
 
   /**
    * One background re-run: the same statement, scope, settings and bound, its rows thrown away. Success ends the
-   * skip; a failure, or a moment with no idle connection or another re-run in flight, doubles the wait instead.
+   * skip; a failure, or a moment with no free connection or another re-run in flight, doubles the wait instead.
    */
   private async rerun(key: string, entry: Entry): Promise<void> {
     entry.cancel = undefined;

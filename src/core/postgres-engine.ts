@@ -54,7 +54,7 @@ import {
 } from './retry.ts';
 import { isConnectionEndedError } from './retry-matcher.ts';
 import { CheckoutGauge, PoisonedDiscardCounter, PoolIncidentCounter, type PoolGaugeSnapshot } from './pool-gauge.ts';
-import { driverPoolStats, type DriverPoolStats } from './postgres-engine/pool-stats.ts';
+import { driverPoolStats, enginePoolStats, type DriverPoolStats } from './postgres-engine/pool-stats.ts';
 import {
   valueHash,
   normalizeDimension,
@@ -219,7 +219,7 @@ export class PostgresEngine implements BrainEngine {
   readonly [ENGINE_ROOT]: object = this;
   private vectorIterativeScan?: Promise<boolean>;
   private keywordStatementTimeout?: Promise<string>;
-  private keywordTimeouts = new KeywordTimeoutNegativeCache(Date.now, undefined, () => keywordRerunPoolIdle(this._sql, this._disconnectPromise)); // #7082
+  private keywordTimeouts = new KeywordTimeoutNegativeCache(Date.now, undefined, () => keywordRerunPoolIdle(enginePoolStats(this), this._disconnectPromise)); // #7082
   private readonly vectorScope = vectorScopeLoader(() => this.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL), ids => this.executeRaw<ScopeChunkCount>(SCOPE_CHUNKS_SQL, [ids]));
   /** Transaction clones keep chunk invalidation and replacement atomic. */
   private _chunkWritesInTransaction = false;

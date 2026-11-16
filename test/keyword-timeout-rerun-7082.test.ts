@@ -187,14 +187,15 @@ describe('keyword timeout re-run (#7082): one-shot processes', () => {
     expect(await s.outcome('q', async () => [])).toBe('ran');
   });
 
-  test('the engine gate needs an open pool with an idle connection and no waiting query', () => {
-    const pool = (busy: number, queued: number) => ({ pool: { max: 3, open: 3 - busy, busy, full: 0, reserved: 0, connecting: 0, closed: 0, ended: 0, queued } });
+  test('the engine gate needs an open pool that keeps a connection free and has no waiting query', () => {
+    const pool = (checked_out: number, waiters: number, max = 3) => ({ checked_out, max, waiters, inflight_oldest_ms: 0, completed: 0 });
     expect(keywordRerunPoolIdle(null, null)).toBe(false);
     expect(keywordRerunPoolIdle(pool(0, 0), null)).toBe(true);
+    expect(keywordRerunPoolIdle(pool(1, 0), null)).toBe(true);
     expect(keywordRerunPoolIdle(pool(0, 0), Promise.resolve())).toBe(false);
-    expect(keywordRerunPoolIdle(pool(3, 0), null)).toBe(false);
+    expect(keywordRerunPoolIdle(pool(2, 0), null)).toBe(false);
+    expect(keywordRerunPoolIdle(pool(0, 0, 1), null)).toBe(false);
     expect(keywordRerunPoolIdle(pool(1, 2), null)).toBe(false);
-    expect(keywordRerunPoolIdle({}, null)).toBe(false);
   });
 });
 
@@ -206,7 +207,7 @@ if (testBackends().includes('postgres')) {
     let locker: ReturnType<typeof postgres>;
 
     beforeAll(async () => {
-      ({ engine, databaseUrl, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
+      ({ engine, databaseUrl, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!, 'module'));
       await engine.putPage('notes/alpha', { type: 'note', title: 'Alpha beta', compiled_truth: 'alpha beta gamma' });
       await installFixtureChunks(engine, 'notes/alpha', [{ chunk_index: 0, chunk_text: 'alpha beta gamma', chunk_source: 'compiled_truth' }]);
       locker = postgres(databaseUrl, { max: 1, prepare: false });
@@ -218,11 +219,10 @@ if (testBackends().includes('postgres')) {
 
     test('skipped while the statement times out, answering after the re-run once the lock is gone', async () => {
       await engine.setConfig(KEYWORD_STATEMENT_TIMEOUT_KEY, '1000');
-      const serving = new PostgresEngine();
-      await serving.connect({ database_url: databaseUrl, poolSize: 3 });
+      const serving = engine;
       const sched = manualScheduler();
-      const priv = serving as unknown as { keywordTimeouts: KeywordTimeoutNegativeCache; _sql: unknown; _disconnectPromise: unknown };
-      priv.keywordTimeouts = new KeywordTimeoutNegativeCache(Date.now, sched.schedule, () => keywordRerunPoolIdle(priv._sql, priv._disconnectPromise));
+      const priv = serving as unknown as { keywordTimeouts: KeywordTimeoutNegativeCache };
+      priv.keywordTimeouts = new KeywordTimeoutNegativeCache(Date.now, sched.schedule, (priv.keywordTimeouts as unknown as { canRerun: () => boolean }).canRerun);
       setKeywordTimeoutReruns(true);
       let release!: () => void;
       const released = new Promise<void>(resolve => { release = resolve; });
@@ -249,7 +249,6 @@ if (testBackends().includes('postgres')) {
       } finally {
         release();
         await held;
-        await serving.disconnect();
         await engine.unsetConfig(KEYWORD_STATEMENT_TIMEOUT_KEY);
         await engine.unsetConfig(KEYWORD_TIMEOUT_STATS_KEY);
       }

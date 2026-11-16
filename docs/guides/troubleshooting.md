@@ -591,7 +591,8 @@ statement once in the background 30 seconds after the timeout, then after 60,
 120 and so on seconds while it keeps failing, never past that limit. The first
 re-run that answers ends the skip, and the next search runs keyword search
 again. A re-run uses the same statement, scope and bound, starts only when the
-pool has an idle connection (otherwise it waits for the next step), runs one at
+pool has no waiting query and keeps a connection free for other queries
+(otherwise it waits for the next step), runs one at
 a time per brain, throws its rows away and is not recorded as a search. The skipped search answers from the vector arm at once and its
 metadata carries `keyword_arm_failed` with reason `skipped_after_timeout`
 (error code `keyword_skipped_after_timeout` in `gbrain errors`). The skip
