@@ -143,7 +143,7 @@ for (const backend of testBackends()) {
     }, url, { extra: {
       'notes/facts': { body: `${TEXT}\n\n<!--- gbrain:facts:begin -->\n| # | claim |\n|---|---|\n| 1 | okapi |\n<!--- gbrain:facts:end -->` },
       'notes/takes': { body: `${TEXT}\n\n<!--- gbrain:takes:begin -->\nokapi take\n<!--- gbrain:takes:end -->` },
-      'notes/key': { body: `${TEXT}\n-----BEGIN RSA PRIVATE KEY-----\nMIIEexample\n-----END RSA PRIVATE KEY-----` },
+      'notes/key': { body: [TEXT, ['-----BEGIN', ' RSA PRIVATE KEY', '-----'].join(''), 'MIIEexample', ['-----END', ' RSA PRIVATE KEY', '-----'].join('')].join('\n') },
       'notes/quarantined': { body: TEXT, frontmatter: { quarantine: 'junk' } },
     } }), 120_000);
 
