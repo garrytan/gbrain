@@ -73,6 +73,7 @@ async function runMemorableRelay(ctx: DoctorContext): Promise<Check[]> {
 export const memorableRelayEntry: DoctorEntry = {
   name: 'memorable_relay_health',
   emits: ['memorable_relay_health', 'memory_writeback'],
+  engineChecks: ['memory_writeback'],
   run: runMemorableRelay,
 };
 

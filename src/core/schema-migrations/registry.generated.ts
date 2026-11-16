@@ -318,6 +318,7 @@ import { v314 } from './v314-guest-notes-fail-closed.ts';
 import { v315 } from './v315-facts-context-head-index.ts';
 import { v316 } from './v316-pages-source-type-index.ts';
 import { v317 } from './v317-pages-projection-waiting-index.ts';
+import { v318 } from './v318-guard-ledgers-fail-closed.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -634,4 +635,5 @@ export const MIGRATIONS: Migration[] = [
   v315,
   v316,
   v317,
+  v318,
 ];
