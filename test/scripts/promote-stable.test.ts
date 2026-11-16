@@ -24,6 +24,7 @@ import {
 } from '../../scripts/promote-stable.ts';
 import type { MatrixReceipt } from '../../scripts/stable-matrix.ts';
 import { offeredVersion } from '../../src/core/self-upgrade.ts';
+import { upgradeSummary } from '../../src/core/upgrade-summary.ts';
 import { RECORD_MAX_BYTES } from '../../src/core/stable-channel.ts';
 import { parseStableRecord } from '../../src/core/stable-channel.ts';
 
@@ -858,6 +859,27 @@ describe('GitHub Latest release', () => {
     expect(rolledUpNotes('', '0.60.360.0', '0.60.361.0', REPO)).toBe(`See [CHANGELOG.md](https://github.com/${REPO}/blob/v0.60.361.0/CHANGELOG.md) for v0.60.361.0.\n`);
   });
 
+  test('rolledUpNotes puts the behavior-change summary between the opening line and the entries', () => {
+    const notes = rolledUpNotes(CHANGELOG, '0.60.360.0', '0.60.361.0', REPO, ['What changed since v0.60.360.0: 1 change.', '', 'Needs you (1):', '- Run gbrain sync once.']);
+    expect(notes.split('\n').slice(0, 6)).toEqual([
+      'Stable release v0.60.361.0: every change since the previous stable release, v0.60.360.0, newest first.',
+      '',
+      'What changed since v0.60.360.0: 1 change.',
+      '',
+      'Needs you (1):',
+      '- Run gbrain sync once.',
+    ]);
+    expect(notes.indexOf('- Run gbrain sync once.')).toBeLessThan(notes.indexOf('## [0.60.361.0]'));
+  });
+
+  test('rolledUpNotes leaves out a summary that alone would pass GitHub\'s size limit', () => {
+    const summary = ['What changed since v0.60.360.0: 1000 changes.', '', 'Needs you (1000):', ...Array.from({ length: 1000 }, () => `- ${'x'.repeat(240)}`)];
+    const notes = rolledUpNotes(CHANGELOG, '0.60.360.0', '0.60.361.0', REPO, summary);
+    expect(notes.length).toBeLessThanOrEqual(RELEASE_NOTES_MAX);
+    expect(notes).not.toContain('Needs you (1000):');
+    expect(notes).toBe(rolledUpNotes(CHANGELOG, '0.60.360.0', '0.60.361.0', REPO));
+  });
+
   test('rolledUpNotes drops the oldest entries past GitHub\'s size limit and links the rest', () => {
     const big = (v: string) => [`## [${v}] - 2026-10-21`, '', 'x'.repeat(50_000), ''].join('\n');
     const notes = rolledUpNotes(['0.60.363.0', '0.60.362.0', '0.60.361.0'].map(big).join('\n'), '0.60.360.0', '0.60.363.0', REPO);
@@ -873,7 +895,8 @@ describe('GitHub Latest release', () => {
     await promote(h.deps, inputs());
     expect(h.writes).toHaveLength(1);
     expect(h.writes[0]).toMatchObject({ method: 'PATCH', path: `repos/${REPO}/releases/42`, body: { prerelease: false, make_latest: 'true' } });
-    expect(h.writes[0]!.body.body).toBe(rolledUpNotes(CHANGELOG, '0.60.360.0', '0.60.361.0', REPO));
+    expect(h.writes[0]!.body.body).toBe(rolledUpNotes(CHANGELOG, '0.60.360.0', '0.60.361.0', REPO, upgradeSummary('0.60.360.0', '0.60.361.0')));
+    expect(h.writes[0]!.body.body).toContain('gbrain doctor --only behavior_changes');
     expect(h.calls.findIndex(c => c.startsWith('push'))).toBeGreaterThanOrEqual(0);
     expect(h.logs.at(-1)).toContain('the GitHub release v0.60.361.0 is now Latest, with notes rolled up');
   });
