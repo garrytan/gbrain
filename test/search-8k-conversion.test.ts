@@ -142,7 +142,7 @@ describe('search.query_facts_block', () => {
     expect(facts.length).toBeGreaterThanOrEqual(2);
     expect(facts.length).toBeLessThanOrEqual(MAX_FACTS_BLOCK_ROWS);
     expect(rows.slice(0, facts.length).every(r => r.result_type === 'fact')).toBe(true);
-    expect(facts[0]!.chunk_text.split('\n')[0]).toBe('[observed unknown; valid 2025-06-02 to unknown]');
+    expect(facts[0]!.chunk_text.split('\n')[0]).toBe('[observed 2025-05-03; valid 2025-06-02 to unknown]');
     expect(facts.reduce((n, r) => n + resultTokens(r), 0)).toBeLessThanOrEqual(Math.floor(budget * QUERY_FACTS_BLOCK_SHARE));
   });
 

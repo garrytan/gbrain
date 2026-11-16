@@ -14,9 +14,13 @@
  * frontmatter `date`, `published` or a created key, in effective-date
  * precedence with `event_date` removed. An event date is when something
  * happened, not when the note was written, and row timestamps are when GBrain
- * stored it, so neither is ever shown as observed. Facts carry no observation
- * date on master, so a fact's `observed` is `unknown` and its validity window
- * (`valid_from` to `valid_until`, an open end shown as `unknown`) follows.
+ * stored it, so neither is ever shown as observed. A fact's `observed` is the
+ * observation date of the page it was taken from (`source_markdown_slug`),
+ * read under the caller's page read policy (GBRA-574 A1); `unknown` when that
+ * page states no date, is its own entity page, or is one the caller may not
+ * read. Its validity window (`valid_from` to `valid_until`, an open end shown
+ * as `unknown`) follows. A failed read also renders `unknown`, and the caller
+ * marks the response degraded.
  *
  * Seam: `pageObservationDate` mirrors `resolveObservationDate` from
  * src/core/ai/date-grounding.ts (#6020); once that lands, call it here
@@ -26,6 +30,8 @@
  * said, never the event date think shows as content date.
  */
 import { computeEffectiveDate, formatBrainDay } from '../effective-date.ts';
+import type { PageReadScope } from '../types.ts';
+import { pageReadFilter } from './read-policy-sql.ts';
 
 export const EVIDENCE_DATE_HEADER_KEY = 'search.evidence_date_header';
 /** GBRA-205: with the date header on, a page block's header line also carries its title (default off). */
@@ -103,39 +109,54 @@ export async function loadPageDateHeaders(
   return out;
 }
 
-/** `recall` fact rows plus `date_header` when `search.evidence_date_header` is on; unchanged otherwise. */
+/**
+ * `recall` fact rows plus `date_header` when `search.evidence_date_header` is on; unchanged otherwise. `scope` is
+ * the caller's page read policy for the observation dates; a failed read renders `unknown` and calls `onUnavailable`.
+ */
 export async function withFactDateHeaders<T extends { id: number; valid_from: string | null; valid_until: string | null; created_at?: string | null; entity_slug?: string | null; source_id?: string }>(
   engine: { getConfig(key: string): Promise<string | null>; executeRaw<R>(sql: string, params?: unknown[]): Promise<R[]> },
   facts: T[],
+  scope: PageReadScope | undefined,
+  onUnavailable: () => void,
 ): Promise<Array<T & { date_header?: string }>> {
   if (!await evidenceDateHeaderEnabled(engine)) return facts;
   const timeZone = (await engine.getConfig('brain.timezone').catch(() => null))?.trim() || null;
-  const observed = await factObservationDates(engine, facts, timeZone).catch(() => new Map<number, string>());
+  const observed = await factObservationDates(engine, facts, timeZone, scope).catch(() => { onUnavailable(); return new Map<number, string>(); });
   return facts.map(f => ({ ...f, date_header: factDateHeader(f, timeZone, observed.get(f.id)) }));
 }
 
 /**
  * When each fact was said: the observation date of the page the fact came
  * from (`facts.source_markdown_slug`, e.g. the conversation it was extracted
- * from). A fact stored in its own entity page's facts fence has no such page,
- * so it stays unknown. One facts read and one pages read per call.
+ * from), read under `scope` (the caller's page read policy), so a page the
+ * caller may not read dates nothing. A fact stored in its own entity page's
+ * facts fence has no such page, so it stays unknown. One pages read per call,
+ * plus one facts read for rows that do not carry `source_markdown_slug`.
+ * Throws on a database error; the caller marks the response degraded.
  */
-async function factObservationDates(
+export async function factObservationDates(
   engine: { executeRaw<R>(sql: string, params?: unknown[]): Promise<R[]> },
-  facts: Array<{ id: number; entity_slug?: string | null }>,
+  facts: Array<{ id: number; entity_slug?: string | null; source_id?: string; source_markdown_slug?: string | null }>,
   timeZone: string | null,
+  scope: PageReadScope | undefined,
 ): Promise<Map<number, string>> {
   const out = new Map<number, string>();
-  const ids = facts.map(f => f.id).filter(id => Number.isInteger(id) && id > 0);
-  if (!ids.length) return out;
-  const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string | null; entity_slug: string | null }>(
-    'SELECT id, source_id, source_markdown_slug AS slug, entity_slug FROM facts WHERE id = ANY($1::bigint[])', [ids]);
+  const valid = facts.filter(f => Number.isInteger(f.id) && f.id > 0);
+  if (!valid.length) return out;
+  const carried = valid.filter(f => f.source_markdown_slug !== undefined && f.source_id !== undefined);
+  const missing = valid.filter(f => !carried.includes(f)).map(f => f.id);
+  const rows = [
+    ...carried.map(f => ({ id: f.id, source_id: f.source_id!, slug: f.source_markdown_slug ?? null, entity_slug: f.entity_slug ?? null })),
+    ...(missing.length ? await engine.executeRaw<{ id: number; source_id: string; slug: string | null; entity_slug: string | null }>(
+      'SELECT id, source_id, source_markdown_slug AS slug, entity_slug FROM facts WHERE id = ANY($1::bigint[])', [missing]) : []),
+  ];
   const wanted = rows.filter(r => r.slug && r.slug !== r.entity_slug);
   if (!wanted.length) return out;
+  const params: unknown[] = [wanted.map(r => r.source_id), wanted.map(r => r.slug!)];
+  const policy = pageReadFilter('p', scope, params, true);
   const pages = await engine.executeRaw<{ source_id: string; slug: string; frontmatter: unknown; import_filename: string | null }>(
     `SELECT p.source_id, p.slug, p.frontmatter, p.import_filename FROM pages p
-     JOIN unnest($1::text[], $2::text[]) AS w(source_id, slug) ON p.source_id = w.source_id AND p.slug = w.slug WHERE p.deleted_at IS NULL`,
-    [wanted.map(r => r.source_id), wanted.map(r => r.slug!)]);
+     JOIN unnest($1::text[], $2::text[]) AS w(source_id, slug) ON p.source_id = w.source_id AND p.slug = w.slug WHERE ${policy}`, params);
   const byKey = new Map(pages.map(p => {
     const fm = typeof p.frontmatter === 'string' ? JSON.parse(p.frontmatter) : p.frontmatter;
     const day = formatBrainDay(pageObservationDate({ slug: p.slug, frontmatter: fm && typeof fm === 'object' ? fm as Record<string, unknown> : null, filename: p.import_filename, timeZone }), timeZone);
@@ -164,7 +185,7 @@ export function titledPageHeader(header: string, title: string | null | undefine
   return clean ? `${header} ${clean}` : header;
 }
 
-type HeaderHit = { page_id: number; title?: string | null; chunk_text?: string | null; fact_row?: { valid_from: string; valid_until: string | null } };
+type HeaderHit = { page_id: number; title?: string | null; chunk_text?: string | null; fact_row?: { valid_from: string; valid_until: string | null; observed?: string } };
 
 /**
  * The date header line (with its newline) for each delivered block, read for
@@ -178,7 +199,7 @@ export async function blockDateHeaders(engine: Parameters<typeof loadPageDateHea
   let headers: Map<number, string>;
   try { headers = await loadPageDateHeaders(engine, hits.map(h => h.page_id)); } catch { headers = new Map(); onUnavailable(); }
   return hit => {
-    if (hit.fact_row) return hit.chunk_text?.startsWith('[observed ') ? '' : `${factDateHeader(hit.fact_row)}\n`;
+    if (hit.fact_row) return hit.chunk_text?.startsWith('[observed ') ? '' : `${factDateHeader(hit.fact_row, undefined, hit.fact_row.observed)}\n`;
     const header = headers.get(hit.page_id) ?? pageDateHeader(null);
     return `${opts.titles ? titledPageHeader(header, hit.title) : header}\n`;
   };

@@ -42,6 +42,7 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { recordTaintEdges } from '../trust/taint.ts';
 import type { TaintInput, WriteTrust } from '../trust/tier.ts';
 import { recordFlaggedRow, type GatedRowDecision } from '../write-gate-store.ts';
+import { supersededValidUntil } from './supersede-interval.ts';
 
 /**
  * #4755: null-like entity tokens LLM extractors emit for subjectless
@@ -290,7 +291,7 @@ export async function writeSingleFact(
 
 /**
  * Fence-path supersession bookkeeping: strike the old row in the fence with a
- * `superseded by #N` reference (strikethrough + valid_until) and link
+ * `superseded by #N` reference (strikethrough + valid_until by supersede-interval.ts's rule) and link
  * `superseded_by` for the audit trail. A supersession is an update, never a
  * durable withdrawal: the old claim stays rememberable and no other page is
  * invalidated. Both steps best-effort — the new fact is already durably
@@ -303,11 +304,12 @@ async function expireSuperseded(engine: BrainEngine, oldId: number, newId: numbe
   );
   try {
     const { forgetFactInFence } = await import('./forget.ts');
-    const [replacement] = await engine.executeRaw<{ row_num: number | null; same_page: boolean }>(
-      `SELECT n.row_num, n.source_markdown_slug IS NOT DISTINCT FROM o.source_markdown_slug AS same_page
+    const [replacement] = await engine.executeRaw<{ row_num: number | null; same_page: boolean; valid_from: Date | string; old_from: Date | string; old_until: Date | string | null }>(
+      `SELECT n.row_num, n.source_markdown_slug IS NOT DISTINCT FROM o.source_markdown_slug AS same_page, n.valid_from, o.valid_from AS old_from, o.valid_until AS old_until
          FROM facts n, facts o WHERE n.id = $1 AND o.id = $2`, [newId, oldId]);
     const rowNum = replacement?.same_page && replacement.row_num !== null ? Number(replacement.row_num) : null;
-    await forgetFactInFence(engine, oldId, { supersededBy: { rowNum } });
+    const validUntil = replacement ? supersededValidUntil({ valid_from: replacement.old_from, valid_until: replacement.old_until }, new Date(replacement.valid_from)) : new Date();
+    await forgetFactInFence(engine, oldId, { supersededBy: { rowNum, validUntil } });
   } catch (err) {
     report('fence strike', err);
   }

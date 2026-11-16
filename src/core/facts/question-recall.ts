@@ -228,7 +228,7 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
     ]);
     const weighted = switches.weighting;
     const grouped = switches.grouping && !input.entity;
-    const scored = scoreFactCandidates(question, pool.candidates, pool.terms);
+    const scored = scoreFactCandidates(question, pool.candidates, pool.terms, pool.stems);
     const ranked = scored.filter(s => admitted(s, rule));
     const unembedded = uncomparable.reduce((n, r) => n + r.n, 0);
     const why = reason ?? (embedding && !pool.column ? 'facts_embedding_column_missing' : undefined);

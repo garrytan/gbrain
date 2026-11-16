@@ -30,6 +30,7 @@ import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { getProposal, transitionProposal, type ProposalRow } from '../ai/decide/proposals-store.ts';
 import { strikeFenceRow, supersededFact } from './forget.ts';
+import { supersededValidUntil } from './supersede-interval.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { wholeBodySnapshot } from '../persistence/segmented-apply.ts';
 import { withTrustKeep } from '../persistence/context.ts';
@@ -48,6 +49,8 @@ export interface PairFact {
   visibility: string;
   fact: string;
   expired_at: string | null;
+  /** Read by the supersession rule (supersede-interval.ts); a pair built without it strikes with today's date. */
+  valid_from?: string | null;
   valid_until: string | null;
   superseded_by: number | null;
   row_num: number | null;
@@ -101,12 +104,12 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
 export async function loadPairFact(engine: BrainEngine, id: number, lock = false): Promise<PairFact | null> {
   const [r] = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT id, source_id, entity_slug, visibility, fact, expired_at, valid_until, superseded_by, row_num, source_markdown_slug
+    `SELECT id, source_id, entity_slug, visibility, fact, expired_at, valid_from, valid_until, superseded_by, row_num, source_markdown_slug
        FROM facts WHERE id = $1${lock ? ' FOR UPDATE' : ''}`, [id]);
   if (!r) return null;
   return {
     id: Number(r.id), source_id: String(r.source_id), entity_slug: (r.entity_slug as string | null) ?? null, visibility: String(r.visibility),
-    fact: String(r.fact), expired_at: iso(r.expired_at), valid_until: iso(r.valid_until),
+    fact: String(r.fact), expired_at: iso(r.expired_at), valid_from: iso(r.valid_from), valid_until: iso(r.valid_until),
     superseded_by: r.superseded_by === null || r.superseded_by === undefined ? null : Number(r.superseded_by),
     row_num: r.row_num === null || r.row_num === undefined ? null : Number(r.row_num), source_markdown_slug: (r.source_markdown_slug as string | null) ?? null,
   };
@@ -136,13 +139,18 @@ export function staleReason(proposal: Pick<ProposalRow, 'source_id'>, oldF: Pair
   return null;
 }
 
-/** The old fact's fence row struck as superseded (with `#N` when the new fact lives on the same page). */
+/** The old fact's validity end on accept (supersede-interval.ts's rule), or undefined when the pair carries no dates. */
+const acceptedUntil = (oldF: PairFact, newF: PairFact): Date | undefined =>
+  oldF.valid_from ? supersededValidUntil({ valid_from: oldF.valid_from, valid_until: oldF.valid_until }, newF.valid_from ? new Date(newF.valid_from) : null) : undefined;
+
+/** The old fact's fence row struck as superseded (with `#N` when the new fact lives on the same page), ending where the rule says. */
 export function planAcceptFence(body: string, oldF: PairFact, newF: PairFact, today: string): { body: string; before: ParsedFact; after: ParsedFact } | null {
   if (oldF.row_num === null || !oldF.source_markdown_slug) return null;
   const before = parseFactsFence(body).facts.find((f) => f.rowNum === oldF.row_num);
   if (!before) return null;
   const newRow = newF.source_markdown_slug === oldF.source_markdown_slug && newF.row_num !== null ? newF.row_num : null;
-  const struck = strikeFenceRow(body, oldF.row_num, (f) => supersededFact(f, today, newRow));
+  const until = acceptedUntil(oldF, newF);
+  const struck = strikeFenceRow(body, oldF.row_num, (f) => supersededFact(f, today, newRow, until && formatFenceDate(until)));
   if (struck === null) return null;
   const after = parseFactsFence(struck).facts.find((f) => f.rowNum === oldF.row_num);
   return after ? { body: struck, before, after } : null;
@@ -169,10 +177,12 @@ export function undoRefusal(state: { before: SupersedeState; after: SupersedeSta
 // ---------------------------------------------------------------------------
 
 async function expireOld(tx: BrainEngine, proposal: PairProposal): Promise<void> {
+  const [oldF, newF] = await Promise.all([loadPairFact(tx, proposal.old_fact_id), loadPairFact(tx, proposal.new_fact_id)]);
+  const until = oldF && newF ? acceptedUntil(oldF, newF) ?? null : null;
   const rows = await tx.executeRaw<{ id: number }>(
-    `UPDATE facts SET expired_at = now(), valid_until = LEAST(COALESCE(valid_until, now()), now()), superseded_by = $3
+    `UPDATE facts SET expired_at = now(), valid_until = COALESCE($4::timestamptz, LEAST(COALESCE(valid_until, now()), now())), superseded_by = $3
       WHERE id = $1 AND source_id = $2 AND expired_at IS NULL RETURNING id`,
-    [proposal.old_fact_id, proposal.source_id, proposal.new_fact_id]);
+    [proposal.old_fact_id, proposal.source_id, proposal.new_fact_id, until?.toISOString() ?? null]);
   if (rows.length !== 1) throw new ProposalConflictError('the old fact changed during accept');
   noteBelief({ kind: 'superseded', oldId: proposal.old_fact_id, newId: proposal.new_fact_id });
 }

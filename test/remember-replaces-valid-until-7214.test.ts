@@ -3,7 +3,7 @@
  * replacement starts after the retired fact, the retired row's valid_until is
  * the replacement's valid_from, in the facts table and in the struck fence row,
  * and a re-extraction of the page keeps it. A backdated replacement (starting
- * on or before the retired fact) leaves the interval as it was.
+ * on or before the retired fact) ends the interval now (GBRA-574 A3).
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -65,23 +65,23 @@ for (const backend of testBackends()) {
         expect(await validUntil(res.body.id)).toBeNull();
       });
 
-      test('a backdated replacement leaves the retired interval open', async () => {
+      test('a backdated replacement ends the retired interval now', async () => {
         const old = await remember('The test charge is 100 units.', { valid_from: '2026-03-01' });
         const res = await remember('The test charge is 200 units.', { valid_from: '2026-01-01', replaces: old.body.id });
         expect(res.body.status).toBe('superseded');
-        expect(await validUntil(old.body.id)).toBeNull();
+        expect(await validUntil(old.body.id)).toBe(new Date().toISOString().slice(0, 10));
       });
     });
 
     describe('#7214 insertFact supersede closes the retired interval', () => {
-      test('later replacement closes at its valid_from; backdated leaves it open', async () => {
+      test('later replacement closes at its valid_from; backdated ends it now', async () => {
         const a = await engine.insertFact({ fact: 'The test charge is 100 units.', entity_slug: 'people/alice-example', source: 'test', valid_from: new Date('2026-01-01') }, { source_id: 'default' }); // gbrain-allow-direct-insert: #7214 probe of the engine supersede path
         const b = await engine.insertFact({ fact: 'The test charge is 200 units.', entity_slug: 'people/alice-example', source: 'test', valid_from: new Date('2026-03-01') }, { source_id: 'default', supersedeId: a.id }); // gbrain-allow-direct-insert: #7214 probe of the engine supersede path
         expect(b.status).toBe('superseded');
         expect(await validUntil(String(a.id))).toBe('2026-03-01');
         const c = await engine.insertFact({ fact: 'The test charge is 50 units.', entity_slug: 'people/alice-example', source: 'test', valid_from: new Date('2025-06-01') }, { source_id: 'default', supersedeId: b.id }); // gbrain-allow-direct-insert: #7214 probe of the engine supersede path
         expect(c.status).toBe('superseded');
-        expect(await validUntil(String(b.id))).toBeNull();
+        expect(await validUntil(String(b.id))).toBe(new Date().toISOString().slice(0, 10));
       });
     });
   });

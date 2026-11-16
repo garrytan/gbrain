@@ -404,8 +404,8 @@
               "Date",
               "number"
             ],
-            "sql": "UPDATE facts SET expired_at = now(), superseded_by = $1, valid_until = CASE WHEN valid_from < $2::timestamptz AND (valid_until IS NULL OR valid_until > $3::timestamptz) THEN $4::timestamptz ELSE valid_until END WHERE id = $5 AND expired_at IS NULL",
-            "textSha256": "aa8e803c695469877ce7546bddfbd038658079b3d7dba01bdbc3acd2f5cfdeaa"
+            "sql": "UPDATE facts SET expired_at = now(), superseded_by = $1, valid_until = CASE WHEN valid_from < $2::timestamptz AND $3::timestamptz < COALESCE(valid_until, now()) THEN $4::timestamptz ELSE LEAST(COALESCE(valid_until, now()), now()) END WHERE id = $5 AND expired_at IS NULL",
+            "textSha256": "1cde69f720af1ab535ada5b0c76f3b37805ff1dbf073a22eb46f31de48ba391b"
           },
           {
             "event": "commit",
