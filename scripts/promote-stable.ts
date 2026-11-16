@@ -562,7 +562,8 @@ export const RELEASE_NOTES_MAX = 120_000;
  * The stable release's notes: every CHANGELOG.md section newer than `previous` up to and including `version`, newest
  * first, under one line naming the previous stable. Oldest sections drop first when the roll-up would pass
  * RELEASE_NOTES_MAX, and a link to the full CHANGELOG at the tag says so. With no previous stable it is the release's
- * own entry; with no matching section it is the same link stub release.yml writes.
+ * own entry; with no matching section it is the same link stub release.yml writes. The behavior-change summary sits
+ * under the opening line, and is left out when it alone would pass RELEASE_NOTES_MAX.
  */
 export function rolledUpNotes(changelog: string, previous: string | null, version: string, repo: string, summary: string[] | null = null): string {
   const link = `https://github.com/${repo}/blob/v${version}/CHANGELOG.md`;
@@ -580,7 +581,8 @@ export function rolledUpNotes(changelog: string, previous: string | null, versio
   }
   if (sections.length === 0) return `See [CHANGELOG.md](${link}) for v${version}.\n`;
   const opening = previous === null ? `Stable release v${version}.\n` : `Stable release v${version}: every change since the previous stable release, v${previous}, newest first.\n`;
-  const intro = summary ? `${opening}\n${summary.join('\n')}\n` : opening;
+  const summarized = summary ? `${opening}\n${summary.join('\n')}\n` : opening;
+  const intro = summarized.length + 200 > RELEASE_NOTES_MAX ? opening : summarized;
   const bodies = sections.map(s => `${s.join('\n').trimEnd()}\n`);
   const kept: string[] = [];
   let size = intro.length;

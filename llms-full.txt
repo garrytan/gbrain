@@ -2899,7 +2899,7 @@ Know one limit before you go back. Upgrades can move your database to a newer sc
 ## Where changes that need your attention are announced
 
 - **The upgrade notice.** After an upgrade, the first command (or the first tool result an agent gets) shows a one-time `behavior_changes` notice. It lists each behaviour change in the releases you skipped over, in plain sentences, often naming the setting that turns it off. Read it again at any time with `gbrain doctor --only behavior_changes`.
-- **The upgrade summary.** `gbrain upgrade` ends with a short summary of the behaviour changes since the version you had: the ones that need you first, then changed defaults, then a count of fixes and additions. Changes from before each one was given a kind are counted as not classified yet.
+- **The upgrade summary.** Once the new version is installed, `gbrain upgrade` prints a short summary of the behaviour changes since the version you had, before its migrations run: the ones that need you first, then changed defaults, then a count of fixes and additions. Changes from before each one was given a kind are counted as not classified yet.
 - **The changelog.** [CHANGELOG.md](../CHANGELOG.md) has an entry for every release.
 - **The GitHub release.** When stable moves, its GitHub release becomes "Latest" and its notes open with the same short summary of behaviour changes since the previous stable release, then list every changelog entry since it. While this rule is new, Latest can still point at a newer release that is not stable; that ends the first time stable passes it.
 

@@ -872,6 +872,14 @@ describe('GitHub Latest release', () => {
     expect(notes.indexOf('- Run gbrain sync once.')).toBeLessThan(notes.indexOf('## [0.60.361.0]'));
   });
 
+  test('rolledUpNotes leaves out a summary that alone would pass GitHub\'s size limit', () => {
+    const summary = ['What changed since v0.60.360.0: 1000 changes.', '', 'Needs you (1000):', ...Array.from({ length: 1000 }, () => `- ${'x'.repeat(240)}`)];
+    const notes = rolledUpNotes(CHANGELOG, '0.60.360.0', '0.60.361.0', REPO, summary);
+    expect(notes.length).toBeLessThanOrEqual(RELEASE_NOTES_MAX);
+    expect(notes).not.toContain('Needs you (1000):');
+    expect(notes).toBe(rolledUpNotes(CHANGELOG, '0.60.360.0', '0.60.361.0', REPO));
+  });
+
   test('rolledUpNotes drops the oldest entries past GitHub\'s size limit and links the rest', () => {
     const big = (v: string) => [`## [${v}] - 2026-10-21`, '', 'x'.repeat(50_000), ''].join('\n');
     const notes = rolledUpNotes(['0.60.363.0', '0.60.362.0', '0.60.361.0'].map(big).join('\n'), '0.60.360.0', '0.60.363.0', REPO);
