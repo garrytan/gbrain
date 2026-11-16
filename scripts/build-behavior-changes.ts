@@ -46,6 +46,28 @@ const cmp = (a: string, b: string) => {
 };
 const markers = (text: string) => [...text.matchAll(MARKER)].map(m => m[1]!);
 
+export const KINDS = ['breaking', 'action', 'default', 'fix', 'add'] as const;
+export const EXCEPTIONS = ['security', 'data-loss', 'revert'] as const;
+const FRONT_KEYS = ['kind', 'exception', 'deprecation'];
+
+/** A notice fragment: optional front matter (kind, exception, deprecation), then the notice text. */
+export function parseNoticeFragment(raw: string): { front: Record<string, string>; body: string; problems: string[] } {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(raw);
+  const front: Record<string, string> = {};
+  const problems: string[] = [];
+  for (const line of (m?.[1] ?? '').split(/\r?\n/).filter(l => l.trim())) {
+    const kv = /^([a-z_]+)\s*:\s*(.*?)\s*$/.exec(line);
+    if (!kv || !FRONT_KEYS.includes(kv[1]!)) { problems.push(`front matter line "${line.trim()}" is not one of ${FRONT_KEYS.join(', ')}`); continue; }
+    front[kv[1]!] = kv[2]!.replace(/^(['"])(.*)\1$/, '$2');
+  }
+  if (front.kind !== undefined && !(KINDS as readonly string[]).includes(front.kind)) problems.push(`kind: ${front.kind} is not one of ${KINDS.join(', ')}`);
+  if (front.exception !== undefined && !(EXCEPTIONS as readonly string[]).includes(front.exception)) problems.push(`exception: ${front.exception} is not one of ${EXCEPTIONS.join(', ')}`);
+  if (front.exception !== undefined && front.kind !== 'breaking') problems.push('exception: applies only to kind: breaking');
+  if (front.exception === 'revert' && !/#\d+/.test(m ? raw.slice(m[0].length) : raw)) problems.push('exception: revert needs the notice text to name the pull request it reverts (#<number>)');
+  if (front.deprecation !== undefined && !ID.test(front.deprecation)) problems.push(`deprecation: ${front.deprecation} is not a deprecations.d id`);
+  return { front, body: m ? raw.slice(m[0].length) : raw, problems };
+}
+
 /** CHANGELOG sections oldest first: each release heading with the ids its text marks; `## [Unreleased]` has version null. */
 export function changelogReleases(changelog: string): Release[] {
   const out: Release[] = [];
@@ -105,7 +127,9 @@ export function build(root: string): Built {
   for (const f of files) {
     const id = f.replace(/\.md$/, '');
     if (!f.endsWith('.md') || !ID.test(id)) { problems.push(`${FRAGMENT_DIR}/${f}: a fragment is named <id>.md, the id lowercase letters, digits and _, starting with a letter (3-96 characters)`); continue; }
-    const text = read(root, join(FRAGMENT_DIR, f)).trim().replace(/\s*\n\s*/g, ' ');
+    const parsed = parseNoticeFragment(read(root, join(FRAGMENT_DIR, f)));
+    for (const problem of parsed.problems) problems.push(`${FRAGMENT_DIR}/${f}: ${problem}`);
+    const text = parsed.body.trim().replace(/\s*\n\s*/g, ' ');
     if (!text) problems.push(`${FRAGMENT_DIR}/${f} is empty`);
     else if (text.length > NOTICE_CAP) problems.push(`${FRAGMENT_DIR}/${f} is ${text.length} characters; the notice renders at most ${NOTICE_CAP}`);
     else if (/<!--|^---/.test(text)) problems.push(`${FRAGMENT_DIR}/${f} holds markup; it is the notice text only`);
