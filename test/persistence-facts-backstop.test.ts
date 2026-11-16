@@ -236,6 +236,20 @@ test('#6071: an extraction that did not complete does not count as extracted', (
   expect(await rewrite(retitled('Renamed after a failed extraction'))).toEqual({ status: { queued: true }, effectQueued: true });
 }));
 
+test.each(['superseded', 'page_missing', 'extraction_disabled'])('#9248: a completed facts-absorb job whose result is skipped %s does not count as extracted', (reason) => fixture(async () => {
+  await publish();
+  await finishExtractions();
+  await engine.executeRaw("UPDATE minion_jobs SET result = jsonb_build_object('skipped', $1::text) WHERE name = 'facts-absorb'", [reason]);
+  expect(await rewrite(retitled('Renamed after a skipped extraction'))).toEqual({ status: { queued: true }, effectQueued: true });
+}));
+
+test('#9248 control: a completed facts-absorb job with an extraction result still counts as extracted', () => fixture(async () => {
+  await publish();
+  await finishExtractions();
+  await engine.executeRaw(`UPDATE minion_jobs SET result = '{"mode":"inline","inserted":2,"duplicate":0,"superseded":0,"fact_ids":[1,2]}'::jsonb WHERE name = 'facts-absorb'`);
+  expect(await rewrite(retitled('Renamed after a real extraction'))).toEqual({ status: { skipped: 'body_unchanged' }, effectQueued: false });
+}));
+
 test('a slug-bound writer\'s backstop refusal says the page was written and who widens the grant', async () => {
   const row = { slug: 'notes/a', authority: { slugPrefixes: ['notes/'] } } as unknown as WriteRequest;
   await expect(authorizeFactsBackstop(engine, row)).rejects.toMatchObject({ code: 'permission_denied',
