@@ -188,6 +188,7 @@
     "check:bash32": "bash scripts/check-bash32.sh",
     "check:schema-migration-order": "bun scripts/check-schema-migration-order.ts",
     "check:behavior-since": "bun scripts/check-behavior-since.ts",
+    "check:public-surface": "bun scripts/check-public-surface.ts",
     "check:changelog-headings": "bun scripts/check-changelog-headings.ts",
     "check:compile-autoload": "bash scripts/check-compile-autoload.sh",
     "check:vendor-postgres": "bash scripts/check-vendor-postgres.sh",

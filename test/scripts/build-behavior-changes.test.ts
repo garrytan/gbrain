@@ -61,6 +61,22 @@ describe('build()', () => {
     expect(rowsOf(build(tree({ VERSION: '0.1.1.0\n', ...files })).text)).toEqual([{ since: '0.1.1.0', id: 'faster_sync_abc', text: 'Sync is faster now.' }]);
   });
 
+  test('front matter (kind, exception, deprecation) is read and left out of the notice text; bad values are problems', () => {
+    const root = tree({
+      VERSION: '0.1.0.0\n',
+      'CHANGELOG.md': changelog(section('0.1.0.0', 'First.', marker('kinded_row_abc'), marker('bad_kind_abc'))),
+      'behavior-changes.d/kinded_row_abc.md': '---\nkind: breaking\nexception: security\n---\nA kinded\nchange.\n',
+      'behavior-changes.d/bad_kind_abc.md': '---\nkind: sideways\nexception: data-loss\nowner: someone\n---\nText.\n',
+    });
+    const { text, problems } = build(root);
+    expect(rowsOf(text).find((r) => r.id === 'kinded_row_abc')?.text).toBe('A kinded change.');
+    expect(problems).toEqual([
+      'behavior-changes.d/bad_kind_abc.md: front matter line "owner: someone" is not one of kind, exception, deprecation',
+      'behavior-changes.d/bad_kind_abc.md: kind: sideways is not one of breaking, action, default, fix, add',
+      'behavior-changes.d/bad_kind_abc.md: exception: applies only to kind: breaking',
+    ]);
+  });
+
   test('a marker under a released CHANGELOG heading dates the row with that version, text joined to one line', () => {
     const root = tree({
       VERSION: '0.1.1.0\n',
