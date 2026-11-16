@@ -10,6 +10,156 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.733.0] - 2026-11-16
+
+**`gbrain transcripts archive` no longer has a day page refused by the write gate over its name, and a run exits 1 exactly when its `errors` list is not empty.**
+
+### Fixed
+- Day page names always pass the write gate. A cron job name cut at 24 characters no longer ends in a hyphen, and a label's repeated hyphens fold into one and its leading or trailing hyphen drops.
+- Every day a run fails to write is listed in the run's `errors` (in `--json`) with its `day` and `code`, and a shared brain with no owner lists the `archive_owner_unset` hold there too. `run` and `backfill` exit 1 exactly when that list is not empty, and 0 otherwise.
+- `--dry-run` reports `write_mode: coordinator` when the real run would write through the write coordinator, even before the archive source exists.
+- Days recorded by `gbrain transcripts archive adopt-legacy` are still skipped after the brain turns shared and the archive moves to its owner-only source.
+
+**The conversation archive reads OpenClaw's Gateway in far fewer process starts, and `gbrain transcripts archive status` no longer reads any session.**
+
+### Changed
+- The OpenClaw Gateway reader asks `chat.history` for pages of up to 1,000 messages within a 4 MiB budget, and reads up to 4 sessions at once. Each `openclaw gateway call` is its own process, so on a test install with 350 sessions a read went from 162 process starts and 164 s to 52 starts and 16 s. A Gateway older than 2026.10 that refuses the byte budget is asked again without it. Pages of one session stay in order, conversations keep their `sessions.list` order, and a failed session still fails the whole read before any day is written.
+- `gbrain transcripts archive status` and `gbrain doctor --only transcript_archive_freshness` report what the last archive run read for each reader (conversations, newest session day, time and any error) instead of running the readers. They start no `openclaw` process and parse no session file. A reader no run has read yet says so. Each real run records this in `transcripts.archive.last_read.<source>`; a dry run records nothing.
+
+### Fixed
+- Doctor warns when no archive run has read a reader successfully within `transcripts.archive.stale_days`, for example when maintenance passes keep stopping at their deadline before that reader, and suggests `gbrain transcripts archive run`.
+
+**A keyword search that timed out on a cold Postgres cache comes back within about a minute instead of ten.**
+
+### Fixed
+- After hybrid search's keyword statement hits the keyword statement timeout, `gbrain serve` and MCP sessions still skip that exact statement (`keyword_arm_failed: skipped_after_timeout`), and now also re-run it once in the background 30 seconds later, then after 60, 120 and so on seconds while it keeps failing, never past `search.keyword_timeout_negative_cache_seconds` (default 600, unchanged). The first re-run that answers ends the skip. A re-run uses the same statement, scope and bound, starts only when the pool has no waiting query and keeps a connection free for other queries, runs one at a time per brain, throws its rows away, writes no timeout counter row and is not recorded as a search. Before, one timeout on a cold cache left every identical search keyword-less for ten minutes even after the cache had warmed (#7082).
+
+<!-- behavior-change: keyword_skip_rerun_7082 -->
+
+**A stuck shared-skills migration is reported as owed work everywhere, with a read-only first step, instead of being called history.**
+
+### Fixed
+- A migration that stopped three or more runs in a row on a source conflict and still owes host work (v0.53.0 today) is no longer called "history, not outstanding work" because a newer migration completed. `gbrain apply-migrations --list`, the notice on other commands and `gbrain serve` startup, and `gbrain doctor` (a warning) now say the same thing: the work is still owed, it does not clear without a person, and the first step is `gbrain apply-migrations --migration 0.53.0 --dry-run --json`, which lists each source's conflict and changes nothing. They give the order that works: review each conflict, clear the wedge with `gbrain apply-migrations --force-retry 0.53.0`, then run the command the inspect output names for that source, or `gbrain apply-migrations --yes`. That inspect command no longer refuses a wedged version as "not registered", and running a wedged migration by name (for example the accept command a conflict message names) still exits 2 but says it is wedged and names those steps. Nothing runs the migration again by itself, and no exit status changes.
+
+<!-- behavior-change: migration_host_work_owed -->
+
+**`bun run verify` now fails when a schema migration would take every page it touches out of search until `gbrain projections drain` rebuilds them, unless the migration is listed with the reason search keeps answering (#9192).**
+
+### For contributors
+- `bun run check:migration-projection`, part of `bun run verify`, fails on a migration whose SQL, or whose handler's own source, updates a page column the page revision trigger watches (`UPDATE pages ... SET` or an `INSERT INTO pages ... DO UPDATE SET` upsert) or writes `tags`. The dollar-quoted body of a `CREATE FUNCTION` or `CREATE PROCEDURE` is skipped; a `DO` block is read.
+- A migration that has to do this goes in `scripts/migration-projection-baseline.tsv` with the reason search keeps answering, or why it cannot. v153 and v189 are listed. A listed migration that no longer matches fails as stale.
+- The guard cannot see a handler that changes pages through helpers or functions defined elsewhere, SQL assembled at run time, or writes made by a database function the migration calls. Review those by hand.
+
+**`gbrain git commit-push` works on a checkout with a very large index, no longer commits a file that still has merge conflicts, and OpenClaw skill setup no longer fails on a busy machine.**
+
+### Fixed
+- `gbrain git commit-push` read each git command's output with Node's default 1 MiB limit, so on a large checkout (one report had about 385,000 tracked files) naming a folder killed git and the run failed with `git_unavailable` "git ls-files -v failed: exit -1". It now reads git's whole output, so the commit goes through. A git command stopped before it finishes (its time limit, or a signal such as the out-of-memory killer) now fails with `git_command_stopped` and its reason, still exit 1, instead of `git_unavailable`, and its partial output is never used, so a cut-off listing can no longer pick the wrong files to stage or restore. A push, fetch or remote listing stopped after the local commit still reports `push_unconfirmed` (exit 4), and a write-through file whose commit was stopped stays in the pending ledger for the next retry.
+- `gbrain git commit-push` refuses a named file that still has unresolved merge conflicts in the index (for example after a merge, rebase or stash pop that stopped on a conflict) with `commit_paths_unmerged`, before it stages anything. It used to commit the file, conflict markers included, as if it were resolved. Nothing is staged or committed, and the message says how to resolve the file first. Every gbrain write that commits named files goes through the same check.
+- `gbrain setup openclaw` checked its installed skill plugin by resolving one turn against the live per-turn deadline of 50 ms, so on a loaded or slow machine the check timed out and setup failed with `skill_resolver_selftest_failed`. The check now gives that one turn 10 seconds, because it tests that a turn resolves, not how fast. Live turns keep the 50 ms deadline.
+
+<!-- behavior-change: commit_paths_unmerged -->
+<!-- behavior-change: git_large_index_listing -->
+
+**After an upgrade from before v0.51, `gbrain projections drain` rebuilds the pages that are out of search first, and on Postgres it rebuilds 4 pages at once by default, so every page answers search much sooner.**
+
+### Fixed
+- The search-index rebuild that an upgrade from before v0.51 starts used to work through pages in queue order, so pages with a facts fence could wait hours behind pages that were still answering from their old index. `gbrain projections drain` now rebuilds the pages that are out of search first, then seals images, then rebuilds the pages still answering from their pre-upgrade index. `--dry-run` lists rows in the same order. A follow-up to #9192.
+- On Postgres the drain rebuilds several pages at once, each on its own pooled connection: 4 by default, or fewer when the pool is small, and `--concurrency N` goes up to the pool size less 2. On a 50,000-page test brain with 30,000 fenced pages behind an 18 ms round trip, every page was searchable after about 86 minutes at the default. PGLite, `gbrain serve` on PGLite and the drain inside `gbrain migrate --to` still rebuild one page at a time.
+- A refused or dropped extra connection lowers the width by one and the drain carries on; stderr names the new width. It never fails the drain.
+- The upgrade's `[153]` line gives the rebuild time at the default width, names the faster `--concurrency` command with its time, and counts only the Markdown and code pages the drain rebuilds, not images.
+
+**The check that runs before every search stays fast while a large brain's pages wait to be rebuilt after an upgrade from before v0.51.**
+
+### Fixed
+- After an upgrade from before v0.51, pages still answering from their old index were walked one by one by the readiness check that runs before every search, so the check cost 21 ms on a test brain with 20,000 such pages and 126 to 149 ms with 200,000. A new partial index (migration v317) holds only the pages that are out of search, so the check now takes about 2 ms and the index is empty once the rebuild finishes. On Postgres the index builds without blocking writes; nothing is rewritten. Follow-up to #9472 (#9192).
+
+**`gbrain doctor` checks for facts left behind by purged pages in about a second per million facts, instead of timing out on a large brain.** The `purged_page_facts` check used to run its exclusion tests (a withdrawal lookup that fingerprints each claim, plus the superseded and open-loop checks) on every active fact before asking whether the fact's page was gone, so on a brain with a few million facts it ran past its 15-second budget and reported nothing. It now finds the facts whose page is gone first and runs those tests only on them. It counts exactly what it counted before, and `gbrain repair purged-page-facts` is unchanged.
+
+### Fixed
+
+- Doctor `purged_page_facts`: on a generated brain with 1,000,000 active facts and nothing to report, the check took 6.7 to 7.0 s on Postgres and 24 to 26 s on PGLite, and now takes about 1.0 s on both.
+
+**A release's list of changes shows each change's headline alone, even when its changelog entry continues on the headline's line.**
+
+### Fixed
+- `scripts/changelog-entry.sh --pr-list` cuts each fragment's first bold line at its closing `**`. Before, a fragment whose body text followed the headline on the same line put that whole paragraph, with a stray `**`, into the release notes.
+
+### For contributors
+- `test/release-workflow.test.ts` covers a fragment with body text after its headline.
+
+**Three fixes from outside bug reports: retired atoms keep their trust tier, a provider answer that cannot be parsed is no longer retried, and doctor stops recommending a sync that refuses a source.**
+
+### Fixed
+- An atom a re-extraction retires keeps the trust tier and write origin its extraction gave it, and comes back at that tier when a later extraction produces it again. It used to be stored as `unknown` with no origin, and a revived atom stayed `unknown`. Every derived retirement (chronicle events, synthesis outputs, `gbrain repair stale-atoms`) now stamps its pages this way. Reported and first fixed by @howardpark (#9456).
+- A model provider that answers with a success status and a body that is not one JSON document now fails with the non-retryable code `provider_response_unparseable`. A facts job that hits it ends on its first attempt instead of paying for the same failing call again, `gbrain facts retry-dead` leaves it alone, and its recorded error names the parse failure without keeping any response text. Reported by @haumanto and first fixed by @Masashi-Ono0611 (#9466).
+- `gbrain doctor`'s `sync_freshness` no longer fails a source whose folder sits inside gbrain's own content directory, and no longer tells you to run `gbrain sync` for it, which refuses such a source with `sync_not_applicable`. It counts the source as a content directory and names `gbrain import <dir> --source <id>` instead. Reported by @railsloes and first fixed by @Masashi-Ono0611 (#9471).
+
+<!-- behavior-change: atom_retirement_keeps_tier_9456 -->
+<!-- behavior-change: provider_response_unparseable_9466 -->
+<!-- behavior-change: sync_freshness_content_directory_9471 -->
+
+**The daily stable check sees merged important fixes again, and stops with a clear error if it ever loses access to pull requests.**
+
+### Fixed
+- The daily stable check's GitHub token can read pull requests again. A recent permissions change had left it unable to see any pull request, so the search for merged `stable:important` fixes came back empty and the check reported nothing to promote.
+- Each run now logs how many labelled pull requests the search found. If the search sees no merged pull request at all, the check stops red and names the missing `pull-requests: read` permission instead of quietly reporting nothing.
+
+**`gbrain upgrade` and the stable release notes now start with a short summary of the behaviour changes since the version you had.**
+
+### Added
+- Once the new version is installed, `gbrain upgrade` (through `gbrain post-upgrade`) prints the summary before its migrations run: the changes that need you first, then changed defaults, then a count of fixes and additions, and a pointer to `gbrain doctor --only behavior_changes` for the full text. Each change shows its first sentence. Under `--json` the summary goes to stderr with the other human lines, so the JSON document on stdout is unchanged.
+- When stable moves, its GitHub release notes open with the same summary for the range since the previous stable release, above the changelog entries. A summary too long for the page by itself is left out, so the notes always fit.
+- Rows written before `kind:` existed are counted as not classified yet. The generated behaviour-change table now carries each row's `kind`, so new rows land in the right group.
+
+## [0.60.732.0] - 2026-11-16
+
+**Every pull request is now checked against stable's promise: removing a command, flag, MCP tool or parameter, config key or exit code needs a deprecation record whose 14-day notice has passed.**
+
+### Added
+- `bun run check:public-surface`, part of `bun run verify`. It compares this tree with the merge base against `docs/contracts/public-surface.json`, a list built from the code by `scripts/build-public-surface.ts` (refreshed by `bun run regen:all`). It refuses a pull request that drops a listed entry, or changes an exit code, before a `deprecations.d/<id>.md` record for it has reached its `remove_after` date. A `cli-command` or `mcp-tool` record also covers that command's flags or that tool's parameters.
+- Removals the promise does not cover go through with no record. That means anything missing from the list at the current stable release (the `stable` tag), and any removal in a pull request that adds a `kind: breaking` row with `exception: security` or `exception: data-loss`. The check fetches the tag when the clone lacks it, and in CI a fetch that fails or takes more than 20 seconds fails the check. Until a stable release carries the list, the check says so and counts everything as on stable; a revert then adds a row with `exception: revert` that names the pull request it reverts.
+- New deprecation records must give at least 14 days of notice. An announced `remove_after` date can move later but never earlier, and a merged record keeps the surface and name it announced.
+- New `behavior-changes.d` rows need `kind:` front matter (`breaking`, `action`, `default`, `fix` or `add`). A `breaking` row needs an exception or a `deprecation: <id>` naming a record whose date has passed.
+- A change to the CLI or agent-contract goldens needs a new behaviour-change row, or a `<!-- public-surface: no-behavior-change: <reason> -->` line in the changelog fragment.
+
+### For contributors
+- `docs/STABILITY.md` "How it is checked" says what the check enforces and what still rests on review: `--json` fields, the page format, wording, behaviour beyond names, the two-stable-releases rule, and the flags of the 124 CLI-only commands without a curated help record.
+- A branch converted with `bun run release:unstamp` gets rows without `kind:`; add one to each before pushing (docs/RELEASING.md).
+
+**The public-surface check no longer fails with "no merge base … even after deepening the clone" on shallow CI checkouts whose head is more than one commit past master.**
+
+### Fixed
+- `bun run check:public-surface` deepened a depth-1 CI checkout with `--filter=tree:0`, which GitHub's server fails on for a shallow clone that is not partial. It now deepens with `--filter=blob:none`, and when a fetch fails it prints git's own error under the FAIL line.
+
+**The public-surface check no longer passes silently when it cannot read master's copy of a file it compares with.**
+
+### Fixed
+- After a shallow CI checkout is deepened with `--filter=blob:none`, `bun run check:public-surface` fetches file contents at the merge base on demand. When that fetch failed, it read master's manifest as missing and skipped the removal check. It now tells a file that is missing on the merge base from one it could not read. Under `CI=true` it fails with git's own error, and locally it skips.
+- A file already on master whose name git quotes (one with non-ASCII characters) now counts as on master, so an old `changelog.d` waiver no longer covers a new golden change.
+
+**A page its owner purged stays purged after a restore, even when the purge waited behind a private derived page.**
+
+When an owner purges a page that a derived page depends on for its privacy, the purge waits until that derived page can be labelled private. Before this change, if an automatic purge removed the page first, or the next purge run failed or was deferred, the page was deleted without the purge records that tell a restore to delete it again, so restoring an older backup brought its text back. gbrain now remembers that the owner's purge is owed, by page id only, and whichever run finally removes the page writes those records, on repo brains and on brains without a repository. Restoring the page clears the reminder, so a page its owner brings back is never purged later by it.
+
+A restore now also removes the same rows a live page purge removes. Replaying a purge from the purge mirror used to delete the page but leave its write requests, file rows, derived generation items and their effects, which still held the purged text. Replay and the live purge now share one sweep. If replay cannot finish a sweep (a store that does not exist on the brain aside), the restore stops with `purge_replay_incomplete` and names the purge it could not replay, instead of reporting success. A new doctor warning, `purge_mirror`, says when recent purges are missing from this machine's purge mirror (for example when gbrain runs in a home directory that is removed after each run), so a restore from an older backup would not replay them. The fix is to give every writer one durable `GBRAIN_HOME`. Thanks to @oakleaf for the replay and purge mirror findings (#9469).
+
+<!-- behavior-change: owner_purge_tombstones_survive_9469 -->
+
+### Fixed
+
+- An owner purge that waited behind a private derived page writes its purge records whichever later run removes the page (an automatic expiry, or a run after a failed or deferred one), on every brain.
+- Restore-time purge replay removes write requests, file rows, derived generation items and their effects, the same rows the live purge removes, and fails with `purge_replay_incomplete` instead of reporting a partial sweep as done.
+
+### Added
+
+- Doctor check `purge_mirror`: a warning (never a failure) when purges recorded in the last 30 days have no line in this machine's purge mirror. It prints counts and the mirror's path, never a page name or text.
+
+**An upgrade from before v0.51 keeps a page in search while the index rebuilds, when its old index can't hold withdrawn, held or redacted text, and says how long the rebuild will take.**
+
+### Fixed
+- Upgrading from a release before v0.51 used to take every page out of keyword and vector search until `gbrain projections drain` finished: about 9 hours on a 50,000-page brain behind an 18 ms database round trip. Now a Markdown or code page indexed at or after the safe-chunk fence keeps answering from its old index until its own rebuild, as long as it has no facts or takes fence, no private-key text and no quarantine marker. Pages with a facts or takes fence, pages with private-key text, quarantined pages, images and pages indexed before the safe-chunk fence still wait for the rebuild, so a brain made mostly of entity pages with a Facts fence gets little from this change. Access checks are unchanged, a page that changes after the upgrade leaves search until it is rebuilt, and no embedding calls are made. Reported by @jonahberg (#9192).
+- The upgrade's `[153]` line says how many pages keep answering, how many wait and why, and how long the rebuild takes at the round trip it measured to the database. `gbrain doctor` still counts every page waiting for the rebuild, and says results may be incomplete only while some page is out of search.
+
 ## [0.60.731.0] - 2026-11-16
 
 **docs/STABILITY.md now says what stays the same on the stable channel, and how much warning you get before something changes.**

@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+On a local search (the CLI and gbrain serve's local callers), the title step now ranks at most 5,000 of the pages that match the query in their title or timeline: the 5,000 with the lowest page ids, so the same pages on every call for the same data. Before, a very common word made it rank every matching page and read every matching timeline until the keyword time limit. A query that matches 5,000 pages or fewer gets the same result as before, timeline-only matches included. When the cut applies, the pages whose title holds the words come first (the rows remote callers get), then the other matching pages among the 5,000 kept, and hybrid search reports `keyword_candidates_incomplete`. A query of several words is cut on the pages that match the whole query, not word by word. Remote callers' results do not change.

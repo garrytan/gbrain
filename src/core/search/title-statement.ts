@@ -39,9 +39,10 @@ export interface SearchTitlesDialect {
  * #7082: a local caller's strict attempt matches the whole vector (title plus
  * timelines, timeline_entries rows included), and a very common word matched
  * most pages, so ranking read every matching vector until the statement timeout.
- * It now ranks at most this many matching pages; a term that matches fewer is
- * ranked exactly as before, and a cut attempt is completed by the title-only
- * statement (engine-sql/titles.ts).
+ * It now ranks at most this many matching pages, the ones with the lowest page
+ * ids, so a cut keeps the same pages on every call for the same data; a term
+ * that matches fewer is ranked exactly as before, and a cut attempt is
+ * completed by the title-only statement (engine-sql/titles.ts).
  */
 let wholeVectorCandidates = 5000;
 export function titleWholeVectorCandidates(): number { return wholeVectorCandidates; }
@@ -133,6 +134,7 @@ export function buildSearchTitlesStatement(query: string, opts: SearchOpts | und
       JOIN sources s ON s.id = p.source_id
       WHERE ${matchSql}
         ${pageFilters}
+      ORDER BY p.id
       LIMIT ${wholeVectorCandidates + 1}
     ),` : ''}
     top_pages AS (
@@ -140,7 +142,7 @@ export function buildSearchTitlesStatement(query: string, opts: SearchOpts | und
         p.effective_date, p.effective_date_source, p.updated_at, p.body_storage, p.body_generation,
         (lower(btrim(p.title, ' "''' || chr(160))) = $2) AS exact_title,
         ${rankSql} * ${sourceFactorCase} AS score
-      FROM ${capped ? 'candidates c JOIN pages p ON p.id = c.id' : 'pages p'}
+      FROM ${capped ? `(SELECT id FROM candidates ORDER BY id LIMIT ${wholeVectorCandidates}) c JOIN pages p ON p.id = c.id` : 'pages p'}
       JOIN sources s ON s.id = p.source_id
       WHERE ${capped ? 'true' : `${matchSql}
         ${pageFilters}`}

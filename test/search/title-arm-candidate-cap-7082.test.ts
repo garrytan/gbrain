@@ -83,6 +83,26 @@ describe('title arm: whole-vector candidate cap for local callers (#7082)', () =
     expect(slugs.length).toBeLessThanOrEqual(remote.slugs.length + 3);
   });
 
+  test('a cut keeps the matching pages with the lowest page ids, the same pages on every call', async () => {
+    const titled = (await titles('board meeting', true)).slugs;
+    const lowest = (await engine.executeRaw<{ slug: string }>(
+      "SELECT slug FROM pages WHERE search_vector @@ websearch_to_tsquery('english', 'board meeting') ORDER BY id LIMIT 2")).map(r => r.slug);
+    __setTitleWholeVectorCandidatesForTests(2);
+    const first = (await titles('board meeting', false)).slugs;
+    expect(first.slice(titled.length).sort()).toEqual(lowest.filter(s => !titled.includes(s)).sort());
+    for (let i = 0; i < 3; i++) expect((await titles('board meeting', false)).slugs).toEqual(first);
+  });
+
+  test('hybrid search reports the cut as keyword_candidates_incomplete', async () => {
+    __setTitleWholeVectorCandidatesForTests(2);
+    let degraded: unknown[] = [];
+    await hybridSearch(engine, 'board meeting', { limit: 10, onMeta: m => { degraded = m.degraded ?? []; } });
+    expect(degraded).toContainEqual({ stage: 'keyword_candidates_incomplete', reason: 'candidate_budget' });
+    __setTitleWholeVectorCandidatesForTests(defaultCap);
+    await hybridSearch(engine, 'board meeting', { limit: 10, onMeta: m => { degraded = m.degraded ?? []; } });
+    expect(degraded).not.toContainEqual({ stage: 'keyword_candidates_incomplete', reason: 'candidate_budget' });
+  });
+
   test('the cap never touches the title-only statement', async () => {
     __setTitleWholeVectorCandidatesForTests(1);
     const { slugs, cut } = await titles('board meeting', true);

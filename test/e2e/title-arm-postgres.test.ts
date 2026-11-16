@@ -12,7 +12,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
-import { buildSearchTitlesStatement } from '../../src/core/search/title-statement.ts';
+import { __setTitleWholeVectorCandidatesForTests, buildSearchTitlesStatement, titleWholeVectorCandidates } from '../../src/core/search/title-statement.ts';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { KEYWORD_STATEMENT_TIMEOUT_DEFAULT_MS } from '../../src/core/postgres-engine/keyword-statement-timeout.ts';
@@ -22,6 +22,7 @@ await registerPostgresTests(() => import('../search/title-arm-exact.test.ts'));
 
 const POSTGRES_DIALECT = { statementTimeout: `${KEYWORD_STATEMENT_TIMEOUT_DEFAULT_MS}ms`, relaxedPrefersIndex: true, staleProbe: false };
 const REMOTE = { requireSafeChunks: true, excludePrivate: true, sourceId: 'default', limit: 50 };
+const DEFAULT_CAP = titleWholeVectorCandidates();
 
 describe('remote title arm plan (postgres)', () => {
   let engine: PostgresEngine;
@@ -85,5 +86,29 @@ describe('remote title arm plan (postgres)', () => {
     const viaEngine = await engine.searchTitles('acme', REMOTE);
     expect(viaEngine.map((r) => r.slug)).toEqual(direct.map((r) => r.slug));
     expect(viaEngine.length).toBe(4);
+  });
+
+  // #7082: a local caller's whole-vector attempt ranks at most titleWholeVectorCandidates() pages, chosen by page id.
+  test('a cut local attempt keeps the lowest page ids, reports candidate_budget and leads with the title rows', async () => {
+    const local = async () => {
+      const cut: string[] = [];
+      const rows = await engine.searchTitles('acme', { limit: 50, onKeywordIncomplete: r => { cut.push(r); } });
+      return { slugs: rows.map(r => r.slug), cut };
+    };
+    // Fold page-1's timeline_entries row (it names acme) into its search_vector, as the next title write does.
+    await engine.executeRaw("UPDATE pages SET title = title WHERE slug = 'notes/page-1'");
+    const titled = (await engine.searchTitles('acme', REMOTE)).map(r => r.slug);
+    const whole = await local();
+    expect(whole.cut).toEqual([]);
+    expect(whole.slugs.sort()).toEqual([...titled, 'notes/page-1'].sort());
+    __setTitleWholeVectorCandidatesForTests(2);
+    try {
+      const first = await local();
+      expect(first.cut).toEqual(['candidate_budget']);
+      expect(first.slugs).toEqual([...titled, 'notes/page-1']);
+      for (let i = 0; i < 3; i++) expect((await local()).slugs).toEqual(first.slugs);
+    } finally {
+      __setTitleWholeVectorCandidatesForTests(DEFAULT_CAP);
+    }
   });
 });

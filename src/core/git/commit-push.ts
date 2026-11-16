@@ -32,7 +32,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { literalPathspecs } from '../git-env.ts';
 import { git, gitOk, type GitRun } from './git-run.ts';
 export type { SkippedPath } from './skipped-paths.ts';
-import { checkoutBehindStrayGitfile, directoryStatus, worktreeOfGitdir, flaggedChanges, stagedRemovals, STAGED_FOR_REMOVAL_WHY, unindexedFiles, unstagedPaths, type SkippedPath } from './skipped-paths.ts';
+import { assertNoUnmergedPaths, checkoutBehindStrayGitfile, directoryStatus, worktreeOfGitdir, flaggedChanges, stagedRemovals, STAGED_FOR_REMOVAL_WHY, unindexedFiles, unstagedPaths, type SkippedPath } from './skipped-paths.ts';
 import { GIT_SSRF_SUBCOMMAND_FLAGS, ownRemoteTransportFlags as transportFlags } from '../git-transport.ts';
 import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesystemRootFor, type ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
@@ -155,7 +155,7 @@ interface Ctx {
 
 /** Remote operations: transport hardening on every call, credentials allowed, no prompt. */
 function remoteGit(root: string, sub: 'fetch' | 'push', args: string[], timeoutMs = 120_000): GitRun {
-  return git(root, [...transportFlags(), sub, ...GIT_SSRF_SUBCOMMAND_FLAGS, ...args], { auth: true, timeoutMs });
+  return git(root, [...transportFlags(), sub, ...GIT_SSRF_SUBCOMMAND_FLAGS, ...args], { auth: true, timeoutMs, returnStopped: true });
 }
 
 export function gitVersion(root: string): [number, number] {
@@ -375,9 +375,9 @@ function withRenamePartners(root: string, rel: string[], env?: NodeJS.ProcessEnv
   return [...out];
 }
 
-/** Index entries that differ from HEAD, whoever staged them, with rename detection off so both sides of a rename are listed. */
-function stagedPaths(root: string): string[] {
-  return git(root, ['diff', '--cached', '--no-renames', '--name-only', '-z']).stdout.split('\0').filter(Boolean);
+/** Index entries under `rel` that differ from HEAD, whoever staged them, with rename detection off so both sides of a rename are listed. */
+function stagedPaths(root: string, rel: string[]): string[] {
+  return git(root, ['diff', '--cached', '--no-renames', '--name-only', '-z', '--', ...literalPathspecs(rel)]).stdout.split('\0').filter(Boolean);
 }
 
 /** The index entries under `rel` as `ls-files -s` records, so a failed commit can put them back exactly. */
@@ -503,13 +503,14 @@ function scopeBases(root: string, opts: CommitPushOptions, rel: string[]): Map<s
 function admitPaths(root: string, rel: string[], roots: string[], bases?: ReadonlyMap<string, string>, dryRun = false): void {
   const outside = rel.filter(p => !insideSourceRoots(p, roots));
   if (outside.length) throw outsideRootError(root, roots, outside, 'Refusing to commit');
+  assertNoUnmergedPaths(root, rel);
   for (const [path, base] of bases ?? []) {
     const head = git(root, ['rev-parse', '--verify', '-q', `HEAD:${path}`]).stdout.trim() || 'absent';
     if (head !== base) throw opError('commit_base_moved', `${path} changed at HEAD since the writer read it (base ${base}, HEAD ${head}).`,
       `Nothing was staged or committed. Read ${path} at HEAD again (git -C ${root} show HEAD:${path}), redo the change on it, and rerun with --base ${path}=${head}.`,
       { detail: JSON.stringify({ path, base, head }), docs: 'docs/guides/shared-checkout-git.md#base-check' });
   }
-  const swept = stagedPaths(root).filter(p => !rel.includes(p) && rel.some(spec => covers(spec, p)));
+  const swept = stagedPaths(root, rel).filter(p => !rel.includes(p) && rel.some(spec => covers(spec, p)));
   const removed = new Set(stagedRemovals(root, swept));
   if (swept.length && swept.every(p => removed.has(p))) {
     const branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).stdout.trim();
@@ -761,7 +762,7 @@ function untrackPaths(root: string, rel: string[], message: string, scope: Commi
 
 export interface PendingWriteThrough { path: string; since: string }
 
-const PENDING_NOTED = new Set(['commit_lock_busy', 'git_index_locked', 'git_index_stale', 'git_unavailable', 'git_operation_in_progress']);
+const PENDING_NOTED = new Set(['commit_lock_busy', 'git_index_locked', 'git_index_stale', 'git_unavailable', 'git_command_stopped', 'git_operation_in_progress']);
 
 function readPendingFile(file: string, into: Map<string, string>): void {
   let text: string;
@@ -1147,12 +1148,12 @@ function remoteContains(ctx: Ctx, sha: string): boolean {
   if (urls.length === 0) return false;
   for (const url of urls) {
     if (git(ctx.root, ['ls-remote', '--get-url', '--', url]).stdout.trim() !== url) return false;
-    const listed = git(ctx.root, [...transportFlags(), 'ls-remote', '--exit-code', '--', url, branchRef], { auth: true, timeoutMs: 60_000 });
+    const listed = git(ctx.root, [...transportFlags(), 'ls-remote', '--exit-code', '--', url, branchRef], { auth: true, timeoutMs: 60_000, returnStopped: true });
     if (listed.code !== 0) return false;
     const tip = listed.stdout.split(/\s/)[0];
     if (!/^[0-9a-f]{40,64}$/.test(tip)) return false;
     if (git(ctx.root, ['cat-file', '-e', `${tip}^{commit}`]).code !== 0) {
-      const got = git(ctx.root, [...transportFlags(), 'fetch', '--quiet', ...fetchFlags(ctx.root), ...GIT_SSRF_SUBCOMMAND_FLAGS, '--', url, tip], { auth: true, timeoutMs: 120_000 });
+      const got = git(ctx.root, [...transportFlags(), 'fetch', '--quiet', ...fetchFlags(ctx.root), ...GIT_SSRF_SUBCOMMAND_FLAGS, '--', url, tip], { auth: true, timeoutMs: 120_000, returnStopped: true });
       if (got.code !== 0) return false;
     }
     if (!isAncestor(ctx.root, sha, tip)) return false;
@@ -1170,12 +1171,12 @@ function pushBase(ctx: Ctx, fetched: string, candidate: string): string {
   const tips = new Set<string>();
   for (const url of urls) {
     if (git(ctx.root, ['ls-remote', '--get-url', '--', url]).stdout.trim() !== url) throw refuse(`push URL ${url} names another remote`);
-    const listed = git(ctx.root, [...transportFlags(), 'ls-remote', '--exit-code', '--', url, ctx.mergeRef], { auth: true, timeoutMs: 60_000 });
+    const listed = git(ctx.root, [...transportFlags(), 'ls-remote', '--exit-code', '--', url, ctx.mergeRef], { auth: true, timeoutMs: 60_000, returnStopped: true });
     if (listed.code === 2) { tips.add(''); continue; }
     const tip = listed.code === 0 ? listed.stdout.split(/\s/)[0] ?? '' : '';
     if (!/^[0-9a-f]{40,64}$/.test(tip)) throw refuse(`push URL ${url} could not be read`);
     if (git(ctx.root, ['cat-file', '-e', `${tip}^{commit}`]).code !== 0
-      && git(ctx.root, [...transportFlags(), 'fetch', '--quiet', ...fetchFlags(ctx.root), ...GIT_SSRF_SUBCOMMAND_FLAGS, '--', url, tip], { auth: true, timeoutMs: 120_000 }).code !== 0) {
+      && git(ctx.root, [...transportFlags(), 'fetch', '--quiet', ...fetchFlags(ctx.root), ...GIT_SSRF_SUBCOMMAND_FLAGS, '--', url, tip], { auth: true, timeoutMs: 120_000, returnStopped: true }).code !== 0) {
       throw refuse(`the commit push URL ${url} holds could not be fetched`);
     }
     tips.add(tip);

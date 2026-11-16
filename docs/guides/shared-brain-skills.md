@@ -538,6 +538,13 @@ before parking existed) resumes with
 `gbrain apply-migrations --migration 0.53.0 --yes`; the oversized source parks
 and the migration completes.
 
+A 0.53.0 migration wedged on a source conflict still owes that work, even after
+a newer migration completes, and it does not clear without a person. Run
+`gbrain apply-migrations --migration 0.53.0 --dry-run --json` (it changes
+nothing) to see each source's conflict, resolve it with the user, and only then
+run `gbrain apply-migrations --force-retry 0.53.0` and the command the output
+names for that source, or `gbrain apply-migrations --yes`.
+
 ## Troubleshoot, leave, and recover
 
 Inspect this installation's local receipt without credentials or a live host:

@@ -56,7 +56,6 @@ const EXEMPT: Record<string, string> = {
   'src/core/repair/agent-session-facts.ts': 'owner repair of existing rows',
   'src/core/repair/consolidate-ties.ts': 'owner repair reopening the validity of existing facts (lifecycle)',
   'src/core/repair/duplicate-facts.ts': 'owner repair behind a preview hash: supersedes exact copies of an existing fact with its oldest row (expired_at, superseded_by; lifecycle, no new text); fenced copies are struck through put_page, which runs the gate',
-  'src/core/generations/managed-retire.ts': 'versioned delete of a synthesis output a managed generation retires, plus its retired_by/retired_at stamp (lifecycle); no new text',
   'src/core/generations/adapters/extracted-facts.ts': 'callers gate first and pass only rows the gate inserts or flags (the conversation lane and the backstop decide in conversation-publication.ts and backstop.ts); restore puts back a row\'s own recorded state',
   'src/core/generations/adapters/fact-rows.ts': 'generation restore puts back a fact row\'s own recorded before-state (lifecycle); no new text',
   'src/core/repair/fact-claim-dates.ts': 'owner repair moving the valid_from of existing database-only facts to the date their claim states (lifecycle)',
@@ -72,7 +71,6 @@ const EXEMPT: Record<string, string> = {
   'src/core/repair/ghost-pages.ts': 'retires an owner-approved ghost page (version + soft delete, lifecycle); no new text',
   'src/core/repair/moved-pages.ts': 'owner repair behind a preview hash: folds a page whose file provably moved into the moved page (twin merge of stored rows, its versions re-pointed, then soft delete); no new text',
   'src/core/repair/ontology-facts.ts': 'owner repair restoring existing ontology rows',
-  'src/core/repair/stale-atoms.ts': 'retires stale atoms (lifecycle)',
   'src/core/persistence/derived-retirement-hold.ts': 'versions, soft-deletes and stamps derived pages a writer retires (lifecycle); writes no content',
   'src/core/repair/atoms-restore.ts': 'restores an owner-approved retired atom to its own earlier version (lifecycle); no new text',
   'src/core/repair/take-supersession.ts': 'owner repair of take supersession pointers',
@@ -97,7 +95,6 @@ const EXEMPT: Record<string, string> = {
   'src/core/facts/fence-write.ts': 'callers decide the gate (backstop, loops-extract) and pass the decision; it records the flag receipt on the new row',
   'src/core/facts/write-single.ts': 'callers gate first (loops-extract decides; remember gates in memory-prepare); it records a passed decision\'s flag receipt',
   'src/core/output/writer.ts': 'gbrain integrity auto-repair (owner-run local CLI) rewrites citations and back-links of existing pages',
-  'src/core/persistence/atom-maintenance.ts': 'pending: the managed atom page carries intent.derivation; the page gate runs in page-prepare once it reads that declaration',
   'src/core/persistence/prepared-maintenance.ts': 'consolidation takes gate in takes-prepare; pending: derived maintenance pages carry intent.derivation for the page-prepare gate',
 };
 

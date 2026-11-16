@@ -102,7 +102,7 @@ function nonNegative(value: string | null | undefined, fallback: number): number
 
 function resultErrors(result: ArchiveRunResult): ArchiveMaintenanceError[] {
   return [
-    ...result.errors.map(e => ({ code: e.code, message: (e.reader + ': ' + e.message).slice(0, 300) })),
+    ...result.errors.filter(e => e.reader).map(e => ({ code: e.code, message: (e.reader + ': ' + e.message).slice(0, 300) })),
     ...result.days.filter(d => d.status === 'error').map(d => ({ code: d.code ?? 'archive_day_failed', message: (d.harness + ' ' + d.day + ': ' + (d.message ?? 'no detail')).slice(0, 300) })),
   ];
 }

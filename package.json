@@ -178,6 +178,7 @@
     "check:chunk-visibility": "bun scripts/check-chunk-visibility.ts",
     "check:page-body-readers": "bun scripts/check-page-body-readers.ts",
     "check:engine-sql-dynamic": "bun scripts/check-engine-sql-dynamic.ts",
+    "check:migration-projection": "bun scripts/check-migration-projection.ts",
     "check:remote-privacy-reads": "bun scripts/check-remote-privacy-reads.ts",
     "check:engine-sql-brands": "bun scripts/check-engine-sql-brands.ts",
     "check:sync-run-state": "bun scripts/check-sync-run-state.ts",
@@ -261,7 +262,7 @@
     "bun": ">=1.4.4"
   },
   "license": "MIT",
-  "version": "0.60.731.0",
+  "version": "0.60.733.0",
   "overrides": {
     "@aws-sdk/util-format-url": "3.972.9",
     "@ai-sdk/provider-utils": "4.0.56",
