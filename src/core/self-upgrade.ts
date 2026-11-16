@@ -421,6 +421,8 @@ export interface CacheWriteOptions {
 }
 
 const STABLE_CODES = new Set(['stable_missing', 'stable_invalid', 'stable_unreadable']);
+/** How far ahead of this clock a stored check time or cache mtime may be (NTP or shared-filesystem skew); further ahead means the clock moved back since the write, so it is ignored (#8795). */
+const CACHE_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 let _tmpCounter = 0;
 function atomicWrite(path: string, content: string): void {
@@ -476,13 +478,15 @@ export function readUpdateCache(channel: ReleaseChannel | null = currentReleaseC
 
 /**
  * Atomically write one channel's cache (0600). A refresh that started before the stored answer's refresh never
- * overwrites it (reversed completion). Best-effort: throws only on truly unexpected fs errors.
+ * overwrites it (reversed completion), unless the stored check time is more than CACHE_FUTURE_SKEW_MS ahead of this clock.
+ * Best-effort: throws only on truly unexpected fs errors.
  */
 export function writeUpdateCache(marker: UpdateMarker | null, opts: CacheWriteOptions = {}): void {
   const channel = opts.channel ?? currentReleaseChannel() ?? DEFAULT_RELEASE_CHANNEL;
-  const checkedAt = opts.checkedAt ?? Date.now();
+  const now = Date.now();
+  const checkedAt = opts.checkedAt ?? now;
   const prior = readUpdateCache(channel);
-  if (prior && prior.checkedAt > checkedAt) return;
+  if (prior && prior.checkedAt > checkedAt && prior.checkedAt <= now + CACHE_FUTURE_SKEW_MS) return;
   atomicWrite(updateCachePath(channel), JSON.stringify({
     schema: 2,
     channel,
@@ -504,7 +508,7 @@ export function clearUpdateCache(): void {
 
 export function isCacheFresh(entry: CacheEntry, now: number): boolean {
   const ttl = entry.marker?.kind === 'upgrade_available' && !entry.error ? CACHE_TTL_UPGRADE_AVAILABLE_MS : CACHE_TTL_UP_TO_DATE_MS;
-  return now - entry.mtimeMs < ttl;
+  return entry.mtimeMs <= now + CACHE_FUTURE_SKEW_MS && now - entry.mtimeMs < ttl;
 }
 
 /**
