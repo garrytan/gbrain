@@ -206,6 +206,8 @@ function corpusIndex(corpusDir: string | null): CorpusIndex {
     if (key === 'unread') { index.unreadSessions.add(session); continue; }
     if (!key) continue;
     index.openings.set(session, key);
+    // A session gbrain already marked with a speaker sidecar is evidenced on its own; it is not a repeat of the owner's opening.
+    if ([...new Set([corpusDir, corpusSpoolDir(corpusDir), ...paths.map(path => dirname(path))])].some(dir => readSpeakerSidecar(dir, session))) continue;
     index.openingSessions.set(key, (index.openingSessions.get(key) ?? new Set<string>()).add(session));
   }
   return index;
