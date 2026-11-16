@@ -46,6 +46,23 @@ export function currentTextProjectionFilter(alias: string): string {
 }
 
 /**
+ * #9192: the `text_projection_revision` v153's activation leaves on a page whose pre-upgrade index it keeps serving
+ * (PAGE_PROJECTION_ACTIVATION_SQL says which). The page stays unsealed (its rebuild is queued); any revision change
+ * clears the column (pages_knowledge_revision trigger), and so does the rebuild. A version-0 UUID: every revision is
+ * gen_random_uuid() (version 4), so the marker never equals one and every strict `= knowledge_revision` read treats
+ * the page as not current.
+ */
+export const ACTIVATION_SERVED_REVISION = '00000000-0000-0000-0000-000000000153';
+
+/**
+ * What search serves: the current projection, or the pre-activation index of a page unchanged since (#9192). The
+ * current-projection term stays its own disjunct so the planner keeps reading pages_text_projection_current_stats.
+ */
+export function servedTextProjectionFilter(alias: string): string {
+  return `(${currentTextProjectionFilter(alias)} OR (${alias}.text_projection_revision = '${ACTIVATION_SERVED_REVISION}'::uuid) IS TRUE)`;
+}
+
+/**
  * Wave B: the chunk row belongs to its page's live body: an inline row
  * (`body_generation IS NULL`) of a page that is not segmented, or a segmented
  * row at or below the page's generation whose occurrence has a live manifest
@@ -95,13 +112,14 @@ export async function chunkManifestReads(engine: Pick<BrainEngine, 'kind' | 'exe
 }
 
 /**
- * Search-facing chunk visibility: the current text projection and the live body generation. A sealed page holds no
+ * Search-facing chunk visibility: the served text projection and the live body generation; maintenance reads pass
+ * currentTextProjectionFilter. A sealed page holds no
  * rows of a retired occurrence (the flip deletes them in its transaction, or leaves the page unsealed until the
  * projection job has), so the row predicate needs no manifest probe, whose per-row cost moved vector search off its
  * HNSW plan (test/e2e/vector-chunk-statistics-postgres.test.ts).
  */
-export function chunkVisibleFilter(page: string, chunk: string): string {
-  return `(${currentTextProjectionFilter(page)}
+export function chunkVisibleFilter(page: string, chunk: string, projection = servedTextProjectionFilter): string {
+  return `(${projection(page)}
        AND (${chunk}.body_generation IS NULL OR ${chunk}.body_generation <= ${page}.body_generation))`;
 }
 

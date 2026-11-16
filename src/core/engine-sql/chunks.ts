@@ -33,7 +33,7 @@ import {
   COLUMN_NAME_REGEX,
   EmbeddingColumnNotRegisteredError,
 } from '../search/embedding-column.ts';
-import { chunkDocumentOrder, chunkGenerationFilter, chunkManifestJoin, chunkVisibleFilter, chunkWriteInvalidations, currentTextProjectionFilter, movableChunkSql, requiresSafeChunks, safeChunksFilter } from '../search/safe-chunks.ts';
+import { chunkDocumentOrder, chunkGenerationFilter, chunkManifestJoin, chunkVisibleFilter, chunkWriteInvalidations, movableChunkSql, requiresSafeChunks, safeChunksFilter, servedTextProjectionFilter } from '../search/safe-chunks.ts';
 import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import { currentSpaceChunkPredicate, splitEmbeddingSignature, lockEmbeddingSources } from '../embedding-invalidation.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from '../embed-skip.ts';
@@ -1163,7 +1163,7 @@ export async function getChunkWindows(exec: ScopedRead, requests: ChunkWindowReq
         FROM pages p
         JOIN sources s ON s.id = p.source_id
        WHERE p.id = ANY(${[...new Set(requests.map(r => r.page_id))]}::int[]) ${scopeSql}
-         AND p.deleted_at IS NULL AND ${trustedSql(currentTextProjectionFilter('p'))} AND NOT s.archived
+         AND p.deleted_at IS NULL AND ${trustedSql(servedTextProjectionFilter('p'))} AND NOT s.archived
          AND ${trustedSql(QUARANTINE_FILTER_FRAGMENT)} ${privateSql} ${safeSql}
     ), chunk_rows AS (
       SELECT cc.page_id, cc.id AS chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.projected_byte_start, cc.projected_byte_end, cc.occurrence_id, a.prio

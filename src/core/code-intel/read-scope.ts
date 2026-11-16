@@ -1,6 +1,6 @@
 import type { PageReadScope } from '../types.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
-import { currentTextProjectionFilter, requiresSafeChunks, safeChunksFilter } from '../search/safe-chunks.ts';
+import { requiresSafeChunks, safeChunksFilter, servedTextProjectionFilter } from '../search/safe-chunks.ts';
 
 export interface CodeReadScope extends PageReadScope {
   allSources?: boolean;
@@ -11,7 +11,7 @@ export function codeReadFilter(params: unknown[], scope: CodeReadScope): string 
   return [
     pageReadFilter('p', policy, params, true),
     scope.sourceIds?.length === 0 ? 'FALSE' : 'TRUE',
-    currentTextProjectionFilter('p'),
+    servedTextProjectionFilter('p'),
     ...(requiresSafeChunks(scope) ? [safeChunksFilter('p')] : []),
   ].join(' AND ');
 }

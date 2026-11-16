@@ -43,6 +43,7 @@ test/access-writes.test.ts
 test/activation-unbound-rooted-6449.test.ts
 test/adopt-local-edit.test.ts
 test/alias-source-cascade-5094.test.ts
+test/atom-retirement-keeps-trust-9456.test.ts
 test/attribution-backfill-history.test.ts
 test/backlinks-type-exists-gbra449.test.ts
 test/backstop-same-page-shadow-managed-6333.test.ts
@@ -408,6 +409,7 @@ test/page-spend-reservation.test.ts
 test/page-state-engine.test.ts
 test/pages-source-created-idx-7379.test.ts
 test/pages-status-7179.test.ts
+test/parallel-projection-drain-9192.test.ts
 test/pathological/a-36-facts-batch-partial-refusal.test.ts
 test/pathological/a-42-atom-dot-led-slug.test.ts
 test/pathological/a-51-conversation-batch-booking.test.ts
@@ -621,6 +623,7 @@ test/retrieval-coverage-notices.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts
 test/scripts/test-stress-postgres.test.ts
+test/search-during-upgrade-rebuild-9192.test.ts
 test/search-entity-facts-eligibility.test.ts
 test/search-keyword-evidence-label-gbra449.test.ts
 test/search-read-keyword-bound.test.ts

@@ -644,7 +644,12 @@ Verify with `gbrain doctor --only persistence_capacity --json`: the
 
 After an upgrade that re-queues text projections (for example the 0.51
 protocol activation, which also queued every image page), search and code
-results stay incomplete until every queued page is sealed. Every queued row
+results stay incomplete until every queued page is sealed. That activation
+(migration 153) keeps a Markdown or code page indexed at or after the
+safe-chunk fence in search from its old index until its own rebuild, when the
+page has no facts or takes fence, no private-key text and no quarantine marker
+and has not changed since; every other queued page stays out of search until
+it is sealed. Every queued row
 falls in exactly one class, and doctor `text_projection_readiness` counts each
 one (counts only, never page names):
 
@@ -682,6 +687,7 @@ To drain now:
 ```bash
 gbrain projections drain            # until every page queued at the start was tried once
 gbrain projections drain --limit 5000
+gbrain projections drain --concurrency 8   # Postgres: 8 pages at once (default 4, at most the pool size less 2)
 gbrain projections drain --json     # {rebuilt, superseded, failed: [{source_id, slug, reason}], remaining, limited, sealed, sealed_with_visual, sealed_text_only, statistics_refreshed, remaining_by_class}
 gbrain projections drain --dry-run  # change nothing: every class count and the rows a drain takes, oldest first
 ```
@@ -690,8 +696,13 @@ gbrain projections drain --dry-run  # change nothing: every class count and the 
 and the rows a drain with the same `--limit` (default 50) would take, oldest
 first, each with its queue reason (`rebuild_failed` for a row whose last
 rebuild failed); `--json` gives the class counts and `rows`. The drain
-rebuilds the `pending` rows first, then seals the `sealable` images in place:
-it rechecks each page's class under its page lock, writes no chunk and leaves
+rebuilds the `pending` rows search does not answer for first, then seals the
+`sealable` images, then rebuilds the `pending` rows search still answers for from
+the index they had before an upgrade (#9192). On Postgres it rebuilds 4 pages at
+once, each on its own pooled connection; `--concurrency` raises that to the pool
+size less 2, and a refused or dropped connection lowers it without stopping the
+drain. PGLite and the resident owner rebuild one page at a time. Sealing an
+image in place rechecks each page's class under its page lock, writes no chunk and leaves
 the visual vector as it is, so image search ranks the page again at once. A
 `sealed_text_only` page (imported with `--no-embed`) gets its visual vector
 from `gbrain embed --stale --images`. `reimport`, `protected` and `archived`

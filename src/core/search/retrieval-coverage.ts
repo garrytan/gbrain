@@ -25,6 +25,7 @@ import type { BrainEngine } from '../engine.ts';
 import { budgetRowAppliesFilter } from '../page-size-policy.ts';
 import { projectionClassSql } from '../page-state/projection-class.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
+import { servedTextProjectionFilter } from './safe-chunks.ts';
 import type { ProjectionReadinessScope } from './projection-readiness.ts';
 
 /** Counts stop here (one bounded scan per call); a capped count reports `capped`. */
@@ -146,7 +147,7 @@ async function countInScope(engine: Pick<BrainEngine, 'executeRaw'>, scope: Proj
 /** The pending pages the readiness probe found (unsealed, needing work) in the same scope. */
 export function countPendingProjections(engine: Pick<BrainEngine, 'executeRaw'>, scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null> {
   return countInScope(engine, scope, relevance, '',
-    `p.text_projection_revision IS DISTINCT FROM p.knowledge_revision AND ${projectionClassSql('p', 's')} NOT IN ('protected','archived')`, true);
+    `NOT ${servedTextProjectionFilter('p')} AND ${projectionClassSql('p', 's')} NOT IN ('protected','archived')`, true);
 }
 
 /** Pages in scope held from embedding: a held or capped budget row that still applies, on a page no `embed_skip` marker keeps out of embedding for good. */

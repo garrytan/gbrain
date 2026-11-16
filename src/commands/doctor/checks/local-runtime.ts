@@ -8,7 +8,7 @@
  */
 
 import { loadCompletedMigrations } from '../../../core/preferences.ts';
-import { MIGRATION_OPT_OUT_KEYS, declinedMigrations, indexCompletedEntries, isFreshInstallStamp, migrationLedgerSummary, trailingPartialCount, upgradeLedgerApplies } from '../../../core/migration-ledger.ts';
+import { MIGRATION_OPT_OUT_KEYS, declinedMigrations, hostWorkOwedFix, hostWorkOwedForVersion, hostWorkOwedMessage, indexCompletedEntries, isFreshInstallStamp, migrationLedgerSummary, trailingPartialCount, upgradeLedgerApplies } from '../../../core/migration-ledger.ts';
 import { VERSION } from '../../../version.ts';
 import { pendingFreshInstallCheck } from './pending-fresh-install.ts';
 import { autopilotInstallPendingCheck } from './autopilot-install-pending.ts';
@@ -153,10 +153,13 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
     // version pending again, as statusForVersion and get_health read it: it
     // is reported below as not run yet, never as still wedged.
     const history = indexCompletedEntries(completed);
+    // A wedge whose latest row records apply_migrations_pending still owes host work: never superseded, reported as a warning.
+    const owed = [...history.keys()].filter(v => !declined.has(v) && compareVersions(v, VERSION) <= 0 && hostWorkOwedForVersion(v, history)).sort(compareVersions);
     const stuck = Array.from(byVersion.entries())
       .filter(([v, s]) => {
         if (!s.partial || s.complete) return false;
         if (history.get(v)?.at(-1)?.status === 'retry') return false;
+        if (owed.includes(v)) return false;
         // Forward-progress override: if any version >= v has completed, the
         // partial is stale. compareVersions returns 1 when first arg is newer.
         const supersededBy = completedVersions.find(cv => compareVersions(cv, v) >= 0);
@@ -238,6 +241,8 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
     }
     const hostWork = migrationHostWorkCheck(history, declined, engine ? await hostWorkMigrations(engine).catch(() => new Set<string>()) : new Set<string>());
     if (hostWork) checks.push(hostWork);
+    if (owed.length > 0) checks.push({ name: 'minions_migration', status: 'warn', message: hostWorkOwedMessage(owed), fix: hostWorkOwedFix(owed),
+      details: { code: 'migration_host_work_owed', wedged_host_work: owed } });
     const skippedInstall = autopilotInstallPendingCheck();
     if (skippedInstall) checks.push(skippedInstall);
     // Note: the "no preferences.json but schema is v7+" case is detected
