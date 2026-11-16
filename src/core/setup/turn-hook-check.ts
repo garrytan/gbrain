@@ -70,12 +70,15 @@ export function inspectTurnHook(harness: string, opts: { projectDir?: string; ma
   const native_inspect = TURN_HOOK_NATIVE_INSPECT[harness];
   const plugin = enabledPluginLanes('gbrain').find((l) => l.harness === harness);
   if (harness === 'claude-code') {
+    const owned = setupReceiptHashes('claude-code').owned;
     const files = [claudeUserSettingsPath(), ...(opts.projectDir ? [join(opts.projectDir, '.claude', 'settings.local.json'), join(opts.projectDir, '.claude', 'settings.json')] : []), ...claudeManagedSettingsPaths(opts.managedDir)];
     for (const path of files) {
       const committed = !!opts.projectDir && path === join(opts.projectDir, '.claude', 'settings.json');
-      const entries = claudeEntries(path).filter((e) => isTurnRuleEntry(e) || isOtherGbrainEntry(e, committed));
+      // #9505: Claude Code can rewrite the file without the _gbrain marker; setup still owns its entry by hash.
+      const setupOwned = (e: Record<string, unknown>) => !committed && owned.has(hookEntryHash(e) ?? '');
+      const entries = claudeEntries(path).filter((e) => isTurnRuleEntry(e) || isOtherGbrainEntry(e, committed) || setupOwned(e));
       const effective = entries.find((e) => !isTurnRuleEntry(e)) ?? entries[0];
-      if (effective) return { harness, state: 'wired', via: isTurnRuleEntry(effective) ? 'turn-rule' : effective[GBRAIN_HOOK_MARKER_KEY] === 'setup-v1' ? 'setup' : 'bootstrap', detail: `UserPromptSubmit hook in ${path}`, command: String(effective.command), source: path, native_inspect };
+      if (effective) return { harness, state: 'wired', via: isTurnRuleEntry(effective) ? 'turn-rule' : effective[GBRAIN_HOOK_MARKER_KEY] === GBRAIN_SETUP_MARKER_VALUE || setupOwned(effective) ? 'setup' : 'bootstrap', detail: `UserPromptSubmit hook in ${path}`, command: String(effective.command), source: path, native_inspect };
     }
     if (plugin) return { harness, state: 'wired', via: 'plugin', detail: `the '${plugin.plugin}' plugin declares the UserPromptSubmit hook`, native_inspect };
     return { harness, state: 'missing', detail: `no gbrain UserPromptSubmit hook in ${files.join(' or ')}`, native_inspect };
