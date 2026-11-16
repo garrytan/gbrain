@@ -539,7 +539,8 @@ export function runDoctorRegistry(ctx: DoctorContext, entries: readonly DoctorEn
             checks.push(...later.emits.filter((n) => !ctx.only || ctx.only.has(n)).map((n) => budgetUnknownCheck(n, ctx.connectError instanceof DoctorBudgetError ? ctx.connectError.elapsedMs : 0, ctx.deadline?.budgetMs ?? 0, 'overall')));
           }
         }
-        return ctx.only ? onlyResult(checks, ctx.only, true) : checks;
+        // "Stopped early" only when a connect failed or --fast skipped the DB checks; an engine-free --only run skipped them by design.
+        return ctx.only ? onlyResult(checks, ctx.only, ctx.connectError !== undefined || ctx.fastMode) : checks;
       }
       const pastDeadline = ctx.deadline?.deadlineAt != null && Date.now() >= ctx.deadline.deadlineAt;
       const produced = result.map((c) => {
