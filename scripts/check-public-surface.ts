@@ -23,7 +23,9 @@
  * The manifest's freshness is regen:all's (scripts/build-public-surface.ts --check). Dates are UTC days;
  * GBRAIN_SURFACE_TODAY (YYYY-MM-DD) overrides today for tests. When the base ref or a merge base is unavailable the
  * check fails under CI=true and skips locally. Fetches (the stable ref, deepening a shallow clone with
- * --filter=tree:0) stop after 20 s and 30 s, or $GBRAIN_SURFACE_FETCH_TIMEOUT_S. Exit: 0 ok or skipped, 1 refused.
+ * --filter=blob:none, since GitHub's pack-objects crashes on tree:0 for a shallow clone that is not partial) stop after
+ * 20 s and 30 s, or $GBRAIN_SURFACE_FETCH_TIMEOUT_S; a failed fetch prints git's own error. Exit: 0 ok or skipped,
+ * 1 refused.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -76,11 +78,16 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
     return { ok: r.status === 0, out: r.stdout ?? '' };
   };
   const fetchTimeout = (seconds: number) => Number(env.GBRAIN_SURFACE_FETCH_TIMEOUT_S) || seconds;
+  let fetchError = '';
   const fetch = (seconds: number, ...args: string[]): 'ok' | 'timeout' | 'failed' => {
-    const r = spawnSync('git', ['fetch', '--no-tags', '--quiet', ...args], { cwd: root, stdio: 'ignore', timeout: fetchTimeout(seconds) * 1000, killSignal: 'SIGKILL' });
+    fetchError = '';
+    const r = spawnSync('git', ['fetch', '--no-tags', '--quiet', ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], timeout: fetchTimeout(seconds) * 1000, killSignal: 'SIGKILL' });
     if (r.status === 0) return 'ok';
-    return (r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT' ? 'timeout' : 'failed';
+    if ((r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') return 'timeout';
+    fetchError = (r.stderr ?? '').split('\n').map(l => l.trim()).filter(Boolean).slice(-4).join(' / ').slice(-600);
+    return 'failed';
   };
+  const logFetchError = (result: string | null) => { if (result === 'failed' && fetchError) log(`git: ${fetchError}`); };
   const ref = env.GBRAIN_SURFACE_BASE_REF || 'origin/master';
   if (!git('rev-parse', '--verify', '-q', `${ref}^{commit}`).ok) {
     if (env.CI === 'true') {
@@ -99,13 +106,14 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
     if (parents.includes(tip)) mergeBase = { ok: true, out: tip };
     for (const depth of [200, 2000]) {
       if (mergeBase.ok || deepened === 'timeout') break;
-      deepened = fetch(30, '--filter=tree:0', `--deepen=${depth}`, 'origin', git('rev-parse', 'HEAD').out.trim(), tip);
+      deepened = fetch(30, '--filter=blob:none', `--deepen=${depth}`, 'origin', git('rev-parse', 'HEAD').out.trim(), tip);
       mergeBase = git('merge-base', ref, 'HEAD');
     }
   }
   if (!mergeBase.ok) {
     if (env.CI === 'true') {
       log(`FAIL: check-public-surface: no merge base between HEAD and ${ref}, ${deepened === 'timeout' ? `because the fetch that deepens the clone timed out after ${fetchTimeout(30)} s` : 'even after deepening the clone'}.`);
+      logFetchError(deepened);
       log('Fix:  fetch more history in the workflow (actions/checkout fetch-depth: 0)');
       return 1;
     }
@@ -163,6 +171,7 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
       stableCommit = resolveStable();
       if (!stableCommit.ok && env.CI === 'true') {
         log(`FAIL: check-public-surface: this change drops public entries, and the stable ref ${stableRef} could not be fetched from origin${fetched === 'timeout' ? ` (timed out after ${fetchTimeout(20)} s)` : ''}, so it cannot tell which of them reached stable.`);
+        logFetchError(fetched);
         log(`Fix:  rerun once origin answers, or fetch it in the workflow (git fetch --no-tags --depth=1 origin +${stableRef}:${stableRef})`);
         return 1;
       }

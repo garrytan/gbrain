@@ -313,6 +313,7 @@ test/scripts/check-dynamic-ci.test.ts	check-dynamic-ci.ts	1	exec-scan,readFileSy
 test/scripts/check-function-size.test.ts	check-function-size.ts rules	11	readFileSync
 test/scripts/check-item-allowlist-catches.test.ts	CLI	2	readFileSync
 test/scripts/check-public-surface.test.ts	dropped manifest entries	5	bun-file
+test/scripts/check-public-surface.test.ts	the base it compares with	9	bun-file
 test/scripts/check-public-surface.test.ts	the committed manifest	2	bun-file
 test/scripts/chunk-visibility-ratchet.test.ts	check-chunk-visibility.ts	6	readFileSync
 test/scripts/ci-bounded-run.test.ts	(file-level)	7	readFileSync

@@ -221,6 +221,35 @@ describe('the base it compares with', () => {
     expect(r.code).toBe(0);
   });
 
+  test('a shallow clone is deepened with a blob filter, the one GitHub serves to a shallow clone that is not partial', () => {
+    const origin = repo({}, {});
+    git(origin, 'config', 'uploadpack.allowFilter', 'true');
+    git(origin, 'config', 'uploadpackfilter.allow', 'false');
+    git(origin, 'config', 'uploadpackfilter.blob:none.allow', 'true');
+    git(origin, 'commit', '-q', '--allow-empty', '-m', 'head after the base merge');
+    git(origin, 'checkout', '-q', 'base');
+    write(origin, { [MANIFEST]: manifest({ 'mcp-tool': ['search', 'think'] }) });
+    git(origin, 'commit', '-qam', 'base adds think');
+    const clone = mkdtempSync(join(tmpdir(), 'gbrain-public-surface-clone-'));
+    roots.push(clone);
+    git(clone, 'clone', '-q', '--depth=1', '--no-tags', '--branch', 'head', `file://${origin}`, '.');
+    git(clone, 'fetch', '-q', '--no-tags', '--depth=1', 'origin', '+refs/heads/base:refs/remotes/origin/base');
+    const r = run(clone, { GBRAIN_SURFACE_BASE_REF: 'origin/base', CI: 'true' });
+    expect(r.out).not.toContain('FAIL');
+    expect(r.code).toBe(0);
+  });
+
+  test('a deepen fetch that fails prints git\'s own error', () => {
+    const origin = repo({}, {});
+    git(origin, 'commit', '-q', '--allow-empty', '-m', 'head after the base merge');
+    const clone = shallowClone(origin, 'head');
+    git(clone, 'remote', 'set-url', 'origin', join(clone, 'no-such-remote'));
+    const r = run(clone, { GBRAIN_SURFACE_BASE_REF: 'origin/base', CI: 'true' });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('no merge base between HEAD and origin/base');
+    expect(r.out).toMatch(/git: .*(does not appear to be a git repository|not found|No such file)/);
+  });
+
   test('a shallow pull-request merge commit whose parent is the base tip needs no fetch', () => {
     const origin = repo({}, { [MANIFEST]: manifest({ 'mcp-tool': ['search', 'think'] }) });
     git(origin, 'checkout', '-q', 'base');
@@ -252,6 +281,7 @@ describe('the base it compares with', () => {
     const ci = run(clone, { GBRAIN_SURFACE_BASE_REF: 'origin/base', CI: 'true' });
     expect(ci.code).toBe(1);
     expect(ci.out).toContain('FAIL: check-public-surface: this change drops public entries, and the stable ref refs/tags/stable could not be fetched from origin, so it cannot tell which of them reached stable.');
+    expect(ci.out).toMatch(/git: .*(does not appear to be a git repository|not found|No such file)/);
     expect(ci.out).not.toContain('mcp-tool `search`');
     const local = run(clone, { GBRAIN_SURFACE_BASE_REF: 'origin/base' });
     expect(local.code).toBe(1);
