@@ -157,4 +157,58 @@ describe('GST-2875: a remote remember restating a confirmed private claim', () =
       expect((await listTrustProposals(engine, { status: 'pending' })).filter(p => (p.before_state as { visibility?: unknown }).visibility && p.source_id === kept.sourceId)).toEqual([]);
     }
   }), 180_000);
+  test('the hold pairs with the private copy on the remembered entity, so the owner accept makes it world (review fix)', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const claim = 'Keeps bees on the roof';
+      const b = await seeded(engine, true, 'people/ada-example', claim);
+      await run(b.local, 'put_page', { slug: 'people/bo-example', content: note('Bo', body([row(1, 'Lives in Turin'), row(2, claim, 'private')])) });
+      for (const r of await engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [b.sourceId, 'people/bo-example'])) await confirmFact(b, Number(r.id));
+      const [other, mine] = await rowsOf(b, claim);
+      const res = await run(b.remote, 'remember', { fact: claim, provenance: 'chat', entity: 'people/bo-example' });
+      const ref = res.contested?.proposal_ref;
+      expect(ref).toMatch(/^tp\d+$/);
+      const restated = (await rowsOf(b, claim)).find(r => r.id !== other!.id && r.id !== mine!.id)!;
+      expect(restated.visibility).toBe('private');
+      expect((await decideTrustProposal(engine, parseTrustProposalRef(ref)!, 'accept', owner)).status).toBe('accepted');
+      expect((await rowsOf(b, claim)).find(r => r.id === restated.id)).toMatchObject({ visibility: 'world', trust_tier: 'user_confirmed' });
+      expect((await rowsOf(b, claim)).find(r => r.id === other!.id)).toMatchObject({ visibility: 'private', trust_tier: 'user_confirmed' });
+    }
+  }), 180_000);
+
+  test('a GST-2511 widening whose fence row was detached later is not applied by the accept (review fix)', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const slug = 'people/yan-example', claim = 'Yan Example keeps bees';
+      const b = await seeded(engine, true, slug, claim);
+      const current = await run(b.remote, 'get_page', { slug, include_content: true });
+      const widened = await run(b.remote, 'put_page', { slug, content: note(slug, body([row(1, 'Lives in Turin'), row(3, claim)])), expected_revision: current.revision });
+      expect(widened.contested?.proposal_ref).toMatch(/^tp\d+$/);
+      const restated = (await rowsOf(b, claim)).find(r => r.trust_tier !== 'user_confirmed')!;
+      expect(restated.visibility).toBe('private');
+      // url-clone-fences keeps an appended row database-only before it restores the file.
+      await engine.transaction(tx => withCoordinatedWrite(tx, [b.sourceId], () =>
+        tx.executeRaw('UPDATE facts SET row_num = NULL, source_markdown_slug = NULL WHERE id = $1', [restated.id]), TEST_WRITE_ATTRIBUTION));
+      await decideTrustProposal(engine, parseTrustProposalRef(widened.contested.proposal_ref)!, 'accept', owner);
+      expect((await rowsOf(b, claim)).find(r => r.id === restated.id)?.visibility).toBe('private');
+    }
+  }), 180_000);
+
+  test('a database-only restatement (an entity with no page) is held and the owner accept makes it world', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const claim = 'Zoe Example ships on Fridays', entity = 'people/zoe-example';
+      const b = await brain(engine, true);
+      await engine.setConfig('sync.write_through', 'false');
+      await run(b.local, 'remember', { fact: claim, provenance: 'chat', entity, visibility: 'private' });
+      for (const r of await rowsOf(b, claim)) await confirmFact(b, r.id);
+      const res = await run(b.remote, 'remember', { fact: claim, provenance: 'chat', entity });
+      await engine.setConfig('sync.write_through', 'true');
+      const ref = res.contested?.proposal_ref;
+      expect(ref).toMatch(/^tp\d+$/);
+      const rows = await rowsOf(b, claim);
+      const restated = rows.find(r => r.trust_tier === 'agent_written')!;
+      expect(rows.map(r => r.row_num)).toEqual([null, null]);
+      expect(restated.visibility).toBe('private');
+      expect((await decideTrustProposal(engine, parseTrustProposalRef(ref)!, 'accept', owner)).status).toBe('accepted');
+      expect((await rowsOf(b, claim)).find(r => r.id === restated.id)).toMatchObject({ visibility: 'world', trust_tier: 'user_confirmed' });
+    }
+  }), 180_000);
 });

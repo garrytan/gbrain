@@ -135,7 +135,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const lexicalOld = await lexical(engine);
   const contestedOld = contested ? decision.candidate! : lexicalOld;
   // GST-2875: a world write restating a more trusted private claim is stored private; its proposal carries the widening.
-  const restated = (tx: BrainEngine) => decision.status !== 'duplicate' && input.visibility === 'world' ? restatedPrivateCopy(tx, row.source_id, input.fact, writerTier) : Promise.resolve(null);
+  const restated = (tx: BrainEngine) => decision.status !== 'duplicate' && input.visibility === 'world' ? restatedPrivateCopy(tx, row.source_id, input.fact, input.entity_slug, writerTier) : Promise.resolve(null);
   const restatedOld = await restated(engine);
   const widening = restatedOld ? { from: restatedOld.visibility, to: 'world' } : null;
   const validate = async (tx: BrainEngine) => {
@@ -204,9 +204,9 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     const contestedBy = contestedOld ? await recordContestedFact(tx, { sourceId: row.source_id, oldId: contestedOld.id,
       oldTier: storedTrustTier(contestedOld.trust_tier), newId: id, newTier: writerTier,
       guard: replaces !== null ? 'remember.replaces' : contested ? 'conflict_slot' : 'conflict_slot_lexical',
-      ...(widening && restatedOld!.id === contestedOld.id ? { visibility: widening } : {}) }) : null;
+      ...(widening && restatedOld!.id === contestedOld.id ? { visibility: widening, pageless: !fence } : {}) }) : null;
     const widenedBy = restatedOld && restatedOld.id !== contestedOld?.id ? await recordContestedFact(tx, { sourceId: row.source_id, oldId: restatedOld.id,
-      oldTier: restatedOld.trust_tier, newId: id, newTier: writerTier, guard: 'remember.restated_private', visibility: widening! }) : null;
+      oldTier: restatedOld.trust_tier, newId: id, newTier: writerTier, guard: 'remember.restated_private', visibility: widening!, pageless: !fence }) : null;
     const flagged = gateField(gate.assessment, `f${id}`, await recordFlaggedRow(tx, gate, { table: 'facts', id, sourceId: row.source_id }));
     const superseded = status === 'superseded' ? decision.candidate! : undefined;
     return { ...outcome(id, status, input.entity_slug, validUntil, degraded, p, superseded?.id,
