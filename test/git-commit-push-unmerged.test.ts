@@ -12,6 +12,9 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { recordManagedRoots } from '../src/core/persistence/root-registry.ts';
+import { commitPathsLocked, readPendingWriteThrough } from '../src/core/git/commit-push.ts';
+import { assertNoUnmergedPaths, withoutUnmergedPaths } from '../src/core/git/skipped-paths.ts';
+import { CODES } from '../src/core/error-registry.ts';
 import { runCli } from './helpers/cli-spawn.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -65,6 +68,10 @@ for (const managed of [false, true]) {
     expect(envelope.code).toBe('commit_paths_unmerged');
     expect(envelope.message).toContain(path);
     expect(envelope.fix).toMatchObject({ next: 'ask_user', verify: { argv: ['git', '-C', f.brain, 'ls-files', '-u', '--', `:(literal)${path}`] } });
+    for (const advice of [envelope.suggestion, envelope.fix.user_message, CODES.commit_paths_unmerged.suggestion]) {
+      expect(advice).not.toMatch(/--ours|--theirs/);
+      expect(advice).toContain('both');
+    }
 
     expect(git(f.brain, ['rev-parse', 'HEAD'])).toBe(head);
     expect(git(f.remote, ['rev-parse', 'refs/heads/main'])).toBe(tip);
@@ -72,3 +79,48 @@ for (const managed of [false, true]) {
     expect(git(f.brain, ['diff', '--cached', '--name-only', '--', 'notes/b.md'])).toBe('');
   }, 60_000);
 }
+
+
+test('a write-through file left unmerged is refused and kept in the pending ledger, so it is retried and doctor reports it', async () => {
+  const f = fixture('write-through', false);
+  const path = conflict(f);
+  const thrown = await withEnv({ ...identity, GBRAIN_HOME: f.home }, async () => {
+    try { commitPathsLocked(f.brain, [join(f.brain, path)], 'gbrain: write-through people/alice-example', { lockWaitMs: 1000 }); } catch (e) { return e as { code?: string }; }
+    return null;
+  });
+  expect(thrown).toMatchObject({ code: 'commit_paths_unmerged' });
+  expect(readPendingWriteThrough(f.brain).map(e => e.path)).toContain(path);
+  expect(git(f.brain, ['ls-files', '-u', '--', path]).split('\n')).toHaveLength(3);
+}, 60_000);
+
+test('an unmerged file in the pending ledger does not hold back the other pending files a later write-through sweeps', async () => {
+  const f = fixture('sweep-past-conflict', false);
+  const path = conflict(f);
+  await withEnv({ ...identity, GBRAIN_HOME: f.home }, async () => {
+    expect(() => commitPathsLocked(f.brain, [join(f.brain, path), join(f.brain, 'notes', 'b.md')], 'gbrain: write-through two pages', { lockWaitMs: 1000 }))
+      .toThrow(expect.objectContaining({ code: 'commit_paths_unmerged' }));
+    expect(readPendingWriteThrough(f.brain).map(e => e.path).sort()).toEqual(['notes/b.md', path]);
+    writeFileSync(join(f.brain, 'notes', 'c.md'), page('C', 'New page.'));
+    expect(commitPathsLocked(f.brain, [join(f.brain, 'notes', 'c.md')], 'gbrain: write-through notes/c', { lockWaitMs: 1000 })).toBeTruthy();
+  });
+  expect(git(f.brain, ['show', '--name-only', '--format=', 'HEAD']).split('\n').sort()).toEqual(['notes/b.md', 'notes/c.md']);
+  expect(git(f.brain, ['ls-files', '-u', '--', path]).split('\n')).toHaveLength(3);
+  expect(readPendingWriteThrough(f.brain).map(e => e.path)).toContain(path);
+}, 60_000);
+
+test('the sweep filter keeps the whole pending list when git cannot list conflicts, so the write-through falls back instead of failing', () => {
+  const f = fixture('sweep-unreadable-index', false);
+  const many = Array.from({ length: 1200 }, (_, i) => `notes/pending-${i}.md`);
+  expect(withoutUnmergedPaths(f.brain, ['people/alice-example.md', ...many])).toHaveLength(1201);
+  writeFileSync(join(f.brain, '.git', 'index'), 'not an index');
+  expect(withoutUnmergedPaths(f.brain, ['people/alice-example.md', 'notes/b.md'])).toEqual(['people/alice-example.md', 'notes/b.md']);
+}, 60_000);
+
+test('a failing unmerged-path check refuses instead of reading as no conflicts', () => {
+  const f = fixture('unreadable-index', false);
+  writeFileSync(join(f.brain, '.git', 'index'), 'not an index');
+  let thrown: { code?: string; message?: string } | null = null;
+  try { assertNoUnmergedPaths(f.brain, ['people/alice-example.md']); } catch (e) { thrown = e as { code?: string; message?: string }; }
+  expect(thrown).toMatchObject({ code: 'git_unavailable' });
+  expect(thrown!.message).toContain('ls-files');
+}, 60_000);

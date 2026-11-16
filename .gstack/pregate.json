@@ -95,7 +95,9 @@
     "scripts/skill-drift-undeclared-subcommands.txt": ["test/skill-drift.test.ts"],
     "scripts/skills-commit-gate.sh": ["test/skill-health.test.ts", "test/skill-drift.test.ts"],
     "skills/skill-budgets.tsv": ["test/skill-health.test.ts"],
-    "skills/skills.lock.history.json": ["test/skills-integrity.test.ts", "test/skillpack-safe-update.test.ts"]
+    "skills/skills.lock.history.json": ["test/skills-integrity.test.ts", "test/skillpack-safe-update.test.ts"],
+    "scripts/check-migration-projection.ts": ["test/scripts/check-migration-projection.test.ts"],
+    "scripts/migration-projection-baseline.tsv": ["test/scripts/check-migration-projection.test.ts"]
   },
   "guards": [
     {
@@ -167,6 +169,27 @@
       "events": ["workflow_dispatch", "push"],
       "jobs": ["e2e-full-suite"],
       "artifact": "e2e-full-suite-tree"
+    },
+    "native-locks.yml/native": {
+      "workflow": "test.yml",
+      "events": ["workflow_dispatch", "push"],
+      "jobs": [
+        "full-suite",
+        "native-locks / linux-x64-glibc / Bun 1.4.4",
+        "native-locks / linux-arm64-glibc / Bun 1.4.4",
+        "native-locks / darwin-arm64 / Bun 1.4.4",
+        "native-locks / darwin-x64 / Bun 1.4.4",
+        "native-locks / win32-x64 / Bun 1.4.4",
+        "native-locks / win32-arm64 / Bun 1.4.4"
+      ],
+      "artifact": "full-suite-tree"
+    },
+    "macos-validation.yml/macos-26": {
+      "workflow": "macos-validation.yml",
+      "events": ["workflow_dispatch"],
+      "jobs": ["macOS 26 validation"],
+      "artifact": "macos-26-tree",
+      "os": "macOS"
     }
   },
   "remote_gate_runs": {
