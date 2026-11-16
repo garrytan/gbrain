@@ -43,7 +43,7 @@ export function git(root: string, args: string[], opts: GitOpts = {}): GitRun {
 }
 
 /** Signals a process raises on itself when it crashes; any other signal came from outside the child. */
-const CRASH_SIGNALS = new Set(['SIGSEGV', 'SIGBUS', 'SIGILL', 'SIGFPE', 'SIGABRT']);
+export const CRASH_SIGNALS = new Set(['SIGSEGV', 'SIGBUS', 'SIGILL', 'SIGFPE', 'SIGABRT']);
 
 function stoppedError(root: string, args: string[], stop: GitStop, timeoutMs: number, maxBuffer?: number): OperationError {
   const what = `git ${args.filter(a => !a.startsWith('-c') && !a.includes('=')).slice(0, 2).join(' ')}`;

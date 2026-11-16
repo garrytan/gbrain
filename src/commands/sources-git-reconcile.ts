@@ -13,6 +13,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { reconcileCheckout, fetchLevel, gitReader, withReconcileLock, type CheckoutReconcileStatus } from '../core/git/reconcile.ts';
+import { CRASH_SIGNALS } from '../core/git/git-run.ts';
 import { isTruthy } from '../core/connectors/config-keys.ts';
 import { existsSync, realpathSync } from 'node:fs';
 import { classifyGitCheckout } from '../core/git-checkout.ts';
@@ -41,11 +42,20 @@ export interface SourceReconcile {
 
 export interface ReconcileOptions { sourceIds?: string[]; dryRun?: boolean; waitMs?: number; sleep?: (ms: number) => Promise<void>; childTimeoutMs?: number }
 
+/** A git command stopped by its output limit or by a git crash stops the same way on a retry, so it goes to the user like the advice says. */
+function stoppedForGood(error: OperationError): boolean {
+  if (error.code !== 'git_command_stopped') return false;
+  let stop: { reason?: string; signal?: string } = {};
+  try { stop = JSON.parse(error.detail ?? '{}'); } catch { /* no detail: a retry may finish */ }
+  const reason = error.reason ?? stop.reason;
+  return reason === 'output_limit' || (reason === 'signal' && CRASH_SIGNALS.has(stop.signal ?? ''));
+}
+
 const refreshBusy = (error: unknown) => error instanceof OperationError && error.code === 'refresh_in_progress';
 
 function groupRefusal(error: unknown, failure: ClassifiedItemFailure): Pick<SourceReconcile, 'status' | 'error'> {
   if (!(error instanceof OperationError)) return { status: failure.class === 'transient' ? 'failed' : 'needs_user', error: { code: failure.code, message: failure.message } };
-  return { status: RETRYABLE.has(error.code) ? 'failed' : 'needs_user',
+  return { status: RETRYABLE.has(error.code) && !stoppedForGood(error) ? 'failed' : 'needs_user',
     error: { code: error.code, message: error.message, ...(error.suggestion ? { suggestion: error.suggestion } : {}), ...(error.fix ? { fix: error.fix } : {}) } };
 }
 

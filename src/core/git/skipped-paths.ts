@@ -181,9 +181,21 @@ export function worktreeOfGitdir(top: string): string {
   return top;
 }
 
+/** The named paths with unresolved merge conflicts in the index; a failed listing throws git_unavailable, never reads as none. */
+export function unmergedPaths(root: string, rel: string[]): string[] {
+  return [...new Set(gitOk(root, ['ls-files', '-u', '-z', '--', ...literalPathspecs(rel)], 'ls-files -u').split('\0').filter(Boolean).map(l => l.slice(l.indexOf('\t') + 1)))];
+}
+
+/** The named paths without those an unresolved merge conflict holds, so a pending-ledger sweep still commits the rest. */
+export function withoutUnmergedPaths(root: string, rel: string[]): string[] {
+  if (!rel.length) return rel;
+  const unmerged = new Set(unmergedPaths(root, rel));
+  return rel.filter(p => !unmerged.has(p));
+}
+
 /** Refuses, before anything is staged, named paths with unresolved merge conflicts in the index: staging one would commit its markers as resolved. */
 export function assertNoUnmergedPaths(root: string, rel: string[]): void {
-  const unmerged = [...new Set(gitOk(root, ['ls-files', '-u', '-z', '--', ...literalPathspecs(rel)], 'ls-files -u').split('\0').filter(Boolean).map(l => l.slice(l.indexOf('\t') + 1)))];
+  const unmerged = unmergedPaths(root, rel);
   if (unmerged.length) {
     const list = `${unmerged.slice(0, 10).join(', ')}${unmerged.length > 10 ? ', ...' : ''}`;
     throw opError('commit_paths_unmerged', `${unmerged.length} named file(s) still have unresolved merge conflicts in the index: ${list}.`,

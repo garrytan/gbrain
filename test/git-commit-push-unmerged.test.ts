@@ -93,6 +93,21 @@ test('a write-through file left unmerged is refused and kept in the pending ledg
   expect(git(f.brain, ['ls-files', '-u', '--', path]).split('\n')).toHaveLength(3);
 }, 60_000);
 
+test('an unmerged file in the pending ledger does not hold back the other pending files a later write-through sweeps', async () => {
+  const f = fixture('sweep-past-conflict', false);
+  const path = conflict(f);
+  await withEnv({ ...identity, GBRAIN_HOME: f.home }, async () => {
+    expect(() => commitPathsLocked(f.brain, [join(f.brain, path), join(f.brain, 'notes', 'b.md')], 'gbrain: write-through two pages', { lockWaitMs: 1000 }))
+      .toThrow(expect.objectContaining({ code: 'commit_paths_unmerged' }));
+    expect(readPendingWriteThrough(f.brain).map(e => e.path).sort()).toEqual(['notes/b.md', path]);
+    writeFileSync(join(f.brain, 'notes', 'c.md'), page('C', 'New page.'));
+    expect(commitPathsLocked(f.brain, [join(f.brain, 'notes', 'c.md')], 'gbrain: write-through notes/c', { lockWaitMs: 1000 })).toBeTruthy();
+  });
+  expect(git(f.brain, ['show', '--name-only', '--format=', 'HEAD']).split('\n').sort()).toEqual(['notes/b.md', 'notes/c.md']);
+  expect(git(f.brain, ['ls-files', '-u', '--', path]).split('\n')).toHaveLength(3);
+  expect(readPendingWriteThrough(f.brain).map(e => e.path)).toContain(path);
+}, 60_000);
+
 test('a failing unmerged-path check refuses instead of reading as no conflicts', () => {
   const f = fixture('unreadable-index', false);
   writeFileSync(join(f.brain, '.git', 'index'), 'not an index');
