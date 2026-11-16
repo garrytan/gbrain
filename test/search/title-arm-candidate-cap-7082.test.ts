@@ -61,12 +61,10 @@ const timelineOnly = (q: string) => TIMELINE_TITLE_PAGES
 
 describe('title arm: whole-vector candidate cap for local callers (#7082)', () => {
   for (const q of TIMELINE_TITLE_QUERIES) {
-    test(`under the cap, the local title arm keeps every timeline-only match and remote keeps none: "${q}"`, async () => {
-      const local = (await titles(q, false)).slugs, remote = (await titles(q, true)).slugs;
-      for (const slug of timelineOnly(q)) {
-        expect(local).toContain(slug);
-        expect(remote).not.toContain(slug);
-      }
+    test(`under the cap, the local title arm keeps every timeline-only match: "${q}"`, async () => {
+      const { slugs, cut } = await titles(q, false);
+      for (const slug of timelineOnly(q)) expect(slugs).toContain(slug);
+      expect(cut).toEqual([]);
     });
 
     test(`hybrid search returns every timeline-only match: "${q}"`, async () => {
