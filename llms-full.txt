@@ -5437,6 +5437,29 @@ CREATE POLICY page_segment_derivation_purge_pages_writer_note ON page_segment_de
 ```
 <!-- gbrain:ledger-rls-recipe:end -->
 
+**Check that the upgrade replaced every guard.** Migration v318 can only replace a guard function
+the role running it owns. A guard owned by another role is left as it was, so it still lets a
+scoped writer without ledger policies through, and v318 only names it in one stderr line
+(`guards: N purge or withdrawal guard(s) still read their ledgers as empty ...`). After upgrading,
+run this as any role that can read the catalog. Every one of the seven rows must show
+`fails_closed = t`:
+
+```sql
+SELECT p.proname, pg_get_userbyid(p.proowner) AS owner,
+       strpos(p.prosrc, 'row_security_active(') > 0 AS fails_closed
+FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public' AND p.proname IN ('gbrain_guard_inserted_facts',
+  'gbrain_preserve_fact_withdrawal', 'gbrain_refuse_purged_fact', 'gbrain_refuse_purged_take',
+  'gbrain_refuse_purged_page', 'gbrain_refuse_purging_derivation', 'gbrain_mark_derivation_scope_entry')
+ORDER BY 1;
+```
+
+For a row with `fails_closed = f`, connect as the role in its `owner` column and run
+`ALTER FUNCTION public.<proname>() OWNER TO <the role gbrain migrates as>;`. Then run
+`gbrain apply-migrations --yes`, or start gbrain: every migration run re-creates a guard that
+is missing its check, provided the migrating role owns it. You can also run gbrain once as the
+owning role instead. Run the query again to confirm.
+
 The segmented storage recipe above already covers the two derivation purge tables for a
 role it applies to. A policy that filters out ledger rows of a source the role writes hides
 them from the guard, as before. Every gbrain function that pins a search_path ends it with

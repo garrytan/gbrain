@@ -250,6 +250,21 @@ function docsRecipe(marker: string, role: string): string {
     }
   });
 
+  test('a writer that may only insert facts is refused only when a withdrawal matches a fact it inserts', async () => {
+    await policies(['facts']);
+    await engine.executeRaw(`CREATE POLICY ${SCOPED}_read ON facts FOR SELECT TO ${SCOPED} USING (true)`);
+    await engine.executeRaw(`CREATE POLICY ${SCOPED}_insert ON facts FOR INSERT TO ${SCOPED} WITH CHECK (true)`);
+    const unrelated = (g: Guard): Guard => ({ ...g, seed: (tx, s) => withdraw(tx, { ...s, claim: `Other ${s.claim}` }) });
+    try {
+      for (const g of [GUARDS[2]!, GUARDS[3]!]) {
+        expect(await run(engine, unrelated(g), await seedPage(engine), as), g.name).toEqual({ result: 'ok', derived: { active: 1 } });
+      }
+      expect((await run(engine, GUARDS[3]!, await seedPage(engine), as)).result).toMatch(UNREADABLE);
+    } finally {
+      for (const name of ['read', 'insert']) await engine.executeRaw(`DROP POLICY ${SCOPED}_${name} ON facts`);
+    }
+  });
+
   test('a ledger without row-level security guards the scoped role with no policy on it', async () => {
     for (const g of GUARDS) {
       await policies(g.hidden);
@@ -276,12 +291,13 @@ function docsRecipe(marker: string, role: string): string {
     }
   });
 
-  test('an upgraded brain ends with every guard failing closed', async () => {
+  // From before v277 (whose search_path hardening now re-creates guards missing their check), from v283 and from v317.
+  for (const from of [276, 283, migration.version - 1]) test(`an upgraded brain at v${from} ends with every guard failing closed`, async () => {
     for (const fn of GUARD_FUNCTIONS) {
       await engine.executeRaw(`CREATE OR REPLACE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql
         SET search_path = pg_catalog, public, pg_temp AS $fn$ BEGIN RETURN ${fn === 'gbrain_guard_inserted_facts' || fn === 'gbrain_mark_derivation_scope_entry' ? 'NULL' : 'NEW'}; END $fn$`);
     }
-    await engine.setConfig('version', String(migration.version - 1));
+    await engine.setConfig('version', String(from));
     await runMigrations(engine);
     expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
     const rows = await engine.executeRaw<{ proname: string; definer: boolean; path: string[]; checks: string[] }>(`SELECT p.proname, p.prosecdef AS definer,

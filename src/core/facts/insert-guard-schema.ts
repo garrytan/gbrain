@@ -60,6 +60,18 @@ export const FACT_INSERT_GUARD_FUNCTION = 'gbrain_guard_inserted_facts';
  */
 export const GUARD_OUTCOME_MARKER_SQL = "(i.source IN ('cli:extract-conversation-facts:terminal:v2','cli:extract-conversation-facts:non-extractable:v2','cli:extract-conversation-facts:terminal') AND i.fact IN ('EXTRACTION_COMPLETE','EXTRACTION_NOT_APPLICABLE'))";
 
+/** The WITH clause naming, as m, the active inserted facts a withdrawal matches and its earliest withdrawn_at. */
+const WITHDRAWN_INSERTS_SQL = `WITH n AS MATERIALIZED (
+        SELECT i.id, i.source_id, i.visibility, i.entity_slug, i.source_markdown_slug,
+          gbrain_fact_fingerprint(i.fact) AS fact_hash, gbrain_fact_fingerprint_v1(i.fact) AS fact_hash_v1
+        FROM inserted_facts i WHERE i.expired_at IS NULL),
+      m AS (
+        SELECT n.id, min(w.withdrawn_at) AS withdrawn_at FROM n JOIN fact_withdrawals w
+          ON w.source_id = n.source_id AND w.visibility = n.visibility
+          AND w.subject = ANY(CASE WHEN starts_with(COALESCE(n.source_markdown_slug, ''), 'memory/members/') THEN ARRAY[n.source_markdown_slug]
+            ELSE ARRAY['*', n.entity_slug] END) AND w.fact_hash IN (n.fact_hash, n.fact_hash_v1)
+        GROUP BY n.id)`;
+
 /**
  * The guard function alone (#7778 re-creates it without touching the triggers). The purge refusal skips an extraction
  * outcome row (facts/audit-sources.ts `isOutcomeMarker`): that bookkeeping marker is not a claim, and a subject-'*'
@@ -90,19 +102,12 @@ CREATE OR REPLACE FUNCTION gbrain_guard_inserted_facts() RETURNS trigger
       ${requireLedgerPoliciesSql('fact_withdrawals', ['SELECT'], '      ')}
     END IF;
     IF EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id IN (SELECT i.source_id FROM inserted_facts i WHERE i.expired_at IS NULL)) THEN
-      ${requireLedgerPoliciesSql('facts', ['SELECT', 'UPDATE'], '      ')}
+      IF EXISTS (${WITHDRAWN_INSERTS_SQL} SELECT 1 FROM m) THEN
+        ${requireLedgerPoliciesSql('facts', ['SELECT', 'UPDATE'], '        ')}
+      END IF;
       stamp_setting := current_setting('${FACT_WITHDRAWAL_STAMP_SETTING}', true);
       PERFORM set_config('${FACT_WITHDRAWAL_STAMP_SETTING}', 'on', true);
-      WITH n AS MATERIALIZED (
-        SELECT i.id, i.source_id, i.visibility, i.entity_slug, i.source_markdown_slug,
-          gbrain_fact_fingerprint(i.fact) AS fact_hash, gbrain_fact_fingerprint_v1(i.fact) AS fact_hash_v1
-        FROM inserted_facts i WHERE i.expired_at IS NULL),
-      m AS (
-        SELECT n.id, min(w.withdrawn_at) AS withdrawn_at FROM n JOIN fact_withdrawals w
-          ON w.source_id = n.source_id AND w.visibility = n.visibility
-          AND w.subject = ANY(CASE WHEN starts_with(COALESCE(n.source_markdown_slug, ''), 'memory/members/') THEN ARRAY[n.source_markdown_slug]
-            ELSE ARRAY['*', n.entity_slug] END) AND w.fact_hash IN (n.fact_hash, n.fact_hash_v1)
-        GROUP BY n.id)
+      ${WITHDRAWN_INSERTS_SQL}
       UPDATE facts f SET expired_at = m.withdrawn_at, valid_until = LEAST(COALESCE(f.valid_until, m.withdrawn_at), m.withdrawn_at)
         FROM m WHERE f.id = m.id;
       PERFORM set_config('${FACT_WITHDRAWAL_STAMP_SETTING}', COALESCE(stamp_setting, ''), true);

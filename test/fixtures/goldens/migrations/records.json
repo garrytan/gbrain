@@ -4238,8 +4238,8 @@
         "idempotent": true,
         "name": "set_based_fact_insert_guards",
         "sql": {
-          "length": 12107,
-          "sha256": "e19f792bd2ab98e4f9f76c045d869074158da066c081cb857187736a579323bf"
+          "length": 12894,
+          "sha256": "80072441dbeb3a3989bb4471ab7ac624b1aa21c4e9dd9d4e59975700e50abaa3"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -4541,8 +4541,8 @@
         "idempotent": true,
         "name": "outcome_markers_skip_purge_guard",
         "sql": {
-          "length": 6083,
-          "sha256": "2e966ce2e439d7ddc47fed9a72888598a40a9ad64d0889c4bc2148333e9d48a4"
+          "length": 6870,
+          "sha256": "30e88e73d6c7c7a7fab54c5884535eb5c2ffa294ade9485801a654afbd1c834d"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -4988,8 +4988,8 @@
         "idempotent": true,
         "name": "member_page_withdrawal_scope",
         "sql": {
-          "length": 8342,
-          "sha256": "fbbf9b1a08a116e4be9c0930671b7bf707a0c448bd14f80132318bd23a954c9a"
+          "length": 9129,
+          "sha256": "97119f853f23194ed6ac926a0a18e2cb6f3e6289a436f1c2c1bf4d61526d1483"
         },
         "sqlFor": "absent",
         "transaction": "absent",
