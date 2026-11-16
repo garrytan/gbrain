@@ -43,8 +43,9 @@
  * 8. the release's GitHub release is marked "Latest" (pre-release cleared):
  *    release.yml publishes every batch release as a pre-release, so the
  *    stable channel is the one release GitHub calls Latest. A forward
- *    promotion replaces its notes with every CHANGELOG entry since the
- *    previous stable (rolledUpNotes()); a rollback keeps the notes. If this
+ *    promotion replaces its notes with a short summary of the behavior
+ *    changes since the previous stable (upgradeSummary()), then every
+ *    CHANGELOG entry since it (rolledUpNotes()); a rollback keeps the notes. If this
  *    last step fails, stable has already moved: the refusal names
  *    `bun scripts/release-channel.ts backfill --apply`, which sets it.
  *
@@ -63,6 +64,7 @@ import { spawnSync } from 'node:child_process';
 import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { upgradeSummary } from '../src/core/upgrade-summary.ts';
 import { judgeMatrixRun, MATRIX_RECEIPT_ARTIFACT, type BreakIssue, type MatrixReceipt, type MatrixRunRow } from './stable-matrix.ts';
 
 export const DOCS = 'docs/RELEASING.md#stable-channel-promotion';
@@ -500,7 +502,7 @@ export async function promote(deps: PromoteDeps, inputs: PromoteInputs): Promise
   };
   const message = renderTagMessage(fields);
   const changelog = rollback ? null : await deps.git(['show', `${releaseRef}:CHANGELOG.md`]);
-  const notes = changelog === null ? null : rolledUpNotes(changelog.code === 0 ? changelog.stdout : '', fields.previous, version, deps.repo);
+  const notes = changelog === null ? null : rolledUpNotes(changelog.code === 0 ? changelog.stdout : '', fields.previous, version, deps.repo, fields.previous ? upgradeSummary(fields.previous, version) : null);
 
   // The evidence record: carried forward from the previous record commit (none before the first promotion).
   const prior = await readPriorRecord(deps);
@@ -562,7 +564,7 @@ export const RELEASE_NOTES_MAX = 120_000;
  * RELEASE_NOTES_MAX, and a link to the full CHANGELOG at the tag says so. With no previous stable it is the release's
  * own entry; with no matching section it is the same link stub release.yml writes.
  */
-export function rolledUpNotes(changelog: string, previous: string | null, version: string, repo: string): string {
+export function rolledUpNotes(changelog: string, previous: string | null, version: string, repo: string, summary: string[] | null = null): string {
   const link = `https://github.com/${repo}/blob/v${version}/CHANGELOG.md`;
   const wanted = (v: string) => compareVersions(v, version) <= 0 && (previous === null ? compareVersions(v, version) === 0 : compareVersions(v, previous) > 0);
   const sections: string[][] = [];
@@ -577,7 +579,8 @@ export function rolledUpNotes(changelog: string, previous: string | null, versio
     current?.push(line);
   }
   if (sections.length === 0) return `See [CHANGELOG.md](${link}) for v${version}.\n`;
-  const intro = previous === null ? `Stable release v${version}.\n` : `Stable release v${version}: every change since the previous stable release, v${previous}, newest first.\n`;
+  const opening = previous === null ? `Stable release v${version}.\n` : `Stable release v${version}: every change since the previous stable release, v${previous}, newest first.\n`;
+  const intro = summary ? `${opening}\n${summary.join('\n')}\n` : opening;
   const bodies = sections.map(s => `${s.join('\n').trimEnd()}\n`);
   const kept: string[] = [];
   let size = intro.length;
