@@ -4074,6 +4074,14 @@ More: [docs/guides/qm.md#proposed-writes](../../docs/guides/qm.md#proposed-write
 |---|---|---|---|---|---|---|
 | provenance is required and must be non-empty. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### provider_response_unparseable
+
+<a id="provider_response_unparseable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A model provider answered with a success status, but its response body could not be parsed as one JSON document; no response text is kept. | The same request gets the same body, so retrying spends another paid call on the same failure. The common cause is a provider route that streams (Server-Sent Events) when a request omits `stream`; a job that hits it ends on its first attempt. | Ask the operator to make the route return one JSON body for a non-streaming request, for example with gbrain config set provider_chat_options.<provider>:<model> '{"stream": false}', then retry the job. | host_admin | `gbrain doctor --json` | 1 | no |
+
 ### publication_pending
 
 <a id="publication_pending"></a>
