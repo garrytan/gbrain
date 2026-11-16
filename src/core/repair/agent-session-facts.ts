@@ -299,8 +299,9 @@ export async function classifyAgentSessionFacts(db: BrainEngine, sourceIds: stri
 /**
  * Active, unresolved `kind: fact` / `holder: self` takes whose every contributing fact is non-user once the facts in
  * `reattributed` are: at least one of them must be in that set or already carry a speaker note, so takes this repair
- * has nothing to do with are never listed. Contributing facts are grouped in one pass over the facts table, never one
- * pass per take (#9503).
+ * has nothing to do with are never listed. Contributing facts are grouped in one pass over the listed sources' facts,
+ * never one pass per take (#9503) and never over other sources: consolidation only links a fact to a take on a page of
+ * the fact's own source.
  */
 export async function agentSessionTakes(db: BrainEngine, sourceIds: string[], reattributed: ReadonlySet<number>, ids?: number[]): Promise<AgentSessionTake[]> {
   const rows = await db.executeRaw<{ id: number | string; source_id: string; slug: string; row_num: number | string; claim: string;
@@ -311,7 +312,7 @@ export async function agentSessionTakes(db: BrainEngine, sourceIds: string[], re
              COALESCE(bool_or(f.attributed_to='other' AND position($3::text in COALESCE(f.context,''))>0), false) AS noted,
              min(f.consolidated_at) AS first_consolidated_at
         FROM facts f
-       WHERE f.consolidated_into IS NOT NULL AND ($2::bigint[] IS NULL OR f.consolidated_into=ANY($2::bigint[]))
+       WHERE f.source_id=ANY($1::text[]) AND f.consolidated_into IS NOT NULL AND ($2::bigint[] IS NULL OR f.consolidated_into=ANY($2::bigint[]))
        GROUP BY f.consolidated_into)
     SELECT t.id, p.source_id, p.slug, t.row_num, t.claim, c.fact_ids, c.user_fact_ids, c.noted
       FROM contributing c JOIN takes t ON t.id=c.take_id JOIN pages p ON p.id=t.page_id
