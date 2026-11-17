@@ -161,3 +161,22 @@ describe('one eligibility function (E13/E11/C13/C14)', () => {
     expect(decideChronicle({ page, authority: null, noExtract: false, enabled: true, settings, now }).reason).toBe('too_short');
   });
 });
+
+describe('managed add_link', () => {
+  test('add_link must not strand a pending meeting decision', () => brain(async ({ engine, ctx }) => {
+    const { runPhaseChronicle } = await import('../src/core/cycle/chronicle.ts');
+    await engine.setConfig('chronicle.auto_settle_seconds', '0');
+    await put(ctx, 'people/alice-example', '---\ntype: person\ntitle: Alice Example\n---\nSynthetic test person.');
+    await put(ctx, 'meetings/link-repro', meeting());
+    const before = (await engine.getPage('meetings/link-repro', { sourceId: 'default' }))!;
+    await operationsByName.add_link.handler(ctx, {
+      from: 'meetings/link-repro', to: 'people/alice-example', context: 'Synthetic participant',
+    });
+    const after = (await engine.getPage('meetings/link-repro', { sourceId: 'default' }))!;
+    expect(after.content_hash).not.toBe(before.content_hash);
+    await engine.executeRaw("UPDATE chronicle_page_state SET next_attempt_at=now()-interval '1 second',decided_at=now()-interval '1 hour' WHERE state='pending'");
+    let calls = 0;
+    await runPhaseChronicle(engine, { judge: async () => { calls++; return { events: [] }; } });
+    expect(calls).toBe(1);
+  }), 120_000);
+});
