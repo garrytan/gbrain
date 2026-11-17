@@ -161,8 +161,9 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
     const window = openCoverageWindow(ch, { runStart, historyDays: cfg.historyDays, lookbackDays: cfg.lookbackDays, alignFrom: ms => slackAlignToDay(ms, cfg.timezone) });
     const from = Date.parse(window.from);
     const to = Date.parse(window.to);
-    // A chat with nothing since the window opened is not read: its days in the window have no messages.
-    const recent = !!thread && !!thread.lastMessageAt && Date.parse(thread.lastMessageAt) >= from;
+    // A chat whose newest message is older than the window is not read: its days in the window have no messages. A chat
+    // the helper lists with no newest-message time is read, so its days are never deleted on a guess.
+    const recent = !!thread && (thread.lastMessageAt === null || Date.parse(thread.lastMessageAt) >= from);
     const byDay = new Map<string, IMessageMessage[]>();
     for (const m of recent ? await helper!.messages(thread!.threadId, window.from, signal) : []) {
       const at = Date.parse(m.timestamp);

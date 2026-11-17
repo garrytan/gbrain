@@ -101,8 +101,12 @@ export function imessageHelper(opts: IMessageHelperOpts): IMessageHelper {
       return body.data.map((raw: Record<string, unknown>) => {
         const threadId = str(raw?.thread_id);
         if (!threadId) throw new IMessageShapeDriftError('threads.data[].thread_id');
+        const lastMessageAt = raw.last_message_at;
+        if (lastMessageAt !== null && !(typeof lastMessageAt === 'string' && Number.isFinite(Date.parse(lastMessageAt)))) {
+          throw new IMessageShapeDriftError('threads.data[].last_message_at');
+        }
         return { threadId, displayName: str(raw.display_name), participants: Array.isArray(raw.participants) ? raw.participants.filter((p): p is string => typeof p === 'string') : [],
-          isGroup: raw.is_group === true, lastMessageAt: str(raw.last_message_at) };
+          isGroup: raw.is_group === true, lastMessageAt };
       });
     },
     async messages(threadId, sinceIso, signal) {
