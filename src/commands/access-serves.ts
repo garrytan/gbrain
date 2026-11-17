@@ -345,9 +345,9 @@ export function companyRuleLines(r: ServesReceipt): string[] {
   const c = r.company_rule;
   if (!c) return [];
   const names = (ps: string[]) => ps.map(p => p.replace(/^member:/, '')).join(', ');
-  const verb = c.action === 'blocked' ? 'BLOCKED' : c.action === 'keep' ? 'kept' : r.applied ? 'added' : 'will add';
+  const verb = c.action === 'blocked' ? 'BLOCKED' : c.action === 'keep' ? 'kept' : `${r.applied ? 'added' : 'will add'}${c.adds?.length ? ` ${names(c.adds)} as reader(s)` : ''}`;
   return [
-    `  rule       ${c.source}:${c.prefix} readable by ${names(c.readers)} (${verb}${c.adds?.length ? `; ${r.applied ? 'added' : 'adds'} ${names(c.adds)}` : ''})${c.detail ? `: ${c.detail}` : ''}`,
+    `  rule       ${c.source}:${c.prefix} readable by ${names(c.readers)} (${verb})${c.detail ? `: ${c.detail}` : ''}`,
     ...(c.action === 'blocked' ? [] : [`             labelled-only members read the company pages through this rule; only keys bound to these members read pages under ${c.prefix}`]),
     ...(c.write ? [writeLine(c.write)] : []),
     ...(companyHeld(r) ? [`             the added readers wait for approval, as every widening does: preview with gbrain access apply --source ${c.source}, then approve with the --yes --expect line it prints`] : []),
