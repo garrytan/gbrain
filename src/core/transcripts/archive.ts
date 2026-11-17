@@ -441,7 +441,7 @@ export async function rescopeArchiveOnShared(engine: BrainEngine): Promise<Array
       if (!(err instanceof LockUnavailableError)) throw err;
       await reconcileAudience(engine, sourceId, privacy, false);
       const skipped = await archiveRescopeSkipped(engine, sourceId);
-      out.push({ source_id: sourceId, skipped: skipped?.code !== 'archive_rescope_pending' ? skipped : { code: 'archive_rescope_pending', message: 'Conversation archive pages archived so far are kept to the owner, but an archive run that started while this brain was personal is writing source ' + sourceId + ' now and its new pages are not; run gbrain transcripts archive run once it finishes (gbrain status --section locks --json shows the holder).' } });
+      out.push({ source_id: sourceId, skipped: skipped?.code !== 'archive_rescope_pending' ? skipped : { code: 'archive_rescope_pending', message: 'Conversation archive pages archived so far are kept to the owner, but an archive run that started while this brain was personal is writing source ' + sourceId + ' now and its new pages are not (gbrain status --section locks --json shows the holder); once it finishes, run gbrain transcripts archive run.' } });
       continue;
     }
     out.push({ source_id: sourceId, skipped: await archiveRescopeSkipped(engine, sourceId) });
