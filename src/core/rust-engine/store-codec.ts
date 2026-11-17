@@ -26,9 +26,14 @@ export function withIsoDates<T extends object>(row: T): T {
   return out as T;
 }
 
-const PAGE_DATES = ['created_at', 'updated_at', 'deleted_at', 'effective_date', 'ingested_at'] as const;
+/** Every date column of `Page`, including `salience_touched_at`, which a family adds through the store's page-columns hook. */
+const PAGE_DATES = ['created_at', 'updated_at', 'deleted_at', 'effective_date', 'ingested_at', 'salience_touched_at'] as const;
 
-/** What PGLite's page rows carry that the store has no field for: always these values. */
+/**
+ * What PGLite's page rows carry that the page record has no field for. A family that owns one of these columns adds it
+ * through the store's page-columns hook (`page_columns.rs`); the store's value then replaces the default here, so no
+ * family edits this list.
+ */
 const PAGE_ROW_DEFAULTS = { contextual_retrieval_mode: null, emotional_weight: 0, salience_touched_at: null, withheld_source_path: null } as const;
 
 function pageDates(page: Row): Row {

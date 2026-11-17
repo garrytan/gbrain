@@ -20,6 +20,7 @@
 use crate::env::{is_uuid, iso, parse_iso};
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::kv::{KvRead, KvWrite};
+use crate::page_columns::PageColumns;
 use crate::pages::{PageRecord, all_pages, read_page, write_page};
 use crate::sources::read_source;
 use crate::{Store, get_json, keys, put_json};
@@ -423,4 +424,15 @@ impl Store {
             Ok(changed)
         })
     }
+}
+
+/// Adds this family's `getPage` columns to a page (`page_columns::add_page_columns`). Adds none
+/// on purpose: PGLite's `getPage` returns no extraction stamp, so this stays empty unless a
+/// parity case shows one.
+pub(crate) fn page_columns(
+    _read: &dyn KvRead,
+    _page: &PageRecord,
+    _columns: &mut PageColumns,
+) -> Result<()> {
+    Ok(())
 }
