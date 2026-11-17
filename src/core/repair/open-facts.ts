@@ -104,6 +104,7 @@ export function openFactsReasonSql(f: string): string {
   return `(CASE
     WHEN ${f}.expired_at IS NOT NULL THEN 'expired'
     WHEN ${f}.superseded_by IS NOT NULL THEN 'superseded'
+    WHEN ${f}.valid_until IS NOT NULL AND ${f}.valid_until <= now() THEN 'lapsed'
     WHEN ${member(`${f}.source_markdown_slug`)} OR ${member(`${f}.entity_slug`)} OR ${member(prov)} THEN 'member_page'
     WHEN EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = ${f}.source_id
         AND w.fact_hash IN (gbrain_fact_fingerprint(${f}.fact), gbrain_fact_fingerprint_v1(${f}.fact)) AND (w.subject = '*' OR w.subject = ${f}.entity_slug))
@@ -325,6 +326,8 @@ export const openFactsRepair: RepairHandler = {
       warnings: [
         'Opening a fact widens what remote callers that are not the brain owner can read, and that is one-way for anything they read before an undo. '
           + `Each opened fact is recorded in ${request.ledger.path}; undo with: gbrain repair open-facts --source ${sel.source_id} --undo ${request.ledger.path}`,
+        'A fact someone saved private on purpose before the cut looks the same as a legacy one and is opened with them. Read the samples and the listing, '
+          + 'and when some must stay private, list the ids to open in a file (one per line) and pass --ids-file <file>.',
         ...(next ? [`This preview lists one window of ${window.length} fact(s); more may follow it. Apply this window (or decide not to), then preview the next one: ${next}`] : []),
         ...(counts ? [] : [`The counts by reason did not finish within the ${PLAN_STATEMENT_MS} ms statement bound and are not listed; the window is.`]),
         ...(notNamed.length ? [`${notNamed.map(([cls, n]) => `${n} ${cls}`).join(', ')} fact(s) are not in this preview: they come from no page the brain can judge, or from a class not named. `
@@ -474,17 +477,20 @@ async function applyFence(ctx: OperationContext, item: OpenItem): Promise<Repair
   const snapshot = await ctx.engine.readPageSnapshot(group.slug, { sourceId: group.source_id });
   if (!snapshot) return settle(item, '', [], 'its page is gone');
   if (isSegmentedPage(snapshot.page)) return settle(item, '', [], 'its page is stored in segments, which this repair does not rewrite; edit the facts fence by hand on the brain host');
-  let body = snapshot.page.compiled_truth ?? '';
+  const sections: { compiled_truth: string; timeline?: string } = { compiled_truth: snapshot.page.compiled_truth ?? '' };
   const struck: FactRef[] = [];
   for (const fact of group.facts) {
-    let hit = false;
-    const next = strikeFenceRow(body, fact.row_num!, row => row.claim === fact.fact && row.visibility === from ? (hit = true, { ...row, visibility: to }) : row);
-    if (next === null || !hit) continue;
-    body = next;
-    struck.push(fact);
+    for (const key of ['compiled_truth', 'timeline'] as const) {
+      let hit = false;
+      const next = strikeFenceRow(sections[key] ?? snapshot.page[key] ?? '', fact.row_num!, row => row.claim === fact.fact && row.visibility === from ? (hit = true, { ...row, visibility: to }) : row);
+      if (next === null || !hit) continue;
+      sections[key] = next;
+      struck.push(fact);
+      break;
+    }
   }
   if (!struck.length) return settle(item, '', [], 'its rows were not found in the page\'s facts fence as previewed, or the fence does not parse cleanly');
-  const content = serializePageToMarkdown({ ...snapshot.page, compiled_truth: body }, snapshot.tags);
+  const content = serializePageToMarkdown({ ...snapshot.page, ...sections }, snapshot.tags);
   const edit = { set: {}, remove: [] };
   const rows = pinned(struck);
   const requestId = requestIdOf(item, snapshot.revision);
