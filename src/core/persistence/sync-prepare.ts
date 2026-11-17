@@ -600,10 +600,15 @@ export async function publishPassStamp(tx: BrainEngine, row: WriteRequest, p: Sy
  * next stamp, once, so a completed pass always has its trend row and a normalization is never counted twice.
  */
 export async function recordPassFenceTrend(tx: Pick<BrainEngine, 'executeRaw'>, scope: { worktreeId: string; sourceId: string; passId: string; since: string | null }): Promise<void> {
+  // The scan is statistics over the source's whole history when no watermark exists yet; the publication transaction's 5 s bound
+  // would cancel it every time and so keep the stamp from ever landing. Widen the bound for this one statement only.
+  const [prior] = await tx.executeRaw<{ v: string }>("SELECT current_setting('statement_timeout') AS v");
+  await tx.executeRaw("SELECT set_config('statement_timeout','120s',true)");
   const rows = await tx.executeRaw<{ path: string | null; fences: Array<{ class: string }> }>(`SELECT intent->>'path' AS path, outcome->'fences_normalized' AS fences
     FROM persistence_requests WHERE worktree_id=$1::uuid AND source_id=$2 AND sequence > $3::bigint AND state='committed'
       AND intent->>'kind'='managed_sync_import' AND intent->>'passId' IS NOT NULL AND jsonb_typeof(outcome->'fences_normalized')='array' ORDER BY sequence`,
   [scope.worktreeId, scope.sourceId, scope.since ?? '0']);
+  await tx.executeRaw("SELECT set_config('statement_timeout',$1,true)", [prior?.v ?? '5s']);
   let tally: FencesTally | undefined;
   for (const row of rows) if (row.path && row.fences.length) tally = addFencesNormalized(tally, row.path, row.fences);
   if (tally) await recordSyncRunTrend(tx, { sourceId: scope.sourceId, runId: scope.passId, day: new Date().toISOString().slice(0, 10), count: tally.count, byClass: tally.by_class, writers: tally.dirs });
