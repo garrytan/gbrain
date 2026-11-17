@@ -35,8 +35,8 @@ export interface SearchTitlesDialect {
   relaxed?: boolean;
   /**
    * A local caller's OR re-run (GST-2899): rank the whole-vector matches only when all of them fit
-   * `titleWholeVectorCandidates()`; a set that does not fit returns no row and the caller runs the title-only
-   * statement. The candidate count has no ORDER BY, since nothing is cut from it: ordered by page id it walked
+   * `titleWholeVectorCandidates()`; a set that does not fit returns one row of nulls marked `candidates_cut`, and only then
+   * does the caller run the title-only statement. The candidate count has no ORDER BY, since nothing is cut from it: ordered by page id it walked
    * pages_pkey for a word on a few percent of pages (about 0.8 s at 1,000,000 pages against 40 ms from idx_pages_search).
    */
   completeOnly?: boolean;
@@ -165,7 +165,8 @@ export function buildSearchTitlesStatement(query: string, opts: SearchOpts | und
       tp.score,
       ${staleSql} AS stale,
       ${capped ? `(SELECT count(*) FROM candidates) > ${wholeVectorCandidates}` : 'false'} AS candidates_cut
-    FROM top_pages tp
+    FROM ${dialect.completeOnly ? `(SELECT (SELECT count(*) FROM candidates) > ${wholeVectorCandidates} AS cut) k
+    LEFT JOIN top_pages tp ON true` : 'top_pages tp'}
     LEFT JOIN LATERAL (
       SELECT cc.id, cc.chunk_index, cc.chunk_text, cc.chunk_source
       FROM content_chunks cc
@@ -175,6 +176,7 @@ export function buildSearchTitlesStatement(query: string, opts: SearchOpts | und
       ORDER BY (cc.chunk_source = 'compiled_truth') DESC, cc.chunk_index ASC
       LIMIT 1
     ) rep ON true
+    ${dialect.completeOnly ? 'WHERE tp.page_id IS NOT NULL OR k.cut' : ''}
     ORDER BY tp.exact_title DESC, tp.score DESC, tp.page_id ASC
   `;
   return { sql, params, safeChunks };

@@ -123,7 +123,7 @@ export async function searchTitles(
   const wordAttempts: Attempt[] = rarity ? terms.map(text => ({ text, kind: 'title' })) : [];
   // A local caller's retry matches timelines too while every matching page fits the cap; otherwise, and for remote callers, titles alone.
   let [orRows, ...wordLists] = await run([{ text: anyWord, kind: statement.safeChunks ? 'title' : 'complete' }, ...wordAttempts], true);
-  if (orRows.length === 0 && !statement.safeChunks) [orRows] = await run([{ text: anyWord, kind: 'title' }], true);
+  if (orRows[0]?.candidates_cut === true && !statement.safeChunks) [orRows] = await run([{ text: anyWord, kind: 'title' }], true);
   const relaxedRows = (rarity ? rankByRarity(orRows, wordLists, limit) : orRows).map(rowToSearchResult);
   // 2026-09 (#3617 follow-up): relaxed rows are TAGGED so hybrid's fusion can
   // demote them (SearchResult.keyword_relaxed). #7491: a title holding every
