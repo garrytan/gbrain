@@ -224,7 +224,7 @@ export const consolidateFact: Member<'consolidateFact'> = async (brain, id, take
 
 export const findTrajectory: Member<'findTrajectory'> = async (brain, opts) => {
   const o = takeOptions('findTrajectory', opts,
-    ['entitySlug', 'sourceId', 'sourceIds', 'remote', 'metric', 'kind', 'since', 'until', 'limit']) as typeof opts;
+    ['entitySlug', 'sourceId', 'sourceIds', 'remote', 'metric', 'kind', 'since', 'until', 'limit']) as unknown as typeof opts;
   const worldOnly = opts.remote !== false;
   if (worldOnly && factVisibilitySql('facts', ['world']) !== "facts.visibility IN ('world')") {
     refuseMember('findTrajectory', 'visibility widened by member pages or grants');
