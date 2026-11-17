@@ -356,10 +356,11 @@ jobs:
 
   # After the release is published: the executable users download, with the rust engine selected,
   # fetches the addon from that release and checks it against the manifest. The engine itself is
-  # not built yet, so the command must stop at the shell's "not built yet" refusal, which is only
-  # reached after the addon verified and loaded. A rust_engine_addon_missing or _mismatch refusal
-  # here means the release is broken. Unauthenticated attestation lookups are limited by GitHub
-  # (60 an hour per address); a rate-limited run reports missing and can be re-run.
+  # a shell that has no capabilities yet, so the command must stop at the shell's
+  # engine_capability_missing refusal, which is only reached after the addon verified and loaded.
+  # A rust_engine_addon_missing or _mismatch refusal here means the release is broken, except that
+  # unauthenticated attestation lookups are limited by GitHub (60 an hour per address): a run that
+  # could not read an attestation is retried up to 3 times with a growing wait, and only that case.
   smoke-rust-addon:
     needs: [version, ci-gate, release]
     if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'
@@ -396,17 +397,27 @@ jobs:
           mkdir -p "$GBRAIN_HOME/.gbrain"
           printf '{"engine":"rust","database_path":"%s"}\n' "$GBRAIN_HOME/.gbrain/brain.rust" > "$GBRAIN_HOME/.gbrain/config.json"
           status=0
-          "$work/$EXECUTABLE" list > "$work/out.log" 2>&1 || status=$?
-          cat "$work/out.log"
+          for attempt in 1 2 3; do
+            status=0
+            "$work/$EXECUTABLE" list > "$work/out.log" 2>&1 || status=$?
+            cat "$work/out.log"
+            # Retry only a lookup GitHub could not answer; any other refusal is the answer.
+            if grep -q 'Could not read a build-provenance attestation' "$work/out.log" && [ "$attempt" != 3 ]; then
+              echo "::warning::attestation lookup failed (attempt $attempt of 3); waiting before retrying"
+              sleep $((attempt * 30))
+              continue
+            fi
+            break
+          done
           if [ "$status" = 0 ]; then
-            echo "::error::the rust engine opened, but the shell is not built yet"
+            echo "::error::the rust engine opened and answered, but the shell implements nothing yet"
             exit 1
           fi
           if grep -Eq 'rust_engine_addon_(missing|mismatch)' "$work/out.log"; then
             echo "::error::the published executable refused the published addon"
             exit 1
           fi
-          grep -q 'the Rust engine is not built yet in this release' "$work/out.log"
+          grep -q 'Error \[engine_capability_missing\]' "$work/out.log"
           engine_build="$(jq -r .engine_build "$work/gbrain-engine-rust.sha256.json")"
           want="$(jq -r --arg t "$ADDON_TARGET" '.targets[$t].sha256' "$work/gbrain-engine-rust.sha256.json")"
           addon="$GBRAIN_HOME/.gbrain/engines/rust/$engine_build/$ADDON_TARGET.node"

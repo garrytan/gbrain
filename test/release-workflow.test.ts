@@ -107,11 +107,21 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
     expect(RUST_WORKFLOW.match(/if: \$\{\{ !inputs\.for_release \}\}/g)).toHaveLength(3);
   });
 
+  test('rust-engine.yml path filters cover the files under src/core/rust-engine/ on both triggers', () => {
+    // `src/core/rust-engine*` alone does not match a path with a slash after it.
+    expect(RUST_WORKFLOW.match(/- 'src\/core\/rust-engine\/\*\*'/g)).toHaveLength(2);
+    expect(RUST_WORKFLOW.match(/- 'src\/core\/rust-engine\*'/g)).toHaveLength(2);
+  });
+
   test('the post-publish smoke fetches the published addon and runs after the release exists', () => {
     const smoke = WORKFLOW.slice(WORKFLOW.indexOf('\n  smoke-rust-addon:\n'), WORKFLOW.indexOf('\n  publish-template:'));
     expect(smoke).toMatch(/needs: \[[^\]]*\brelease\b[^\]]*\]/);
     expect(smoke).toContain('rust_engine_addon_(missing|mismatch)');
-    expect(smoke).toContain('the Rust engine is not built yet in this release');
+    expect(smoke).toContain('Error \\[engine_capability_missing\\]');
+    // Only an attestation lookup GitHub could not answer is retried, at most three times.
+    expect(smoke).toContain('for attempt in 1 2 3; do');
+    expect(smoke).toContain("grep -q 'Could not read a build-provenance attestation'");
+    expect(smoke).toContain('sleep $((attempt * 30))');
   });
 
   test('release tag derives from the VERSION file, v-prefixed', () => {

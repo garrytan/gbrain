@@ -26,6 +26,7 @@ on:
     paths:
       - 'rust/**'
       - 'src/core/rust-engine*'
+      - 'src/core/rust-engine/**'
       - 'src/core/engine.ts'
       - 'src/core/engine-*.ts'
       - 'src/core/engine-sql/**'
@@ -42,6 +43,7 @@ on:
     paths:
       - 'rust/**'
       - 'src/core/rust-engine*'
+      - 'src/core/rust-engine/**'
       - 'src/core/engine.ts'
       - 'src/core/engine-*.ts'
       - 'src/core/engine-sql/**'
