@@ -109,9 +109,9 @@ export async function deriveTrust(engine: Sql, refs: readonly TaintRef[], input:
  * transaction right after the row. Inputs read as `unknown` because they
  * vanished keep their recorded reference.
  */
-export async function recordTaintEdges(tx: BrainEngine, derived: { table: TaintTable; id: number; sourceId?: string | null },
+export async function recordTaintEdges(tx: BrainEngine, derived: { table: TaintTable; id: number; sourceId?: string | null; replace?: boolean },
   inputs: readonly Pick<TaintInput, 'table' | 'id'>[]): Promise<void> {
-  if (!inputs.length) return;
+  if (!inputs.length && !derived.replace) return;
   await recordDerivationInputs(tx, derived, inputs.map(({ table, id }): DerivationRef => ({ table, id })));
 }
 
@@ -176,7 +176,7 @@ export async function lowerDerivedPageIn(tx: BrainEngine, derivation: { trust: W
   sourceId: string, slug: string): Promise<void> {
   for (const row of await tx.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug])) {
     await lowerToDerivedTier(tx, 'pages', [Number(row.id)], derivation.trust);
-    await recordTaintEdges(tx, { table: 'pages', id: Number(row.id), sourceId }, derivation.inputs);
+    await recordTaintEdges(tx, { table: 'pages', id: Number(row.id), sourceId, replace: true }, derivation.inputs);
   }
 }
 
