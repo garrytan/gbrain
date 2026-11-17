@@ -40,7 +40,7 @@ import {
 import { runSyncTrigger } from './trigger.ts';
 import { drainJsonFields, formatDrainSummary, syncOutcome } from '../../core/persistence/sync-drain.ts';
 import { readManagedMode } from '../../core/persistence/ownership.ts';
-import { writeJsonDocument } from '../../core/cli-force-exit.ts';
+import { setCliExitVerdict, writeJsonDocument } from '../../core/cli-force-exit.ts';
 import { cliRenderContext, renderNotice, type Notice } from '../../core/agent-output.ts';
 
 /** D2: under the `--json` guard only writeStdoutFinal reaches fd 1 (writeJsonDocument). */
@@ -99,7 +99,7 @@ function printTailNotice(result: SyncResult): void {
   for (const notice of runNotices(result)) process.stderr.write(`[gbrain notice ${notice.code}] ${notice.why}\n`);
 }
 
-export async function runSyncInner(engine: BrainEngine, args: string[]) {
+export async function runSyncInner(engine: BrainEngine, args: string[], opts: { ownSignals?: boolean } = {}) {
   // v0.40 Federated Sync v2: `gbrain sync trigger` subcommand
   // Routes to runSyncTrigger which queues a 'sync' minion job with
   // auto_embed_backfill=true. Falls through to the normal sync path
@@ -137,16 +137,16 @@ export async function runSyncInner(engine: BrainEngine, args: string[]) {
   // --all is set and accept maxAgeSeconds for age-gated breaks.
   if (breakLock || forceBreakLock) return await runSyncBreakLock(engine, args, { syncAll, jsonOut, forceBreakLock, maxAgeSeconds });
   // GBRA-133: one single-source run reads its routing rows once (core/sync-dispatch-read.ts); --all and --watch read live.
-  if (syncAll || flags.watch) return runRoutedSync(engine, args, flags);
+  if (syncAll || flags.watch) return runRoutedSync(engine, args, flags, opts);
   const { syncDispatchRow, withSyncDispatchRead } = await import('../../core/sync-dispatch-read.ts');
   return withSyncDispatchRead(engine, () => {
     const explicit = args.find((a, i) => args[i - 1] === '--source');
     if (explicit) void syncDispatchRow(engine, explicit);
-    return runRoutedSync(engine, args, flags);
+    return runRoutedSync(engine, args, flags, opts);
   });
 }
 
-async function runRoutedSync(engine: BrainEngine, args: string[], flags: ReturnType<typeof parseSyncFlags>): Promise<void> {
+async function runRoutedSync(engine: BrainEngine, args: string[], flags: ReturnType<typeof parseSyncFlags>, opts: { ownSignals?: boolean } = {}): Promise<void> {
   const { repoPath, dryRun, skipFailed, syncAll, jsonOut } = flags;
   let { noEmbed } = flags;
   const fanout = parseSyncFanoutFlags(args, syncAll);
@@ -198,9 +198,9 @@ async function runRoutedSync(engine: BrainEngine, args: string[], flags: ReturnT
   if (syncAll && (args.includes('--no-delegate') || process.env.GBRAIN_SYNC_NO_DELEGATE === '1')) {
     (await import('../../core/persistence/consumer-election.ts')).forceOwnConsumer('opted_out');
   }
-  if (syncAll) return await runSyncAll(engine, { ...flags, ...fanout }, { noEmbed, embeddingCredentialError, resumeCommand });
+  if (syncAll) return await runSyncAll(engine, { ...flags, ...fanout }, { noEmbed, embeddingCredentialError, resumeCommand, ownSignals: opts.ownSignals === true });
 
-  return await runSingleSourceSync(engine, { ...flags, ...fanout }, { sourceId, companyPolicy, noEmbed, resumeCommand, args });
+  return await runSingleSourceSync(engine, { ...flags, ...fanout }, { sourceId, companyPolicy, noEmbed, resumeCommand, args, ownSignals: opts.ownSignals === true });
 }
 
 /** #6288: `gbrain sync --source <id> --acknowledge-managed <request_id|path>` removes only recorded failures the imported commit settles. */
@@ -376,13 +376,13 @@ async function resolveCliSyncSource(
 async function runSyncAll(
   engine: BrainEngine,
   flags: SyncFlags & SyncFanoutFlags,
-  input: { noEmbed: boolean; embeddingCredentialError: Error | undefined; resumeCommand: string },
+  input: { noEmbed: boolean; embeddingCredentialError: Error | undefined; resumeCommand: string; ownSignals: boolean },
 ): Promise<void> {
   const {
     dryRun, full, noPull, noBulk, lanes, noExtract, skipFailed, retryFailed, noSchemaPack, includeGitignored,
     workingTree, missingPathMode, jsonOut, yesFlag, serialFlag, noAutoEmbed, maxSources, concurrency, timeoutSeconds,
   } = flags;
-  const { noEmbed, embeddingCredentialError, resumeCommand } = input;
+  const { noEmbed, embeddingCredentialError, resumeCommand, ownSignals } = input;
   // v0.41.31: SELECT carries last_commit + chunker_version so the inline
   // cost preview's "unchanged source → 0" short-circuit can mirror sync's
   // own "do work?" gate (sync.ts:1057+1075) + doctor's sync_freshness.
@@ -635,7 +635,9 @@ async function runSyncAll(
     ? Math.min(runnableSources.length, maxSources ?? 8)
     : 1;
 
-  await dispatchSyncAll({ fanOutEligible: fanOutEligible && !managedSerial, effectiveParallel, concurrency, runnableSources, runOne, writeHuman, humanSink, perSourceResults, onAllSigint });
+  // GST-2869: a termination signal aborts the shared controller, so sources not yet dispatched return before any work.
+  await withTerminationOwner(ownSignals, allInterrupt, () => dispatchSyncAll({ fanOutEligible: fanOutEligible && !managedSerial, effectiveParallel, concurrency, runnableSources, runOne, writeHuman, humanSink, perSourceResults, onAllSigint }));
+  const terminated = await terminatedExit(allInterrupt);
 
   const okCount = perSourceResults.filter((r) => r.status === 'ok').length;
   const errCount = perSourceResults.filter((r) => r.status === 'error').length;
@@ -650,9 +652,9 @@ async function runSyncAll(
 
   // v0.42.7 (#1696): brain-wide extraction-lag nudge after the --all wave.
   // Best-effort, stderr-only; skipped on dry-run.
-  if (!dryRun) await maybeExtractionNudge(engine);
+  if (!dryRun && terminated === null) await maybeExtractionNudge(engine);
   // Monthly backup-coverage stale-only refresh (trusted local engine holder).
-  if (!dryRun) await maybeBackupCoverageRefresh(engine);
+  if (!dryRun && terminated === null) await maybeBackupCoverageRefresh(engine);
 
   // #3068: any source wedged on a failed pull (partial/pull_failed) makes
   // the whole --all run non-zero — it will not self-heal on retry, so a
@@ -661,6 +663,7 @@ async function runSyncAll(
   const pullFailedCount = perSourceResults.filter(
     (r) => r.status === 'ok' && r.result && isFailedPartial(r.result),
   ).length;
+  if (terminated !== null) { setCliExitVerdict(terminated); return; }
   if (errCount > 0 || pullFailedCount > 0) process.exit(1);
   return;
 }
@@ -825,17 +828,56 @@ function emitSyncAllEnvelope(input: {
 }
 
 /** Single-source sync (one run, or `--watch`). */
+/** GST-2869: 128 + the signal number, the exit a supervisor that sent the signal expects. */
+const terminationExit = (signal: NodeJS.Signals): number => signal === 'SIGHUP' ? 129 : 143;
+
+/**
+ * GST-2869: while a managed pass this CLI runs is live, the first SIGTERM or SIGHUP aborts `interrupt` with `SyncTerminated`,
+ * so the pass records `resumable` / `terminated` and the run prints its result, then exits 128 + n. A second signal, a signal
+ * with no live pass, or a run whose save or result outlasts process-cleanup's window takes today's cleanup-and-exit. Never under another
+ * owner (a worker's sync job): the newest owner would take that owner's signals.
+ */
+async function withTerminationOwner<T>(ownSignals: boolean, interrupt: AbortController, run: () => Promise<T>): Promise<T> {
+  const cleanup = await import('../../core/process-cleanup.ts');
+  if (!ownSignals || cleanup.hasSignalOwner()) return run();
+  const { SyncTerminated } = await import('../../core/persistence/sync-stop-class.ts');
+  const { managedPassLive } = await import('../../core/persistence/sync-pass-episode.ts');
+  const release = cleanup.registerSignalOwner('sync', signal => {
+    if (interrupt.signal.aborted || !managedPassLive()) { release(); process.kill(process.pid, signal); return; }
+    process.stderr.write(`[sync] ${signal}: saving the pass and stopping; send it again to exit now\n`);
+    interrupt.abort(new SyncTerminated(signal));
+    terminationFallback = setTimeout(() => { release(); void cleanup.triggerCleanupAndExit(terminationExit(signal)); }, cleanup.CLEANUP_DEADLINE_MS);
+    terminationFallback.unref?.();
+  }, ['SIGTERM', 'SIGHUP']);
+  try { return await run(); } finally { release(); }
+}
+
+let terminationFallback: ReturnType<typeof setTimeout> | undefined;
+
+/** GST-2869: drops the fallback a termination armed once the whole run is done, so the result and its reads stay inside the window. */
+export function clearTerminationFallback(): void {
+  clearTimeout(terminationFallback);
+  terminationFallback = undefined;
+}
+
+/** GST-2869: the exit of a run `withTerminationOwner` stopped, or null. */
+async function terminatedExit(interrupt: AbortController): Promise<number | null> {
+  const { SyncTerminated } = await import('../../core/persistence/sync-stop-class.ts');
+  const reason: unknown = interrupt.signal.reason;
+  return reason instanceof SyncTerminated ? terminationExit(reason.signal) : null;
+}
+
 async function runSingleSourceSync(
   engine: BrainEngine,
   flags: SyncFlags & SyncFanoutFlags,
-  input: { sourceId: string; companyPolicy: Awaited<ReturnType<typeof getCompanyBrainProfile>> | null; noEmbed: boolean; resumeCommand: string; args: string[] },
+  input: { sourceId: string; companyPolicy: Awaited<ReturnType<typeof getCompanyBrainProfile>> | null; noEmbed: boolean; resumeCommand: string; args: string[]; ownSignals: boolean },
 ): Promise<void> {
   const {
     repoPath, watch, interval, dryRun, full, noPull, noBulk, lanes, noExtract, skipFailed, retryFailed, resetCheckpoint, noSchemaPack,
     includeGitignored, workingTree, jsonOut, redactPaths, yesFlag, noAutoEmbed, strategyArg, srcSubpath,
     excludePatterns, includeHiddenPatterns, concurrency, timeoutSeconds,
   } = flags;
-  const { sourceId, companyPolicy, noEmbed, resumeCommand, args } = input;
+  const { sourceId, companyPolicy, noEmbed, resumeCommand, args, ownSignals } = input;
   // #7630: before the cost gate walks the directory.
   await assertSyncAnchorAbsolute(engine, { sourceId, repoPath });
   // v0.41.13.0 (T6) — single-source --timeout: same per-source AbortController
@@ -937,7 +979,7 @@ async function runSingleSourceSync(
       // #6317 (D1 a′): on a managed Postgres brain whose host a live serve owns, the drain runs inside that serve as this
       // CLI's writer and returns the same SyncResult; every other case keeps this process's own consumer.
       const delegated = companyPolicy ? null : await (await import('../sync-delegate.ts')).maybeDelegateManagedSyncToServe(engine, args, opts);
-      result = delegated?.kind === 'delegated' ? delegated.result : await performSync(engine, opts);
+      result = delegated?.kind === 'delegated' ? delegated.result : await withTerminationOwner(ownSignals, singleSourceInterrupt, () => performSync(engine, opts));
     } catch (error) {
       // A refused managed dry run (a case- or separator-only spelling pair) still carries its convergence receipt in the
       // refusal's envelope; the refusal and its exit code are unchanged.
@@ -961,19 +1003,19 @@ async function runSingleSourceSync(
     // which PGLite's Emscripten runtime clobbers mid-run — see
     // src/core/cli-force-exit.ts).
     // #5984: the managed drain's verdict decides; a drain that stopped at its deadline with a pending write is resumable (exit 0).
-    if (syncOutcome(result) === 'blocked' || isFailedPartial(result)) {
-      const { setCliExitVerdict } = await import('../../core/cli-force-exit.ts');
-      setCliExitVerdict(1);
-    }
+    if (syncOutcome(result) === 'blocked' || isFailedPartial(result)) setCliExitVerdict(1);
+    // GST-2869: a run a termination signal stopped exits 128 + n, ahead of every other verdict, and skips the post-pass extras.
+    const terminated = await terminatedExit(singleSourceInterrupt);
+    if (terminated !== null) setCliExitVerdict(terminated);
     // v0.42.7 (#1696, D5): extraction-lag nudge after a completed single-source
     // sync. Fire on every non-error completion (synced | first_sync | up_to_date)
     // — NOT just 'synced'; a fresh/--full import (`first_sync`) is the biggest
     // un-extracted backlog. Scoped to this source; best-effort, stderr-only.
-    if (shouldNudgeAfterSync(result.status)) await maybeExtractionNudge(engine, sourceId);
+    if (terminated === null && shouldNudgeAfterSync(result.status)) await maybeExtractionNudge(engine, sourceId);
     // Monthly backup-coverage: the sync CLI legitimately holds the engine
     // (trusted local), so the stale-only compute piggybacks here — covering
     // active CLI users without any serve involvement. Dry-run stays pure.
-    if (result.status !== 'dry_run') await maybeBackupCoverageRefresh(engine);
+    if (terminated === null && result.status !== 'dry_run') await maybeBackupCoverageRefresh(engine);
     // Issue #2 + eng-review pass-2 finding #1 + Codex P1: manage .gitignore ONLY
     // on successful sync. Skip on dry-run (don't mutate disk in preview mode)
     // and blocked_by_failures (sync state is inconsistent — defer .gitignore

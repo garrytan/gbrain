@@ -176,7 +176,9 @@ Options:
                  file-drift: select the source's held file_drift pages of one Decision. --side deleted needs --state,
                  because --prefer file and --prefer database do opposite things in each state (tombstone_edited: restore
                  and import, or keep the deletion and remove the file; purged_differs: import as a new page, or remove the
-                 file; file_gone: soft-delete the page, or recreate the file). Held pages of several sides or states are
+                 file; file_gone: soft-delete the page, or recreate the file). On a read-only mirror tombstone_edited
+                 --prefer database removes no file: it records the kept deletion on the hold (mirror_keep_deleted), which
+                 stops asking until the upstream edits the file again. Held pages of several sides or states are
                  refused without --side; the preview prints each page's action. One preview covers a window of at most
                  200 held pages (or 60 s of work) in held-path order, reports progress on stderr, and its hash covers only
                  that window; a partial window prints next_cursor and the next preview command.

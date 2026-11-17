@@ -890,8 +890,8 @@ async function runThinClientRouted(
           console.error('  gbrain auth register-client <name> --grant-types client_credentials --scopes read,write,admin');
           break;
         case 'auth_after_refresh':
-          console.error('OAuth auth failed after token refresh. Credentials may have been revoked.');
-          console.error('Run `gbrain remote doctor` to confirm.');
+          console.error(e.detail?.code === 'access_member_disabled' ? e.message : 'OAuth auth failed after token refresh. Credentials may have been revoked.');
+          if (e.detail?.code !== 'access_member_disabled') console.error('Run `gbrain remote doctor` to confirm.');
           break;
         case 'rate_limited':
           console.error(`OAuth /token is rate-limited by the server (HTTP 429)${e.detail?.retry_after_s !== undefined ? `; retry in ${e.detail.retry_after_s}s` : ''}.`);

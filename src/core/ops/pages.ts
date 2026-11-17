@@ -32,6 +32,7 @@ import { getContentFlag } from '../quarantine.ts';
 import { fileHeldField, readHeldPages } from '../persistence/held-reads.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
+import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
 import { unquoteAnyTranscriptText } from '../search/transcript-quote.ts';
 import { withIgnoredPrivacyLabelNotice } from '../search/ignored-privacy-labels.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
@@ -87,10 +88,11 @@ async function dropPrivateSlugs(
  * split boundary), which get_page/fetch_page returned verbatim, unstripped.
  * A private fact fence misplaced there was fully readable by any remote MCP
  * caller. Same stripping rule as compiled_truth: takes fence dropped
- * entirely, facts fence keeps only `world`-visibility rows.
+ * entirely, facts fence keeps only `world`-visibility rows, less those held from a world-only caller (GST-2891).
  */
-function stripPrivacyFencesForRemoteReader(page: Page): Page {
-  const opts = { includeWithdrawn: true, keepMaterializedMarkers: true }; // #5567: markers round-trip remote edits
+async function stripPrivacyFencesForRemoteReader(ctx: OperationContext, page: Page): Promise<Page> {
+  const omitRows = await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId: page.source_id, slug: page.slug, compiled_truth: page.compiled_truth, timeline: page.timeline });
+  const opts = { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows }; // #5567: markers round-trip remote edits
   return { ...page, compiled_truth: sanitizeRemoteBody(page.compiled_truth, opts), timeline: sanitizeRemoteBody(page.timeline ?? '', opts) };
 }
 
@@ -209,9 +211,7 @@ const get_page: Operation = {
     // Only explicitly trusted local reads retain protected body sections.
     // Holder grants and page-visibility opt-outs do not bypass this boundary.
     const isUntrustedReader = ctx.remote !== false;
-    const visibleBody = isUntrustedReader && page.body_storage !== 'segmented'
-      ? stripPrivacyFencesForRemoteReader(page)
-      : page;
+    const visibleBody = isUntrustedReader && page.body_storage !== 'segmented' ? await stripPrivacyFencesForRemoteReader(ctx, page) : page;
     // v0.42 (#1699) agent-warning channel: surface the page's content_flag
     // marker as a top-level field (parallel to SearchResult.content_flag) so
     // an agent reading a page directly gets the same "this looks odd, examine
@@ -315,7 +315,7 @@ const fetch_page: Operation = {
     const tags = snapshot!.tags;
     // Same boundaries as get_page: untrusted readers never see takes or private facts fences, nor a quarantined body (#6259).
     const segmented = isSegmentedPage(page);
-    const visibleBody = ctx.remote === false || segmented ? page : stripPrivacyFencesForRemoteReader(page);
+    const visibleBody = ctx.remote === false || segmented ? page : await stripPrivacyFencesForRemoteReader(ctx, page);
     const quarantined = readQuarantined(ctx, page, p.include_quarantined === true);
     unverifiedOriginNotice(ctx, page, readable.trust);
     if (!quarantined?.body_omitted && (segmented || (ctx.remote !== false && bodyBytes(visibleBody) > await inlineBodyBytes(ctx)))) {

@@ -3,6 +3,12 @@
     "admin/e2e/publish-copy-button.pw.ts": [
       "test/publish.test.ts"
     ],
+    "docs/research/rust-engine/data/**": [
+      "test/docs-repo-paths.test.ts"
+    ],
+    "docs/research/rust-engine/scripts/**": [
+      "test/docs-repo-paths.test.ts"
+    ],
     "test/**/*.serial.test.ts": [
       "test/scripts/serial-files.test.ts"
     ],

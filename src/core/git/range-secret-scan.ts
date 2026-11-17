@@ -29,8 +29,8 @@ import { readLedger } from './commit-ledger.ts';
 import { GIT_ENV } from '../git-transport.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { shellQuote } from '../agent-output.ts';
-import { loadWorkspaceAllowlist, pathAllowlisted, SCAN_ALLOW_FILENAME } from '../secret-scan-allowlist.ts';
-import { scanText, SCAN_MAX_FILE_BYTES } from '../secret-scan.ts';
+import { allowlistProblems, loadWorkspaceAllowlist, pathAllowlisted, SCAN_ALLOW_FILENAME, withoutRuleAllowed, type AllowlistProblem } from '../secret-scan-allowlist.ts';
+import { NAMED_SECRET_RULES, scanText, SCAN_MAX_FILE_BYTES } from '../secret-scan.ts';
 import { spawnSync } from '../spawn.ts';
 
 export interface RangeSecretFinding { path: string; commit: string; line: number; pattern: string; fingerprint: string }
@@ -40,6 +40,15 @@ export interface RangeScan {
   unreadable?: string;
   /** Set with `unreadable` when the reason is the time budget, so a caller with a short budget can scan again elsewhere. */
   timed_out?: true;
+  /** Hits a `path:<glob> pattern:<rule>` entry allowed, each with that entry (never the value). */
+  allowed?: Array<{ path: string; commit: string; line: number; pattern: string; entry: string }>;
+  /** `.gbrain-scan-allow` entries that allow nothing, or other than they seem to (scanAllowProblems). */
+  allowlist_problems?: AllowlistProblem[];
+}
+
+/** Malformed rule entries and unknown rule names in a loaded `.gbrain-scan-allow`. */
+export function scanAllowProblems(allowlist: string[]): AllowlistProblem[] {
+  return allowlistProblems(allowlist, [...NAMED_SECRET_RULES, 'high_entropy_assignment', 'labeled_credential'].sort());
 }
 
 /** The commit message as `path` in a finding. */
@@ -149,12 +158,18 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
   };
   const scan: RangeScan = { findings: [], unscanned: [], gate_changes: [] };
   const allowlist = loadWorkspaceAllowlist(root);
+  const problems = scanAllowProblems(allowlist);
+  if (problems.length) scan.allowlist_problems = problems;
   let allowFile = SCAN_ALLOW_FILENAME, prefix = '';
   const allowed = (path: string) => path.startsWith(prefix) && pathAllowlisted(path.slice(prefix.length), allowlist);
   const scanned = (path: string, commit: string, text: string, lineAt: (line: number) => number = line => line) => {
     if (Date.now() > deadline) throw new Unreadable('the scan ran past its time budget', true);
     if (Buffer.byteLength(text) > SCAN_MAX_FILE_BYTES) { scan.unscanned.push({ path, commit }); return; }
-    for (const f of scanText(text, { allowlist })) scan.findings.push({ path, commit, line: lineAt(f.line), pattern: f.pattern, fingerprint: f.fingerprint });
+    const found = scanText(text, { allowlist });
+    const kept = path !== MESSAGE_PATH && path.startsWith(prefix)
+      ? withoutRuleAllowed(found, path.slice(prefix.length), allowlist, hit => (scan.allowed ??= []).push({ path, commit, line: lineAt(hit.line), pattern: hit.pattern, entry: hit.entry }))
+      : found;
+    for (const f of kept) scan.findings.push({ path, commit, line: lineAt(f.line), pattern: f.pattern, fingerprint: f.fingerprint });
   };
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-range-scan-'));
   try {
@@ -384,8 +399,8 @@ export function rangeSecretRefusal(root: string, base: string, target: string, s
     ...scan.gate_changes.map(g => `${g.path} (changes what the scan sees, ${g.commit.slice(0, 7)})`)];
   return opError('publish_secret_found',
     `${named.length} item(s) in the local commits ${range} look like secrets or could not be scanned: ${named.slice(0, 10).join(', ')}${named.length > 10 ? ', ...' : ''}. Nothing was pushed.`,
-    `Remove the value from those commits (rewriting unpushed local commits is the user's call), or add a false positive's fingerprint to .gbrain-scan-allow, then retry. Never publish them with a command that skips this scan.${base ? '' : ' The remote has no such branch, so this covered the branch\'s whole history, which may include commits published elsewhere before: review it, and push the branch yourself once it is safe.'}${scan.gate_changes.length ? ` A commit that changes .gbrain-scan-allow or a .gitattributes is never published automatically, because it changes what the scan sees: review it and push it yourself (git -C ${root} push), then retry.` : ''}`,
-    { detail: JSON.stringify(scan),
+    `Remove the value from those commits (rewriting unpushed local commits is the user's call), or add a false positive's fingerprint to .gbrain-scan-allow (or, for a rule that misfires on a whole kind of file, a path:<glob> pattern:<rule> line), then retry. Never publish them with a command that skips this scan.${scan.allowlist_problems?.length ? ` Check these .gbrain-scan-allow lines: ${scan.allowlist_problems.map(p => `${p.entry} (${p.problem})`).join('; ')}.` : ''}${base ? '' : ' The remote has no such branch, so this covered the branch\'s whole history, which may include commits published elsewhere before: review it, and push the branch yourself once it is safe.'}${scan.gate_changes.length ? ` A commit that changes .gbrain-scan-allow or a .gitattributes is never published automatically, because it changes what the scan sees: review it and push it yourself (git -C ${root} push), then retry.` : ''}`,
+    { detail: JSON.stringify(scan.allowed && scan.allowed.length > 10 ? { ...scan, allowed: scan.allowed.slice(0, 10), allowed_total: scan.allowed.length } : scan),
       fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
         argv: ['git', '-C', root, 'log', '--stat', base ? `${base}..${target}` : target],
         why: 'Lists the unpublished commits the scan refused; read-only. A secret pushed to the remote stays in its history.',
