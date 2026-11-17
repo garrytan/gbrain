@@ -909,6 +909,16 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     onceForPhase: opts.once ? opts.phases[0]! : undefined,
   });
 
+  // A phase the caller named (or --input implied) that skipped for want of a
+  // database did not do what was asked: refuse like --source/--drain do.
+  const noDbPhase = report.phases.find(p => p.status === 'skipped' && p.details?.reason === 'no_database'
+    && (opts.phases as string[]).includes(p.phase));
+  if (noDbPhase) {
+    dreamExit(opError('database_error',
+      `gbrain dream --phase ${noDbPhase.phase} requires a connected brain (no engine available); the phase was skipped (no_database)`,
+      'Fix the brain connection (`gbrain doctor --json` names the cause), then run the phase again.'), opts.json);
+  }
+
   // Exit non-zero when the cycle failed overall or any phase failed (agent-first
   // operator wave E4): a 'partial' cycle whose phase reports 'fail' — thrown and
   // contained, or caught inside the runner — is never success. Warn-only
