@@ -296,10 +296,10 @@ describe('engine parity: salience + enrich + anomalies', () => {
       ]);
       const view = (rows: Awaited<ReturnType<typeof engine.batchLoadEmotionalInputs>>) =>
         sorted(rows.map((r) => ({
-          key: `${r.source_id}:${r.slug}`,
+          id: `${r.source_id}:${r.slug}`,
           tags: sorted(r.tags),
           takes: sorted(r.takes.map((t) => `${t.kind}|${t.holder}|${t.weight}|${t.active}`)),
-        })), (r) => r.key);
+        })), (r) => r.id);
       const everything = view(await engine.batchLoadEmotionalInputs());
       const one = view(await engine.batchLoadEmotionalInputs(['people/sal-alice']));
       const none = await engine.batchLoadEmotionalInputs(['people/missing']);
