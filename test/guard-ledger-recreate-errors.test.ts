@@ -19,7 +19,7 @@ const ROLLBACK = 'guard-recreate-rollback';
 const STALE_ROW = [{ name: 'gbrain_refuse_purged_fact', sig: 'gbrain_refuse_purged_fact()', owned: true, role: 'writer' }];
 
 /** Each executeRaw call takes the next step (rows, or an error to throw); later calls read []. Counts the hardening's transactions. */
-function stubEngine(steps: Array<unknown[] | Error>) {
+function stubEngine(steps: Array<unknown[] | Error>, transactionError?: Error) {
   const state = { transactions: 0 };
   const engine = {
     kind: 'pglite',
@@ -30,6 +30,7 @@ function stubEngine(steps: Array<unknown[] | Error>) {
     },
     transaction: async (fn: (tx: unknown) => Promise<void>) => {
       state.transactions++;
+      if (transactionError) throw transactionError;
       await fn({ executeRaw: async () => [], runMigration: async () => {} });
     },
   } as unknown as BrainEngine;
@@ -47,10 +48,23 @@ describe('the guard re-create in hardenFunctionSearchPaths', () => {
     const { engine, state } = stubEngine([STALE_ROW, broken, [{ sig: 'gbrain_try_jsonb(text)' }]]);
     const failure = await hardenFunctionSearchPaths(engine).then(() => 'resolved', (error: unknown) => error);
     expect(failure).toBeInstanceOf(LedgerGuardRecreateError);
-    expect(failure).toMatchObject({ code: '08006', cause: broken });
+    expect(failure).toMatchObject({ cause: broken });
+    expect((failure as { code?: unknown }).code).toBeUndefined();
     expect(hardenFailureLine(failure)).toBe('  guards: purge or withdrawal guards not re-created (connection terminated); gbrain doctor (guard_ledger_checks) names the ones left without their ledger check\n');
     expect(hardenFailureLine(broken)).toContain('pg_temp not restored');
     expect(state.transactions).toBe(1);
+  });
+
+  test('a hardening that fails too keeps its own error, a lock refusal included, and carries the re-create failure', async () => {
+    const broken = Object.assign(new Error('connection terminated'), { code: '08006' });
+    const lock = Object.assign(new Error('canceling statement due to lock timeout'), { code: '55P03' });
+    const { engine } = stubEngine([STALE_ROW, broken, [{ sig: 'gbrain_try_jsonb(text)' }]], lock);
+    const failure = await hardenFunctionSearchPaths(engine).then(() => 'resolved', (error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'schema_lock_blocked' });
+    expect((failure as { guardFailure?: unknown }).guardFailure).toBeInstanceOf(LedgerGuardRecreateError);
+    const line = hardenFailureLine(failure);
+    expect(line).toContain('  search_path: pg_temp not restored');
+    expect(line).toContain('  guards: purge or withdrawal guards not re-created (connection terminated)');
   });
 
   test('a concurrent pg_proc update during the re-create is retried', async () => {
@@ -90,7 +104,9 @@ for (const backend of backends) {
       } catch (error) {
         if ((error as Error).message !== ROLLBACK) throw error;
       }
-      expect(failure).toMatchObject({ code: '42P13' });
+      const guardFailure = failure instanceof LedgerGuardRecreateError ? failure : (failure as { guardFailure?: unknown }).guardFailure;
+      expect(guardFailure).toBeInstanceOf(LedgerGuardRecreateError);
+      expect((guardFailure as Error).cause).toMatchObject({ code: '42P13' });
       expect((await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pg_trigger WHERE tgfoid = 'public.gbrain_refuse_purged_fact()'::regprocedure"))[0]!.n).toBeGreaterThan(0);
     }, 120_000);
 

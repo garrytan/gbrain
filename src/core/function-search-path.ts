@@ -88,13 +88,14 @@ function isConcurrentCatalogUpdate(error: unknown): boolean {
   return /tuple concurrently updated/i.test(error instanceof Error ? error.message : String(error));
 }
 
-/** A failure to re-create a purge or withdrawal guard other than another role owning it; `code` is the database's. */
+/**
+ * A failure to re-create a purge or withdrawal guard other than another role owning it. It carries no `code` of its own,
+ * so a lock timeout in the re-create never reads as the migration run's lock refusal; the database error is its cause.
+ */
 export class LedgerGuardRecreateError extends Error {
-  readonly code?: string;
   constructor(cause: unknown) {
     super(`purge or withdrawal guards not re-created (${cause instanceof Error ? cause.message : String(cause)}); gbrain doctor (guard_ledger_checks) names the ones left without their ledger check`, { cause });
     this.name = 'LedgerGuardRecreateError';
-    this.code = (cause as { code?: string } | null)?.code;
   }
 }
 
@@ -121,13 +122,16 @@ async function recreateLedgerGuards(engine: BrainEngine, attempt = 1): Promise<L
 /** The stderr line a migration run prints when hardenFunctionSearchPaths throws, naming the doctor check that lists what is left. */
 export function hardenFailureLine(error: unknown): string {
   if (error instanceof LedgerGuardRecreateError) return `  guards: ${error.message}\n`;
-  return `  search_path: pg_temp not restored on gbrain functions (${error instanceof Error ? error.message : String(error)}); gbrain doctor (function_search_path) names them\n`;
+  const guardFailure = (error as { guardFailure?: unknown } | null)?.guardFailure;
+  return `  search_path: pg_temp not restored on gbrain functions (${error instanceof Error ? error.message : String(error)}); gbrain doctor (function_search_path) names them\n`
+    + (guardFailure instanceof LedgerGuardRecreateError ? `  guards: ${guardFailure.message}\n` : '');
 }
 
 /**
  * Re-creates the guards (recreateLedgerGuards), then puts pg_temp back (pinTempLast) and returns what that left. A
  * failed re-create never skips the pg_temp hardening: it is thrown as a LedgerGuardRecreateError once the hardening has
- * run, and ahead of a hardening error, which in a transaction it caused. Prints nothing: the caller decides who is told.
+ * run. When the hardening fails too, its own error is thrown (a lock refusal keeps its meaning for the migration run)
+ * with the re-create failure attached as `guardFailure`, which hardenFailureLine prints as well.
  */
 export async function hardenFunctionSearchPaths(engine: BrainEngine): Promise<string[] | null> {
   const guardFailure = await recreateLedgerGuards(engine);
@@ -135,7 +139,8 @@ export async function hardenFunctionSearchPaths(engine: BrainEngine): Promise<st
   try {
     left = await pinTempLast(engine);
   } catch (error) {
-    throw guardFailure ?? error;
+    if (guardFailure && error instanceof Error) Object.assign(error, { guardFailure });
+    throw error;
   }
   if (guardFailure) throw guardFailure;
   return left;
