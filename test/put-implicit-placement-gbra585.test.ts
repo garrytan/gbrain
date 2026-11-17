@@ -22,6 +22,11 @@ import { resolveSourceWithTier } from '../src/core/source-resolver.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { withImplicitPlacement } from '../src/core/access/implicit-placement.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
+import { sqlQueryForEngine } from '../src/core/sql-query.ts';
+import { bindCredential } from '../src/core/access/members.ts';
+import { mintLegacyToken } from '../src/core/token-mint.ts';
+import type { AuthInfo } from '../src/core/ops/contract.ts';
 
 const note = (title: string) => ['---', 'type: note', 'title: ' + title, '---', '# ' + title, '', 'Board prep ' + randomUUID()].join('\n');
 
@@ -87,6 +92,34 @@ describe('a local put that names no source says where its page went (company bra
     const doc = JSON.parse(out.content.map(c => c.text).join('\n')) as { placement?: { readers: unknown; note: string } };
     expect(doc.placement?.readers).toEqual(['alice-example']);
     expect(doc.placement?.note).toContain('Members who may read it: alice-example.');
+  }), 120_000);
+
+  test('a private page in default does not claim a member key reads it, and the member really gets page_not_found', () => quiet(async () => {
+    const out = await dispatchToolCall(engine, 'put_page', { slug: 'notes/owner-private', request_id: randomUUID(),
+      content: ['---', 'type: note', 'title: Owner private', 'visibility: private', '---', '# Owner private'].join('\n') },
+      { remote: false, sourceId: 'default', localSourceImplicit: true, takesHoldersAllowList: ['world'] });
+    const doc = JSON.parse(out.content.map(c => c.text).join('\n')) as { placement?: { readers: unknown; note: string } };
+    expect(doc.placement?.readers).toBe('every_source_reader');
+    expect(doc.placement?.note).not.toContain('a member key with no source grant does');
+    expect(doc.placement?.note).toContain('private_pages: granted_sources');
+    const minted = await mintLegacyToken(engine, { name: 'member-alice-placement', scopes: ['read', 'write'], takesHolders: ['world'] });
+    await bindCredential(engine, { kind: 'token', id: minted.id }, { member: 'alice-example' });
+    const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+    const auth = await provider.verifyAccessToken(minted.token) as unknown as AuthInfo;
+    const read = await dispatchToolCall(engine, 'get_page', { slug: 'notes/owner-private' }, { remote: true, transport: 'http', auth, sourceId: 'default', takesHoldersAllowList: ['world'] });
+    expect(read.isError).toBe(true);
+    expect(JSON.parse(read.content[0]!.text).code).toBe('page_not_found');
+  }), 120_000);
+
+  test('a labelled-only member is named as not reading a page that names nobody', () => quiet(async () => {
+    await engine.executeRaw('UPDATE access_members SET labelled_only = true WHERE id = $1', ['bob-example']);
+    try {
+      const out = await put('notes/owner-labelled', { sourceId: 'default', implicit: true });
+      expect(out.placement!.note).toContain('Labelled-only members (bob-example) read it only when it names them');
+      expect(out.placement!.note).toContain('so none of them reads it');
+    } finally {
+      await engine.executeRaw('UPDATE access_members SET labelled_only = false WHERE id = $1', ['bob-example']);
+    }
   }), 120_000);
 
   test('a brain that serves one person gets no placement', () => quiet(async () => {

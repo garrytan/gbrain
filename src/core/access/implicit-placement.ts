@@ -42,14 +42,18 @@ export async function implicitPlacement(engine: BrainEngine, sourceId: string, s
   const noGrantReads = sourceId === 'default' || parseSourceConfig(row?.config).federated === true;
   const who = entry.members !== 'every_source_reader'
     ? `Members who may read it: ${entry.members.join(', ') || 'none'}.`
-    : noGrantReads
-      ? `It names no readers, so every member whose key reads source '${sourceId}' reads it, and a member key with no source grant does.`
-      : `It names no readers. A member key with no source grant does not read source '${sourceId}' until it is federated (gbrain sources federate ${sourceId}); from then on every member does.`;
+    : entry.private
+      ? `It names no readers, but it is private: a member key reads it only with private_pages: granted_sources on source '${sourceId}', so a key with no source grant does not.`
+      : noGrantReads
+        ? `It names no readers, so every member whose key reads source '${sourceId}' reads it, and a member key with no source grant does.`
+        : `It names no readers. A member key with no source grant does not read source '${sourceId}' until it is federated (gbrain sources federate ${sourceId}); from then on every member does.`;
+  const qualifications = entry.note.split(/(?<=\.) (?=[A-Z])/)
+    .filter(s => s.startsWith('Labelled-only members') || (entry.members !== 'every_source_reader' && s.startsWith('visibility: private')));
   return {
     source_id: sourceId,
     picked_by: picked,
     readers: entry.members,
-    note: `No source was named, so ${slug} went to source '${sourceId}': ${WHY[picked](sourceId)}. ${who} `
+    note: `No source was named, so ${slug} went to source '${sourceId}': ${WHY[picked](sourceId)}. ${[who, ...qualifications].join(' ')} `
       + 'To choose the source, pass --source <id> (gbrain sources current shows how one is picked); '
       + 'to keep the page to some members, give it readable_by: [<member>, ...] in its frontmatter.',
   };
