@@ -5,7 +5,8 @@
  *
  * 1. Protects: two or more client processes read and write one brain through its owner; their results and errors are
  *    byte-identical to the same calls made in-process; calls end with `timeout` / `cancelled` within the caller's
- *    deadline or signal and never leak a permit; members outside the cut refuse at once; a dead owner gives
+ *    deadline or signal and never leak a permit (a request already past its deadline never runs); closing the owner
+ *    waits for running engine calls; members outside the cut refuse at once; a dead owner gives
  *    `owner_unavailable`.
  * 2. Fails on: a codec that drops a type (Date, Float32Array, error codes), a server that frees a permit before the
  *    engine call settles, a client that hangs on an owner that died, or a route table that forwards transaction().
@@ -15,6 +16,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawn } from 'node:child_process';
+import net from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,7 +27,7 @@ import { ownerWholeOperations } from '../src/core/rust-engine/owner-ipc/owner-op
 import { connectOwner, installOwnerClient } from '../src/core/rust-engine/owner-ipc/client.ts';
 import { serveOwnerEngine } from '../src/core/rust-engine/owner-ipc/server.ts';
 import { ownerSocketPath } from '../src/core/rust-engine/owner-ipc/protocol.ts';
-import { decodeValue, encodeValue } from '../src/core/rust-engine/owner-ipc/codec.ts';
+import { decodeError, decodeValue, encodeValue } from '../src/core/rust-engine/owner-ipc/codec.ts';
 import { withRequestSignal } from '../src/core/request-signal.ts';
 import { withReadDeadline } from '../src/core/read-deadline.ts';
 import { requestSignal } from '../src/core/request-signal.ts';
@@ -234,6 +236,30 @@ describe('deadlines, cancel and permits', () => {
     } finally { close(); }
   });
 
+  test('a request that arrives after its deadline ends with timeout and never runs, so a write does not commit', async () => {
+    const reply = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      const socket = net.connect(server.socketPath);
+      let buf = '';
+      socket.on('error', reject);
+      socket.on('data', chunk => {
+        buf += chunk;
+        for (const line of buf.split('\n').slice(0, -1)) {
+          const frame = JSON.parse(line) as Record<string, unknown>;
+          if (frame.t === 'result') { socket.destroy(); resolve(frame); }
+        }
+        buf = buf.slice(buf.lastIndexOf('\n') + 1);
+      });
+      socket.on('connect', () => socket.write(JSON.stringify({
+        t: 'call', id: 1, member: 'putPage', deadline_at: Date.now() - 1_000,
+        args: encodeValue(['ipc/expired', { type: 'note', title: 'Expired', compiled_truth: 'must not be written' }]),
+      }) + '\n'));
+    });
+    expect(reply.ok).toBe(false);
+    expect((decodeError(reply.error as never) as OperationError).code).toBe('timeout');
+    expect(await owner.getPage('ipc/expired')).toBeNull();
+    expect(await settled()).toMatchObject({ active: 0, queued: 0 });
+  });
+
   test('a client that disconnects aborts its running calls', async () => {
     const { engine, close } = await clientOf(server.socketPath);
     const call = engine.getHealth().then(() => null, e => e);
@@ -242,6 +268,35 @@ describe('deadlines, cancel and permits', () => {
     close();
     await call;
     expect(await settled()).toMatchObject({ active: 0, queued: 0 });
+  });
+});
+
+describe('closing the owner server', () => {
+  test('close() resolves only after every running engine call has settled', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-close-'));
+    let finished = false;
+    // A member that keeps working for 300 ms after its abort, as a store write that must finish its step would.
+    const owner = {
+      kind: 'pglite', capabilities: new Set<string>(),
+      getHealth: () => new Promise((_resolve, reject) => {
+        requestSignal()?.addEventListener('abort', () => setTimeout(() => { finished = true; reject(new Error('aborted')); }, 300), { once: true });
+      }),
+    } as unknown as BrainEngine;
+    const server = await serveOwnerEngine(owner, join(dir, 'owner.sock'));
+    if (!server) throw new Error('no socket');
+    const { engine, close } = await clientOf(server.socketPath);
+    try {
+      const call = engine.getHealth().then(() => null, e => e);
+      for (let i = 0; i < 100 && server.stats().active === 0; i++) await Bun.sleep(10);
+      expect(server.stats().active).toBe(1);
+      await server.close();
+      expect(finished).toBe(true);
+      expect(server.stats().active).toBe(0);
+      expect(((await call) as OperationError).code).toBe('owner_unavailable');
+    } finally {
+      close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

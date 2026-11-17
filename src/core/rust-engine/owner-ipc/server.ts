@@ -11,6 +11,9 @@
  * - A permit is released only when the engine call itself settles, never when its reply is sent early (a timeout or
  *   a cancel), so the pool never runs more work than its size. `stats()` shows the pool for leak checks.
  * - A connection that closes aborts every call it started. Calls from other connections keep running.
+ * - A request already past its `deadline_at` never starts, on arrival or when it leaves the queue.
+ * - `close()` aborts every call and resolves only after all engine work that started has settled, so the owner lock
+ *   (released by RustEngine.disconnect after close) never frees while the old owner still runs a call.
  */
 import net, { type Server, type Socket } from 'node:net';
 import { chmodSync, lstatSync, unlinkSync } from 'node:fs';
@@ -53,6 +56,8 @@ interface PendingCall {
   done: boolean;
   queued: boolean;
   timer?: ReturnType<typeof setTimeout>;
+  /** Epoch ms after which the call must not start; a call past it ends with `timeout` and never runs. */
+  deadlineAt?: number;
   reply(frame: object): void;
 }
 
@@ -100,16 +105,28 @@ export async function serveOwnerEngine(
   const sockets = new Set<Socket>();
   let active = 0;
   let closing = false;
+  let closed: Promise<void> | undefined;
+  // Engine work that has started and not settled. close() waits for all of it before the owner lock can be released.
+  const running = new Set<Promise<unknown>>();
+
+  const expire = (call: PendingCall, queued: boolean) => {
+    if (call.timer) clearTimeout(call.timer);
+    call.reply({ t: 'result', id: call.id, ok: false, error: encodeError(ownerCallTimeout(call.member, 0, queued)) });
+    call.controller.abort(timeoutReason());
+  };
 
   const pump = () => {
     while (active < permits && queue.length) {
       const call = queue.shift()!;
       if (call.done) continue;
+      if (closing) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); continue; }
+      // A timer fires on a later turn, so a call whose deadline passed while it waited is checked here, before it runs.
+      if (call.deadlineAt !== undefined && Date.now() >= call.deadlineAt) { expire(call, true); continue; }
       call.queued = false;
       active++;
       let settled: Promise<unknown>;
       try { settled = call.run(); } catch (error) { settled = Promise.reject(error); }
-      settled.then(
+      const tracked = settled.then(
         value => {
           if (call.done) return;
           let encoded: Wire;
@@ -125,8 +142,10 @@ export async function serveOwnerEngine(
         active--;
         call.done = true;
         if (call.timer) clearTimeout(call.timer);
+        running.delete(tracked);
         pump();
       });
+      running.add(tracked);
     }
   };
 
@@ -208,6 +227,9 @@ export async function serveOwnerEngine(
     call.run = () => withRequestSignal(controller.signal, () =>
       readDeadlineAt === undefined ? target(...args) : withReadDeadline(readDeadlineAt, () => target(...args)));
     if (deadlineAt !== undefined) {
+      call.deadlineAt = deadlineAt;
+      // A request that arrives after its deadline never starts: a fast write would otherwise commit before the timer.
+      if (Date.now() >= deadlineAt) { expire(call, true); return; }
       const ms = Math.max(0, deadlineAt - Date.now());
       call.timer = setTimeout(() => {
         if (call.done) return;
@@ -243,11 +265,19 @@ export async function serveOwnerEngine(
   return {
     socketPath,
     stats: () => ({ active, queued: queue.filter(call => !call.done).length, connections: sockets.size }),
-    close: () => new Promise<void>(resolve => {
-      if (closing) { resolve(); return; }
+    // Stops new work, aborts every queued and running call, and resolves only when the server is closed AND every
+    // engine call that started has settled, so the caller cannot release the owner lock while old work still runs.
+    // A second close() gets the same promise, so no caller can release the lock before the drain ends.
+    close: () => (closed ??= (async () => {
       closing = true;
+      const serverClosed = new Promise<void>(resolve => server.close(() => resolve()));
+      for (const call of queue) {
+        if (!call.done) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); }
+      }
+      queue.length = 0;
       for (const socket of sockets) socket.destroy();
-      server.close(() => resolve());
-    }),
+      while (running.size) await Promise.allSettled([...running]);
+      await serverClosed;
+    })()),
   };
 }
