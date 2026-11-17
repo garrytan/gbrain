@@ -82,13 +82,13 @@ fn sum_as_f64(values: impl IntoIterator<Item = f32>) -> f64 {
 /// `InvalidArg` error as an argument of the wrong type, because another Worker could write it
 /// during the call.
 ///
-/// That refusal is a contract, not the safety argument. The check that finds a shared buffer can
-/// be fooled on some runtimes (it falls back to the global `SharedArrayBuffer` constructor, which
-/// JavaScript can replace). So Rust never makes a `&[f32]` or `&mut [f32]` over the caller's
-/// memory: every read and write goes through `AtomicU32` cells with relaxed ordering (see
-/// [`PlainF32::cells`]). Those compile to plain loads and stores, and they stay sound even when
-/// another thread writes the same memory at the same time; the worst case is a torn view of the
-/// numbers, never undefined behaviour.
+/// That refusal is the safety argument. It asks the runtime (`napi_is_arraybuffer` on the view's
+/// buffer), which reads the engine's own record of the buffer, so no JavaScript state (a replaced
+/// global constructor, a swapped prototype) can change the answer, and an unclear answer is
+/// treated as shared. Rust never makes a `&[f32]` or `&mut [f32]` over the caller's memory: every
+/// read and write goes through `AtomicU32` cells with relaxed ordering (see [`PlainF32::cells`]),
+/// which compile to plain loads and stores. Atomics do not make shared memory safe (another Worker
+/// may write it with accesses of a different size), which is why shared memory is refused.
 pub struct PlainF32 {
     /// Keeps the JavaScript array alive for the call.
     _array: Float32Array,
@@ -107,8 +107,8 @@ impl PlainF32 {
         // SAFETY: `data` points at `length` elements of 4 bytes that stay allocated while
         // `_array` is held (this struct only lives for one call on the JavaScript thread).
         // `AtomicU32` has the size and alignment of `u32`, and the pointer is 4-aligned (checked
-        // in `from_napi_value`). Atomic cells allow concurrent writers, so no exclusivity is
-        // claimed over memory another Worker may share.
+        // in `from_napi_value`). The buffer is a plain ArrayBuffer (`backed_by_shared_memory`),
+        // so only this thread, blocked in the call, can reach it.
         unsafe { std::slice::from_raw_parts(self.data.cast::<AtomicU32>(), self.length) }
     }
 
@@ -181,8 +181,9 @@ impl FromNapiValue for PlainF32 {
 }
 
 /// True when `value` is a typed array over memory that may be shared, or when that cannot be
-/// told. A value that is not a typed array returns false, so the `Float32Array` conversion
-/// reports its own wrong-type error.
+/// told. Only the runtime's `napi_is_arraybuffer` answer counts: a buffer it does not call a plain
+/// ArrayBuffer is treated as shared. A value that is not a typed array returns false, so the
+/// `Float32Array` conversion reports its own wrong-type error.
 ///
 /// # Safety
 /// `env` and `value` must be live handles of the current Node-API call.
@@ -213,37 +214,8 @@ unsafe fn backed_by_shared_memory(env: sys::napi_env, value: sys::napi_value) ->
     }
     let mut plain = false;
     // SAFETY: `buffer` is the live handle the call above returned.
-    if unsafe { sys::napi_is_arraybuffer(env, buffer, &mut plain) } != ok || !plain {
-        return true;
-    }
-    // Some runtimes report a SharedArrayBuffer as an ArrayBuffer too, so ask its constructor.
-    let mut global = std::ptr::null_mut();
-    let mut shared_class = std::ptr::null_mut();
-    let mut class_type = 0;
-    // SAFETY: valid out pointers and a NUL-terminated property name.
-    unsafe {
-        if sys::napi_get_global(env, &mut global) != ok
-            || sys::napi_get_named_property(
-                env,
-                global,
-                c"SharedArrayBuffer".as_ptr(),
-                &mut shared_class,
-            ) != ok
-            || sys::napi_typeof(env, shared_class, &mut class_type) != ok
-        {
-            return true;
-        }
-    }
-    if class_type != sys::ValueType::napi_function {
-        // No SharedArrayBuffer in this runtime, so no buffer can be one.
-        return false;
-    }
-    let mut is_shared = false;
-    // SAFETY: `shared_class` is a function, checked above.
-    if unsafe { sys::napi_instanceof(env, buffer, shared_class, &mut is_shared) } != ok {
-        return true;
-    }
-    is_shared
+    let status = unsafe { sys::napi_is_arraybuffer(env, buffer, &mut plain) };
+    status != ok || !plain
 }
 
 /// Sum of a `Float32Array`, added in `f64`. Reads the JavaScript memory in place for the length
