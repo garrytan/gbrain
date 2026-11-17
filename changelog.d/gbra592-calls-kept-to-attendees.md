@@ -1,0 +1,9 @@
+**Imported calls on a brain shared by two or more people are now kept to the owner and the people who were on them.**
+
+### Changed
+- `gbrain import --calls` on a brain that serves two or more people (enabled person members; group-chat audiences do not count) keeps each new call to the brain owner plus the teammates its `Attendees:` or `Participants:` header names. Names match exactly: an email by email only, else a member id, else a display name exactly one person holds (flagged `matched_by: name`). A call with no list goes to the owner only, and names that match nobody are listed (`unmatched`), never guessed. A teammate who was not on a call gets not_found for it, and links out of it stay hidden from them. Each call's readers get the label guard, so a later agent write cannot drop them. `--readers source` imports open as before. A one-person brain imports exactly as before, and calls imported earlier are not changed.
+- The import stays open, as before, and prints the `calls_not_scoped` notice with one of four reasons (`owner_unset`, `owner_inactive`, `unbound_readers`, `stdio_unbound`) and the command that fixes it, whenever a caller that could be the owner's own would lose a call. Import JSON rows carry `scoped`, `reason`, `readers`, `readers_from`, `matched_by` and `unmatched`.
+- `gbrain setup claude-code|codex --serves several --shape company` (or `both`) ties the harness entry it installs to the brain owner (`serve --stdio-member <owner>`) when no member is named for it, so the owner's own assistant reads every call. With `--transcripts` it prints one line per call with its readers, and each unmatched name with the command that adds a reader. `--no-stdio-member` leaves the entry unbound, and calls then stay open with the notice.
+
+<!-- behavior-change: calls_kept_to_attendees_gst2904 -->
+<!-- behavior-change: setup_ties_owner_gst2904 -->
