@@ -37,6 +37,21 @@ export interface Sink {
   close(): void;
 }
 
+export interface BrainInfo {
+  brain_id: string;
+  format_version: number;
+  schema_version: number;
+  created: boolean;
+}
+
+/** The store class (crates/gbrain-napi/src/store_binding.rs). Every method is documented in rust/README.md. */
+export interface Brain {
+  readonly isOpen: boolean;
+  open(path: string, options?: { schemaVersion?: number; createdBy?: string }): Promise<BrainInfo>;
+  close(): Promise<void>;
+  info(): Promise<BrainInfo>;
+}
+
 export interface Addon {
   target: string;
   engineAbi: number;
@@ -51,6 +66,7 @@ export interface Addon {
   liveWorkers(): number;
   CancelToken: new () => CancelToken;
   Pool: new (workers: number) => Pool;
+  Brain: new (pool: Pool) => Brain;
   Sink: new (callback: (value: number) => void) => Sink;
 }
 

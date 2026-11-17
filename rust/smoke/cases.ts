@@ -4,6 +4,9 @@
  * `bun build --compile` executable.
  */
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Addon, Pool } from './addon.ts';
 
 export interface Case {
@@ -44,6 +47,16 @@ async function rejection(promise: Promise<unknown>): Promise<Error & Record<stri
   throw new assert.AssertionError({ message: 'expected the promise to reject' });
 }
 
+/** A fresh brain directory, removed when `body` ends. */
+async function withBrainDir(body: (dir: string) => Promise<void>): Promise<void> {
+  const root = mkdtempSync(join(tmpdir(), 'gbrain-store-smoke-'));
+  try {
+    await body(join(root, 'brain'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 export const cases: Case[] = [
   {
     name: 'metadata: target, abi, build hash, catalog version, format versions',
@@ -52,7 +65,7 @@ export const cases: Case[] = [
       assert.equal(addon.engineAbi, 1);
       assert.match(addon.engineBuild, /^[0-9a-f]{64}$/);
       assert.equal(addon.catalogVersion, 0);
-      assert.deepEqual(addon.formatVersions, []);
+      assert.deepEqual(addon.formatVersions, [1]);
     },
   },
   {
@@ -317,6 +330,38 @@ export const cases: Case[] = [
       assert.equal(sink.emit(9), 'closing');
       assert.deepEqual(await sink.emitFromThread(2), ['closing', 'closing']);
       await sleep(20);
+    },
+  },
+  {
+    name: 'store: open, reopen, a second open is refused, close',
+    async run(addon) {
+      await withBrainDir(async dir => {
+        const pool = new addon.Pool(2);
+        const first = new addon.Brain(pool);
+        assert.equal(first.isOpen, false);
+        const opened = await first.open(dir, { schemaVersion: 319 });
+        assert.equal(opened.created, true);
+        assert.equal(opened.format_version, 1);
+        assert.match(opened.brain_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+        assert.equal(first.isOpen, true);
+
+        const second = new addon.Brain(pool);
+        const refused = await rejection(second.open(dir));
+        assert.equal(refused.code, 'store_locked');
+        assert.equal(second.isOpen, false);
+        assert.equal((await first.info()).brain_id, opened.brain_id, 'the owner keeps working');
+
+        await first.close();
+        assert.equal(first.isOpen, false);
+        assert.equal((await rejection(first.info())).code, 'store_closed');
+        await first.close();
+
+        const reopened = await second.open(dir);
+        assert.equal(reopened.created, false);
+        assert.equal(reopened.brain_id, opened.brain_id);
+        await second.close();
+        await pool.shutdown(1000);
+      });
     },
   },
 ];
