@@ -1170,7 +1170,7 @@ Errors stop at 7: the shared renderer's `Fix:` placement is deferred and process
 - **CYCLE 2 (shadow mode):** focused delta review by two review agents (CEO+DX lens, Eng lens), not a full interactive rerun; 21 findings, all accepted; 6 shadow decisions (S1-S6) added to the gate.
 - **VERDICT:** CEO + DX + ENG CLEARED for planning, cycle 2 included. The maintainer answered the final gate on 2026-11-16 with every recommendation (gate revision 2).
 
-**UNRESOLVED DECISIONS:**
+**DECISIONS OPEN AT REVIEW TIME (since resolved):** these three were open when the review ended. The maintainer settled all three at the final gate; the "Approval record" in [`../RUST_ENGINE.md`](../RUST_ENGINE.md) records the outcome, and D11 now names the gbrain-evals maintainer agent as the lander.
 - U1 (D11): who lands and pins the gbrain-evals changes; recommended: the maintainer, unless a delegate is named.
 - U2 (Phase 1 entry): effort budget through Checkpoint C1; recommended: 8 calendar weeks or 25 merged PRs from PR 1, whichever comes first.
 - U3 (D10, open question 3): 1M benchmark corpus and spend; recommended: a permissively licensed public corpus embedded once at 1,024 dimensions, kept outside the repository, spend cap $50.

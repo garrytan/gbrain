@@ -168,7 +168,7 @@ Storage dims conflict (verified):
 - `src/schema.sql:360` declares `content_chunks.embedding vector(1536)` as a literal, and the column default model is `text-embedding-3-large` in `src/core/schema-embedded.generated.ts:365`.
 - The PGLite template uses `vector(__EMBEDDING_DIMS__)` (`scripts/build-schema.ts:410`) and replaces it at init (`:605`).
 - Runtime default is 1024. Dims mismatches are caught by `src/core/embedding-dim-check.ts`; the exact reconciliation flow was not traced **(inferred)**.
-- Image and multimodal columns are `vector(1024)` (`src/core/schema.sql:400` and `:403`).
+- Image and multimodal columns are `vector(1024)` (`src/schema.sql:400` and `:403`).
 
 ### 8b. Batching and truncation
 

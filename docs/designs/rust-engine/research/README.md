@@ -2,6 +2,8 @@
 
 These twelve maps are research for a Rust third engine behind `BrainEngine`, next to PGLite and Postgres. The design they feed is in [`../../RUST_ENGINE.md`](../../RUST_ENGINE.md). Each map reads the TypeScript implementation and its tests and records what a Rust engine must match, what it can simplify, and which questions are still open.
 
+**Precedence.** The maps were written before the design was settled, and some of their implication sections explore a wider rewrite: one engine instead of a parity matrix (`01`), a Rust CLI and middleware (`05`), dropping the engine test matrix and TypeScript guards (`10`), a stdio `oracle-ts` route for gbrain-evals (`11`) and dropping the embedded PGLite lane (`12`). Those passages are kept as research history and do not bind. The approved [`../../RUST_ENGINE.md`](../../RUST_ENGINE.md) governs: it keeps the TypeScript surfaces, keeps PGLite and Postgres as engines, and defers the stdio route. Where a map and the plan disagree, the plan wins.
+
 ## Pinned commits
 
 - gbrain: `36bd05806a` (v0.60.733.0). Line numbers in every map refer to this commit.
