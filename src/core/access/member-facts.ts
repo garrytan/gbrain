@@ -36,6 +36,20 @@ export function callerMember(): string | null {
   return member && ACCESS_ID_RE.test(member) ? member : null;
 }
 
+/** GST-2897 B: the member a people page names: `people/<member>` or a page under it. */
+export function peoplePageMember(slug: string | null | undefined): string | null {
+  const id = /^people\/([^/]+)/.exec(slug ?? '')?.[1];
+  return id && ACCESS_ID_RE.test(id) ? id : null;
+}
+
+/** GST-2897 B: the enabled member other than the caller whose people page `entitySlug` is, else null. */
+export async function otherMemberSubject(engine: Pick<BrainEngine, 'executeRaw'>, entitySlug: string | null): Promise<string | null> {
+  const id = peoplePageMember(entitySlug);
+  if (!id || id === callerMember()) return null;
+  const rows = await engine.executeRaw('SELECT 1 FROM access_members WHERE id = $1 AND disabled_at IS NULL AND tombstoned_at IS NULL', [id]);
+  return rows.length ? id : null;
+}
+
 /**
  * The member page a remote memory write goes to, or null when the caller writes as no single member (local or
  * unbound). A member id whose page slug a repo brain would rename on sync (`a--b`, `zed-`) is refused: its facts
