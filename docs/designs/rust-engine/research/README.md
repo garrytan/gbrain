@@ -7,7 +7,7 @@ These twelve maps are research for a Rust third engine behind `BrainEngine`, nex
 ## Pinned commits
 
 - gbrain: `36bd05806a` (v0.60.733.0). Line numbers in every map refer to this commit.
-- gbrain-evals: `9ecc5b20`.
+- gbrain-evals: `9ecc5b20` (2026-05-24). That commit is about 3,500 commits behind gbrain-evals main as of 2026-11-16, so `11` is history for that repository: its counts, broken-runner notes and pin status are out of date, and the plan's D11 records the current terms.
 
 ## Evidence tags
 
