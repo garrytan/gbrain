@@ -1233,7 +1233,7 @@ const delta: Operation = {
     // structured arrays reflect — the assembler's render predates both.
     let text = renderDelta(pages, facts, threads, effectiveSince);
     const diff = p.beliefs === true ? await (await import('../belief/changes.ts')).deltaBeliefs(ctx.engine, { sourceId, since: effectiveSince, until: horizon,
-      remote: !includePrivate, takesHolders: readHolders(ctx), entities: parseEntityList(p.entities) }, budgetTokens !== null ? beliefBudget : null, text, TURN_CONTEXT_ENVELOPE) : null;
+      remote: !includePrivate, worldOnly: (await import('../search/private-visibility.ts')).worldOnlyFacts(ctx.remote), takesHolders: readHolders(ctx), entities: parseEntityList(p.entities) }, budgetTokens !== null ? beliefBudget : null, text, TURN_CONTEXT_ENVELOPE) : null;
     if (diff) text = diff.text;
     const budgetUsed = budgetTokens !== null ? estimateTokens(text) : undefined;
 

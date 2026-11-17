@@ -27,7 +27,7 @@ import type { ReadEligibility } from '../eligibility/policy.ts';
 import { trustFields } from '../eligibility/labels.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { loadPageTrust } from '../eligibility/stamp.ts';
-import { worldLinkContexts } from '../eligibility/fence-overlay.ts';
+import { storedEdge, worldLinkContexts } from '../eligibility/fence-overlay.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { loadRelationshipNotes, relationshipNoteKey } from '../link-relationship-notes.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
@@ -618,8 +618,8 @@ async function assembleCard(
     readAka(engine, sourceId, pageSlug),
     engine.getLinks(pageSlug, { ...(remote ? { sourceIds: [sourceId] } : { sourceId }), excludePrivate, temporal: { status: 'all' } }).catch(() => []),
     engine
-      .executeRaw<{ from_slug: string; link_type: string; context: string | null; link_source: string | null }>(
-        `SELECT f.slug AS from_slug, l.link_type, l.context, l.link_source${TEMPORAL_LINK_SELECT_SQL}
+      .executeRaw<{ from_slug: string; link_type: string; context: string | null }>(
+        `SELECT f.slug AS from_slug, l.link_type, l.context${TEMPORAL_LINK_SELECT_SQL}
            FROM links l
            JOIN pages f ON f.id = l.from_page_id
            JOIN pages t ON t.id = l.to_page_id
@@ -630,7 +630,7 @@ async function assembleCard(
         [pageSlug, sourceId],
       )
       .then(rs => rs.map(r => annotateTemporalRow(r)))
-      .catch(() => [] as Array<{ from_slug: string; link_type: string; context: string | null; link_source: string | null } & TemporalAnnotation>),
+      .catch(() => [] as Array<{ from_slug: string; link_type: string; context: string | null } & TemporalAnnotation>),
     engine
       .executeRaw<{ n: string | number }>(
         `SELECT COUNT(*) AS n
@@ -683,9 +683,9 @@ async function assembleCard(
     };
   };
   const outCandidates = (await worldLinkContexts(engine, readerRemote, (outLinks as Array<Link & Partial<TemporalAnnotation>>)
-    .filter(l => l.link_source !== 'mentions'), l => ({ sourceId: l.from_source_id, slug: l.from_slug })))
+    .filter(l => l.link_source !== 'mentions'), storedEdge))
     .map(l => edgeOf(l, 'out', l.to_slug));
-  const inCandidates = (await worldLinkContexts(engine, readerRemote, inEdges, l => ({ sourceId, slug: l.from_slug })))
+  const inCandidates = (await worldLinkContexts(engine, readerRemote, inEdges, l => ({ from: { sourceId, slug: l.from_slug }, to: { sourceId, slug: pageSlug }, linkType: l.link_type })))
     .map(l => edgeOf(l as typeof l & Partial<TemporalAnnotation>, 'in', l.from_slug));
   const edges: EntityCardEdge[] = [
     ...[...outCandidates].sort((a, b) => rank(a) - rank(b)),

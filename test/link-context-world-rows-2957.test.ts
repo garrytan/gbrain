@@ -37,6 +37,8 @@ const THIRD = 'people/third-example';
 const ACME = 'companies/acme-example';
 const LIA = 'people/lia-example';
 const PLAIN = 'notes/plain-example';
+const KIM = 'people/kim-example';
+const MEET = 'meetings/standup-example';
 const CORE = 'notes/core-example';
 /** Fence rows on LIA: a private row and a held row, each naming another page. */
 const PRIV = 'pelicanprivcanary';
@@ -44,6 +46,10 @@ const HELD = 'wombatheldcanary';
 /** Fence rows on a core page with no links: they reach a reader only through the core block. */
 const CORE_PRIV = 'heronprivcorecanary';
 const CORE_HELD = 'badgerheldcorecanary';
+/** A private row on a meeting page naming an attendee: the attendance edge is stored from the attendee, its context cut from the meeting. */
+const MEET_PRIV = 'lynxmeetprivcanary';
+/** A context a writer gave add_link on a page with a fence. */
+const MANUAL = 'quailmanualnote';
 /** A context outside any fence, which every caller keeps. */
 const PROSE = 'otterplainprose';
 const HOPS = [{ link_type: 'works_at', toward: 'object' }];
@@ -82,6 +88,10 @@ for (const kind of testBackends()) {
         row(2, 'Lia works at [[' + ACME + ']] as an engineer'),
         row(3, 'Lia dated [[' + THIRD + ']] ' + HELD),
       ]));
+      await put(KIM, '---\ntype: person\ntitle: Kim Example\n---\n# Kim Example\n\nProfile.\n');
+      await put(MEET, '---\ntype: meeting\ntitle: Standup Example\ndate: 2026-01-01\n---\n# Standup Example\n\n## Facts\n\n'
+        + renderFactsTable([row(1, 'The standup ran long'), row(2, 'Budget raised ' + MEET_PRIV, 'private')] as never) + '\n\n## Attendees\n\n- [[' + KIM + ']]\n');
+      await call('local', 'add_link', { from: LIA, to: THIRD, link_type: 'related_to', context: 'Met through a ' + MANUAL, request_id: randomUUID() });
       await put(PLAIN, '---\ntype: note\ntitle: Plain\n---\n# Plain\n\nThe ' + PROSE + ' memo mentions [[' + TARGET + ']] in passing.\n');
       await put(CORE, page('note', 'Core Example', [row(1, 'Core detail ' + CORE_PRIV, 'private'), row(2, 'Core detail ' + CORE_HELD), row(3, 'Core detail public')], 'always_load: true\n'));
       // Held: a world cell whose stored fact is narrower, the state an unaccepted widening leaves (GST-2891).
@@ -110,12 +120,20 @@ for (const kind of testBackends()) {
       ['entity', 'entity', { name: LIA }],
       ['entity target', 'entity', { name: TARGET }],
       ['context_pack', 'context_pack', { entities: LIA }],
+      ['get_links attendee', 'get_links', { slug: KIM }],
+      ['get_backlinks meeting', 'get_backlinks', { slug: MEET }],
+      ['traverse_graph attendee', 'traverse_graph', { slug: KIM, depth: 1 }],
+      ['entity attendee', 'entity', { name: KIM }],
+      ['entity meeting', 'entity', { name: MEET }],
     ];
 
     test('the fixture stores the private and held rows inside link contexts', async () => {
       const contexts = (await engine.executeRaw<{ context: string }>('SELECT context FROM links')).map(r => r.context).join('\n');
       expect(contexts).toContain(PRIV);
       expect(contexts).toContain(HELD);
+      const attendance = await engine.executeRaw<{ context: string }>(
+        'SELECT l.context FROM links l JOIN pages f ON f.id = l.from_page_id JOIN pages o ON o.id = l.origin_page_id WHERE f.slug = $1 AND o.slug = $2', [KIM, MEET]);
+      expect(attendance.map(r => r.context).join('\n')).toContain(MEET_PRIV);
       const hop = JSON.parse(await call('local', 'traverse_graph', { slug: LIA, hops: HOPS }));
       expect(hop.answers.map((a: { slug: string }) => a.slug)).toEqual([ACME]);
     }, 60_000);
@@ -124,7 +142,7 @@ for (const kind of testBackends()) {
       const leaks: string[] = [];
       for (const who of ['bob', 'unbound']) for (const [label, op, params] of linkReads) {
         const text = await call(who, op, params);
-        for (const canary of [PRIV, HELD]) if (text.includes(canary)) leaks.push(who + ' ' + label + ' ' + canary);
+        for (const canary of [PRIV, HELD, MEET_PRIV]) if (text.includes(canary)) leaks.push(who + ' ' + label + ' ' + canary);
       }
       expect(leaks).toEqual([]);
     }, 120_000);
@@ -138,8 +156,10 @@ for (const kind of testBackends()) {
       }
     }, 60_000);
 
-    test('a context outside any fence still reaches a world-only remote caller', async () => {
+    test('a context outside any fence, or one a writer gave add_link, still reaches a world-only remote caller', async () => {
       for (const who of ['bob', 'unbound']) {
+        expect(await call(who, 'get_links', { slug: LIA })).toContain(MANUAL);
+        expect(await call(who, 'traverse_graph', { slug: LIA, depth: 1 })).toContain(MANUAL);
         expect(await call(who, 'get_backlinks', { slug: TARGET })).toContain(PROSE);
         expect(await call(who, 'entity', { name: TARGET })).toContain(PROSE);
       }
@@ -152,6 +172,7 @@ for (const kind of testBackends()) {
         const links = await call(who, 'get_links', { slug: LIA });
         for (const canary of [PRIV, HELD]) expect(links).toContain(canary);
         expect(await call(who, 'entity', { name: LIA })).toContain(PRIV);
+        expect(await call(who, 'get_links', { slug: KIM })).toContain(MEET_PRIV);
         const pack = await call(who, 'context_pack', { entities: LIA });
         for (const canary of [PRIV, HELD, CORE_HELD]) expect(pack).toContain(canary);
       }
