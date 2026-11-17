@@ -93,7 +93,7 @@ export async function checkTranscriptArchiveFreshness(
         name, { consent: ['persistent_install'] });
     }
     const details = {
-      enabled: true, source_id: status.source_id, stale_days: staleDays, behind, held: status.held,
+      enabled: true, enabled_by: enablement.source, reason: enablement.reason, ...(enablement.serves_several ? { serves_several: true } : {}), source_id: status.source_id, stale_days: staleDays, behind, held: status.held,
       harnesses: status.harnesses.map(h => ({ harness: h.harness, reader: h.reader, readable: !h.info, newest_session_day: h.newest_session_day, newest_archived_day: h.newest_archived_day })),
       ...(record ? { last_maintenance: record } : {}), docs: 'docs/guides/conversation-archive.md#doctor',
     };
@@ -105,8 +105,9 @@ export async function checkTranscriptArchiveFreshness(
       ...(idle.length ? ['no readable sessions for ' + idle.join(', ') + ' (gbrain transcripts archive status names each reader)'] : []),
       ...(unread.length ? ['not read by an archive run yet: ' + unread.join(', ')] : []),
     ].join('; ');
-    if (!readable.length) return infoCheck(name, 'Conversation archive is on; ' + (idleNote || 'no harness has readable sessions yet') + '.', 'not_applicable', undefined, details);
-    return { name, status: 'ok', message: 'Conversation archive is up to date (' + readable.map(h => h.harness + ' ' + h.newest_archived_day).join(', ') + ')' + (idleNote ? '; ' + idleNote : '') + '.', details };
+    const onWhy = enablement.serves_several ? ' (' + enablement.reason + ')' : '';
+    if (!readable.length) return infoCheck(name, 'Conversation archive is on' + onWhy + '; ' + (idleNote || 'no harness has readable sessions yet') + '.', 'not_applicable', undefined, details);
+    return { name, status: 'ok', message: 'Conversation archive is up to date' + onWhy + ' (' + readable.map(h => h.harness + ' ' + h.newest_archived_day).join(', ') + ')' + (idleNote ? '; ' + idleNote : '') + '.', details };
   } catch (error) {
     return checkError(name, 'read the conversation archive', error);
   }

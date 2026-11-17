@@ -461,13 +461,27 @@ in a form the scanner does not match (split it, or describe it) or move the
 mention after the real fence. Pinned by `test/fence-marker-code-context.test.ts`
 ("remote privacy boundary" and "remote page replacement").
 
+<a id="full-backup"></a>
 Markdown export is a portable view of pages, **not a full database backup**.
 DB-only facts and pages (extract receipts included), revision history, the belief ledger (what the brain
 had recorded, and when; `gbrain beliefs`), withdrawal state, jobs, settings,
-and authentication records may not be recoverable from Markdown. Use the engine's
-full backup/restore path and verify a restore into a separate location. Treat
-database backups as sensitive. See the [system-of-record contract](../architecture/system-of-record.md)
-and [isolated local backup guide](in-agent-setup.md#6-back-up-the-complete-local-database).
+and authentication records may not be recoverable from Markdown. On a brain with
+several sources or members, an import of an export puts every page in one source
+with no members, tokens or facts, so a page from a personal source comes back
+readable by everyone in that source. Use the engine's full backup/restore path
+and verify a restore into a separate location:
+
+- **PGLite:** `gbrain backup create --output <absolute path>`, restored with
+  `gbrain backup restore` ([isolated local backup guide](in-agent-setup.md#6-back-up-the-complete-local-database)).
+- **Postgres:** a dump of the brain's database, `pg_dump --format=custom --file <dump> --dbname <database>`,
+  restored into a new, empty database with `pg_restore --no-owner --dbname <new database> <dump>`;
+  `gbrain init --url <new database>` under a separate `GBRAIN_HOME` then opens it with its
+  sources, members, tokens, folder rules and facts. `gbrain backup create` refuses on Postgres.
+  The restored brain's sources still name the original's content folders, so keep
+  only one of the two brains writing to them. See [embedding migrations](../embedding-migrations.md)
+  for a quiesced dump with service files that keep the password off the command line.
+
+Treat database backups as sensitive. See the [system-of-record contract](../architecture/system-of-record.md).
 
 <a id="purge"></a>
 ## Expire versus purge
