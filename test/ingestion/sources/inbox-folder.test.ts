@@ -223,7 +223,7 @@ describe('InboxFolderSource — file ingestion', () => {
     await harness.stop();
   });
 
-  test('binary file: path-only content, hash from path+stat', async () => {
+  test('binary file: path-only content, hash from the bytes', async () => {
     const stub = makeStubWatcher();
     const source = createInboxFolderSource({
       inboxDir,
@@ -244,6 +244,8 @@ describe('InboxFolderSource — file ingestion', () => {
     // For binary, content is the absolute path (NOT the bytes).
     expect(harness.events[0]?.content).toBe(f);
     expect(harness.events[0]?.metadata?.is_text).toBe(false);
+    // The hash is over the bytes, so the same file dedups wherever it lands.
+    expect(harness.events[0]?.content_hash).toBe(new Bun.CryptoHasher('sha256').update(Buffer.from([0x89, 0x50, 0x4e, 0x47])).digest('hex'));
     await harness.stop();
   });
 

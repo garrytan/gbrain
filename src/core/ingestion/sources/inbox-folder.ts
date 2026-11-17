@@ -41,7 +41,7 @@ import { assertManagedFilesystemWrite } from '../../persistence/filesystem-guard
 
 import { watch, type FSWatcher, type ChokidarOptions } from 'chokidar';
 import { mkdir, rename, readFile, stat, lstat } from 'node:fs/promises';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { resolve, basename, join, dirname, extname } from 'node:path';
 import {
   computeContentHash,
@@ -63,6 +63,14 @@ export interface InboxFolderSourceOpts {
   archiveSubdir?: string;
   /** Set to false to skip the post-emit archive move (debugging only). */
   archiveAfterEmit?: boolean;
+  /**
+   * Leave files no installed processor can read (PDF, image, audio, video,
+   * unknown) in the inbox with a warning, instead of emitting and archiving
+   * them: the capture handler refuses binary content, so archiving would hide
+   * a file that never became a page. Dot files (.DS_Store) are skipped
+   * silently. Default false (every file is emitted). `gbrain inbox` sets it.
+   */
+  textOnly?: boolean;
   /** chokidar awaitWriteFinish stability threshold. Default 1000. */
   awaitStabilityMs?: number;
   /** Debounce between identical-path events. Default 500. */
@@ -113,7 +121,7 @@ function detectContentType(filename: string): IngestionContentType {
 }
 
 /** Format a UTC date as YYYY-MM-DD for the archive subdir. */
-function archiveDateFolder(d: Date): string {
+export function archiveDateFolder(d: Date): string {
   const y = d.getUTCFullYear();
   const m = String(d.getUTCMonth() + 1).padStart(2, '0');
   const day = String(d.getUTCDate()).padStart(2, '0');
@@ -138,6 +146,148 @@ function uniqueArchivePath(dir: string, filename: string): string {
   return join(dir, `${stem}-${Date.now()}${ext}`);
 }
 
+export interface InboxCaptureConfig {
+  id: string;
+  kind: string;
+  archiveDirAbs: string;
+  archiveAfterEmit: boolean;
+  textOnly: boolean;
+  /**
+   * Awaited delivery instead of ctx.emit (the one-shot CLI path): the file is
+   * archived only when it resolves true, so a capture that failed stays in the
+   * inbox (outcome `failed`) to be retried.
+   */
+  deliver?: (event: IngestionEvent) => Promise<boolean>;
+}
+
+/** SHA-256 hex of a file's bytes, streamed so a large file is never held in memory. */
+export async function hashFileBytes(absPath: string): Promise<string> {
+  const hasher = new Bun.CryptoHasher('sha256');
+  for await (const chunk of Bun.file(absPath).stream()) hasher.update(chunk);
+  return hasher.digest('hex');
+}
+
+/** What happened to one inbox file. */
+export type InboxCaptureOutcome = 'emitted' | 'held' | 'skipped' | 'failed';
+
+/**
+ * Capture one inbox file: emit it, then move it to .archived/YYYY-MM-DD/.
+ * `held`: a file no processor can read, left in place (textOnly). `skipped`:
+ * not a regular file, a symlink, unreadable, or a dot file under textOnly.
+ * `failed`: `deliver` resolved false; the file stays in the inbox.
+ */
+export async function captureInboxFile(absPath: string, cfg: InboxCaptureConfig, ctx: IngestionSourceContext): Promise<InboxCaptureOutcome> {
+  const { id, kind, archiveDirAbs, archiveAfterEmit } = cfg;
+  // Layered defense against the file becoming a symlink between
+  // chokidar discovery and our read. chokidar's followSymlinks=false
+  // already filters at the dir level.
+  let info;
+  try {
+    info = await lstat(absPath);
+  } catch (err) {
+    ctx.logger.warn(
+      `inbox-folder: failed to lstat ${absPath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return 'skipped';
+  }
+  if (info.isSymbolicLink()) {
+    ctx.logger.warn(`inbox-folder: rejected symlink ${absPath} (security)`);
+    return 'skipped';
+  }
+  if (!info.isFile()) {
+    // Directories and other types are ignored — we only ingest files.
+    return 'skipped';
+  }
+
+  const filename = basename(absPath);
+  if (cfg.textOnly && filename.startsWith('.')) return 'skipped';
+  const contentType = detectContentType(filename);
+
+  // For text-typed content we read and emit the bytes inline. For binary
+  // types (image/audio/video/pdf) we emit the absolute path as the content
+  // and let the daemon's processor pipeline handle extraction. Path-only
+  // emit for binary keeps the daemon's hot path lean — a 200MB video
+  // shouldn't be read into memory just to compute content_hash.
+  const isText = contentType === 'text/markdown' || contentType === 'text/plain' ||
+                 contentType === 'text/html' || contentType === 'application/json';
+
+  if (!isText && cfg.textOnly) {
+    ctx.logger.warn(
+      `inbox-folder: ${filename} left in the inbox: no processor reads ${contentType} yet. ` +
+        `Convert it to text or markdown (for a PDF: pdftotext), drop that in, then remove this file.`,
+    );
+    return 'held';
+  }
+
+  let content: string;
+  let contentHash: string;
+  if (isText) {
+    try {
+      content = await readFile(absPath, 'utf8');
+    } catch (err) {
+      ctx.logger.warn(
+        `inbox-folder: failed to read ${absPath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 'skipped';
+    }
+    contentHash = computeContentHash(content);
+  } else {
+    // For binary, content_hash is over the file's BYTES (streamed): the same
+    // file dropped twice dedups wherever it lands, and two different files
+    // never share a hash because they share a path, size and mtime.
+    content = absPath;
+    try {
+      contentHash = await hashFileBytes(absPath);
+    } catch (err) {
+      ctx.logger.warn(
+        `inbox-folder: failed to read ${absPath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 'skipped';
+    }
+  }
+
+  const ev: IngestionEvent = {
+    source_id: id,
+    source_kind: kind,
+    source_uri: absPath,
+    received_at: new Date().toISOString(),
+    content_type: contentType,
+    content,
+    content_hash: contentHash,
+    metadata: {
+      original_filename: filename,
+      size_bytes: info.size,
+      is_text: isText,
+    },
+  };
+
+  if (archiveAfterEmit) assertManagedFilesystemWrite(absPath);
+  if (cfg.deliver) {
+    if (!(await cfg.deliver(ev))) return 'failed';
+  } else {
+    ctx.emit(ev);
+  }
+
+  // Move to .archived/YYYY-MM-DD/<filename> so the user has a visible
+  // record of what was captured AND the inbox stays uncluttered. Failure
+  // is non-fatal — log and leave the file in place. Better to risk a
+  // re-emit (caught by the daemon's 24h dedup) than to silently lose
+  // the user's capture by failing the move and crashing.
+  if (archiveAfterEmit) {
+    try {
+      const todayDir = join(archiveDirAbs, archiveDateFolder(new Date()));
+      await mkdir(todayDir, { recursive: true });
+      const dest = uniqueArchivePath(todayDir, filename);
+      await rename(absPath, dest);
+    } catch (err) {
+      ctx.logger.warn(
+        `inbox-folder: failed to archive ${absPath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  return 'emitted';
+}
+
 export function createInboxFolderSource(opts: InboxFolderSourceOpts): IngestionSource {
   if (!opts.inboxDir || typeof opts.inboxDir !== 'string') {
     throw new Error('InboxFolderSource: inboxDir is required (typical: ~/.gbrain/inbox)');
@@ -160,96 +310,8 @@ export function createInboxFolderSource(opts: InboxFolderSourceOpts): IngestionS
     return absPath.startsWith(archiveDirAbs + '/') || absPath === archiveDirAbs;
   }
 
-  async function handleAdd(absPath: string, ctx: IngestionSourceContext): Promise<void> {
-    // Layered defense against the file becoming a symlink between
-    // chokidar discovery and our read. chokidar's followSymlinks=false
-    // already filters at the dir level.
-    let info;
-    try {
-      info = await lstat(absPath);
-    } catch (err) {
-      ctx.logger.warn(
-        `inbox-folder: failed to lstat ${absPath}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return;
-    }
-    if (info.isSymbolicLink()) {
-      ctx.logger.warn(`inbox-folder: rejected symlink ${absPath} (security)`);
-      return;
-    }
-    if (!info.isFile()) {
-      // Directories and other types are ignored — we only ingest files.
-      return;
-    }
-
-    const filename = basename(absPath);
-    const contentType = detectContentType(filename);
-
-    // For text-typed content we read and emit the bytes inline. For binary
-    // types (image/audio/video/pdf) we emit the absolute path as the content
-    // and let the daemon's processor pipeline handle extraction. Path-only
-    // emit for binary keeps the daemon's hot path lean — a 200MB video
-    // shouldn't be read into memory just to compute content_hash.
-    const isText = contentType === 'text/markdown' || contentType === 'text/plain' ||
-                   contentType === 'text/html' || contentType === 'application/json';
-
-    let content: string;
-    let contentHashSource: string;
-    if (isText) {
-      try {
-        content = await readFile(absPath, 'utf8');
-      } catch (err) {
-        ctx.logger.warn(
-          `inbox-folder: failed to read ${absPath}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        return;
-      }
-      contentHashSource = content;
-    } else {
-      // For binary, content_hash is over the absolute path + size + mtime
-      // so repeat-drops of the SAME file dedup but different files with
-      // matching name (rare) get different hashes. Reading the bytes to
-      // hash them would be O(file size); the path+stat shortcut is O(1).
-      content = absPath;
-      contentHashSource = `${absPath}|${info.size}|${info.mtimeMs}`;
-    }
-
-    const ev: IngestionEvent = {
-      source_id: id,
-      source_kind: kind,
-      source_uri: absPath,
-      received_at: new Date().toISOString(),
-      content_type: contentType,
-      content,
-      content_hash: computeContentHash(contentHashSource),
-      metadata: {
-        original_filename: filename,
-        size_bytes: info.size,
-        is_text: isText,
-      },
-    };
-
-    if (archiveAfterEmit) assertManagedFilesystemWrite(absPath);
-    ctx.emit(ev);
-
-    // Move to .archived/YYYY-MM-DD/<filename> so the user has a visible
-    // record of what was captured AND the inbox stays uncluttered. Failure
-    // is non-fatal — log and leave the file in place. Better to risk a
-    // re-emit (caught by the daemon's 24h dedup) than to silently lose
-    // the user's capture by failing the move and crashing.
-    if (archiveAfterEmit) {
-      try {
-        const todayDir = join(archiveDirAbs, archiveDateFolder(new Date()));
-        await mkdir(todayDir, { recursive: true });
-        const dest = uniqueArchivePath(todayDir, filename);
-        await rename(absPath, dest);
-      } catch (err) {
-        ctx.logger.warn(
-          `inbox-folder: failed to archive ${absPath}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-  }
+  const cfg: InboxCaptureConfig = { id, kind, archiveDirAbs, archiveAfterEmit, textOnly: opts.textOnly ?? false };
+  const handleAdd = (absPath: string, ctx: IngestionSourceContext) => captureInboxFile(absPath, cfg, ctx).then(() => undefined);
 
   function scheduleHandle(absPath: string, ctx: IngestionSourceContext): void {
     const existing = pending.get(absPath);
@@ -359,6 +421,47 @@ export function createInboxFolderSource(opts: InboxFolderSourceOpts): IngestionS
       return { status: 'ok' };
     },
   };
+}
+
+/** Every file waiting in the inbox (recursive), the archive dir excluded, sorted. */
+export function listInboxFiles(inboxDir: string, archiveSubdir = '.archived'): string[] {
+  const root = resolve(inboxDir);
+  const archive = join(root, archiveSubdir);
+  if (!existsSync(root)) return [];
+  const out: string[] = [];
+  const walk = (d: string) => {
+    for (const entry of readdirSync(d, { withFileTypes: true })) {
+      const full = join(d, entry.name);
+      if (full === archive) continue;
+      if (entry.isDirectory()) walk(full);
+      else out.push(full);
+    }
+  };
+  walk(root);
+  return out.sort();
+}
+
+/**
+ * Capture every file waiting in the inbox once, in order, then return: the
+ * one-shot form of the watcher (`gbrain inbox run --once`). Same per-file
+ * rules as the watcher (symlinks refused, archive after emit, textOnly).
+ */
+export async function processInboxOnce(
+  opts: Pick<InboxFolderSourceOpts, 'id' | 'inboxDir' | 'archiveSubdir' | 'archiveAfterEmit' | 'textOnly'>
+    & Pick<InboxCaptureConfig, 'deliver'>,
+  ctx: IngestionSourceContext,
+): Promise<Record<InboxCaptureOutcome, string[]>> {
+  const root = resolve(opts.inboxDir);
+  const archiveSubdir = opts.archiveSubdir ?? '.archived';
+  const cfg: InboxCaptureConfig = {
+    id: opts.id ?? 'inbox-folder', kind: 'inbox-folder', archiveDirAbs: join(root, archiveSubdir),
+    archiveAfterEmit: opts.archiveAfterEmit ?? true, textOnly: opts.textOnly ?? false, deliver: opts.deliver,
+  };
+  const result: Record<InboxCaptureOutcome, string[]> = { emitted: [], held: [], skipped: [], failed: [] };
+  for (const file of listInboxFiles(root, archiveSubdir)) {
+    result[await captureInboxFile(file, cfg, ctx)].push(file);
+  }
+  return result;
 }
 
 /** For tests. */

@@ -67,12 +67,9 @@ const PERMITTED_TEST_ONLY = [
   { path: 'src/core/progressive-batch/retrofit-wrap.ts', reason: 'held: progressive-batch re-compose item still open in TODOS.md' },
   { path: 'src/core/progressive-batch/stage-report.ts', reason: 'held: progressive-batch re-compose item still open in TODOS.md' },
   { path: 'src/commands/sources-writer-movement.ts', reason: 'held: released updaters from about v0.60.150 to v0.60.248 import this path into the old process after the swap, so it stays a leaf no current runtime imports (GST-2688, test/upgrade-old-updater-leaf.test.ts)' },
-  { path: 'src/core/ingestion/daemon.ts', reason: 'held: ingestion cluster awaits a wire-up vs delete product decision (public gbrain/ingestion export, docs/guides/data-ingestion.md)' },
-  { path: 'src/core/ingestion/dedup.ts', reason: 'held: ingestion cluster awaits a wire-up vs delete product decision' },
   { path: 'src/core/ingestion/skillpack-load.ts', reason: 'held: ingestion cluster awaits a wire-up vs delete product decision' },
   { path: 'src/core/ingestion/sources/file-watcher.ts', reason: 'held: ingestion cluster awaits a wire-up vs delete product decision' },
   { path: 'src/core/ingestion/sources/gstack-learnings.ts', reason: 'held: ingestion cluster awaits a wire-up vs delete product decision' },
-  { path: 'src/core/ingestion/sources/inbox-folder.ts', reason: 'held: ingestion cluster awaits a wire-up vs delete product decision (docs/guides/data-ingestion.md promises the inbox folder)' },
   { path: 'src/core/ingestion/sources/markdown-greenfield.ts', reason: 'held: ingestion cluster awaits a wire-up vs delete product decision (docs/migrations/v0.41.2-markdown-greenfield.md)' },
 ];
 

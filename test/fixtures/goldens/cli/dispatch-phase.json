@@ -1065,6 +1065,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "inbox": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "init": {
         "hasSwitchCase": false,
         "phase": "pre-connect",
