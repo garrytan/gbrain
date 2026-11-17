@@ -16,6 +16,8 @@ use napi::bindgen_prelude::Object;
 use napi::Env;
 use napi_derive::napi;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 
 use crate::binding::{Pool, spawn};
 use crate::error::TaskError;
@@ -28,6 +30,20 @@ const CLOSE_WAIT: Duration = Duration::from_secs(30);
 
 pub(crate) fn task_error(error: StoreError) -> TaskError {
     TaskError::new(error.code, error.message)
+}
+
+/// Decodes a JSON argument. `null` and a missing argument are the same thing.
+fn arg<T: DeserializeOwned + Default>(value: Option<Value>, what: &str) -> Result<T, StoreError> {
+    match value {
+        None | Some(Value::Null) => Ok(T::default()),
+        Some(value) => serde_json::from_value(value)
+            .map_err(|e| StoreError::invalid(format!("{what}: {e}"))),
+    }
+}
+
+/// Like `arg`, for an argument that must be given.
+fn required<T: DeserializeOwned>(value: Value, what: &str) -> Result<T, StoreError> {
+    serde_json::from_value(value).map_err(|e| StoreError::invalid(format!("{what}: {e}")))
 }
 
 /// Options for `Brain#open`.
@@ -169,5 +185,98 @@ impl Brain {
     #[napi]
     pub fn info<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
         self.run(env, |store| Ok(store.info().clone()))
+    }
+
+    // ---- config -----------------------------------------------------------------------------
+
+    /// `getConfig(key)`: the value or `null`.
+    #[napi]
+    pub fn get_config<'env>(&self, env: &'env Env, key: String) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.get_config(&key))
+    }
+
+    /// `setConfig(key, value)`: upsert. Resolves `null`.
+    #[napi]
+    pub fn set_config<'env>(
+        &self,
+        env: &'env Env,
+        key: String,
+        value: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.set_config(&key, &value))
+    }
+
+    /// `unsetConfig(key)`: the number of rows removed (0 or 1).
+    #[napi]
+    pub fn unset_config<'env>(&self, env: &'env Env, key: String) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.unset_config(&key))
+    }
+
+    /// `listConfigKeys(prefix)`: sorted keys that start with `prefix` (a literal prefix).
+    #[napi]
+    pub fn list_config_keys<'env>(
+        &self,
+        env: &'env Env,
+        prefix: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_config_keys(&prefix))
+    }
+
+    /// `getAllConfig()`: `{ [key]: value }`.
+    #[napi]
+    pub fn get_all_config<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, |s| s.get_all_config())
+    }
+
+    // ---- sources ----------------------------------------------------------------------------
+
+    /// `listAllSources({ includeArchived?, localPathOnly? }?)`: `SourceRow[]`, `default` first.
+    #[napi]
+    pub fn list_all_sources<'env>(
+        &self,
+        env: &'env Env,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_all_sources(&arg(options, "listAllSources options")?)
+        })
+    }
+
+    /// `getSourceById(id)`: the `SourceRow` or `null`.
+    #[napi]
+    pub fn get_source_by_id<'env>(&self, env: &'env Env, id: String) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.get_source_by_id(&id))
+    }
+
+    /// `upsertSource({ id, name?, local_path?, last_sync_at?, config? })`: the `SourceRow`.
+    #[napi]
+    pub fn upsert_source<'env>(&self, env: &'env Env, input: Value) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.upsert_source(&required(input, "upsertSource input")?)
+        })
+    }
+
+    /// `updateSourceConfig(id, patch)`: merges `patch` into the config; whether the source exists.
+    #[napi]
+    pub fn update_source_config<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        patch: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.update_source_config(&id, &required(patch, "updateSourceConfig patch")?)
+        })
+    }
+
+    /// `setSourceArchived(id, archived)`: whether the source exists.
+    #[napi]
+    pub fn set_source_archived<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        archived: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.set_source_archived(&id, archived))
     }
 }

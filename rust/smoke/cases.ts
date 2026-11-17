@@ -350,6 +350,15 @@ export const cases: Case[] = [
         assert.equal(refused.code, 'store_locked');
         assert.equal(second.isOpen, false);
         assert.equal((await first.info()).brain_id, opened.brain_id, 'the owner keeps working');
+        assert.equal(await first.getConfig('version'), '319');
+        assert.equal(await first.getConfig('nothing'), null);
+        await first.setConfig('sync.repo', '/work');
+        assert.deepEqual(await first.listConfigKeys('sync.'), ['sync.repo']);
+        assert.equal(await first.unsetConfig('sync.repo'), 1);
+        const sources = await first.listAllSources();
+        assert.deepEqual(sources.map(s => s.id), ['default']);
+        assert.deepEqual(sources[0]!.config, { federated: true });
+        assert.equal(await first.getSourceById('nope'), null);
 
         await first.close();
         assert.equal(first.isOpen, false);

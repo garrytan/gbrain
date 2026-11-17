@@ -44,12 +44,31 @@ export interface BrainInfo {
   created: boolean;
 }
 
+export interface SourceRow {
+  id: string;
+  name: string | null;
+  local_path: string | null;
+  last_sync_at: string | null;
+  config: Record<string, unknown>;
+  incarnation: string;
+}
+
 /** The store class (crates/gbrain-napi/src/store_binding.rs). Every method is documented in rust/README.md. */
 export interface Brain {
   readonly isOpen: boolean;
   open(path: string, options?: { schemaVersion?: number; createdBy?: string }): Promise<BrainInfo>;
   close(): Promise<void>;
   info(): Promise<BrainInfo>;
+  getConfig(key: string): Promise<string | null>;
+  setConfig(key: string, value: string): Promise<null>;
+  unsetConfig(key: string): Promise<number>;
+  listConfigKeys(prefix: string): Promise<string[]>;
+  getAllConfig(): Promise<Record<string, string>>;
+  listAllSources(options?: { includeArchived?: boolean; localPathOnly?: boolean }): Promise<SourceRow[]>;
+  getSourceById(id: string): Promise<SourceRow | null>;
+  upsertSource(input: { id: string; name?: string; local_path?: string; last_sync_at?: string; config?: Record<string, unknown> }): Promise<SourceRow>;
+  updateSourceConfig(id: string, patch: Record<string, unknown>): Promise<boolean>;
+  setSourceArchived(id: string, archived: boolean): Promise<boolean>;
 }
 
 export interface Addon {

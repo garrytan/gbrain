@@ -133,6 +133,38 @@ Rules for every method:
 stores as config `version`; pass `LATEST_SCHEMA_VERSION`. `close` waits for calls already running,
 then gives up the lock.
 
+### Config
+
+A fresh brain has one config entry, `version`, set to the `schemaVersion` given to `open`
+(`getConfig('version')` equals `LATEST_SCHEMA_VERSION`, 319 today). Values are strings and keys
+cannot contain NUL.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.getConfig(key)` | `string \| null` | `getConfig` |
+| `brain.setConfig(key, value)` | `null`; an upsert | `setConfig` |
+| `brain.unsetConfig(key)` | rows removed, `0` or `1` | `unsetConfig` |
+| `brain.listConfigKeys(prefix)` | sorted `string[]`; the prefix is literal (`%` and `_` are plain characters) | `listConfigKeys` |
+| `brain.getAllConfig()` | `{ [key]: value }` | `getAllConfig` |
+
+### Sources
+
+A fresh brain has the `default` source: `{ id: 'default', name: 'default', local_path: null,
+last_sync_at: null, config: { federated: true } }`. A row is PGLite's `SourceRow` plus
+`incarnation` (a UUID that changes when a source is deleted and created again), with
+`last_sync_at` as an ISO string.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.listAllSources({ includeArchived?, localPathOnly? }?)` | `SourceRow[]`, `default` first then by `id`; archived rows are left out unless `includeArchived`; `localPathOnly` keeps rows with a `local_path` that are not `config.role = 'storage_manifest'` | `listAllSources` |
+| `brain.getSourceById(id)` | `SourceRow \| null`, archived rows included | `sources-ops` read by id |
+| `brain.upsertSource({ id, name?, local_path?, last_sync_at?, config? })` | the `SourceRow`; only the fields given change; ids are 1 to 32 of `a-z0-9-` (`invalid_argument` otherwise) | `sources add` |
+| `brain.updateSourceConfig(id, patch)` | `boolean`, whether the source exists; a `null` value in `patch` removes the key | `updateSourceConfig` |
+| `brain.setSourceArchived(id, archived)` | `boolean`, whether the source exists | `sources archive` and `restore` |
+
+`upsertSource` and `setSourceArchived` are not in PGLite's engine interface; the store needs a way
+to make a source, and the page methods below are source-scoped.
+
 ## Error codes
 
 Errors from the addon are real `Error` objects with a `code`:

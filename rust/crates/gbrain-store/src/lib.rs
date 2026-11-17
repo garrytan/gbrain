@@ -8,12 +8,14 @@
 //! This crate has no JavaScript types. `gbrain-napi` turns each `Store` method into an async
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
+pub mod config;
 pub mod env;
 pub mod error;
 pub mod format;
 pub mod keys;
 pub mod kv;
 pub mod redb_kv;
+pub mod sources;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -66,7 +68,6 @@ pub struct StoreInfo {
 /// any number of snapshot reads.
 pub struct Store {
     pub(crate) kv: Arc<dyn Kv>,
-    #[allow(dead_code)]
     pub(crate) env: Arc<dyn Env>,
     info: StoreInfo,
 }
@@ -141,17 +142,21 @@ impl Store {
                 }
             }
         };
-        let store = Store {
+        // The schema version is the config the TypeScript migrations keep; a brain that has none
+        // (it never was seeded) reports 0.
+        let schema_version = config::read_config(&*kv.snapshot()?, "version")?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        Ok(Store {
             kv,
             env,
             info: StoreInfo {
                 brain_id: stored.brain_id,
                 format_version: stored.format_version,
-                schema_version: options.schema_version,
+                schema_version,
                 created,
             },
-        };
-        Ok(store)
+        })
     }
 
     pub fn info(&self) -> &StoreInfo {
@@ -171,13 +176,11 @@ impl Store {
     /// reference to the underlying engine is dropped.
     pub fn close(self) {}
 
-    #[allow(dead_code)] // used from the config methods on
     pub(crate) fn read(&self) -> Result<Box<dyn KvRead>> {
         self.kv.snapshot()
     }
 
     /// Runs `f` in the write transaction and commits when it returns `Ok`. An `Err` rolls back.
-    #[allow(dead_code)]
     pub(crate) fn write<T>(&self, f: impl FnOnce(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
         let mut tx = self.kv.begin_write()?;
         let value = f(&mut *tx)?;
@@ -205,7 +208,12 @@ pub(crate) struct StoredFormat {
     pub created_at_us: i64,
 }
 
-/// Records a fresh brain starts with, written in the same transaction as its format record.
-fn seed(_tx: &mut dyn KvWrite, _env: &dyn Env, _options: &OpenOptions) -> Result<()> {
-    Ok(())
+/// Records a fresh brain starts with, written in the same transaction as its format record: the
+/// schema version config (`getConfig('version')`) and the `default` source.
+fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()> {
+    tx.put(
+        &keys::text(keys::CONFIG, &["version"]),
+        options.schema_version.to_string().as_bytes(),
+    )?;
+    sources::seed_default_source(tx, env)
 }
