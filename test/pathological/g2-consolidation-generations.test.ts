@@ -83,8 +83,8 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
 
     test('a strict chain records each member before-state and repair generations restore reopens it', async () => {
       await withBrain(databaseUrl, async engine => {
-        const claim = 'Acme-example reports steady recurring revenue growth.';
-        const ids = [await seed(engine, claim, '2026-01-15T00:00:00Z'), await seed(engine, claim, '2026-04-12T00:00:00Z'), await seed(engine, claim, '2026-07-08T00:00:00Z')];
+        const claim = (where: string) => `Acme-example reports steady recurring revenue growth in its ${where}.`;
+        const ids = [await seed(engine, claim('board deck'), '2026-01-15T00:00:00Z'), await seed(engine, claim('investor letter'), '2026-04-12T00:00:00Z'), await seed(engine, claim('call notes'), '2026-07-08T00:00:00Z')];
         const result = await runPhaseConsolidate(engine, {});
         expect(result.details.facts_consolidated).toBe(3);
         const closed = await facts(engine);

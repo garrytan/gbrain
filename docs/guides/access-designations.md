@@ -40,16 +40,22 @@ Five kinds of caller read a brain:
 | fact `visibility: private` | reads | reads | hidden | hidden | hidden |
 
 "Hidden" means the same `not_found` a missing page gets, on every read path (get_page, search, query, recall, lists,
-links, timelines, versions). The owner reads through `get_page`, `search`, `query`, `recall` and the other page
+links, timelines, versions). Designations govern readers, not processing: restricted pages are embedded
+with the brain's configured embedding provider like any other page. See
+[where text goes](memory-boundaries.md#where-text-goes). The owner reads through `get_page`, `search`, `query`, `recall` and the other page
 reads in every source its grant reads; the owner's source grant still bounds which sources those are. It also gets
 private facts from `recall`, the `query` facts arm, `think` trajectories, hot memory, `delta` and `context_pack` hot
 facts, except a fact taken from a page it cannot read. Facts on `entity` and `context_pack` cards stay world-only for
-every remote caller, the owner included.
+every remote caller, the owner included, except that the private-facts grant below adds private facts to `entity` cards.
 
-Two grants relax privacy for callers that are not the owner, and both are operator decisions:
+Two grants relax page privacy for callers that are not the owner, and both are operator decisions:
 `gbrain auth rescope --private-pages granted-sources` (private pages in the sources that grant names) and the
 escape hatches `GBRAIN_REMOTE_PRIVATE_PAGES=1` / `gbrain config set search.remote_private_pages visible` (every
 remote caller). Neither relaxes `readable_by` or folder rules, and neither reaches a shared-room audience.
+Fact privacy has its own operator grant, `gbrain auth rescope --private-facts granted-sources`: that credential reads
+facts saved `private` in the sources its grant names, never one held on, provenanced from or about a private,
+`readable_by`, folder-ruled, quarantined or member page, nor one with no page to check, and never under an asserted
+audience or an attested call ([MCP administration](../mcp/ADMIN.md)).
 
 `gbrain access check --token <name>` reports whether a credential reads as the owner, and
 `gbrain <operation> --as <member>` previews a member's view, the owner's included. Every remote response names the
@@ -188,7 +194,10 @@ host saved with `visibility: "private"`, or one on a page whose `readable_by` na
 on a page whose readers leave the owner out (even with `reads-restricted on`) or on another member's page stays with the brain host, and one the owner confirmed or curated files a `forget_requires_owner`
 proposal instead, as for a shared fact. The trade-off: an owner agent that follows a planted instruction can share a fact
 without passing any flag, so pass `visibility: "private"` for a fact that must stay with the owner. Extracted facts follow `facts.default_visibility` (private when unset)
-and are never wider than their page. Remote fact reads return private facts to the owner only.
+and are never wider than their page. Remote fact reads return private facts to the owner, and to a credential holding the private-facts grant
+above (only in the sources that grant names). Facts saved `private`
+before `facts.default_visibility` became `world` stay private until the operator opens them from the brain host with
+`gbrain repair open-facts` (preview first, with an undo; see [repair](repair.md#open-facts-saved-private-before-the-world-default)).
 
 ### The owner (`gbrain access owner`)
 
@@ -197,6 +206,12 @@ and are never wider than their page. Remote fact reads return private facts to t
 database, so a repo-less brain works the same. The owner relaxation applies to a credential bound to that member
 when it speaks for itself (no audience, or an audience of the owner alone); never to a shared-room audience or an
 attested call. `gbrain access owner clear` turns it off.
+
+When `gbrain access owner set`, `gbrain access member add` or `member enable` (a second enabled member), or
+`gbrain config set brain.audience shared` leaves the brain shared, the command also keeps the conversation archive
+pages written while it was personal to the owner before it returns, and says so on stderr. Three cases wait instead
+(the audience turning shared from client usage, a shared brain with no owner, and rules kept in git); see
+[when a personal brain becomes shared](conversation-archive.md#when-a-personal-brain-becomes-shared).
 
 **The owner's writes.** The owner's own credential with write scope, speaking for itself (no audience, not an
 attested call, not a subagent job, no slug fence, checked again when the write is published), may change a private page

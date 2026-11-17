@@ -453,6 +453,13 @@ export interface AuthInfo {
    * private-readable set of each non-mutating call. Undefined = `none`.
    */
   privatePages?: { mode: 'granted_sources'; sources: string[] };
+  /**
+   * GBRA-575: the grant's `private_facts: granted_sources` axis, set at token
+   * verification from the live row, with the same explicitly named sources.
+   * MCP dispatch makes them the private-fact sources of each non-mutating call
+   * (CallerAccess.privateFactSources). Undefined = `none`.
+   */
+  privateFacts?: { mode: 'granted_sources'; sources: string[] };
   /** Current transport ceiling applied to this authenticated request. */
   effectiveSurface?: 'verbs' | 'starter' | 'full';
   /**

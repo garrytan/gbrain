@@ -133,8 +133,18 @@ Next — choose the connection method supported by the intended client
                    then gbrain bootstrap harness --yes --port 3131 --token <value>; or grant a scoped client with
                    gbrain mcp grant … --url http://127.0.0.1:3131/mcp --admin-token-file ~/.gbrain/serve/admin-token
                    and gbrain connect http://127.0.0.1:3131/mcp --harness <id> --credentials-file … --install
+  Cursor           cursor://anysphere.cursor-deeplink/mcp/install?name=gbrain&config=eyJ1cmwiOiJodHRwczovL3lvdXItbWFjaGluZS55b3VyLXRhaWxuZXQudHMubmV0L21jcCJ9
+                   Opens Cursor's MCP install prompt with this URL filled in; the Cursor machine must be on your tailnet.
   Check            gbrain mcp expose --status
 ```
+
+The `Cursor` line is a one-click link: it opens Cursor's install prompt with
+this MCP URL filled in. With `--funnel`, a `Claude` line comes first, which
+opens claude.ai's add-connector form the same way. Tailnet-only publishes get
+no Claude line, because claude.ai connects from Anthropic's servers. You still
+confirm and sign in inside the client. `--status` repeats the links and
+`--json` returns them as `install_links`. See [one-click client
+links](../mcp/README.md#one-click-client-links).
 
 The `Engine` and `Local agents` lines depend on the engine the receipt
 recorded: a Postgres brain prints `Local agents     gbrain bootstrap harness
@@ -5437,6 +5447,12 @@ CREATE POLICY page_segment_derivation_purge_pages_writer_note ON page_segment_de
 ```
 <!-- gbrain:ledger-rls-recipe:end -->
 
+A bulk fact insert (the fence import in `src/core/engine-sql/facts.ts`) defers the withdrawal
+stamp to the end of its statement, so when one of its rows matches a withdrawal the guard
+updates that row in `facts`, and the write role then needs a permissive `UPDATE` policy on
+`facts` covering the row, beside its `SELECT` policy, or the guard refuses the insert with the
+same `writer_coordinator_required` error.
+
 **Check that the upgrade replaced every guard.** Migration v318 can only replace a guard function
 the role running it owns. A guard owned by another role is left as it was, so it still lets a
 scoped writer without ledger policies through, and v318 only names it in one stderr line
@@ -5458,7 +5474,10 @@ For a row with `fails_closed = f`, connect as the role in its `owner` column and
 `ALTER FUNCTION public.<proname>() OWNER TO <the role gbrain migrates as>;`. Then run
 `gbrain apply-migrations --yes`, or start gbrain: every migration run re-creates a guard that
 is missing its check, provided the migrating role owns it. You can also run gbrain once as the
-owning role instead. Run the query again to confirm.
+owning role instead. Run the query again to confirm. On Postgres, `gbrain doctor`
+(`guard_ledger_checks`) runs the same check and names each guard left without its ledger check
+with its owner, and the fix: `gbrain apply-migrations --yes` when the doctor's role may re-create
+it, else the `ALTER FUNCTION ... OWNER TO` SQL to run as the owning role first.
 
 The segmented storage recipe above already covers the two derivation purge tables for a
 role it applies to. A policy that filters out ledger rows of a source the role writes hides
@@ -8243,7 +8262,9 @@ Save ONE fact with mandatory attribution.
   `share: true`, and its `visibility: "world"` is refused; the brain owner's
   own credential saves as above (shared by default, `private` on its member
   page when it asks or the page or default keeps facts private). The response
-  names the `page` and `visibility` the fact got.
+  names the `page` and `visibility` the fact got. Facts saved `private` before
+  the default became `world` stay private until the operator runs
+  `gbrain repair open-facts` on the brain host (no remote verb opens them).
 
 Response: `{ id, status, status_text, entity_slug, valid_until,
 protocol_version }` (+ `degraded_dedup: true` when no embedding provider —
@@ -9794,8 +9815,12 @@ seconds and comes back with only vector hits; search metadata carries
 statement timeout` (SQLSTATE 57014). Keyword-mode paging and the strict page
 count rank every matching page, so their cost grows with how common the terms
 are. Hybrid search's keyword arm ranks at most 50,000 matching chunks (its metadata
-carries `keyword_candidates_incomplete` when that bound applies). A local
-caller's statement usually stops reading matches at that bound. A remote MCP
+carries `keyword_candidates_incomplete` when that bound applies). For a local
+caller, hybrid search's title step ranks at most 5,000 of the pages whose title
+or timeline matches (the lowest page ids) and reports the same
+`keyword_candidates_incomplete` when it cuts; a remote caller's title step
+matches titles only. A local
+caller's keyword statement usually stops reading matches at the 50,000 bound. A remote MCP
 caller's arm stops there when the call sets no type, frontmatter or date filter
 and no source scope narrower than every live source; with such a filter it
 can still read every match before ranking. (A remote caller's arm used to read

@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   MIGRATION_VERSIONS,
+  RECONCILE_MIGRATION_VERSIONS,
   MAX_CONSECUTIVE_PARTIALS,
   compareVersions,
   statusForVersion,
@@ -35,6 +36,9 @@ function entry(version: string, status: CompletedMigrationEntry['status']): Comp
 describe('MIGRATION_VERSIONS registry sync (EV4)', () => {
   test('matches the real migration registry exactly, in order', () => {
     expect([...MIGRATION_VERSIONS]).toEqual(migrations.map(m => m.version));
+  });
+  test('RECONCILE_MIGRATION_VERSIONS lists exactly the migrations that declare reconcile', () => {
+    expect([...RECONCILE_MIGRATION_VERSIONS]).toEqual(migrations.filter(m => m.reconcile).map(m => m.version));
   });
 });
 
