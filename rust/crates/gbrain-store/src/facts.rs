@@ -86,6 +86,15 @@ pub(crate) fn fact_exists(read: &dyn KvRead, id: u64, source_ids: &[String]) -> 
         .is_some_and(|row| source_ids.is_empty() || source_ids.contains(&row.source_id)))
 }
 
+/// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`).
+/// Nothing to delete yet. Full paths keep this stub clear of the imports this file will add.
+pub(crate) fn remove_source_rows(
+    _tx: &mut dyn crate::kv::KvWrite,
+    _source_id: &str,
+) -> crate::Result<()> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
