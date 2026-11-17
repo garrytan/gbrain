@@ -1,5 +1,8 @@
 {
   "dependencies": {
+    "admin/e2e/publish-copy-button.pw.ts": [
+      "test/publish.test.ts"
+    ],
     "docs/research/rust-engine/data/**": [
       "test/docs-repo-paths.test.ts"
     ],
