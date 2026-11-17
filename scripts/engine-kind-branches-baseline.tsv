@@ -130,7 +130,6 @@ src/core/function-search-path.ts	kind_compare	1
 src/core/link-source-check-repair.ts	kind_compare	1
 src/core/maintenance/run.ts	kind_compare	2
 src/core/mcp-request-log-retention.ts	kind_compare	2
-src/core/mentions/policy.ts	kind_compare	2
 src/core/migrate.ts	kind_compare	4
 src/core/migration-orchestration-lock.ts	kind_compare	2
 src/core/migration-preludes.ts	kind_compare	3
