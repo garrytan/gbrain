@@ -69,7 +69,7 @@ while IFS=$'\t' read -r pattern fix; do
     echo "FAIL: $file:$line retired phrase \"$match\"" >&2
     echo "Why:  refactor wave 1 retired this workflow; agents follow these docs literally and would edit the wrong file." >&2
     echo "Fix:  rewrite the sentence to the current instruction: $fix" >&2
-    echo "See:  docs/TESTING.md#retired-phrase-guard" >&2
+    echo "See:  docs/ci-guards.md#retired-phrase-guard" >&2
   done < <(grep -rnIE "$pattern" "${SCAN[@]}" 2>/dev/null || true)
 done <<< "$RETIRED"
 
