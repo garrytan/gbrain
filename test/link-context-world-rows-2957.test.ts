@@ -1,0 +1,162 @@
+/**
+ * GST-2957: a stored link context is an excerpt of the from page's body, so a reference in or next to a facts fence
+ * carries fence row text, private rows and held rows (a world cell whose fact is stored narrower) included. Every
+ * reader that hands a context to a remote caller whose fact reads are world-only (worldOnlyFacts) must leave that text
+ * out: get_backlinks, get_links, traverse_graph (walk and hops), entity and context_pack's cards. context_pack's core
+ * block must leave held rows out for the same caller. The owner's remote callers and the local CLI keep what they read
+ * before. Each read runs through MCP dispatch as the caller, on PGLite, and on Postgres when DATABASE_URL is set.
+ * Synthetic data only.
+ */
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { randomUUID } from 'node:crypto';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
+import { sqlQueryForEngine } from '../src/core/sql-query.ts';
+import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
+import { setOwner } from '../src/core/access/owner.ts';
+import { bindCredential } from '../src/core/access/members.ts';
+import type { AuthInfo } from '../src/core/ops/contract.ts';
+import { renderFactsTable } from '../src/core/facts-fence.ts';
+import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { registerLocalWriter } from '../src/core/persistence/identity.ts';
+import { testBackends } from './helpers/test-backends.ts';
+import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
+
+const row = (n: number, claim: string, visibility = 'world') => ({ rowNum: n, claim, kind: 'fact', confidence: 1, visibility, notability: 'medium', active: true });
+const page = (type: string, title: string, rows: ReturnType<typeof row>[], fm = '') =>
+  '---\ntype: ' + type + '\ntitle: ' + title + '\n' + fm + '---\n# ' + title + '\n\nProfile.\n\n## Facts\n\n' + renderFactsTable(rows as never) + '\n';
+
+const TARGET = 'people/target-example';
+const THIRD = 'people/third-example';
+const ACME = 'companies/acme-example';
+const LIA = 'people/lia-example';
+const PLAIN = 'notes/plain-example';
+const CORE = 'notes/core-example';
+/** Fence rows on LIA: a private row and a held row, each naming another page. */
+const PRIV = 'pelicanprivcanary';
+const HELD = 'wombatheldcanary';
+/** Fence rows on a core page with no links: they reach a reader only through the core block. */
+const CORE_PRIV = 'heronprivcorecanary';
+const CORE_HELD = 'badgerheldcorecanary';
+/** A context outside any fence, which every caller keeps. */
+const PROSE = 'otterplainprose';
+const HOPS = [{ link_type: 'works_at', toward: 'object' }];
+
+for (const kind of testBackends()) {
+  describe('GST-2957 stored link context and the core block for world-only callers (' + kind + ')', () => {
+    let engine: BrainEngine; let close: () => Promise<void>;
+    const tokens: Record<string, string> = {};
+    const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+    async function call(who: string, op: string, params: Record<string, unknown>): Promise<string> {
+      __resetPrivateVisibilityCacheForTests();
+      let out;
+      if (who === 'local') out = await dispatchToolCall(engine, op, { ...params }, { remote: false, sourceId: 'default' });
+      else {
+        const auth = await provider().verifyAccessToken(tokens[who]!) as unknown as AuthInfo;
+        out = await dispatchToolCall(engine, op, { ...params }, { remote: true, transport: 'http', auth, sourceId: auth.sourceId ?? 'default', takesHoldersAllowList: ['world'] });
+      }
+      const text = out.content.map(c => c.text).join('\n');
+      expect(out.isError, who + ' ' + op + ': ' + text.slice(0, 300)).toBeFalsy();
+      return text;
+    }
+    const put = (slug: string, content: string) => call('local', 'put_page', { slug, content, request_id: randomUUID() });
+    const holdRow = (canary: string) => engine.transaction(tx => withCoordinatedWrite(tx, ['default'],
+      () => tx.executeRaw("UPDATE facts SET visibility = 'private' WHERE fact LIKE '%' || $1 || '%'", [canary]), TEST_WRITE_ATTRIBUTION));
+
+    beforeAll(async () => {
+      if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
+      else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
+      await disposePersistenceConsumer(engine);
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      await registerLocalWriter(engine, 'cli');
+      for (const [slug, title] of [[TARGET, 'Target Example'], [THIRD, 'Third Example']]) await put(slug, page('person', title, [row(1, title + ' likes tea')]));
+      await put(ACME, page('company', 'Acme Example', [row(1, 'Acme makes widgets')]));
+      await put(LIA, page('person', 'Lia Example', [
+        row(1, 'Lia owes [[' + TARGET + ']] money ' + PRIV, 'private'),
+        row(2, 'Lia works at [[' + ACME + ']] as an engineer'),
+        row(3, 'Lia dated [[' + THIRD + ']] ' + HELD),
+      ]));
+      await put(PLAIN, '---\ntype: note\ntitle: Plain\n---\n# Plain\n\nThe ' + PROSE + ' memo mentions [[' + TARGET + ']] in passing.\n');
+      await put(CORE, page('note', 'Core Example', [row(1, 'Core detail ' + CORE_PRIV, 'private'), row(2, 'Core detail ' + CORE_HELD), row(3, 'Core detail public')], 'always_load: true\n'));
+      // Held: a world cell whose stored fact is narrower, the state an unaccepted widening leaves (GST-2891).
+      await holdRow(HELD);
+      await holdRow(CORE_HELD);
+      await engine.setConfig('memory.core.enabled', 'true');
+      for (const id of ['owner-example', 'bob-example']) await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1)', [id]);
+      const mint = async (name: string, member?: string) => {
+        const m = await mintLegacyToken(engine, { name, scopes: ['read'], takesHolders: ['world'] });
+        tokens[name] = m.token;
+        if (member) await bindCredential(engine, { kind: 'token', id: m.id }, { member }); else await readsUnscopedOnPurpose(engine, m.id);
+      };
+      await mint('owner', 'owner-example'); await mint('bob', 'bob-example'); await mint('unbound');
+      await setOwner(engine, 'owner-example');
+    }, 300_000);
+    afterAll(async () => { await disposePersistenceConsumer(engine); await close?.(); }, 60_000);
+
+    const linkReads: Array<[string, string, Record<string, unknown>]> = [
+      ['get_backlinks', 'get_backlinks', { slug: TARGET }],
+      ['get_backlinks third', 'get_backlinks', { slug: THIRD }],
+      ['get_backlinks acme', 'get_backlinks', { slug: ACME }],
+      ['get_links', 'get_links', { slug: LIA }],
+      ['traverse_graph', 'traverse_graph', { slug: LIA, depth: 1 }],
+      ['traverse_graph in', 'traverse_graph', { slug: TARGET, depth: 1, direction: 'in' }],
+      ['traverse_graph hops', 'traverse_graph', { slug: LIA, hops: HOPS }],
+      ['entity', 'entity', { name: LIA }],
+      ['entity target', 'entity', { name: TARGET }],
+      ['context_pack', 'context_pack', { entities: LIA }],
+    ];
+
+    test('the fixture stores the private and held rows inside link contexts', async () => {
+      const contexts = (await engine.executeRaw<{ context: string }>('SELECT context FROM links')).map(r => r.context).join('\n');
+      expect(contexts).toContain(PRIV);
+      expect(contexts).toContain(HELD);
+      const hop = JSON.parse(await call('local', 'traverse_graph', { slug: LIA, hops: HOPS }));
+      expect(hop.answers.map((a: { slug: string }) => a.slug)).toEqual([ACME]);
+    }, 60_000);
+
+    test('a world-only remote caller reads no private or held row text through a stored link context', async () => {
+      const leaks: string[] = [];
+      for (const who of ['bob', 'unbound']) for (const [label, op, params] of linkReads) {
+        const text = await call(who, op, params);
+        for (const canary of [PRIV, HELD]) if (text.includes(canary)) leaks.push(who + ' ' + label + ' ' + canary);
+      }
+      expect(leaks).toEqual([]);
+    }, 120_000);
+
+    test("context_pack's core block leaves held rows out for a world-only remote caller", async () => {
+      for (const who of ['bob', 'unbound']) {
+        const text = await call(who, 'context_pack', { entities: TARGET });
+        expect(text).toContain('Core detail public');
+        expect(text).not.toContain(CORE_PRIV);
+        expect(text).not.toContain(CORE_HELD);
+      }
+    }, 60_000);
+
+    test('a context outside any fence still reaches a world-only remote caller', async () => {
+      for (const who of ['bob', 'unbound']) {
+        expect(await call(who, 'get_backlinks', { slug: TARGET })).toContain(PROSE);
+        expect(await call(who, 'entity', { name: TARGET })).toContain(PROSE);
+      }
+    }, 60_000);
+
+    test("the owner's remote caller and the local CLI still read the private and held rows' context", async () => {
+      for (const who of ['owner', 'local']) {
+        expect(await call(who, 'get_backlinks', { slug: TARGET })).toContain(PRIV);
+        expect(await call(who, 'get_backlinks', { slug: THIRD })).toContain(HELD);
+        const links = await call(who, 'get_links', { slug: LIA });
+        for (const canary of [PRIV, HELD]) expect(links).toContain(canary);
+        expect(await call(who, 'entity', { name: LIA })).toContain(PRIV);
+        const pack = await call(who, 'context_pack', { entities: LIA });
+        for (const canary of [PRIV, HELD, CORE_HELD]) expect(pack).toContain(canary);
+      }
+      const walk = await call('owner', 'traverse_graph', { slug: LIA, depth: 1 });
+      for (const canary of [PRIV, HELD]) expect(walk).toContain(canary);
+    }, 120_000);
+  });
+}

@@ -35,6 +35,9 @@ import { activationSuppressedSql } from './sql.ts';
 import { holdFingerprint } from '../write-gate-store.ts';
 import { memberFactAdmitSql } from '../access/member-facts.ts';
 import { worldOnlyFacts } from '../search/private-visibility.ts';
+import { sanitizeRemoteBody } from '../remote-body.ts';
+import { MANAGED_LINK_SOURCES, maskLinksFence } from '../links-fence.ts';
+import { ensureWellFormed } from '../text-safe.ts';
 
 /** The origin slot of a fence trust marker: the chunk holds facts-fence rows, not page prose. */
 export const FENCE_TRUST_ORIGIN = 'facts-fence';
@@ -296,4 +299,57 @@ export async function loadFenceChunkOverlay(
 export async function heldRowsForCaller(engine: Pick<BrainEngine, 'executeRaw'>, remote: boolean | undefined,
   page: { sourceId: string; slug: string; compiled_truth: string; timeline?: string | null }): Promise<ReadonlySet<number> | undefined> {
   return worldOnlyFacts(remote) ? (await loadFenceChunkOverlay(engine, page, { hideHeld: true }))?.held : undefined;
+}
+
+/** Link producers whose context is an excerpt of the from page's body (link-extraction.ts); a null source is a legacy row. */
+const BODY_EXCERPT_LINK_SOURCES: readonly string[] = MANAGED_LINK_SOURCES.filter(s => s !== 'frontmatter');
+
+/**
+ * GST-2957: stored link contexts as a caller whose fact reads are world-only (worldOnlyFacts) may read them. A context
+ * written by a body producer is an excerpt of its from page's body (`page(row)`), so a reference in or near a facts or
+ * takes fence carries fence row text, private and held rows included. On a from page whose body holds such a fence, the
+ * caller keeps that context only when it reads, whitespace-collapsed as the extractor collapses it, inside the page as
+ * get_page shows it to the caller (sanitizeRemoteBody less heldRowsForCaller); otherwise it is emptied, as it is when
+ * the page is stored in segments, is gone or the lookup fails (fail closed). Contexts the caller supplied (manual and
+ * other add_link provenances, frontmatter fields) and every context read by any other caller are returned as stored.
+ */
+export async function worldLinkContexts<T extends { context?: string | null; link_source?: string | null }>(
+  engine: Pick<BrainEngine, 'executeRaw'>, remote: boolean | undefined, rows: T[],
+  page: (row: T) => { sourceId: string; slug: string },
+): Promise<T[]> {
+  if (!worldOnlyFacts(remote)) return rows;
+  const checked = rows.map(row => !!row.context && (row.link_source == null || BODY_EXCERPT_LINK_SOURCES.includes(row.link_source)));
+  const key = (ref: { sourceId: string; slug: string }) => `${ref.sourceId}\u0000${ref.slug}`;
+  const refs = [...new Map(rows.filter((_r, i) => checked[i]).map(row => [key(page(row)), page(row)] as const)).values()];
+  if (refs.length === 0) return rows;
+  let views: Map<string, string | null> | null = new Map();
+  try {
+    const pages = await engine.executeRaw<{ source_id: string; slug: string; segmented: boolean; fenced: boolean; compiled_truth: string | null; timeline: string | null }>(
+      `SELECT p.source_id, p.slug, s.segmented, f.fenced,
+         CASE WHEN f.fenced THEN p.compiled_truth END AS compiled_truth, CASE WHEN f.fenced THEN p.timeline END AS timeline
+       FROM pages p JOIN unnest($1::text[], $2::text[]) AS u(source_id, slug) ON p.source_id = u.source_id AND p.slug = u.slug
+       CROSS JOIN LATERAL (SELECT p.body_storage IS NOT DISTINCT FROM 'segmented' AS segmented) s
+       CROSS JOIN LATERAL (SELECT NOT s.segmented AND (concat(p.compiled_truth, p.timeline) LIKE '%gbrain:facts%'
+         OR concat(p.compiled_truth, p.timeline) LIKE '%gbrain:takes%') AS fenced) f
+       WHERE p.deleted_at IS NULL`,
+      [refs.map(r => r.sourceId), refs.map(r => r.slug)]);
+    for (const p of pages) {
+      if (p.segmented === true) { views.set(key({ sourceId: p.source_id, slug: p.slug }), null); continue; }
+      if (p.fenced !== true) continue;
+      const compiled = p.compiled_truth ?? '';
+      const omitRows = await heldRowsForCaller(engine, remote, { sourceId: p.source_id, slug: p.slug, compiled_truth: compiled, timeline: p.timeline });
+      const shown = sanitizeRemoteBody(compiled, { omitRows }) + '\n' + sanitizeRemoteBody(p.timeline ?? '', { omitRows });
+      views.set(key({ sourceId: p.source_id, slug: p.slug }), ensureWellFormed(maskLinksFence(shown)).replace(/\s+/g, ' '));
+    }
+    for (const ref of refs) if (!pages.some(p => p.source_id === ref.sourceId && p.slug === ref.slug)) views.set(key(ref), null);
+  } catch {
+    views = null;
+  }
+  return rows.map((row, i) => {
+    if (!checked[i]) return row;
+    const k = key(page(row));
+    if (views && !views.has(k)) return row;
+    const view = views?.get(k);
+    return view && view.includes(row.context!) ? row : { ...row, context: '' };
+  });
 }

@@ -18,6 +18,7 @@ import { cutLinkPage, finishLinkPage, linkId, parseLinkListing, reportLinkPage }
 import { opError, type Operation } from './contract.ts';
 import type { Action } from '../agent-output.ts';
 import { presentEdgeContext, resolveChainAnchors, runRelationalChain, validateChainHops, type ChainEvidenceEdge, type ChainPlan } from '../search/relational-chain.ts';
+import { worldLinkContexts } from '../eligibility/fence-overlay.ts';
 import { invalidParam, paramUse, readFix } from './op-fix.ts';
 import {
   assertExplicitSourceLive,
@@ -370,7 +371,8 @@ async function readLinkEdges(
   } while ((listing.all || kept.length === 0) && nextId !== undefined);
   reportTemporal(ctx, opName, p, temporal, hidden);
   if (kept.length === 0 && hidden === 0 && listing.afterId === undefined && !fromType) await hintScopedLinkMiss(ctx, p, requested, policy, direction);
-  return { links: kept, nextCursor: reportLinkPage(ctx, opName, p, listing, { returned: kept.length, nextId }) };
+  const links = await worldLinkContexts(ctx.engine, ctx.remote, kept, l => ({ sourceId: l.from_source_id, slug: l.from_slug }));
+  return { links, nextCursor: reportLinkPage(ctx, opName, p, listing, { returned: kept.length, nextId }) };
 }
 
 /**
@@ -639,7 +641,7 @@ const traverse_graph: Operation = {
       }) : undefined;
       ctx.emitNotice?.({ code: 'graph_walk_truncated', kind: 'degraded', why, ...(fix ? { fix } : {}) });
     }
-    return paths;
+    return worldLinkContexts(ctx.engine, ctx.remote, paths, e => ({ sourceId: e.from_source_id, slug: e.from_slug }));
   },
   scope: 'read',
   cliHints: { name: 'graph', positional: ['slug'] },
