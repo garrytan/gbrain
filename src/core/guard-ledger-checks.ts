@@ -16,7 +16,7 @@ import { DERIVATION_SCOPE_ENTRY_FUNCTION_SQL, REFUSE_PURGING_DERIVATION_FUNCTION
 
 /**
  * Each guard, the ledger whose check marks its current body, that body, and for a guard a later migration changed again
- * a text only its current body holds (GBRA-574 v320: the facts guards' name-key branch), so the migration run of a role
+ * a text only its current body holds (GBRA-574 v321: the facts guards' name-key branch), so the migration run of a role
  * that owns it re-creates it too.
  */
 const LEDGER_GUARDS: ReadonlyArray<{ name: string; ledger: string; sql: string; marker?: string }> = [

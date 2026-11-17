@@ -13,8 +13,8 @@ import { failClosedLedgerGuards } from '../guard-ledger-checks.ts';
 // take an ACCESS EXCLUSIVE lock on facts. Like v318, a guard another role owns is left and named on stderr, never an
 // abort; every later migration run re-creates it once a role that owns it runs (failClosedLedgerGuards reads each
 // guard's marker). No row is read or written.
-export const v320: Migration = {
-  version: 320,
+export const v321: Migration = {
+  version: 321,
   name: 'unbacked_entity_keys_guards',
   idempotent: true,
   sql: '',
