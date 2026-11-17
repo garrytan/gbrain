@@ -52,7 +52,7 @@ a time, never when the archive is off, and never fails the pass: its outcome, er
 and the next pass picks up the rest.
 
 `gbrain transcripts archive run` archives now, on demand, whatever the pass is doing; it works with automatic
-maintenance turned off (`maintenance.auto false`).
+maintenance turned off (`maintenance.auto false`), and `gbrain transcripts archive status` says so when it is off.
 
 `run` and `backfill` exit 1 when anything in the run failed, and 0 otherwise, even when most days were written:
 the days that did not make it are retried by the next run on their own, and a script or scheduler should see that

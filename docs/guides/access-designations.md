@@ -188,7 +188,9 @@ host saved with `visibility: "private"`, or one on a page whose `readable_by` na
 on a page whose readers leave the owner out (even with `reads-restricted on`) or on another member's page stays with the brain host, and one the owner confirmed or curated files a `forget_requires_owner`
 proposal instead, as for a shared fact. The trade-off: an owner agent that follows a planted instruction can share a fact
 without passing any flag, so pass `visibility: "private"` for a fact that must stay with the owner. Extracted facts follow `facts.default_visibility` (private when unset)
-and are never wider than their page. Remote fact reads return private facts to the owner only.
+and are never wider than their page. Remote fact reads return private facts to the owner only. Facts saved `private`
+before `facts.default_visibility` became `world` stay private until the operator opens them from the brain host with
+`gbrain repair open-facts` (preview first, with an undo; see [repair](repair.md#open-facts-saved-private-before-the-world-default)).
 
 ### The owner (`gbrain access owner`)
 

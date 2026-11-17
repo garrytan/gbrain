@@ -10,6 +10,133 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.734.0] - 2026-11-17
+
+**Repairs keep a page's safety flag or quarantine, `gbrain facts relink` keeps a fact's origin and exact dates, and consolidate no longer ends a fact because it was said again.**
+
+### Fixed
+- `gbrain repair rows-behind` and the other managed file repairs no longer strip the write gate's `instruction_like` flag or quarantine from a page. A repair now publishes through the same write gate a sync of those bytes runs, with the file's path, so an owner allow rule scoped to that path holds during a repair as it does during sync. Rows-behind and overwritten-edits comparisons ignore those database-only markers, so a flagged page is no longer reported behind its own file. Under `write_gate.external_mode=reject`, a repair of external instruction-like content now refuses with `write_gate_rejected`, as sync already holds that file, and the refusal names `gbrain trust allow --source <id> --uri-prefix <path>` (#9511).
+- `gbrain facts relink` no longer re-stamps a fact's trust tier and write origin with the relink request, and no longer rounds its `valid_from` and `valid_until` to the second. The page's facts table carries the stored instant to the millisecond, so the page projection writes the same instant back. A fact stored finer than a millisecond is left unlinked and counted `claim_unfenceable` instead of being rounded (#9260).
+- The upkeep consolidate step no longer ends a fact at the next copy of the same claim. A fact now ends at the next fact in its cluster that says something else, by claim text and typed value, so a restated value stays active from the date it was first stated, every copy ends together when the value changes, and a typed metric whose value changed under the same wording still ends the older value. Facts consolidated before this release keep the dates they have.
+
+<!-- behavior-change: repair_write_gate_markers_9511 -->
+<!-- behavior-change: relink_keeps_fact_instant_9260 -->
+<!-- behavior-change: consolidate_restatement_stays_open -->
+
+**New `gbrain repair open-facts` lets the operator open facts saved private before the world default, after a preview, with an undo.**
+
+<!-- behavior-change: open_facts_repair_8194 -->
+
+### Added
+- `gbrain repair open-facts --source <id> --created-before <ISO-8601>` previews the active private facts saved before that instant, counts every fact it leaves private by reason (private, missing or quarantined pages, member pages, withdrawn, contested, expired, superseded), and `--apply --expect <hash>` opens exactly that window in place, keeping ids and trust tiers (Discussion #8194).
+- Facts with no page and transcript-lane facts are listed apart and open only with `--class unpaged:<lane>`; `--ids-file` narrows the set; `--undo <ledger>` re-privates what a run opened.
+- The command runs only from the CLI on the brain host: remote callers, member mode (`GBRAIN_ENFORCED_MEMBER`), `repair --all`, doctor and the remediation plan never run it. Nothing changes until an operator runs it.
+- A fact made private on purpose before the cutoff is opened with the legacy ones, so read the preview or narrow the run with `--ids-file`.
+- A fact with an end date (`valid_until`) in the past that was never expired or superseded is opened like a current one; a follow-up leaves it private.
+- A fact whose table sits in a page's timeline is left private; a follow-up opens it.
+
+**A remote `remember` that restates a confirmed private fact as world is now stored private until the brain's operator accepts it, as page writes to that fact's own page already were.**
+
+<!-- behavior-change: remember_restated_private_hold_2875 -->
+
+### Fixed
+- A remote caller that remembered the exact claim of a private fact on the same entity, more trusted than itself, got a new world copy that every other connected client could read, so an agent that knew a private claim could publish it. The new fact is now stored private with a trust proposal that carries the widening; `gbrain trust review` lists it and `gbrain trust confirm tp<N>` makes it world. Remembers with no private copy on that entity, with a world copy already present, or with an explicit private visibility are unchanged.
+- Two gaps remain until #9574 lands: the page that carries a held fact still shows its text to remote `get_page` and search, and a writer who first saves the same claim about a different entity is not held.
+
+**Ten small fixes from outside reports: agent-session repair, doctor, the prompt hook, sync, transcript ingest and enrich.**
+
+### Fixed
+- `gbrain repair agent-session-facts` no longer counts sessions that already carry a speaker sidecar toward another session's repeated opening, so an owner session whose prompt was replayed by marked workers is no longer listed as ambiguous (#9521, reported and first fixed by @Masashi-Ono0611).
+- `gbrain doctor --only memory_writeback` connects the database instead of reporting it unreachable (#9513, reported and first fixed by @Masashi-Ono0611).
+- The Retrieval Reflex recipe's health check and setup steps run only its own doctor check, so an unrelated failing check no longer fails the integration (#9228, reported and first fixed by @johnerik).
+- A facts-absorb job that finished by skipping (superseded, page missing, extraction off) no longer counts as proof the page was extracted, so a later rewrite that keeps the body still queues extraction (#9248, reported and first fixed by @Masashi-Ono0611).
+- Task notifications and teammate messages no longer get the brain-first nudge, in the main prompt hook and in the turn-rule hook; prompts a person types are unchanged (#9163, reported and first fixed by @Masashi-Ono0611).
+- A failed commit-ledger location lookup is retried on the next call instead of being remembered for the life of the process (#8870, reported and first fixed by @sx4im).
+- `gbrain sync --all --parallel N` caps how many sources run at once, as its help says, and `--max-sources` still wins when both are given (#8951, reported and first fixed by @Masashi-Ono0611).
+- `gbrain transcripts ingest` skips Claude Code's per-project `sessions-index.json` instead of reporting an unknown format on every run (#9115, reported and first fixed by @Masashi-Ono0611).
+- The autopilot-install doctor test names its installer target, so on macOS it can no longer load a real LaunchAgent (#9545, reported and first fixed by @Kkkkkuro).
+- `gbrain enrich` stops asking the provider for a prompt cache, because its system prompt is below the smallest cacheable prefix and the cache was written on every call but never read (#9541, reported and first fixed by @mattverlaque).
+
+**`gbrain repair agent-session-facts` finishes its preview on brains with tens of thousands of saved facts, and `gbrain setup claude-code` no longer fails its re-run after Claude Code rewrites its settings file.**
+
+### Fixed
+- `gbrain repair agent-session-facts` (and doctor's `agent_session_facts` check) no longer times out on a large brain. The preview fingerprinted the source's facts once for every user-attributed fact saved from a session, before it knew whether that session was an agent's; it now looks for the owner's own copy only for facts whose session it already judged evidenced or ambiguous, using the existing fingerprint index, and it reads each take's contributing facts in one pass instead of one lookup per take. On a generated brain with 143,640 facts and 7,045 sessions the preview went from a statement timeout to about 1.5 seconds (#9503).
+- `gbrain setup claude-code` re-run no longer exits 1 with `turn_hook_not_loaded` (and doctor's `harness_wiring` no longer warns) when Claude Code has rewritten `~/.claude/settings.json` without the `_gbrain` key on gbrain's hook entries. The per-turn hook check now recognises an entry the setup receipt owns, the same way setup itself does (#9505).
+- `gbrain errors migration_host_work_owed` explains the doctor warning instead of printing "Unknown error code".
+- `gbrain sources git-reconcile` treats a git command that ran past its time limit or was killed from outside (`git_command_stopped`) as a retryable failure (exit 4) instead of asking the user (exit 1). A git command stopped by its output limit or by a git crash still asks the user, since a retry stops the same way.
+- `gbrain git commit-push` refuses with `git_unavailable` when it cannot list conflicted files, instead of reading a failed listing as "no conflicts". A write-through file refused for unresolved conflicts is kept in the pending ledger, so doctor reports it and `--pending` retries it, while later write-throughs still commit the ledger's other files, and the advice now says to keep the changes from both sides rather than to pick one side, since one side may be a write gbrain made.
+- A git child that crashes (SIGSEGV, SIGBUS, SIGILL, SIGFPE or SIGABRT) is reported as a crash with a `git fsck` suggestion, not as a kill from outside gbrain, and output too large for one string is reported as `git_command_stopped` (`output_limit`) instead of an empty listing.
+
+### Tests and CI
+- The unit suite runs on 36 shards instead of 34, with refreshed shard weights, which brings the predicted time per shard from about 595 s to about 562 s.
+- A test now covers `scripts/check-migration-projection.ts` and its baseline, and macOS 26 validation records the tree it tested so a passed run can stand as evidence for the same tree.
+
+<!-- behavior-change: setup_turn_hook_unmarked_9505 -->
+<!-- behavior-change: git_reconcile_stopped_retryable -->
+
+**`gbrain frontmatter validate` checks every path you give it, and doctor, `gbrain serve --http`, the update check and the agent-session repair each get a small fix.**
+
+### Fixed
+- `gbrain frontmatter validate a.md b.md` validated only the last path and could report ok for a bad file named earlier. It now checks every path, walks each directory, checks a file named twice once, refuses before checking anything when a path is missing, and lists the paths as `targets` in `--json` when there is more than one.
+- Doctor no longer tells you to run `gbrain sync` for a gbrain-owned content folder on a brain with persistence off, which sync refuses. The check still fails, and it now names the `gbrain import` command that works for that folder.
+- `gbrain transcripts archive status` says when `maintenance.auto` is false, because free upkeep then doesn't archive conversations by itself (an installed autopilot still does). The line names `gbrain transcripts archive run`.
+- `gbrain serve --http` no longer treats a request refused for a missing or wrong token as activity, so unauthenticated traffic can't keep idle upkeep from running (#9484).
+- If your computer's clock moved backwards, the update check no longer goes quiet. A saved answer stamped more than 5 minutes in the future counts as stale and is replaced, so a notice that your version was withdrawn still reaches you (#8795, also reported in #9157).
+- `gbrain repair agent-session-facts` reads only the listed sources' facts when it looks up takes, so its cost follows the source instead of the whole brain.
+
+<!-- behavior-change: frontmatter_validate_every_path -->
+<!-- behavior-change: serve_http_refused_not_activity_9484 -->
+<!-- behavior-change: update_cache_future_stamp_8795 -->
+
+**Local searches on a very common word no longer spend the keyword time limit in the title step.**
+
+### Fixed
+- The title step of hybrid search now ranks at most 5,000 matching pages for local callers, the ones with the lowest page ids, so the cut keeps the same pages on every call. A word that sits in many page timelines used to make it rank every matching page and run into the 8 s keyword statement limit on a large brain, a second time after the keyword step (#7082). When the cut applies, pages whose title holds the words come first and hybrid search reports `keyword_candidates_incomplete`. A query that matches 5,000 pages or fewer keeps its exact result, including a page found only through a timeline row that no chunk holds. Remote callers' results do not change.
+
+<!-- behavior-change: title_arm_candidate_cap_7082 -->
+
+**A restricted Postgres write role can no longer save purged or withdrawn content again by lacking a read policy on the purge and withdrawal ledgers: the guard now refuses the write with a message naming the policy to add.**
+
+<!-- behavior-change: guard_ledgers_fail_closed_7632 -->
+
+### Fixed
+- The seven purge and withdrawal guard triggers (facts, takes, pages, segment derivations and the derivation sweep's scope note) read their ledgers as the writing role. A role with write policies on the guarded table but no policy on the ledger read it as empty, so a purged claim, take, page or derivation could be stored again while the purge reported done, and a withdrawn fact could be saved or set active again. Each guard now refuses such a role with `writer_coordinator_required` (`unreadable_state`), the same refusal the writer fences and derived-state maintainers use, and its hint names the table and the docs/ENGINES.md recipe. The guards keep running with the writer's own rights (no SECURITY DEFINER). Migration v318 applies it to existing brains. Owners, roles that bypass row-level security and PGLite see no change. (#7632, #7659)
+- After upgrading on Postgres, check the guards. v318 can only replace a guard function the migrating role owns. One owned by another role stays fail-open, and v318 names it in a single stderr line starting `guards:`. docs/ENGINES.md ("Purge and withdrawal guards") has a query that lists the seven guards and whether each now fails closed. For any that doesn't, its owner runs `ALTER FUNCTION public.<name>() OWNER TO <the role gbrain migrates as>`, then `gbrain apply-migrations --yes` (or the next gbrain start) replaces it.
+
+**A purged claim no longer comes back as a page's change reason when a sync publishes after the purge.**
+
+### Fixed
+- A sync reads each page's change reason from its `gbrain-reason` commit trailer before it saves the page. If a fact purge committed in between, the saved page history still stored the purged text as that page's reason. The save now checks the purge's tombstone for the exact commit and file when it writes the history row, so the reason is stored empty, while the page content still imports and other files' reasons from the same commit are kept. This applies to classic and managed sync (#8635, #8591).
+
+<!-- behavior-change: purged_change_reason_8635 -->
+
+**A large read-only mirror source whose sync passes only re-check old holds no longer parks as `pass_abandoned` with nothing settled, and its status and repair output now say what is actually held.**
+
+### Fixed
+- A sync pass that stopped while it re-checked old holds now counts as progress when it cleared a hold's re-check trigger, so a few such passes no longer build the abandoned streak. Passes that re-check the same holds every time (slug conflicts) still end `pass_abandoned`, and so do passes that only re-hold a page edited again before each of them: once that hold has been held three times, `gbrain sync status` reports `needs_human: true` with that page's own decision.
+- A pass now reads the earlier Git versions of the held pages it re-checks one batch at a time, just before that batch commits, instead of for the whole round before its first commit. On a source with many such holds the first commit came only after the whole history read.
+- `gbrain sync status` leads with the pass's own next step when the holds are not what stops the source, and `next.why` for `pass_interrupted` and `pass_abandoned` names the step the stopped pass was last seen in (the level read, or the history read with how far it got).
+- On a read-only mirror, `gbrain repair file-drift --held` compares each held page with its file. A differing page reads `prefer_file` or `needs_human` with its evidence, a matching one `release_hold`, and only a page whose file is gone reads `no_drift` with `database_only`. The comparison still writes nothing.
+- A windowed held dry run reports `complete: false` while held pages remain past its window, and `details.window.next_command` names the next window.
+- `gbrain sources status --json` counts `git_holds.by_code` over every hold of the source, not only the listed ones.
+
+Larger sources still need a per-class decision flow for their held pages; this change only makes the counts and the comparison true.
+
+<!-- behavior-change: mirror_compare_reads_file_gst2843 -->
+<!-- behavior-change: held_compare_complete_window_gst2843 -->
+<!-- behavior-change: hold_by_code_counts_all_gst2843 -->
+
+**Saved facts in query results now say when they were said, collapse their copies, match on word stems, and end at the right date when replaced.**
+
+<!-- behavior-change: fact_rows_observed_date_gbra574 -->
+<!-- behavior-change: superseded_fact_valid_until_gbra574 -->
+
+### Fixed
+- The facts block, temporal fact reserve, facts arm and recall date headers print the observed date of the page each fact came from, read under the caller's page access; a failed read reports `fact_observed_date_unavailable` instead of a silent `observed unknown`.
+- Copies of one claim take one row in the facts block (dated as first stated, `(stated N times, last DATE)`), so restated facts stop crowding out older values; facts that differ by one word keep their rows.
+- Question ranking of saved facts matches on stems under the brain's full-text config (an exact word still ranks above a stem-only match) and ignores dates, years and auxiliary verbs, so an as-of question admits the facts it names and a fact sharing only a year with the question is not admitted.
+- Every supersession writer ends the replaced fact by one rule. It ends on the newer fact's `valid_from` when it falls inside the older fact's window, else at the older fact's own earlier end or now, and never before the older fact began. New writes only.
+
 ## [0.60.733.0] - 2026-11-16
 
 **`gbrain transcripts archive` no longer has a day page refused by the write gate over its name, and a run exits 1 exactly when its `errors` list is not empty.**
