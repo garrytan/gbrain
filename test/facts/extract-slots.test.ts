@@ -78,7 +78,8 @@ describe('conversation extraction main call', () => {
     }
     const rows = await engine.executeRaw<{ fact: string; dimension: string | null }>(
       'SELECT fact, dimension FROM facts WHERE source_markdown_slug = $1 ORDER BY id', [PAGE]);
-    expect(rows.some(row => row.fact.startsWith('Alice Example joined Acme Example'))).toBe(true);
+    expect(rows.map(row => row.fact)).toEqual([
+      'Alice Example joined Acme Example as head of design.', 'User wants a quieter desk lamp for the study.', 'EXTRACTION_COMPLETE']);
     for (const row of rows) expect(row.dimension).toBeNull();
   });
 });
