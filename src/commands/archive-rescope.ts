@@ -7,17 +7,17 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
-import { assertAccessId, getMember, legacyTokenByName } from '../core/access/members.ts';
+import { assertAccessId, getMember } from '../core/access/members.ts';
 
 /**
  * Before gbrain access member add or member enable: when the member will be newly enabled, keeps the personal-era archive
- * pages to the owner first. A failure throws before the member is added, enabled or bound, so nothing changes.
+ * pages to the owner first. member add calls it from addMember's beforeWrite, after every input check passed, so a
+ * refused add changes nothing; member enable calls it for a disabled member only. A failure throws before the member is
+ * added, enabled or bound, so nothing changes.
  */
-export async function rescopeArchiveBefore(engine: BrainEngine, rawId: unknown, change: 'add' | 'enable', opts: { bindToken?: string } = {}): Promise<void> {
+export async function rescopeArchiveBefore(engine: BrainEngine, rawId: unknown, change: 'add' | 'enable'): Promise<void> {
   const id = assertAccessId(rawId);
-  const member = await getMember(engine, id);
-  if (change === 'add' ? member !== null : member?.status !== 'disabled') return;
-  if (opts.bindToken) await legacyTokenByName(engine, opts.bindToken);
+  if (change === 'enable' && (await getMember(engine, id))?.status !== 'disabled') return;
   try {
     await (await import('../core/transcripts/archive.ts')).rescopeArchiveBeforeJoin(engine, id);
   } catch (e) {

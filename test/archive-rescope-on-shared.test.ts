@@ -290,3 +290,85 @@ for (const kind of testBackends()) {
     }
   }
 }
+
+/**
+ * A member add that its own input checks refuse (a bad --kind, a malformed --email, an ill-formed group) changes nothing:
+ * the access rules, the archive pages, the members table and an unbound token's archive reads stay exactly as they were,
+ * because addMember runs the re-scope (beforeWrite) only after every input check has passed.
+ */
+for (const kind of testBackends()) {
+  for (const [reason, extra] of [['a bad --kind', ['--kind', 'typo']], ['a malformed --email', ['--email', 'not-an-email']], ['an ill-formed group', ['--groups', 'Bad Group!']]] as const) {
+    describe('a refused member add changes nothing: ' + reason + ' (' + kind + ')', () => {
+      let engine: BrainEngine;
+      let close: () => Promise<void>;
+      let token = '';
+      let slug = '';
+      const home = emptyHome();
+      const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+
+      async function unboundReads(): Promise<Record<string, boolean>> {
+        __resetPrivateVisibilityCacheForTests();
+        const auth = await provider().verifyAccessToken(token) as unknown as AuthInfo;
+        const sourceId = auth.sourceId ?? 'default';
+        const localFederated = await noGrantFederatedScope(engine, auth.hasSourceGrant, sourceId);
+        const out: Record<string, boolean> = {};
+        for (const [label, op, params] of readsFor(slug, CANARIES[0]).filter(([l]) => l === 'get_page' || l === 'search keyword')) {
+          const res = await dispatchToolCall(engine, op, { ...params }, {
+            remote: true, transport: 'http', auth, sourceId, takesHoldersAllowList: auth.takesHoldersAllowList ?? ['world'],
+            ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
+          });
+          out[label] = res.content.map(c => c.text ?? '').join('\n').includes(BODY_ONLY[CANARIES[0]]);
+        }
+        return out;
+      }
+
+      const snapshot = async () => ({
+        rules: JSON.stringify(await policy.appliedRules(engine, SRC)),
+        pages: await engine.executeRaw<{ j: string }>("SELECT row_to_json(p)::text AS j FROM pages p WHERE slug LIKE 'conversations/%' ORDER BY slug"),
+        members: await engine.executeRaw<{ j: string }>('SELECT row_to_json(m)::text AS j FROM access_members m ORDER BY id'),
+        audience: await engine.getConfig('transcripts.archive.audience.' + SRC),
+        reads: await unboundReads(),
+      });
+
+      beforeAll(async () => {
+        if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
+        else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
+        __resetPrivateVisibilityCacheForTests();
+        await engine.setConfig('maintenance.auto', 'false');
+        await engine.setConfig(ARCHIVE_TIMEZONE_KEY, 'UTC');
+        await setArchiveEnabled(engine, true);
+        await addMember(engine, OWNER);
+        await setOwner(engine, OWNER);
+        const reader = staticReader('openclaw', [conversation('openclaw', 'agent:main:main', [['user', '2026-10-01T10:00:00.000Z', 'harbor planning notes ' + CANARIES[0] + ' private ' + BODY_ONLY[CANARIES[0]]]], { chatType: 'direct', verified: true })]);
+        await withEnv({ GBRAIN_HOME: home }, () => runTranscriptArchive(engine, { mode: 'backfill', from: '2026-10-01', to: '2026-10-01', readers: [reader], now: new Date('2026-10-05T00:00:00Z') }));
+        slug = (await archivedPages(engine, SRC)).find(pg => pg.body.includes(CANARIES[0]))!.slug;
+        token = (await mintLegacyToken(engine, { name: 'tok-unbound', scopes: ['read'], takesHolders: ['world'], sourceGrant: [SRC] })).token;
+      }, 240_000);
+
+      afterAll(async () => {
+        await disposePersistenceConsumer(engine).catch(() => {});
+        await close?.();
+      }, 60_000);
+
+      test('the rules, the archive pages, the members and an unbound token\'s reads stay as they were', async () => {
+        const before = await snapshot();
+        expect(before.audience).toBe('personal');
+        const exit = spyOn(process, 'exit').mockImplementation(((code?: number) => { throw new Exited(String(code)); }) as never);
+        const stderr = spyOn(console, 'error').mockImplementation(() => {});
+        let exited: unknown = null;
+        try {
+          await withEnv({ GBRAIN_HOME: home }, () => runAccess(engine, ['member', 'add', OTHER, ...extra]));
+        } catch (e) {
+          exited = e;
+        } finally {
+          exit.mockRestore();
+          stderr.mockRestore();
+        }
+        expect(exited).toBeInstanceOf(Exited);
+        expect((exited as Exited).message).not.toBe('0');
+        expect(await getMember(engine, OTHER)).toBeNull();
+        expect(await snapshot()).toEqual(before);
+      }, 240_000);
+    });
+  }
+}
