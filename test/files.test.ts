@@ -332,7 +332,8 @@ describe('files upload-raw git-storage branch (#2297)', () => {
     const cap = captureLogs();
     try {
       await runFiles(engine, ['upload-raw', src, '--page', 'notes/small-doc', '--type', 'photo']);
-      writeFileSync(src, 'changed bytes');
+      // The same bytes again take the ON CONFLICT merge on the same path (originals are never overwritten,
+      // so this is the only re-upload that reaches it; changed bytes are stored beside the original, below).
       await runFiles(engine, ['upload-raw', src, '--page', 'notes/small-doc']);
     } finally {
       cap.restore();
@@ -343,6 +344,28 @@ describe('files upload-raw git-storage branch (#2297)', () => {
     expect(rows.length).toBe(1);
     expect(rows[0].storage).toBe('git');
     expect(rows[0].type).toBe('photo');
+  });
+
+  test('re-upload of changed bytes keeps the original file and row, and stores the new one beside it', async () => {
+    await engine.setConfig('sync.repo_path', repo);
+    const src = join(srcDir, 'kept.txt');
+    writeFileSync(src, 'original evidence');
+    const cap = captureLogs();
+    try {
+      await runFiles(engine, ['upload-raw', src, '--page', 'notes/small-doc']);
+      writeFileSync(src, 'a different file with the same name');
+      await runFiles(engine, ['upload-raw', src, '--page', 'notes/small-doc']);
+    } finally {
+      cap.restore();
+    }
+    const rows = await engine.executeRaw<{ storage_path: string }>(
+      `SELECT storage_path FROM files WHERE filename = 'kept.txt' ORDER BY storage_path`,
+    );
+    expect(rows.length).toBe(2);
+    const original = rows.find((r) => r.storage_path.endsWith('/kept.txt'))!;
+    const beside = rows.find((r) => /\/[0-9a-f]{12}-kept\.txt$/.test(r.storage_path))!;
+    expect(readFileSync(join(repo, original.storage_path), 'utf8')).toBe('original evidence');
+    expect(readFileSync(join(repo, beside.storage_path), 'utf8')).toBe('a different file with the same name');
   });
 
   test('no repo configured: exits 1 instead of lying success', async () => {

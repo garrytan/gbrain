@@ -90,7 +90,7 @@ const file_upload: Operation = {
 
     const stat = statSync(filePath);
     const hash = hashStorageFile(filePath);
-    const storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
+    let storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
 
     const MIME_TYPES: Record<string, string> = {
       '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
@@ -149,6 +149,19 @@ const file_upload: Operation = {
     }
     if (foreign) throw opError('invalid_params', `${storagePath} holds the attachment of a page in source '${owner!.source_id}', so nothing was uploaded.`,
       'Upload it under another filename; an upload never replaces another source\'s attachment.');
+    // Originals are never overwritten (core/file-originals.ts): other bytes under a taken name are stored beside it.
+    // A row whose bytes the backend no longer holds keeps nothing, so it is healed in place (#4302: trust the backend).
+    let keptOriginal: string | undefined;
+    if (owner && owner.content_hash !== hash && await storage.exists(storagePath).catch(() => false)) {
+      const { keptOriginalPath, placeOriginal } = await import('../file-originals.ts');
+      const [beside] = await ctx.engine.executeRaw<{ content_hash: string }>(
+        'SELECT content_hash FROM files WHERE storage_path = $1', [keptOriginalPath(storagePath, hash)]);
+      const placed = placeOriginal(storagePath, hash, owner.content_hash, beside?.content_hash);
+      if (placed.action === 'refuse') throw opError('invalid_params', `${placed.reason}. Nothing was uploaded.`, 'Rename the file, then upload it again.');
+      if (placed.action === 'same' && await storage.exists(placed.path).catch(() => false)) return { status: 'already_exists', storage_path: placed.path };
+      keptOriginal = storagePath;
+      storagePath = placed.path;
+    }
 
     try {
       await uploadUnchangedFile(storage, storagePath, filePath, hash, mimeType || undefined);
@@ -185,7 +198,8 @@ const file_upload: Operation = {
       throw dbErr;
     }
 
-    return { status: 'uploaded', storage_path: storagePath, size_bytes: stat.size };
+    return { status: 'uploaded', storage_path: storagePath, size_bytes: stat.size,
+      ...(keptOriginal ? { kept_original: keptOriginal, note: `${keptOriginal} already held a different file; it was kept, and this one was stored beside it.` } : {}) };
   },
 };
 
