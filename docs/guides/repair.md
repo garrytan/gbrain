@@ -2795,7 +2795,8 @@ sweep) skips gbrain's own claude-cli model sessions and text you paste into a
 conversation. Facts a gbrain older than v0.60.30.0 captured from them stay
 active, so recall and hot memory keep returning them. `gbrain repair captured-facts` expires them. It is
 explicit-only and preview-bound, and it runs on the brain host (it reads the
-Claude Code session directory and the session corpus there).
+Claude Code session directory, the live and archived Codex session folders
+and the session corpus there).
 
 **Say to your agent:** *"Doctor says some facts were captured from gbrain's own
 sessions or from pasted text. Show me which ones before removing anything."*
