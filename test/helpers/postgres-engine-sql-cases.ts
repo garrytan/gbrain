@@ -42,6 +42,7 @@ const OOS = {
   dream: 'out-of-scope:dream-verdicts',
   raw: 'out-of-scope:raw-data',
   stub: 'out-of-scope:no-sql-stub',
+  importGuards: 'out-of-scope:import-guards (born in engine-sql/persistence-state.ts, transaction-settings.ts, belief.ts, access-control.ts; pinned by test/engine-parity/import-path.test.ts)',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
 } as const;
 
@@ -110,7 +111,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'getTimelineForDate': 'timeline', 'getSince': 'timeline', 'getOnThisDay': 'timeline', 'getLastSeen': 'timeline',
   'upsertEventProjection': 'timeline',
   // sources
-  'listAllSources': 'sources', 'updateSourceConfig': 'sources',
+  'listAllSources': 'sources', 'updateSourceConfig': 'sources', 'getSource': 'sources',
   // files
   'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files',
   // chunks
@@ -150,7 +151,11 @@ export const DOMAIN_OF: Record<string, string> = {
   'getContentFlagsByPageIds': OOS.enrichment, 'getUnverifiedExtractionPageIds': OOS.enrichment,
   'getEffectiveDates': OOS.enrichment, 'getSalienceScores': OOS.enrichment, 'resolveAliases': OOS.enrichment,
   'getStats': OOS.stats, 'getHealth': OOS.stats,
-  'getConfig': OOS.config, 'setConfig': OOS.config, 'unsetConfig': OOS.config, 'listConfigKeys': OOS.config, 'getAllConfig': OOS.config,
+  'getConfig': OOS.config, 'setConfig': OOS.config, 'unsetConfig': OOS.config, 'listConfigKeys': OOS.config, 'getAllConfig': OOS.config, 'getConfigValues': OOS.config,
+  // import guards (typed reads and writes the default import path runs)
+  'readManagedModeRows': OOS.importGuards, 'getSourceStrictness': OOS.importGuards, 'readPersistenceBrainId': OOS.importGuards,
+  'readLocalWriterRow': OOS.importGuards, 'insertLocalWriterRow': OOS.importGuards, 'readTransactionSettings': OOS.importGuards,
+  'applyTransactionSettings': OOS.importGuards, 'readLedgerSource': OOS.importGuards, 'isFolderRestricted': OOS.importGuards,
   'logIngest': OOS.ingest, 'getIngestLog': OOS.ingest,
   'logEvalCandidate': OOS.eval, 'listEvalCandidates': OOS.eval, 'deleteEvalCandidatesBefore': OOS.eval,
   'logEvalCaptureFailure': OOS.eval, 'listEvalCaptureFailures': OOS.eval,
@@ -528,6 +533,7 @@ export const SQL_CASES: SqlCase[] = [
   // ── sources ──
   ...variants('listAllSources', [['default', (e) => e.listAllSources()]]),
   ...variants('updateSourceConfig', [['default', (e) => e.updateSourceConfig(SRC, { federated: true })]]),
+  ...variants('getSource', [['default', (e) => e.getSource(SRC)]]),
 
   // ── files ──
   ...variants('upsertFile', [
@@ -821,4 +827,22 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('getRawData', [['default', (e) => e.getRawData(SLUG)]]),
   ...variants('getIngestLog', [['default', (e) => e.getIngestLog()]]),
   ...variants('getConfig', [['default', (e) => e.getConfig('embedding_model')]]),
+  ...variants('getConfigValues', [['default', (e) => e.getConfigValues(['embedding_model', 'auto_link'])]]),
+  ...variants('readManagedModeRows', [['default', (e) => e.readManagedModeRows()]]),
+  ...variants('getSourceStrictness', [['default', (e) => e.getSourceStrictness(SRC)]]),
+  ...variants('readPersistenceBrainId', [['default', (e) => e.readPersistenceBrainId()]]),
+  ...variants('readLocalWriterRow', [
+    ['default', (e) => e.readLocalWriterRow('writer-1')],
+    ['lock', (e) => e.transaction((tx: any) => tx.readLocalWriterRow('writer-1', { lock: true }))],
+  ]),
+  ...variants('insertLocalWriterRow', [
+    ['default', (e) => e.insertLocalWriterRow({ id: 'writer-1', lane: 'maintenance', credentialHash: 'hash', grant: { sourceIds: ['default'], operations: null, scopes: [], slugPrefixes: null } })],
+  ]),
+  ...variants('readTransactionSettings', [['default', (e) => e.transaction((tx: any) => tx.readTransactionSettings(['gbrain.write_attribution']))]]),
+  ...variants('applyTransactionSettings', [['default', (e) => e.transaction((tx: any) => tx.applyTransactionSettings(['gbrain.write_attribution'], ['x']))]]),
+  ...variants('readLedgerSource', [
+    ['default', (e) => e.readLedgerSource(SRC)],
+    ['batch', (e) => e.readLedgerSource(SRC, { batch: true })],
+  ]),
+  ...variants('isFolderRestricted', [['default', (e) => e.isFolderRestricted(SRC, SLUG)]]),
 ];

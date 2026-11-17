@@ -100,6 +100,17 @@
         ],
         "flagOnScopes": []
       },
+      "applyTransactionSettings#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "batchLoadEmotionalInputs#default": {
         "flagOffLanes": [
           "pool"
@@ -1036,6 +1047,17 @@
         ],
         "flagOnScopes": []
       },
+      "getConfigValues#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "getContradictionCacheEntry#default": {
         "flagOffLanes": [
           "pool"
@@ -1430,6 +1452,28 @@
         ],
         "flagOnScopes": []
       },
+      "getSource#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "getSourceStrictness#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "getStats#default": {
         "flagOffLanes": [
           "pool"
@@ -1704,6 +1748,17 @@
         ],
         "flagOnScopes": []
       },
+      "insertLocalWriterRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "invalidateContentDriftEmbeddings#default": {
         "flagOffLanes": [
           "pool",
@@ -1753,6 +1808,17 @@
         "flagOnLanes": [
           "pool",
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "isFolderRestricted#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -2645,6 +2711,61 @@
           "*"
         ]
       },
+      "readLedgerSource#batch": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readLedgerSource#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readLocalWriterRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readLocalWriterRow#lock": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readManagedModeRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readPageSnapshot#default": {
         "flagOffLanes": [
           "pool"
@@ -2683,6 +2804,28 @@
         "flagOnScopes": [
           "src-a"
         ]
+      },
+      "readPersistenceBrainId#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readTransactionSettings#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
       },
       "refreshPageBody#default": {
         "flagOffLanes": [
@@ -3683,6 +3826,7 @@
         "addTimelineEntry": "none",
         "allocateBodyOccurrenceIds": "none",
         "applyForwardReferenceBootstrap": "none",
+        "applyTransactionSettings": "none",
         "batchLoadEmotionalInputs": "none",
         "batchRetry": "none",
         "connRetry": "none",
@@ -3738,6 +3882,7 @@
         "getChunks": "direct",
         "getChunksWithEmbeddings": "none",
         "getConfig": "none",
+        "getConfigValues": "none",
         "getContentFlagsByPageIds": "none",
         "getContradictionCacheEntry": "none",
         "getDreamVerdict": "none",
@@ -3760,6 +3905,8 @@
         "getSalienceScores": "none",
         "getScorecard": "none",
         "getSince": "none",
+        "getSource": "none",
+        "getSourceStrictness": "none",
         "getStats": "none",
         "getTags": "none",
         "getTakeEmbeddings": "none",
@@ -3771,8 +3918,10 @@
         "initSchema": "none",
         "insertFact": "none",
         "insertFacts": "none",
+        "insertLocalWriterRow": "none",
         "invalidateContentDriftEmbeddings": "none",
         "invalidateStaleSignatureEmbeddings": "none",
+        "isFolderRestricted": "none",
         "jitOffRead": "none",
         "keywordBoundedRead": "direct",
         "keywordStatementTimeoutSetting": "none",
@@ -3817,12 +3966,17 @@
         "putPage": "none",
         "putRawData": "none",
         "readEmbeddingStateCounts": "direct",
+        "readLedgerSource": "none",
+        "readLocalWriterRow": "none",
+        "readManagedModeRows": "none",
         "readManifest": "none",
         "readPageSnapshot": "direct",
         "readPageSnapshotsBatch": "direct",
+        "readPersistenceBrainId": "none",
         "readSegmentDerivations": "none",
         "readSegmentTexts": "none",
         "readTransaction": "none",
+        "readTransactionSettings": "none",
         "reconnect": "none",
         "refreshPageBody": "none",
         "registerBeforeDisconnect": "none",

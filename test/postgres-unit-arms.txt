@@ -125,6 +125,7 @@ test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/facts.test.ts
+test/engine-parity/import-path.test.ts
 test/engine-parity/lifecycle.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/pages.test.ts

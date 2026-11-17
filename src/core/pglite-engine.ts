@@ -157,6 +157,11 @@ import * as tagsImpl from './engine-sql/tags.ts';
 import * as linksImpl from './engine-sql/links.ts';
 import * as timelineImpl from './engine-sql/timeline.ts';
 import * as sourcesImpl from './engine-sql/sources.ts';
+import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
+import * as transactionSettingsImpl from './engine-sql/transaction-settings.ts';
+import * as beliefImpl from './engine-sql/belief.ts';
+import * as configImpl from './engine-sql/config.ts';
+import * as accessControlImpl from './engine-sql/access-control.ts';
 import * as filesImpl from './engine-sql/files.ts';
 import type { ChunkWindowRequest, ChunkWindowOpts, ChunkWindowPage } from './search/chunk-windows.ts';
 import type { KeywordPageWindow } from './search/keyword-statement.ts';
@@ -1400,6 +1405,19 @@ export class PGLiteEngine implements BrainEngine {
   async updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean> {
     return sourcesImpl.updateSourceConfig(this.engineSql, sourceId, patch);
   }
+
+  // Import-path guard, attribution and config reads: SQL in engine-sql (persistence-state, transaction-settings, belief, config, access-control, sources).
+  getSource(sourceId: string) { return sourcesImpl.getSource(unscopedExecutor(this.engineSql, 'sources: single-row read ran unscoped through executeRaw'), sourceId); }
+  getConfigValues(keys: readonly string[]) { return configImpl.getConfigValues(unscopedExecutor(this.engineSql, 'config: keyed read ran unscoped through executeRaw'), keys); }
+  readManagedModeRows() { return persistenceStateImpl.readManagedModeRows(unscopedExecutor(this.engineSql, 'persistence: managed-mode read ran unscoped through executeRaw')); }
+  getSourceStrictness(sourceId: string) { return persistenceStateImpl.getSourceStrictness(unscopedExecutor(this.engineSql, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId); }
+  readPersistenceBrainId() { return persistenceStateImpl.readPersistenceBrainId(unscopedExecutor(this.engineSql, 'persistence: brain identity read ran unscoped through executeRaw')); }
+  readLocalWriterRow(id: string, opts?: { lock?: boolean }) { return persistenceStateImpl.readLocalWriterRow(unscopedExecutor(this.engineSql, 'persistence: local writer read ran unscoped through executeRaw'), id, opts); }
+  insertLocalWriterRow(row: persistenceStateImpl.LocalWriterInsert) { return persistenceStateImpl.insertLocalWriterRow(this.engineSql, row); }
+  readTransactionSettings(names: readonly string[]) { return transactionSettingsImpl.readTransactionSettings(unscopedExecutor(this.engineSql, 'transaction settings: read ran through the transaction executeRaw'), names); }
+  applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.engineSql, names, values); }
+  readLedgerSource(sourceId: string, opts?: { batch?: boolean }) { return beliefImpl.readLedgerSource(unscopedExecutor(this.engineSql, 'belief: ledger source probe ran unscoped through executeRaw'), sourceId, opts); }
+  isFolderRestricted(sourceId: string, slug: string) { return accessControlImpl.isFolderRestricted(unscopedExecutor(this.engineSql, 'access: folder rule read ran unscoped through executeRaw'), sourceId, slug); }
 
   // v0.37.0 — domain-bank engine methods (D14 + D5 + D10).
   // See postgres-engine.ts:listPrefixSampledPages for the ranking + source-scope rationale.

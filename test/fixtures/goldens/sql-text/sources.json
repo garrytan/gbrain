@@ -2,6 +2,18 @@
   "golden": {
     "domain": "sources",
     "methods": {
+      "getSource": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, contextual_retrieval_mode, trust_frontmatter_overrides FROM sources WHERE id = $1",
+            "textSha256": "62f0fbc57b866ec35d27b204bffed68c8c0fe2b01b0f1c9d762645e14d571356"
+          }
+        ]
+      },
       "listAllSources": {
         "default": [
           {

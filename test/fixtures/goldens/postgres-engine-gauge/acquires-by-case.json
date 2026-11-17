@@ -158,6 +158,9 @@
     "getScorecard#sourceId": {},
     "getSince#default": {},
     "getSince#kind+sourceId": {},
+    "getSource#default": {
+      "raw": 1
+    },
     "getTags#default": {},
     "getTags#excludePrivate+liveOnly": {},
     "getTags#sourceIds": {},

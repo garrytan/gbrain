@@ -3,9 +3,9 @@
 # legacy_e2e = called by the Postgres-gated test/e2e/engine-parity*.test.ts suite (informational).
 # pglite/postgres/rust = what each arm must do: yes (runs, compared), same (Rust must match once its arm exists),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 198/198
+# covered: 209/209
 # lifecycle: 9/9
-# pages: 24/24
+# pages: 25/25
 # search: 7/7
 # chunks: 17/17
 # extraction: 7/7
@@ -22,7 +22,8 @@
 # versions: 3/3
 # stats_ingest: 4/4
 # sync_aliases: 9/9
-# config: 5/5
+# config: 6/6
+# import_guards: 9/9
 # raw_sql: 4/4
 # code_edges: 5/5
 # eval_capture: 5/5
@@ -33,7 +34,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	same
 reconnect	lifecycle	yes	1	no	yes	yes	same
 initSchema	lifecycle	yes	2	yes	yes	yes	same
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	n/a:postgres-only
-transaction	lifecycle	yes	8	no	yes	yes	same
+transaction	lifecycle	yes	11	no	yes	yes	same
 transactionDirect	lifecycle	yes	1	no	yes	yes	same
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	same
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -59,6 +60,7 @@ getAllSlugs	pages	yes	4	no	yes	yes	same
 listAllPageRefs	pages	yes	1	yes	yes	yes	same
 listAllSources	pages	yes	2	no	yes	yes	same
 updateSourceConfig	pages	yes	1	no	yes	yes	same
+getSource	pages	yes	1	no	yes	yes	same
 listPrefixSampledPages	pages	yes	1	no	yes	yes	same
 listCorpusSample	pages	yes	1	no	yes	yes	same
 searchKeyword	search	yes	8	yes	yes	yes	same
@@ -203,10 +205,20 @@ refreshPageBody	sync_aliases	yes	1	no	yes	yes	same
 updatePageContextualRetrievalState	sync_aliases	yes	1	no	yes	yes	same
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	same
 getConfig	config	yes	4	no	yes	yes	same
-setConfig	config	yes	7	no	yes	yes	same
+setConfig	config	yes	8	no	yes	yes	same
 unsetConfig	config	yes	2	no	yes	yes	same
 listConfigKeys	config	yes	2	no	yes	yes	same
 getAllConfig	config	yes	1	no	yes	yes	same
+getConfigValues	config	yes	1	no	yes	yes	same
+readManagedModeRows	import_guards	yes	1	no	yes	yes	same
+getSourceStrictness	import_guards	yes	1	no	yes	yes	same
+readPersistenceBrainId	import_guards	yes	1	no	yes	yes	same
+readLocalWriterRow	import_guards	yes	1	no	yes	yes	same
+insertLocalWriterRow	import_guards	yes	1	no	yes	yes	same
+readTransactionSettings	import_guards	yes	1	no	yes	yes	same
+applyTransactionSettings	import_guards	yes	1	no	yes	yes	same
+readLedgerSource	import_guards	yes	1	no	yes	yes	same
+isFolderRestricted	import_guards	yes	1	no	yes	yes	same
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	2	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql

@@ -8,6 +8,8 @@ import type { EmbeddingState, EmbeddingStateCounts, EmbeddingStateRow } from './
 import type { DerivedLinkBatchItem, DerivedLinkOrigin, DerivedLinkReplacementOptions } from './derived-links.ts';
 import type { FindPagesQuery, FoundPages } from './page-find.ts';
 import type { PageCountQuery, PageCounts, TypeGrouper } from './page-counts.ts';
+import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
+import type { LedgerSource } from './engine-sql/belief.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
@@ -61,6 +63,21 @@ export interface SourceRow {
   local_path: string | null;
   last_sync_at: Date | null;
   config: Record<string, unknown>;
+}
+
+/** One `sources` row with the columns import and contextual retrieval read (`BrainEngine.getSource`); values as the driver returns them. */
+export interface SourceDetailRow {
+  id: string;
+  name: string;
+  local_path: string | null;
+  last_commit: string | null;
+  last_sync_at: Date | null;
+  config: Record<string, unknown>;
+  created_at: Date;
+  /** Per-source contextual-retrieval mode override; null falls through to the global mode. */
+  contextual_retrieval_mode?: string | null;
+  /** Per-source mount-frontmatter trust gate. */
+  trust_frontmatter_overrides?: boolean;
 }
 
 export interface TraverseGraphOpts extends LinkReadScope {
@@ -1165,6 +1182,9 @@ export interface BrainEngine {
    * a problem).
    */
   updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean>;
+
+  /** One source row (id, name, local_path, last_commit, last_sync_at, config, created_at, contextual_retrieval_mode, trust_frontmatter_overrides), or null when no source has that id. */
+  getSource(sourceId: string): Promise<SourceDetailRow | null>;
 
   /**
    * v0.37.0 — prefix-stratified page sampling for `gbrain brainstorm` / `gbrain lsd`
@@ -2690,6 +2710,52 @@ export interface BrainEngine {
    * bulk-read path only.
    */
   getAllConfig(): Promise<Record<string, string>>;
+
+  /**
+   * The stored `{ key, value }` rows for the named config keys in one read, ordered by key; a key with no row is
+   * absent. Reads the table itself, not the request config snapshot (`getConfig` / `getAllConfig` honor that).
+   */
+  getConfigValues(keys: readonly string[]): Promise<Array<{ key: string; value: string }>>;
+
+  /**
+   * The `enabled` value of every `persistence_brain` singleton row, as stored (a healthy brain has exactly one boolean).
+   * Callers decide what a malformed answer means; the direct-write guard refuses it (persistence/managed-mode.ts).
+   */
+  readManagedModeRows(): Promise<Array<{ enabled: unknown }>>;
+
+  /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */
+  getSourceStrictness(sourceId: string): Promise<boolean>;
+
+  /** The brain's persistence identity (`persistence_brain.brain_id`), or null when the schema holds no such row. */
+  readPersistenceBrainId(): Promise<string | null>;
+
+  /** One local writer registration row (lane, credential hash, grant ceiling, revoked_at), or undefined; `lock` reads it `FOR SHARE`. */
+  readLocalWriterRow(id: string, opts?: { lock?: boolean }): Promise<LocalWriterRow | undefined>;
+
+  /** Registers a local writer unless its id or credential hash is already registered; true when this call inserted the row. */
+  insertLocalWriterRow(row: LocalWriterInsert): Promise<boolean>;
+
+  /**
+   * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null
+   * where unset. On a transaction engine it reads inside that transaction. Names are code constants (dotted lowercase).
+   */
+  readTransactionSettings(names: readonly string[]): Promise<Array<string | null>>;
+
+  /** Sets each named setting to the value at its index for the rest of the current transaction (`set_config(name, value, true)`), in one statement. */
+  applyTransactionSettings(names: readonly string[], values: readonly string[]): Promise<void>;
+
+  /**
+   * What the belief ledger knows about one source (incarnation, purge epoch, newest coverage event, whether any purge
+   * exists), or null for an unknown source. `batch` also returns the managed-mode rows and the plan-cache mode it
+   * replaced, and switches the transaction to generic plans when coverage is active.
+   */
+  readLedgerSource(sourceId: string, opts?: { batch?: boolean }): Promise<LedgerSource | null>;
+
+  /**
+   * Whether a page known by its slug sits under an applied folder rule, a pending or invalid folder prefix, or the
+   * database role cannot read the folder access tables. A failed read throws; callers that count it as restricted catch.
+   */
+  isFolderRestricted(sourceId: string, slug: string): Promise<boolean>;
 
   // Migration support
   runMigration(version: number, sql: string): Promise<void>;

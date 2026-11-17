@@ -52,7 +52,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Pages CRUD
   'getPage', 'readPageSnapshot', 'readPageSnapshotsBatch', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'findDuplicatePages', 'deletePage', 'deletePages', 'resolveSlugsByPaths',
   'softDeletePage', 'softDeletePages', 'restorePage', 'purgeDeletedPages', 'listPages', 'findPages', 'countPagesBy', 'resolveSlugs', 'getAllSlugs',
-  'listAllPageRefs', 'listAllSources', 'updateSourceConfig', 'listPrefixSampledPages', 'listCorpusSample',
+  'listAllPageRefs', 'listAllSources', 'updateSourceConfig', 'getSource', 'listPrefixSampledPages', 'listCorpusSample',
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks
@@ -104,7 +104,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // v0.46.28-34 master waves (classified at the test-gap-wave merge):
   // #3980 bulk config read, #3776 takes-embedding update, #3674 scoped
   // link removal.
-  'getAllConfig', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource',
+  'getAllConfig', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow', 'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource',
   // Code edges
   'addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
   'searchKeywordChunks',
