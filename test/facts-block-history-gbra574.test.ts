@@ -16,6 +16,7 @@ import { handleToolCall } from '../src/mcp/server.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { forgetFactInFence } from '../src/core/facts/forget.ts';
 import { applyFactsBlock, hasHistoryCue } from '../src/core/search/facts-arm.ts';
+import { collectFactCandidates } from '../src/core/search/fact-relevance.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { newSource, page, putPage } from './helpers/pinned-questions-fixture.ts';
 
@@ -165,5 +166,45 @@ describe('G1 contested facts in the block', () => {
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.some(r => (r.chunk_text ?? '').includes('contested'))).toBe(false);
     expect(rows.every(r => r.fact_row?.contested_unavailable)).toBe(true);
+  });
+});
+
+describe('B1 review fixes', () => {
+  test('a superseded fact whose page was purged never comes back', async () => {
+    const GINA = 'people/gina-example';
+    await putPage(engine, sourceId, GINA, page('person', 'Gina Example', 'Gina Example is in the address book.'));
+    for (const i of [81, 82]) await putPage(engine, sourceId, session(i), page('conversation', 'Talk ' + i, '**User:** Weekly planning, session ' + i + '.\n\n**Assistant:** Noted.', 'date: ' + day(i) + '\n'));
+    await fact('oslo', 'Gina Example lives in Oslo.', GINA, 81);
+    await fact('bergen', 'Gina Example lives in Bergen.', GINA, null, { validFrom: day(81) });
+    await engine.executeRaw("UPDATE facts SET source = 'sync:import', context = $2 WHERE id = $1", [ids.bergen, session(81) + ' — weekly notes']);
+    await fact('tromso', 'Gina Example lives in Tromso.', GINA, 82);
+    await supersede('oslo', 'tromso', 82);
+    await supersede('bergen', 'tromso', 82);
+    const Q = 'Where has Gina Example lived before?';
+    const before = (await ask(Q)).join('\n');
+    expect(before).toContain('Oslo');
+    expect(before).toContain('Bergen');
+    await engine.softDeletePage(session(81), { sourceId });
+    await engine.executeRaw("UPDATE pages SET deleted_at = now() - interval '100 hours' WHERE source_id = $1 AND slug = $2", [sourceId, session(81)]);
+    expect((await engine.purgeDeletedPages(72)).slugs).toContain(session(81));
+    const after = (await ask(Q)).join('\n');
+    expect(after).toContain('Tromso');
+    expect(after).not.toContain('Oslo');
+    expect(after).not.toContain('Bergen');
+  });
+  test('an entity with more ended facts than the pool depth keeps its most recent ones', async () => {
+    const HANK = 'people/hank-example';
+    await putPage(engine, sourceId, HANK, page('person', 'Hank Example', 'Hank Example is in the address book.'));
+    for (let i = 1; i <= 5; i++) {
+      await fact('hank' + i, 'Hank Example lives in Town' + i + '.', HANK, null, { validFrom: day(i) });
+      await end('hank' + i, i + 1);
+    }
+    await fact('hank6', 'Hank Example lives in Town6.', HANK, null, { validFrom: day(6) });
+    const { candidates } = await collectFactCandidates(engine, 'Where has Hank Example lived before?', { sourceIds: [sourceId], worldOnly: false, excludePrivate: false }, null,
+      { depth: { keyword: 50, cosine: 50, entity: 3 }, history: true });
+    const facts = candidates.map(c => c.fact);
+    expect(facts).toContain('Hank Example lives in Town6.');
+    expect(facts).toContain('Hank Example lives in Town5.');
+    expect(facts).not.toContain('Hank Example lives in Town1.');
   });
 });
