@@ -1018,8 +1018,8 @@ export function privateFactFilterForCaller(factAlias: string, perCandidate = fal
  * the policy recall and find_trajectory use (privateProvenanceFilterUnderPolicy), so the owner keeps facts taken from a
  * private page it reads, while member access still applies; every other caller keeps privateFactFilterForCaller.
  */
-export function privateFactFilterForReader(factAlias: string): string {
-  return callerIsOwner() ? privateProvenanceFilterUnderPolicy(factAlias) : privateFactFilterForCaller(factAlias);
+export function privateFactFilterForReader(factAlias: string, perCandidate = false): string {
+  return callerIsOwner() ? privateProvenanceFilterUnderPolicy(factAlias) : privateFactFilterForCaller(factAlias, perCandidate);
 }
 
 /** True only inside a remote caller record whose read an operator relaxed (the env hatch or the config opt-out). */
