@@ -48,6 +48,12 @@ const WITHDRAWN = { trajectory: 'canarygonetrajpoint', ontology: 'canarygoneonto
 /** A private fact on a world page: the private-facts grant admits it. */
 const GRANTED = 'canarygrantedtrajpoint';
 const WORLD = 'canaryworldtrajpoint';
+/** Private facts taken from a private page the owner reads (visibility: private, no readers). */
+const OWNERS_PAGE = 'notes/owner-ledger';
+const OWN_PAGE = { trajectory: 'canaryownpagetrajpoint', ontology: 'canaryownpageontology' } as const;
+/** A newer private observation from a diary page and the older one beside it that a remote reader still gets. */
+const DIARY = 'canarydiarysleep';
+const BEHIND_DIARY = 'canaryvisiblesleep';
 
 type Surface = 'find_trajectory' | 'ontology_get' | 'ontology_conflicts' | 'volunteer_chronicle';
 const SURFACES: Surface[] = ['find_trajectory', 'ontology_get', 'ontology_conflicts', 'volunteer_chronicle'];
@@ -122,6 +128,7 @@ for (const kind of testBackends()) {
       await importFromContent(engine, ENTITY, ['---', 'type: person', 'title: Dana Example', '---', '# Dana Example', '', 'Dana is a founder.'].join('\n'), { sourceId: SRC });
       await importFromContent(engine, WORLD_PAGE, page('Open ledger'), { sourceId: SRC });
       await importFromContent(engine, BOBS_PAGE, page('Bob ledger', ['readable_by: [bob-example]']), { sourceId: SRC });
+      await importFromContent(engine, OWNERS_PAGE, page('Owner ledger', ['visibility: private']), { sourceId: SRC });
 
       ids.own = await insertFact(OWN.trajectory, 'private', null, '2026-05-01T00:00:00Z');
       ids.bobs = await insertFact(BOBS.trajectory, 'private', BOBS_PAGE, '2026-05-02T00:00:00Z');
@@ -135,6 +142,11 @@ for (const kind of testBackends()) {
       await insertObservation('mood', `calm ${BOBS.ontology}`, BOBS_PAGE, '2026-02-01T00:00:00Z');
       await insertObservation('mood', 'tense', 'notes/source-c-example', '2026-01-01T00:00:00Z');
       ids.withdrawnObservation = await insertObservation('status', `gone ${WITHDRAWN.ontology}`, 'notes/source-d-example', '2026-02-01T00:00:00Z');
+      ids.ownPage = await insertFact(OWN_PAGE.trajectory, 'private', OWNERS_PAGE, '2026-05-06T00:00:00Z');
+      await insertObservation('focus', `climbing ${OWN_PAGE.ontology}`, OWNERS_PAGE, '2026-02-01T00:00:00Z');
+      await insertObservation('focus', 'running', 'notes/source-e-example', '2026-01-01T00:00:00Z');
+      await insertObservation('sleep', `early ${BEHIND_DIARY}`, 'notes/source-f-example', '2026-01-01T00:00:00Z');
+      await insertObservation('sleep', `late ${DIARY}`, 'life/diary/2026-02-01', '2026-02-01T00:00:00Z');
       for (const id of [ids.withdrawn, ids.withdrawnWorld, ids.withdrawnObservation]) {
         const forgot = await dispatchToolCall(engine, 'forget_fact', { id }, { remote: false, sourceId: SRC });
         if (forgot.isError) throw new Error(`fixture forget: ${forgot.content.map(c => c.text).join(' ')}`);
@@ -204,6 +216,26 @@ for (const kind of testBackends()) {
     test('member access stays mandatory for the owner: no fact taken from another person\'s readable_by page', async () => {
       expect(await seenBy('owner', BOBS)).toEqual([]);
       expect(await attributes('owner-admin', ids.bobs!)).toBe('fact_not_found');
+    }, 240_000);
+
+    test('the owner reads private facts taken from a private page it reads, on every surface and in write attribution', async () => {
+      for (const who of ['owner', 'delegate']) expect({ who, seen: await seenBy(who, OWN_PAGE) }).toEqual({ who, seen: SURFACES });
+      expect(await attributes('owner-admin', ids.ownPage!)).toBe(true);
+      for (const who of ['bob', 'unbound']) expect({ who, seen: await seenBy(who, OWN_PAGE) }).toEqual({ who, seen: [] });
+      expect(await seenBy('owner', OWN_PAGE, AUDIENCE)).toEqual([]);
+      expect(await attributes('bob-admin', ids.ownPage!)).toBe('fact_not_found');
+    }, 240_000);
+
+    test('a newer diary observation neither reaches the owner nor hides the older value behind it', async () => {
+      for (const who of ['owner', 'delegate']) {
+        for (const [op, params] of [READS.ontology_get, READS.volunteer_chronicle]) {
+          const text = (await call(who, op, params)).text;
+          expect({ who, op, behind: text.includes(BEHIND_DIARY), diary: text.includes(DIARY) }).toEqual({ who, op, behind: true, diary: false });
+        }
+        expect((await call(who, ...READS.ontology_conflicts)).text).not.toContain(DIARY);
+      }
+      const local = (await dispatchToolCall(engine, 'ontology_get', READS.ontology_get[1], { remote: false, sourceId: SRC })).content.map(c => c.text).join('\n');
+      expect(local).toContain(DIARY);
     }, 240_000);
 
     test('no caller reads a withdrawn fact', async () => {

@@ -185,6 +185,7 @@ const ontology_get: Operation = {
       minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
       includeQuarantined: p.include_quarantined === true,
       visibility: worldOnlyFacts(ctx.remote) ? ['world'] : undefined,
+      excludeDiary: ctx.remote !== false,
       ...await readPolicyOpts(ctx),
     });
     // Remote redaction: the visibility recall reads (worldOnlyFacts), resolved before
@@ -297,6 +298,7 @@ const ontology_conflicts: Operation = {
     const conflicts = await ctx.engine.findOntologyConflicts({
       minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
       visibility: worldOnlyFacts(ctx.remote) ? ['world'] : undefined,
+      excludeDiary: ctx.remote !== false,
       ...await readPolicyOpts(ctx),
     });
     if (ctx.remote === false) return conflicts;

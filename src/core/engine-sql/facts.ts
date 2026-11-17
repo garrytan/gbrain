@@ -683,9 +683,10 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
     const useArray = Array.isArray(opts.sourceIds) && opts.sourceIds.length > 0;
     const sourceIds = useArray ? opts.sourceIds! : null;
     const sourceId = opts.sourceId ?? 'default';
-    // Fail-closed (CV6 / v0.26.9 F7b posture): anything not strictly local
-    // is remote. An omitted flag (cast-bypassed context, caller that forgot
-    // to thread it) degrades to world-only reads, never to a private-fact leak.
+    // Fail-closed (CV6 / v0.26.9 F7b posture): `remote` means world-only facts here
+    // (callers pass worldOnlyFacts(ctx.remote), so the brain owner's remote read passes
+    // false); it gates only the visibility clause. An omitted flag degrades to
+    // world-only reads, never to a private-fact leak.
     const remoteFilter = opts.remote !== false;
 
     // Source-scope predicate: array path (federated) wins over scalar.
