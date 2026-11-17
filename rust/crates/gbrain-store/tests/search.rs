@@ -410,6 +410,78 @@ fn long_bodies_are_split_and_cjk_characters_are_terms() {
 }
 
 #[test]
+fn a_page_put_without_indexing_has_no_chunks_and_reads_them_only_once_sealed() {
+    let dir = TempDir::new("search-unindexed");
+    let store = open(&dir);
+    let page = store
+        .put_page(
+            "doc",
+            &input("doc", "heliotrope body"),
+            &opts(json!({"index": false})),
+        )
+        .unwrap();
+    assert_eq!(page["text_projection_revision"], Value::Null);
+    assert_eq!(store.count_chunks().unwrap(), 0, "put_page wrote no chunks");
+    assert!(find(&store, "heliotrope").is_empty());
+    let revision = page["knowledge_revision"].as_str().unwrap().to_string();
+    // Chunks written with no revision are stored but not read: the page is not sealed.
+    store
+        .upsert_chunks(
+            "doc",
+            &chunks(json!([{"chunk_index": 0, "chunk_text": "heliotrope body", "model": "voyage:voyage-4"}])),
+            &UpsertChunksOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(store.count_chunks().unwrap(), 1);
+    assert!(
+        store
+            .get_chunks("doc", &ReadScope::default())
+            .unwrap()
+            .is_empty()
+    );
+    assert!(find(&store, "heliotrope").is_empty());
+    // Sealing to the revision makes them current, with the model the caller stamped.
+    store
+        .upsert_chunks(
+            "doc",
+            &chunks(json!([{"chunk_index": 0, "chunk_text": "heliotrope body", "model": "voyage:voyage-4"}])),
+            &UpsertChunksOptions {
+                expected_revision: Some(revision),
+                seal: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let got = store.get_chunks("doc", &ReadScope::default()).unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0]["model"], "voyage:voyage-4");
+    assert_eq!(slugs(&find(&store, "heliotrope")), ["doc"]);
+    // A tag change moves the revision: the chunks stay stored and stop being read.
+    store.add_tag("doc", "late", None).unwrap();
+    assert!(
+        store
+            .get_chunks("doc", &ReadScope::default())
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(store.count_chunks().unwrap(), 1);
+    // An unchanged put with indexing off does not seal what a tag change unsealed.
+    store
+        .put_page(
+            "doc",
+            &input("doc", "heliotrope body"),
+            &opts(json!({"index": false})),
+        )
+        .unwrap();
+    assert!(
+        store
+            .get_chunks("doc", &ReadScope::default())
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn upsert_chunks_checks_the_revision_and_seals_to_it() {
     let dir = TempDir::new("search-upsert");
     let store = open(&dir);
@@ -437,6 +509,7 @@ fn upsert_chunks_checks_the_revision_and_seals_to_it() {
     );
     let good = UpsertChunksOptions {
         expected_revision: Some(revision.clone()),
+        seal: true,
         ..Default::default()
     };
     store
@@ -531,4 +604,62 @@ fn quarantined_and_pinned_question_pages_are_hidden_whatever_the_key_holds() {
             .unwrap()
             .is_some()
     );
+}
+
+#[test]
+fn an_incremental_write_keeps_metadata_for_unchanged_text_and_never_seals() {
+    let dir = TempDir::new("search-incremental");
+    let store = open(&dir);
+    let page = store
+        .put_page("doc", &input("doc", "body"), &opts(json!({"index": false})))
+        .unwrap();
+    let revision = page["knowledge_revision"].as_str().unwrap().to_string();
+    let sealed = UpsertChunksOptions {
+        expected_revision: Some(revision.clone()),
+        seal: true,
+        ..Default::default()
+    };
+    store
+        .upsert_chunks(
+            "doc",
+            &chunks(json!([
+                {"chunk_index": 0, "chunk_text": "alpha", "language": "ts", "symbol_name": "f", "model": "m:1"},
+                {"chunk_index": 1, "chunk_text": "beta"},
+                {"chunk_index": 2, "chunk_text": "gamma"}
+            ])),
+            &sealed,
+        )
+        .unwrap();
+    // A write that repeats chunk 0 with no metadata keeps it; chunk 1 changed so takes the new
+    // (empty) metadata; chunk 2 is gone. `expectedRevision` alone checks and does not seal.
+    store
+        .upsert_chunks(
+            "doc",
+            &chunks(json!([
+                {"chunk_index": 0, "chunk_text": "alpha", "model": "m:2"},
+                {"chunk_index": 1, "chunk_text": "beta changed"}
+            ])),
+            &UpsertChunksOptions {
+                expected_revision: Some(revision),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let got = store.get_chunks("doc", &ReadScope::default()).unwrap();
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0]["language"], "ts");
+    assert_eq!(got[0]["symbol_name"], "f");
+    assert_eq!(got[0]["model"], "m:2", "the model is the new write's");
+    assert_eq!(got[1]["chunk_text"], "beta changed");
+    assert!(got[1].get("language").is_none());
+    // An empty write removes every chunk and unseals the page.
+    store
+        .upsert_chunks("doc", &[], &UpsertChunksOptions::default())
+        .unwrap();
+    assert_eq!(store.count_chunks().unwrap(), 0);
+    let page = store
+        .read_page_snapshot("doc", &ReadScope::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(page["page"]["text_projection_revision"], Value::Null);
 }

@@ -135,6 +135,7 @@ fn run(store: &Store, op: &str, args: &[Value]) -> Result<Value, StoreError> {
                 &chunks,
                 &UpsertChunksOptions {
                     expected_revision: revision,
+                    seal: true,
                     ..Default::default()
                 },
             )?;

@@ -572,28 +572,18 @@ fn list_sorts_filters_and_pages() {
 }
 
 #[test]
-fn resolve_slugs_prefers_the_exact_slug_then_substrings() {
+fn resolve_slugs_answers_only_the_exact_live_slug() {
     let dir = TempDir::new("pages-resolve");
     let store = open(&dir);
-    for slug in [
-        "people/ada",
-        "people/adam",
-        "notes/ada-diary",
-        "notes/other",
-    ] {
+    for slug in ["people/ada", "people/adam", "notes/ada-diary"] {
         put(&store, slug, "x");
     }
     let resolve = |p: &str| store.resolve_slugs(p, &ReadScope::default()).unwrap();
     assert_eq!(resolve("people/ada"), ["people/ada"]);
-    assert_eq!(
-        resolve("ADA"),
-        ["notes/ada-diary", "people/ada", "people/adam"]
-    );
-    assert!(resolve("zzz").is_empty());
-    for n in 0..8 {
-        put(&store, &format!("many/m{n}"), "x");
-    }
-    assert_eq!(resolve("many/").len(), 5, "at most five");
+    // A partial name, a different case and a title are the trigram half of PGLite's answer, which
+    // this store does not have: the list is empty, and the TypeScript member refuses it.
+    assert!(resolve("ADA").is_empty());
+    assert!(resolve("people/ad").is_empty());
     store
         .upsert_source(&SourceInput {
             id: "work".into(),
@@ -601,9 +591,66 @@ fn resolve_slugs_prefers_the_exact_slug_then_substrings() {
         })
         .unwrap();
     let in_work = store
-        .resolve_slugs("ada", &scope(json!({"sourceId": "work"})))
+        .resolve_slugs("people/ada", &scope(json!({"sourceId": "work"})))
         .unwrap();
     assert!(in_work.is_empty());
+    store.soft_delete_page("people/ada", None).unwrap();
+    assert!(
+        resolve("people/ada").is_empty(),
+        "a soft-deleted page is not resolved"
+    );
+}
+
+#[test]
+fn an_unscoped_soft_delete_and_restore_cover_every_source_and_a_hard_delete_only_the_default() {
+    let dir = TempDir::new("pages-unscoped");
+    let store = open(&dir);
+    store
+        .upsert_source(&SourceInput {
+            id: "work".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let live = |slug: &str, source: &str| {
+        store
+            .read_page_snapshot(slug, &scope(json!({"sourceId": source})))
+            .unwrap()
+            .is_some()
+    };
+    for slug in ["s/one", "s/two"] {
+        store
+            .put_page(slug, &input("T", "body"), &opts(json!({})))
+            .unwrap();
+        store
+            .put_page(
+                slug,
+                &input("T", "body"),
+                &opts(json!({"sourceId": "work"})),
+            )
+            .unwrap();
+    }
+    // One call hides the slug in both sources and reports it once.
+    assert_eq!(
+        store.soft_delete_page("s/one", None).unwrap().as_deref(),
+        Some("s/one")
+    );
+    assert!(!live("s/one", "default") && !live("s/one", "work"));
+    assert!(live("s/two", "default") && live("s/two", "work"));
+    assert_eq!(store.soft_delete_page("s/one", None).unwrap(), None);
+    // And one call brings both back.
+    assert!(store.restore_page("s/one", None).unwrap());
+    assert!(live("s/one", "default") && live("s/one", "work"));
+    assert!(!store.restore_page("s/one", None).unwrap());
+    // A named source is the only one touched.
+    store.soft_delete_page("s/one", Some("work")).unwrap();
+    assert!(live("s/one", "default") && !live("s/one", "work"));
+    // A hard delete with no source is the default source's alone.
+    store.delete_page("s/two", None).unwrap();
+    assert!(!live("s/two", "default") && live("s/two", "work"));
+    // Slugs are matched as written: stored slugs are lower case, so a capitalised one finds nothing.
+    assert_eq!(store.soft_delete_page("S/One", None).unwrap(), None);
+    store.delete_page("S/One", None).unwrap();
+    assert!(live("s/one", "default"));
 }
 
 #[test]

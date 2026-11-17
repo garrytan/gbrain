@@ -195,19 +195,16 @@ impl Store {
         })
     }
 
-    /// Merges `patch` into the source's config (a key set to `null` is removed). Returns whether
-    /// the source exists. Mirrors `updateSourceConfig`.
+    /// Merges `patch` into the source's config, one level deep (PGLite's `config || patch`): a key
+    /// set to `null` is kept as JSON `null`, not removed. Returns whether the source exists.
+    /// Mirrors `updateSourceConfig`.
     pub fn update_source_config(&self, id: &str, patch: &Map<String, Value>) -> Result<bool> {
         self.write(|tx| {
             let Some(mut record) = read_source(&*tx, id)? else {
                 return Ok(false);
             };
             for (key, value) in patch {
-                if value.is_null() {
-                    record.config.remove(key);
-                } else {
-                    record.config.insert(key.clone(), value.clone());
-                }
+                record.config.insert(key.clone(), value.clone());
             }
             put_json(tx, &source_key(id), &record)?;
             Ok(true)

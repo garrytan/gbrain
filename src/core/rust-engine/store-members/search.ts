@@ -4,7 +4,6 @@
  * `afterDate`, `beforeDate`) refuse here instead.
  */
 import type { SearchOpts, SearchResult } from '../../types.ts';
-import { withDates } from '../store-codec.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
 const SEARCH_FILTERS = ['limit', 'type', 'types', 'exclude_slugs', 'exclude_slug_prefixes', 'include_slug_prefixes', 'detail',
@@ -17,5 +16,6 @@ export const searchKeyword: StoreMember<[query: string, opts?: SearchOpts], Sear
   const { offset: _offset, ...rest } = opts ?? {};
   const options = takeOptions('searchKeyword', rest, SEARCH_FILTERS, RANKING_ONLY);
   const rows: SearchResult[] = await storeCall({ member: 'searchKeyword' }, () => brain.searchKeyword(query, options));
-  return rows.map((row) => withDates(row, ['effective_date']));
+  // PGLite reports a page's effective date as the calendar day ("2026-03-04"), never a Date.
+  return rows.map((row) => (typeof row.effective_date === 'string' ? { ...row, effective_date: (row.effective_date as string).slice(0, 10) } : row));
 };

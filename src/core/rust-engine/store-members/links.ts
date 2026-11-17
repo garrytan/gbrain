@@ -2,7 +2,7 @@
 import type { LinkBatchInput } from '../../engine.ts';
 import type { LinkReadScope } from '../../link-validity.ts';
 import type { Link } from '../../types.ts';
-import { storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
 
 type EndpointSources = { fromSourceId?: string; toSourceId?: string; originSourceId?: string };
 
@@ -19,6 +19,7 @@ const BATCH_FIELDS = ['from_slug', 'to_slug', 'link_type', 'context', 'link_sour
 
 export const addLinksBatch: StoreMember<[links: LinkBatchInput[], opts?: { auditSite?: unknown; signal?: AbortSignal }], number> = async (brain, links, opts) => {
   takeOptions('addLinksBatch', opts, [], ['auditSite', 'signal']);
+  throwIfAborted(opts?.signal);
   // `link_kind` and `resolution_type` are stored beside a link and are not part of what the store keeps today.
   for (const link of links) takeOptions('addLinksBatch', link, BATCH_FIELDS);
   return storeCall({ member: 'addLinksBatch' }, () => brain.addLinksBatch(links));

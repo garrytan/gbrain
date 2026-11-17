@@ -161,7 +161,7 @@ last_sync_at: null, config: { federated: true } }`. A row is PGLite's `SourceRow
 | `brain.listAllSources({ includeArchived?, localPathOnly? }?)` | `SourceRow[]`, `default` first then by `id`; archived rows are left out unless `includeArchived`; `localPathOnly` keeps rows with a `local_path` that are not `config.role = 'storage_manifest'` | `listAllSources` |
 | `brain.getSourceById(id)` | `SourceRow \| null`, archived rows included | `sources-ops` read by id |
 | `brain.upsertSource({ id, name?, local_path?, last_sync_at?, config? })` | the `SourceRow`; only the fields given change; ids are 1 to 32 of `a-z0-9-` (`invalid_argument` otherwise) | `sources add` |
-| `brain.updateSourceConfig(id, patch)` | `boolean`, whether the source exists; a `null` value in `patch` removes the key | `updateSourceConfig` |
+| `brain.updateSourceConfig(id, patch)` | `boolean`, whether the source exists; `patch` is merged one level deep, and a `null` value is kept as JSON `null` (it does not remove the key) | `updateSourceConfig` |
 | `brain.setSourceArchived(id, archived)` | `boolean`, whether the source exists | `sources archive` and `restore` |
 
 `upsertSource` and `setSourceArchived` are not in PGLite's engine interface; the store needs a way
@@ -228,7 +228,7 @@ does, so a tag change, soft delete or restore hides a page from search until a `
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.putPage(slug, page, { ..., chunks? })` | as above; `chunks` replaces the page's chunks | `putPage` plus `upsertChunks` |
-| `brain.upsertChunks(slug, chunks, { sourceId?, expectedRevision?, deferSeal? }?)` | `null`; replaces the page's chunks (a chunk that keeps its index keeps its id). `page_not_found`, `revision_conflict`, `invalid_argument` for a bad `chunk_source`. With `expectedRevision` the chunks are sealed to it | `upsertChunks` |
+| `brain.upsertChunks(slug, chunks, { sourceId?, expectedRevision?, seal? }?)` | `null`; writes the page's chunks as PGLite does: chunks not in `chunks` are removed, a chunk whose text is unchanged keeps the metadata the write leaves null, an empty list unseals the page. `page_not_found`, `revision_conflict` (`expectedRevision` only checks), `invalid_argument` for a bad `chunk_source`. With `seal: true` the chunks replace the old ones outright and are sealed to the page's revision (PGLite's `sealChunks`) | `upsertChunks` |
 | `brain.getChunks(slug, { sourceId?, sourceIds?, includeDeleted? }?)` | `Chunk[]` in index order, `embedding: null` | `getChunks` |
 | `brain.deleteChunks(slug, { sourceId? }?)` | `null`; the page stays | `deleteChunks` |
 | `brain.countChunks()` | number of chunks in the brain | none |

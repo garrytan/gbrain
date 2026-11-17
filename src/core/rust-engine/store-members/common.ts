@@ -3,6 +3,7 @@
  * and mapping the store's rejections (store-errors.ts).
  */
 import type { Capability } from '../../engine-capabilities.ts';
+import { RetryAbortError } from '../../retry.ts';
 import { capabilityMissing } from '../errors.ts';
 import { RUST_ENGINE_MEMBERS } from '../members.ts';
 import { mapStoreError, type StoreErrorContext } from '../store-errors.ts';
@@ -47,4 +48,13 @@ export async function storeCall<T>(ctx: StoreErrorContext, run: () => Promise<T>
   } catch (error) {
     throw mapStoreError(error, ctx);
   }
+}
+
+/**
+ * A batch write that was cancelled before it started does nothing and throws `RetryAbortError`, as PGLite's retry
+ * wrapper does (it checks the signal before every attempt). A call already inside the store is not interrupted:
+ * PGLite does not interrupt one either, and the store commits or rolls back as a whole.
+ */
+export function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new RetryAbortError();
 }

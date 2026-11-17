@@ -233,7 +233,8 @@ fn upsert_keeps_the_incarnation_and_updates_only_the_fields_given() {
     let default = store.get_source_by_id("default").unwrap().unwrap();
     assert_eq!(
         serde_json::to_value(&default.config).unwrap(),
-        json!({"a": 1})
+        json!({"a": 1, "federated": null}),
+        "a null in a patch stays a JSON null, as `config || patch` leaves it"
     );
     assert!(
         !store

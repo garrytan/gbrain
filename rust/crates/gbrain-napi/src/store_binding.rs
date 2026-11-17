@@ -477,8 +477,9 @@ impl Brain {
         })
     }
 
-    /// `upsertChunks(slug, chunks, { sourceId?, expectedRevision?, deferSeal? }?)`: replaces the
-    /// page's chunks. With `expectedRevision` the chunks are sealed to it.
+    /// `upsertChunks(slug, chunks, { sourceId?, expectedRevision?, seal? }?)`: writes the
+    /// page's chunks as PGLite's `upsertChunks` does (a repeated chunk keeps the metadata it had;
+    /// the page is not sealed). With `seal` the chunks replace the old ones and are sealed.
     #[napi]
     pub fn upsert_chunks<'env>(
         &self,

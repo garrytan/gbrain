@@ -2,7 +2,7 @@
 import type { TimelineBatchInput } from '../../engine.ts';
 import type { TimelineEntry, TimelineInput, TimelineOpts } from '../../types.ts';
 import { toTimelineEntry } from '../store-codec.ts';
-import { storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
 
 export const addTimelineEntry: StoreMember<[slug: string, entry: TimelineInput, opts?: { skipExistenceCheck?: boolean; sourceId?: string }], boolean> =
   (brain, slug, entry, opts) => {
@@ -12,6 +12,7 @@ export const addTimelineEntry: StoreMember<[slug: string, entry: TimelineInput, 
 
 export const addTimelineEntriesBatch: StoreMember<[entries: TimelineBatchInput[], opts?: { auditSite?: unknown; signal?: AbortSignal }], number> = (brain, entries, opts) => {
   takeOptions('addTimelineEntriesBatch', opts, [], ['auditSite', 'signal']);
+  throwIfAborted(opts?.signal);
   return storeCall({ member: 'addTimelineEntriesBatch' }, () => brain.addTimelineEntriesBatch(entries));
 };
 

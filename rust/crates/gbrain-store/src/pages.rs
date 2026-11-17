@@ -157,6 +157,10 @@ pub struct PutPageOptions {
     /// Chunks installed with the page, in the same transaction. When absent the page's body is
     /// split by the built-in chunker whenever its chunks are not current.
     pub chunks: Option<Vec<ChunkInput>>,
+    /// `false` installs no chunks and seals nothing: the page is written alone, as PGLite's
+    /// `putPage` writes it, and whatever chunks it had stay (unread until they are sealed again).
+    /// Default true. `chunks` has no effect when this is false.
+    pub index: Option<bool>,
 }
 
 /// Which pages a read may see. Mirrors `GetPageOpts`: `source_ids` wins when it is not empty.
@@ -620,13 +624,16 @@ pub(crate) fn put_page_in(
     };
     write_page(tx, &record)?;
     let mut record = record;
+    if options.index == Some(false) {
+        return Ok(record);
+    }
     match &options.chunks {
-        Some(chunks) => replace_chunks(tx, &mut record, chunks, true)?,
+        Some(chunks) => replace_chunks(tx, &mut record, chunks, true, false)?,
         None if record.text_projection_revision.as_deref()
             != Some(record.knowledge_revision.as_str()) =>
         {
             let chunks = auto_chunks(&record);
-            replace_chunks(tx, &mut record, &chunks, true)?
+            replace_chunks(tx, &mut record, &chunks, true, false)?
         }
         None => {}
     }
@@ -786,8 +793,10 @@ impl Store {
         Ok(())
     }
 
-    /// `resolveSlugs(partial, opts)`: the exact live slug, else up to 5 live slugs or titles
-    /// that contain `partial` (case-insensitive), ordered by slug.
+    /// `resolveSlugs(partial, opts)`, the exact half: the live slug equal to `partial`, as PGLite
+    /// answers first. When no live page has that slug PGLite goes on to a trigram match on titles
+    /// (and an `ILIKE` on slugs), which this store does not have, so the answer is the empty list
+    /// and means only "no exact match": the caller must not take it for "nothing resembles it".
     pub fn resolve_slugs(&self, partial: &str, scope: &ReadScope) -> Result<Vec<String>> {
         let read = self.read()?;
         let sources: Option<BTreeSet<String>> = match (&scope.source_ids, &scope.source_id) {
@@ -795,77 +804,64 @@ impl Store {
             (_, Some(id)) if !id.is_empty() => Some(BTreeSet::from([id.clone()])),
             _ => None,
         };
-        let pages: Vec<PageRecord> = all_pages(&*read)?
-            .into_iter()
-            .filter(|p| {
-                p.deleted_at_us.is_none()
-                    && sources.as_ref().is_none_or(|s| s.contains(&p.source_id))
-            })
-            .collect();
-        if let Some(exact) = pages.iter().find(|p| p.slug == partial) {
-            return Ok(vec![exact.slug.clone()]);
-        }
-        let needle = partial.to_lowercase();
-        let mut found: Vec<String> = pages
-            .iter()
-            .filter(|p| {
-                p.slug.to_lowercase().contains(&needle) || p.title.to_lowercase().contains(&needle)
-            })
-            .map(|p| p.slug.clone())
-            .collect();
-        found.sort();
-        found.dedup();
-        found.truncate(5);
-        Ok(found)
+        let exact = all_pages(&*read)?.into_iter().find(|p| {
+            p.deleted_at_us.is_none()
+                && p.slug == partial
+                && sources.as_ref().is_none_or(|s| s.contains(&p.source_id))
+        });
+        Ok(exact.map(|p| vec![p.slug]).unwrap_or_default())
     }
 
-    /// `softDeletePage`: hides the page. `None` when no live page matches.
+    /// `softDeletePage`: hides the page. `None` when no live page matches. With no `source_id` it
+    /// hides the slug in every source, in one transaction, as PGLite's `UPDATE ... WHERE slug = $1`
+    /// does. The slug is matched as written (stored slugs are lower case, so `Notes/A` matches
+    /// nothing), as PGLite matches it.
     pub fn soft_delete_page(&self, slug: &str, source_id: Option<&str>) -> Result<Option<String>> {
         self.write(|tx| {
-            let slug = slug.to_lowercase();
             let sources = scope_sources(&*tx, &source_id.map(String::from), &None)?;
+            let now = self.env.now_micros();
+            let mut hidden = None;
             for id in sources {
-                if let Some(mut page) = read_page(&*tx, &id, &slug)?
+                if let Some(mut page) = read_page(&*tx, &id, slug)?
                     && page.deleted_at_us.is_none()
                 {
-                    page.deleted_at_us = Some(self.env.now_micros());
+                    page.deleted_at_us = Some(now);
                     tag_change(tx, &*self.env, &mut page)?;
-                    return Ok(Some(page.slug));
+                    hidden.get_or_insert(page.slug);
                 }
             }
-            Ok(None)
+            Ok(hidden)
         })
     }
 
-    /// `restorePage`: brings a soft-deleted page back. False when none matches.
+    /// `restorePage`: brings a soft-deleted page back; with no `source_id`, in every source. False
+    /// when none matches. The slug is matched as written, as in `soft_delete_page`.
     pub fn restore_page(&self, slug: &str, source_id: Option<&str>) -> Result<bool> {
         self.write(|tx| {
-            let slug = slug.to_lowercase();
             let sources = scope_sources(&*tx, &source_id.map(String::from), &None)?;
+            let now = self.env.now_micros();
+            let mut restored = false;
             for id in sources {
-                if let Some(mut page) = read_page(&*tx, &id, &slug)?
+                if let Some(mut page) = read_page(&*tx, &id, slug)?
                     && page.deleted_at_us.is_some()
                 {
                     page.deleted_at_us = None;
-                    page.updated_at_us = self.env.now_micros();
+                    page.updated_at_us = now;
                     tag_change(tx, &*self.env, &mut page)?;
-                    return Ok(true);
+                    restored = true;
                 }
             }
-            Ok(false)
+            Ok(restored)
         })
     }
 
-    /// `deletePage`: removes the page row for good, with its versions.
+    /// `deletePage`: removes the page row for good, with its versions. Only the one source named
+    /// (`default` when none is), as PGLite's hard delete does; the slug is matched as written.
     pub fn delete_page(&self, slug: &str, source_id: Option<&str>) -> Result<()> {
         self.write(|tx| {
-            let slug = slug.to_lowercase();
-            let sources = scope_sources(&*tx, &source_id.map(String::from), &None)?;
-            for id in sources {
-                if let Some(page) = read_page(&*tx, &id, &slug)? {
-                    remove_page(tx, &page)?;
-                    break;
-                }
+            let source = source_id.unwrap_or(DEFAULT_SOURCE);
+            if let Some(page) = read_page(&*tx, source, slug)? {
+                remove_page(tx, &page)?;
             }
             Ok(())
         })

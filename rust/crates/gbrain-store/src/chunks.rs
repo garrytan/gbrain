@@ -22,7 +22,8 @@ const MAX_TERM_BYTES: usize = 64;
 /// The size a chunk aims for, in characters.
 pub const CHUNK_TARGET_CHARS: usize = 1500;
 
-/// ChunkInput fields that are kept on the chunk and returned by `get_chunks`.
+/// ChunkInput fields that are kept on the chunk and returned by `get_chunks`. `model` is the label
+/// the caller stamps on the chunk (the embedding model PGLite would record); no vector is stored.
 const META_KEYS: &[&str] = &[
     "language",
     "symbol_name",
@@ -35,6 +36,7 @@ const META_KEYS: &[&str] = &[
     "projected_byte_start",
     "projected_byte_end",
     "token_count",
+    "model",
 ];
 
 /// `ChunkInput` of `src/core/types.ts`. Vectors are not stored; any `embedding*` field is
@@ -75,7 +77,7 @@ impl ChunkRecord {
             "chunk_source": self.chunk_source,
             "modality": self.modality,
             "embedding": Value::Null,
-            "model": "",
+            "model": self.meta.get("model").cloned().unwrap_or_else(|| json!("")),
             "token_count": self.meta.get("token_count").cloned().unwrap_or(Value::Null),
             "embedded_at": Value::Null,
             "has_embedding": false,
@@ -248,10 +250,11 @@ pub(crate) fn replace_chunks(
     page: &mut PageRecord,
     chunks: &[ChunkInput],
     seal: bool,
+    merge: bool,
 ) -> Result<()> {
-    let previous: HashMap<u32, u64> = read_chunks(&*tx, page.id)?
+    let previous: HashMap<u32, ChunkRecord> = read_chunks(&*tx, page.id)?
         .into_iter()
-        .map(|c| (c.chunk_index, c.id))
+        .map(|c| (c.chunk_index, c))
         .collect();
     clear_chunks(tx, page.id)?;
     // The last chunk given for an index wins.
@@ -279,15 +282,27 @@ pub(crate) fn replace_chunks(
         let text = input.chunk_text.replace('\0', "");
         let (tf, length) = term_frequencies(&text);
         let id = match previous.get(&index) {
-            Some(id) => *id,
+            Some(old) => old.id,
             None => next_chunk_id(tx)?,
         };
-        let meta: Map<String, Value> = input
+        let mut meta: Map<String, Value> = input
             .rest
             .iter()
             .filter(|(k, v)| META_KEYS.contains(&k.as_str()) && !v.is_null())
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
+        // PGLite's incremental write: a chunk whose text did not change keeps the metadata the
+        // new write leaves null (`COALESCE(new, old)`); `token_count` and `model` are the new
+        // write's. A chunk whose text changed takes the new write's metadata outright.
+        if merge {
+            if let Some(old) = previous.get(&index).filter(|old| old.chunk_text == text) {
+                for (key, value) in &old.meta {
+                    if key != "token_count" && key != "model" && !meta.contains_key(key) {
+                        meta.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+        }
         let record = ChunkRecord {
             id,
             page_id: page.id,
@@ -329,11 +344,12 @@ fn next_chunk_id(tx: &mut dyn KvWrite) -> Result<u64> {
 #[serde(default, rename_all = "camelCase")]
 pub struct UpsertChunksOptions {
     pub source_id: Option<String>,
-    /// When given, the page must be at this revision (`revision_conflict` otherwise) and the
-    /// chunks are sealed to it.
+    /// When given, the page must be at this revision (`revision_conflict` otherwise). It only
+    /// checks: PGLite's `upsertChunks` never seals.
     pub expected_revision: Option<String>,
-    /// Do not seal even with `expected_revision`.
-    pub defer_seal: bool,
+    /// PGLite's `sealChunks`: replace every chunk of the page with `chunks` (no merge with what
+    /// was there) and seal them to the page's current revision, even when `chunks` is empty.
+    pub seal: bool,
 }
 
 impl Store {
@@ -363,12 +379,25 @@ impl Store {
                     ));
                 }
             }
-            let seal = options.expected_revision.is_some() && !options.defer_seal;
-            replace_chunks(tx, &mut page, chunks, seal)
+            let seal = options.seal;
+            if chunks.is_empty() && !seal {
+                // PGLite: an empty write removes the chunks and leaves the page unsealed.
+                replace_chunks(tx, &mut page, chunks, false, true)?;
+                if page.text_projection_revision.is_some() {
+                    page.text_projection_revision = None;
+                    write_page(tx, &page)?;
+                }
+                return Ok(());
+            }
+            replace_chunks(tx, &mut page, chunks, seal, !seal)
         })
     }
 
-    /// `getChunks(slug, opts)`: the page's chunks in index order, without vectors.
+    /// `getChunks(slug, opts)`: the page's chunks in index order, without vectors, while they
+    /// describe the page's current text. PGLite reads a page's chunks only when its
+    /// `text_projection_revision` equals its `knowledge_revision` (the chunks are sealed), so a page
+    /// that was never sealed, or whose revision moved since (a tag change, a soft delete), reads as
+    /// no chunks.
     pub fn get_chunks(&self, slug: &str, scope: &ReadScope) -> Result<Vec<Value>> {
         let read = self.read()?;
         let scope_default =
@@ -377,16 +406,15 @@ impl Store {
             } else {
                 scope.source_id.clone()
             };
-        let Some(page) = find_in_scope(
-            &*read,
-            &slug.to_lowercase(),
-            &scope_default,
-            &scope.source_ids,
-            scope.include_deleted,
-        )?
+        // The slug is matched as written, and a soft-deleted page is read like a live one: PGLite's
+        // chunk read has neither a case fold nor a `deleted_at` filter.
+        let Some(page) = find_in_scope(&*read, slug, &scope_default, &scope.source_ids, true)?
         else {
             return Ok(Vec::new());
         };
+        if page.text_projection_revision.as_deref() != Some(page.knowledge_revision.as_str()) {
+            return Ok(Vec::new());
+        }
         Ok(read_chunks(&*read, page.id)?
             .iter()
             .map(ChunkRecord::to_chunk)
