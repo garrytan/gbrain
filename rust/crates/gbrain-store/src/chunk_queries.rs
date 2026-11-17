@@ -10,15 +10,18 @@
 //! `pub(crate)` readers and writes nothing, so this family keeps no records of its own: no key
 //! starts with `keys::CHUNK_QUERIES` (`c`).
 //!
-//! The store keeps every body inline (no segmented pages), so the segmented branches of the SQL
-//! engines never apply. It has no `chunker_version` column either: a page's chunks are sealed when
-//! its `text_projection_revision` equals its `knowledge_revision`, the same test the SQL engines'
+//! A segmented page is one whose body columns are NULL (`PageText::is_null`), the shell PGLite's
+//! `createSegmentedPageShell` leaves. Its `body_bytes` is a column the page_body family adds
+//! (`page_columns::add_page_columns`); until that family writes one it reads as NULL, and a NULL
+//! `body_bytes` fails `body_bytes > 0` as it does in SQL. A page's chunks are served when its
+//! `text_projection_revision` equals its `knowledge_revision`, the same test the SQL engines'
 //! served-projection filter makes. See rust/docs/store/chunk_queries.md.
 
 use crate::Store;
 use crate::chunks::{ChunkRecord, read_chunks};
 use crate::error::Result;
 use crate::kv::KvRead;
+use crate::page_columns::add_page_columns;
 use crate::pages::{PageRecord, all_pages, find_in_scope, read_page_by_id};
 use crate::sources::read_source;
 use serde::Deserialize;
@@ -31,6 +34,29 @@ const DEFAULT_CHUNKLESS_BATCH: u64 = 50;
 const QUARANTINE_KEY: &str = "quarantine";
 /// The frontmatter key that marks a page whose chunks get no vectors.
 const EMBED_SKIP_KEY: &str = "embed_skip";
+/// `SAFE_FENCE_CHUNKER_VERSION` (`src/core/search/safe-chunks.ts`): a page chunked at this version
+/// or later has sealed chunks.
+const SAFE_FENCE_CHUNKER_VERSION: i16 = 4;
+
+/// True for a segmented shell page: its body columns are NULL.
+fn segmented(page: &PageRecord) -> bool {
+    page.compiled_truth.is_null() && page.timeline.is_null()
+}
+
+/// The page's `body_bytes` column, which the page_body family adds; `None` when no family adds it.
+fn body_bytes(read: &dyn KvRead, page: &PageRecord) -> Result<Option<i64>> {
+    let mut row = json!({});
+    add_page_columns(read, page, &mut row)?;
+    Ok(row.get("body_bytes").and_then(Value::as_i64))
+}
+
+/// The `chunklessPagesWhere` body test: `compiled_truth <> '' OR timeline <> '' OR
+/// (body_storage = 'segmented' AND body_bytes > 0)`. A NULL body column fails `<> ''`.
+fn has_body(page: &PageRecord, body_bytes: Option<i64>) -> bool {
+    !page.compiled_truth.is_empty()
+        || !page.timeline.is_empty()
+        || (segmented(page) && body_bytes.is_some_and(|b| b > 0))
+}
 
 /// `getChunkPage(slug, { sourceId, fromIndex, limit })`. The TypeScript member resolves the
 /// scope to one named source before it calls the store.
@@ -97,7 +123,7 @@ fn chunkless_pages(read: &dyn KvRead, source_id: Option<&str>) -> Result<Vec<Pag
     for page in all_pages(read)? {
         if source_id.is_some_and(|s| !s.is_empty() && s != page.source_id)
             || page.deleted_at_us.is_some()
-            || (page.compiled_truth.is_empty() && page.timeline.is_empty())
+            || !has_body(&page, body_bytes(read, &page)?)
             || page.frontmatter.contains_key(QUARANTINE_KEY)
             || (sealed(&page) && !page.frontmatter.contains_key(EMBED_SKIP_KEY))
             || !read_chunks(read, page.id)?.is_empty()
@@ -108,6 +134,18 @@ fn chunkless_pages(read: &dyn KvRead, source_id: Option<&str>) -> Result<Vec<Pag
     }
     out.sort_by_key(|p| p.id);
     Ok(out)
+}
+
+/// One `listChunklessPagesWithContent` row. A segmented page's NULL body columns read as `''`, as
+/// the SQL engines' `?? ''` maps them.
+fn chunkless_row(page: &PageRecord) -> Value {
+    json!({
+        "id": page.id,
+        "slug": page.slug,
+        "source_id": page.source_id,
+        "compiled_truth": &*page.compiled_truth,
+        "timeline": &*page.timeline,
+    })
 }
 
 fn chunk_window_row(chunk: &ChunkRecord, prio: i64) -> Value {
@@ -207,11 +245,19 @@ impl Store {
             {
                 continue;
             }
+            // `sealed`: `COALESCE(chunker_version, 0) >= SAFE_FENCE_CHUNKER_VERSION`. A store page
+            // with no recorded version was chunked by this store's chunker, which seals; a segmented
+            // shell records the version PGLite caps below the safe one. Only a sealed page gives
+            // chunk rows.
+            let page_sealed = page
+                .chunker_version
+                .is_none_or(|v| v >= SAFE_FENCE_CHUNKER_VERSION);
             let chunks = read_chunks(&*read, page.id)?;
             let max = chunks.iter().map(|c| c.chunk_index).max();
             for chunk in &chunks {
                 let index = i64::from(chunk.chunk_index);
-                if options.chunk_sources.contains(&chunk.chunk_source)
+                if page_sealed
+                    && options.chunk_sources.contains(&chunk.chunk_source)
                     && chunk.modality == "text"
                     && requests.iter().any(|r| {
                         r.page_id == page_id && r.from_index <= index && index <= r.to_index
@@ -232,8 +278,8 @@ impl Store {
                 "source_id": page.source_id,
                 "type": page.page_type,
                 "revision": page.knowledge_revision,
-                "sealed": true,
-                "segmented": false,
+                "sealed": page_sealed,
+                "segmented": segmented(&page),
                 "prio": page_prio,
                 "max_chunk_index": max,
                 "compiled_truth": page.compiled_truth,
@@ -270,15 +316,126 @@ impl Store {
                     .is_none_or(|after| i128::from(p.id) > i128::from(after))
             })
             .take(limit)
-            .map(|p| {
-                json!({
-                    "id": p.id,
-                    "slug": p.slug,
-                    "source_id": p.source_id,
-                    "compiled_truth": p.compiled_truth,
-                    "timeline": p.timeline,
-                })
-            })
+            .map(|p| chunkless_row(&p))
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pages::{PageInput, PageText, PutPageOptions, read_page, write_page};
+    use crate::test_support::store;
+
+    fn put(store: &Store, slug: &str, body: &str) -> PageRecord {
+        let input: PageInput = serde_json::from_value(json!({
+            "type": "note", "title": slug, "compiled_truth": body, "timeline": ""
+        }))
+        .unwrap();
+        store
+            .put_page(slug, &input, &PutPageOptions::default())
+            .unwrap();
+        read_page(&*store.read().unwrap(), "default", slug)
+            .unwrap()
+            .unwrap()
+    }
+
+    /// The shell PGLite's `createSegmentedPageShell` leaves: NULL body columns, no content hash,
+    /// chunker version 0.
+    fn make_shell(store: &Store, slug: &str) -> PageRecord {
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, "default", slug)?.unwrap();
+                page.compiled_truth = PageText::null();
+                page.timeline = PageText::null();
+                page.content_hash = None;
+                page.chunker_version = Some(0);
+                write_page(tx, &page)?;
+                Ok(page)
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn a_segmented_page_has_a_body_only_when_its_body_bytes_are_positive() {
+        let store = store();
+        put(&store, "notes/big", "body");
+        let shell = make_shell(&store, "notes/big");
+        assert!(segmented(&shell));
+        assert!(has_body(&shell, Some(10)));
+        assert!(!has_body(&shell, Some(0)), "a fresh shell has body_bytes 0");
+        assert!(!has_body(&shell, None), "NULL > 0 is not true");
+        // No family adds body_bytes yet, so the shell is not chunkless-with-content today, as a
+        // PGLite shell with body_bytes 0 is not.
+        let options = ChunklessOptions::default();
+        assert_eq!(
+            store.count_chunkless_pages_with_content(&options).unwrap(),
+            0
+        );
+        assert!(
+            store
+                .list_chunkless_pages_with_content(&options)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_chunkless_row_sends_an_empty_string_for_a_null_body_column() {
+        let store = store();
+        let shell = {
+            put(&store, "notes/big", "body");
+            make_shell(&store, "notes/big")
+        };
+        let row = chunkless_row(&shell);
+        assert_eq!(row["compiled_truth"], json!(""));
+        assert_eq!(row["timeline"], json!(""));
+        assert_eq!(row["slug"], json!("notes/big"));
+    }
+
+    #[test]
+    fn a_chunk_window_page_row_says_segmented_and_unsealed_for_a_shell() {
+        let store = store();
+        let inline = put(&store, "notes/inline", "inline body");
+        let shell = {
+            put(&store, "notes/big", "big body");
+            make_shell(&store, "notes/big")
+        };
+        let requests: Vec<ChunkWindowRequest> = [inline.id, shell.id]
+            .iter()
+            .map(|&id| ChunkWindowRequest {
+                page_id: i64::try_from(id).unwrap(),
+                from_index: 0,
+                to_index: 10,
+                priority: 0,
+            })
+            .collect();
+        let options = ChunkWindowOptions {
+            chunk_sources: vec!["compiled_truth".into()],
+            max_rows: 100,
+            ..Default::default()
+        };
+        let rows = store.get_chunk_windows(&requests, &options).unwrap();
+        let page_row = |id: u64| {
+            rows.iter()
+                .find(|r| r["kind"] == "page" && r["page_id"] == json!(id))
+                .cloned()
+        };
+        let inline_row = page_row(inline.id).expect("the inline page is authorized");
+        assert_eq!(inline_row["segmented"], json!(false));
+        assert_eq!(inline_row["compiled_truth"], json!("inline body"));
+        if let Some(shell_row) = page_row(shell.id) {
+            assert_eq!(shell_row["segmented"], json!(true));
+            assert_eq!(shell_row["sealed"], json!(false));
+            assert_eq!(shell_row["compiled_truth"], Value::Null);
+            assert!(
+                !rows
+                    .iter()
+                    .any(|r| r["kind"] == "chunk" && r["page_id"] == json!(shell.id)),
+                "an unsealed page gives no chunk rows"
+            );
+        } else {
+            panic!("the shell page is authorized: {rows:?}");
+        }
     }
 }
