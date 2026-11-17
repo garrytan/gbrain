@@ -128,7 +128,8 @@ agent never reads a short list as "nothing else exists".
 - Put the name in the title, or after a prefix: `CRM record: Acme Example`.
 - Declare other names in the body (see [How gbrain learns an alias](#how-gbrain-learns-an-alias)).
 - Or list names in frontmatter `aliases: [Acme, Acme Inc]`.
-- Put a person's X handle in frontmatter `x_handle:` (or `twitter:`): text that
+- Put a person's X handle in frontmatter `x_handle:` (or `twitter:`,
+  `twitter_handle:` or `x:`; an `x.com/<handle>` URL works too): text that
   writes `@handle` links to that page. `unknown`, `0` and other placeholders
   are ignored.
 
