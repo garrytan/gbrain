@@ -438,6 +438,22 @@ segmented chunk (`test/e2e/segmented-switch-off-write-role.test.ts`). With the
 policies above it creates segmented pages and sees only its sources' rows
 (`test/e2e/segmented-rls-scope.test.ts`).
 
+<a id="owner-only-delete-triggers"></a>
+**Owner-only delete triggers.** Rows derived from an owner-only source (an `imessage` source, or
+one with `owner_only: true`) stay owner-only after their origin is gone. Since migration v322
+(GST-3032) a `BEFORE DELETE` trigger on `sources`, `pages`, `facts`, `takes` and
+`timeline_entries` records every row derived from a row it deletes in `owner_only_marks`, and
+reads treat a marked row as owner-only. Nothing derived is deleted. `CREATE TRIGGER` needs the
+table's owner: a table another role owns gets no trigger, the migration run and
+`gbrain doctor` (`owner_only_marks_triggers`) name it with `ALTER TABLE ... OWNER TO`, and the
+next migration run by its owner creates it. While a trigger is missing on a brain that holds an
+owner-only source or a mark, owner-only lineage reads closed: every row with a recorded
+derivation input and every synthesized concept or question counts as owner-only, and it stays
+closed after the triggers exist (a delete in the gap left no marks) until the owner deletes the
+`('*', 'unguarded')` row by hand. A role that does not own the tables needs
+`GRANT SELECT, INSERT ON owner_only_marks`; the migration's policies let every granted role read
+and add marks, and none remove them.
+
 <a id="purge-and-withdrawal-guards"></a>
 **Purge and withdrawal guards.** The guards that refuse purged content and keep withdrawn
 facts withdrawn run as the writing role (`SECURITY INVOKER`) and read their ledgers
