@@ -32,6 +32,7 @@ import type { Action, ActionInput, Effect } from '../agent-output.ts';
 import { CONTENT_REPAIR_MEASURED_MODELS } from './measured.ts';
 import type { ContentHoldRepairState } from '../persistence/sync-holds.ts';
 import { contentRepairHumanReason, contentRepairLaneCurrent } from '../persistence/sync-fault-class.ts';
+import { commandText } from '../brand.ts';
 
 const PAID: ReadonlySet<string> = new Set(['llm_disabled', 'budget_exhausted', 'no_measured_model', 'no_pricing']);
 
@@ -102,7 +103,7 @@ export function contentHoldFix(record: { source_id: string; path: string; slug?:
         : state.reason === 'no_measured_model' ? 'no measured model has a provider key here and models.content_repair is unset'
         : state.reason === 'no_pricing' ? `foresights has no price for ${state.model ?? 'the model'} under a user-set cap` : 'the daily content-repair budget is spent'}. `
         + `Spending is the user's call; ask before changing it. Until then the file stays held${state.next_attempt_after ? ` and the maintenance run tries again after ${state.next_attempt_after}` : ''}. `
-        + `Preview: ${preview.join(' ')}. By hand instead: if ${record.path} and ${named ?? 'the page its slug: line names'} are different pages, delete the slug: line of ${record.path} and commit; if they are the same, merge them and delete the duplicate.`,
+        + `Preview: ${commandText(preview)}. By hand instead: if ${record.path} and ${named ?? 'the page its slug: line names'} are different pages, delete the slug: line of ${record.path} and commit; if they are the same, merge them and delete the duplicate.`,
       user_message: `${pair}; only a model call can judge whether they are the same page, and ${state.reason === 'llm_disabled' ? 'model repair is turned off' : state.reason === 'budget_exhausted' ? 'the daily model budget for content repair is spent'
         : state.reason === 'no_pricing' ? 'foresights has no price for the configured model' : 'no measured model has a key here'}. Allow the spend, or leave the file held?` };
   }

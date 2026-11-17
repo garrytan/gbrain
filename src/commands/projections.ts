@@ -23,6 +23,7 @@ export { drainProjections, previewProjectionDrain, type ProjectionDrainResult } 
 import { SERVE_LAUNCHD_LABEL, SERVE_SYSTEMD_UNIT } from '../core/serve-service.ts';
 import { resolveAutopilotJob } from '../core/autopilot-paths.ts';
 import { detectInstalledJob } from './autopilot/jobs.ts';
+import { commandText } from '../core/brand.ts';
 
 export const PROJECTION_DRAIN_DOCS = 'docs/guides/repair.md#projection-drain';
 
@@ -166,7 +167,7 @@ export function residentDrainAction(holder: LockHolderInfo, brain = 'host', stat
   return {
     ...(holder.pid ? { argv: ['kill', String(holder.pid)] } : {}), consent: [], actor: 'user', requires_exclusive: false,
     why: `${owner} holds this PGLite brain and drains text only; sealing images needs the database to itself. Stop it, run the next step, then start it again (the commands are in the error hint).`,
-    user_message: `This brain has ${counts}. The running foresights owner, ${owner}, drains text only, so sealing needs it stopped for about ${seconds} second(s) per drain run; harnesses connected through that serve disconnect until it restarts. Please stop it, run \`${argv.join(' ')}\`, then start it again.`,
+    user_message: `This brain has ${counts}. The running foresights owner, ${owner}, drains text only, so sealing needs it stopped for about ${seconds} second(s) per drain run; harnesses connected through that serve disconnect until it restarts. Please stop it, run \`${commandText(argv)}\`, then start it again.`,
     then: drain,
   };
 }

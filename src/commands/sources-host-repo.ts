@@ -8,6 +8,7 @@ import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { OperationError, opError } from '../core/ops/contract.ts';
 import { cliRenderContext, toAgentError } from '../core/agent-output.ts';
 import { hostRepo, type HostRepoOptions, type HostRepoPlan } from '../core/persistence/hosted-repo.ts';
+import { commandText } from '../core/brand.ts';
 
 const USAGE = 'foresights sources host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>] [--json]';
 
@@ -34,10 +35,10 @@ function describe(plan: HostRepoPlan): string {
   const lines = [...plan.summary];
   if (plan.dry_run) {
     lines.push(`Hook: ${plan.hook.state} (${plan.hook.path}); worktree link: ${plan.worktree_link}.`);
-    lines.push(plan.apply ? `Apply (after the user agrees): ${plan.apply.join(' ')}` : 'Nothing to apply.');
+    lines.push(plan.apply ? `Apply (after the user agrees): ${commandText(plan.apply)}` : 'Nothing to apply.');
   } else lines.push(plan.action === 'host' ? `Done: source ${plan.source_id} is hosted at ${plan.repository}.`
     : plan.action === 'reinstall_hook' ? 'Done: the pre-receive hook is reinstalled.' : 'Nothing changed.');
-  for (const step of plan.next) lines.push(`Next: ${step.join(' ')}`);
+  for (const step of plan.next) lines.push(`Next: ${commandText(step)}`);
   return lines.join('\n');
 }
 

@@ -31,6 +31,7 @@ import { readManagedSyncBacklog } from '../core/persistence/sync-drain.ts';
 import type { FenceAutoRepair } from '../core/fence-repair/hold-fix.ts';
 import { companyBrainProfile } from '../core/company-brain/policy.ts';
 import { findUnindexedFiles, refreshUnindexedFiles, unindexedScanBudgetMs, type UnindexedScan } from '../core/persistence/unindexed-files.ts';
+import { commandText } from '../core/brand.ts';
 
 export interface RetryHeldReceipt {
   source_id: string;
@@ -91,7 +92,7 @@ async function scheduleGitFiles(engine: BrainEngine, sourceId: string, incarnati
 
 function gitNextStep(sourceId: string, dryRun: boolean, scheduled: Scheduled): { text: string; fix: Action } {
   const count = scheduled.items.length;
-  const sync = scheduled.sync.join(' ');
+  const sync = commandText(scheduled.sync);
   const verify = { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] };
   const automatic = 'Most holds re-screen on the next sync by themselves (the file changed or was deleted, or a newer foresights can read it); '
     + 'a scheduled re-screen covers a cause outside the file, such as a conflicting page that has since moved.';
@@ -117,7 +118,7 @@ export async function retryHeld(engine: BrainEngine, sourceId: string, opts: { d
   const dryRun = opts.dryRun === true;
   const scheduled = await (kind === 'connector' ? scheduleConnectorItems : scheduleGitFiles)(engine, sourceId, source.incarnation, dryRun);
   const count = scheduled.items.length;
-  const sync = scheduled.sync.join(' ');
+  const sync = commandText(scheduled.sync);
   const step = kind === 'git' && count ? gitNextStep(sourceId, dryRun, scheduled) : undefined;
   const next = !count ? `No held ${kind === 'connector' ? 'items' : 'files'} for ${sourceId}.`
     : step ? step.text
@@ -158,9 +159,9 @@ export async function retryUnindexed(engine: BrainEngine, sourceId: string, opts
   const partial = scan.complete ? '' : ` The scan stopped at its time budget after ${scan.scanned} file(s); run ${again.join(' ')} again to continue.`;
   const waiting = count + scan.scheduled;
   const next = !count ? (scan.complete ? `No unindexed files for ${sourceId}.` : `No unindexed files found so far in ${sourceId}.`)
-      + (scan.scheduled ? ` ${scan.scheduled} file(s) already wait for a re-screen; run: ${sync.join(' ')}.` : '') + partial
+      + (scan.scheduled ? ` ${scan.scheduled} file(s) already wait for a re-screen; run: ${commandText(sync)}.` : '') + partial
     : dryRun ? `${count} unindexed file(s) would be scheduled for a re-screen; run: ${again.join(' ')}.${partial}`
-      : `${count} unindexed file(s) scheduled for a re-screen; none has run yet. Run it now with: ${sync.join(' ')}, then verify with: ${UNINDEXED_VERIFY.argv.join(' ')}. `
+      : `${count} unindexed file(s) scheduled for a re-screen; none has run yet. Run it now with: ${commandText(sync)}, then verify with: ${commandText(UNINDEXED_VERIFY.argv)}. `
         + `Each file that passes imports; each one that refuses is held and listed by foresights sources status ${sourceId}.${partial}`;
   const fix: Action | undefined = dryRun && count
     ? { argv: again, consent: [], actor: 'agent', requires_exclusive: false, verify: UNINDEXED_VERIFY, why: `Schedules ${count} unindexed file(s) of ${sourceId} for a re-screen on its next sync; nothing runs now.` }
@@ -172,7 +173,7 @@ export async function retryUnindexed(engine: BrainEngine, sourceId: string, opts
   return receiptOf({ source_id: sourceId, kind: 'git', dry_run: dryRun, scheduled: scheduled.length, ...(fix ? { fix } : {}),
     unindexed: { complete: scan.complete, target: scan.target, scanned: scan.scanned, unindexed: scan.unindexed, slug_taken: scan.slug_taken, already_scheduled: scan.scheduled, by_code: scan.by_code, metafile_skipped: scan.metafile_skipped } },
   scan.files.map(file => ({ key: file.path, code: file.code, reason: 'unindexed', action: dryRun ? 'would_retry' as const : 'retry_scheduled' as const })), next,
-  dryRun ? 'Run the same command without --dry-run to schedule it.' : `Re-screened on the next ${sync.join(' ')}.`);
+  dryRun ? 'Run the same command without --dry-run to schedule it.' : `Re-screened on the next ${commandText(sync)}.`);
 }
 
 export async function runRetryHeld(engine: BrainEngine, args: string[]): Promise<void> {

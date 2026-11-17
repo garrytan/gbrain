@@ -36,6 +36,7 @@ import { hasPendingMigrations } from '../migrate-pending.ts';
 import { tryAcquireDbLock } from '../db-lock.ts';
 import { resolveArchiveEnabled } from '../transcripts/archive-default.ts';
 import type { ArchiveMaintenanceOutcome } from '../transcripts/archive-maintenance.ts';
+import { argvOfCommandText } from '../brand.ts';
 
 export const MAINTENANCE_LAST_RUN_KEY = 'maintenance.last_run';
 export const MAINTENANCE_AUTO_KEY = 'maintenance.auto';
@@ -267,7 +268,7 @@ async function preflight(engine: BrainEngine, opts: UpkeepOpts, now: Date): Prom
   const paused = await (opts.capacityPaused ?? defaultCapacityPaused)(engine).catch(() => null);
   if (paused) {
     return skip('write_capacity_backpressure', `A cumulative write cap (${paused.config_key}) passed the background pause line, so upkeep skipped this run.`,
-      { argv: paused.command.split(' '), consent: [], actor: 'host_admin', requires_exclusive: false,
+      { argv: argvOfCommandText(paused.command), consent: [], actor: 'host_admin', requires_exclusive: false,
         why: 'Raises the write cap on the brain host; background producers, upkeep included, resume below the pause line.', verify: { argv: ['gbrain', 'doctor', '--only', 'persistence_capacity', '--json'] } });
   }
   return null;

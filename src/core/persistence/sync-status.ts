@@ -54,6 +54,7 @@ import { GIT_PUSH_CODES, readGitPushHolds, type GitPushHold } from './git-push-h
 import { holderStalled, readDrainLease, type DrainHolder } from './sync-lease.ts';
 import { syncLockId } from '../db-lock.ts';
 import { ACTIVE_REFRESH_STATES_SQL } from './worktree-refresh-schema.ts';
+import { commandText } from '../brand.ts';
 
 export interface SyncStatusHold extends SyncFaultVerdict {
   code: string;
@@ -408,7 +409,7 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
     ...(failure.repeats ? { repeats: failure.repeats } : {}),
     ...classifySyncFault({ code: failure.code, detail: laneFault, message: failure.message, repeated: failure.repeats ? { path: failure.path, runs: failure.repeats } : null }) }
     : retired ? { code: 'cursor_incarnation_retired', category: 'sync_fault', public_category: 'superseded', message: `An unfinished sync cursor of ${sourceId} was recorded under an incarnation the source no longer has; no current sync selects it, and it says nothing about whether the current files are imported. `
-      + `Retire it with ${repairPreview.argv!.join(' ')} (preview, then --apply with the printed hash).`, phase: 'resume', first_seen: retired.first_seen, attempts: 1, ...classifySyncFault({ code: 'cursor_incarnation_retired' }) } : null;
+      + `Retire it with ${commandText(repairPreview.argv!)} (preview, then --apply with the printed hash).`, phase: 'resume', first_seen: retired.first_seen, attempts: 1, ...classifySyncFault({ code: 'cursor_incarnation_retired' }) } : null;
   const iso = (value: Date | string | null | undefined) => value == null ? null : new Date(value).toISOString();
   if (failure && lastError) {
     const [seen] = await engine.executeRaw<{ failure_at: Date | string | null; committed_at: Date | string | null; admitted_at: Date | string | null; now_at: Date | string }>(`SELECT now() AS now_at,

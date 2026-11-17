@@ -5,6 +5,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { resolveSourcePaths } from '../core/persistence/resolve-paths.ts';
+import { commandText } from '../core/brand.ts';
 
 export const RESOLVE_PATH_USAGE = 'Usage: foresights sources resolve-path <id> <path...> [--stdin] [--json]';
 
@@ -30,6 +31,6 @@ export async function runResolvePath(engine: BrainEngine, args: string[]): Promi
   for (const p of result.paths) {
     console.log(`  ${p.path} -> ${p.slug}: ${p.state}${p.searchable === true ? ' (searchable)' : p.searchable === 'keyword' ? ' (keyword search only)' : ''}`);
     console.log(`    ${p.why}`);
-    if (p.fix?.argv) console.log(`    next: ${p.fix.argv.join(' ')}`);
+    if (p.fix?.argv) console.log(`    next: ${commandText(p.fix.argv)}`);
   }
 }

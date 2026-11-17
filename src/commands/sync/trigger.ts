@@ -1,6 +1,7 @@
 /** `foresights sync trigger`: ask for a sync of one source without waiting for it (GBRA-133 PR 2a). */
 import type { BrainEngine } from '../../core/engine.ts';
 import { cliRenderContext, renderNotice, type Notice } from '../../core/agent-output.ts';
+import { commandText } from '../../core/brand.ts';
 
 export type TriggerAction = 'queued' | 'nudged' | 'coalesced';
 
@@ -71,7 +72,7 @@ export function printTriggerOutcome(o: TriggerOutcome, json: boolean): void {
     nudged: `the running serve recorded the request for ${o.source_id} (${o.intent}, wanted ${head})${o.resident ? ' and its notifier starts the sync' : ''}`,
   };
   console.error(`[sync trigger] ${line[o.action]}`);
-  if (notice) console.error(`[gbrain notice no_resident] ${notice.why} Run: ${notice.fix!.argv!.join(' ')}`);
+  if (notice) console.error(`[gbrain notice no_resident] ${notice.why} Run: ${commandText(notice.fix!.argv!)}`);
 }
 
 /**

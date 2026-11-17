@@ -27,6 +27,7 @@ import { resolvePageWriteTarget, scannerSlugRootMode } from '../write-through.ts
 import { managedPersistenceEnabled } from './ownership.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
+import { commandText } from '../brand.ts';
 
 export const DETACHED_REASON = 'detached';
 const DOCS = 'docs/storage-tiering.md#restoring-a-page-whose-file-is-gone';
@@ -85,7 +86,7 @@ export async function assertRestoreOrigin(engine: BrainEngine, input: { sourceId
   const command = ['gbrain', 'restore', slug, '--source-id', sourceId, '--detach'];
   throw opError('source_changed', `The page's canonical file ${absent} is no longer in the checkout of source '${sourceId}'.`,
     `Nothing was restored: a restored page whose recorded file is gone is soft-deleted again by the next foresights sync --full. Choose one: put ${absent} back in the checkout, `
-      + `commit it and run foresights sync --source ${sourceId} (sync restores the page from its file); or restore the page database-only with ${command.join(' ')} `
+      + `commit it and run foresights sync --source ${sourceId} (sync restores the page from its file); or restore the page database-only with ${commandText(command)} `
       + '(restore_page with detach: true), which forgets its recorded file so sync keeps it; a file synced later at its path updates it again.',
     { detail: 'canonical_file_absent', retryable: false, docs: DOCS, fix: {
       argv: command, mcp: { tool: 'restore_page', arguments: { slug, source_id: sourceId, detach: true } },

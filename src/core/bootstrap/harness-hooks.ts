@@ -13,6 +13,7 @@ import { cliRenderContext, noticeBlock, renderNotice } from '../agent-output.ts'
 import type { HarnessReceipt, HarnessTarget } from './format.ts';
 import { GBRAIN_HARNESS_MARKER_VALUE } from './host-specs.ts';
 import { harnessHookIdentity, removeClaudeHooksAt, scanHarnessHookCarrier } from './hooks.ts';
+import { commandText } from '../brand.ts';
 
 interface HookDeps {
   userSettingsPath: string;
@@ -46,7 +47,7 @@ export function harnessHookUnownedNotice(settingsPath: string, events: string[])
       verify: { argv: STATUS_ARGV },
     },
   }, cliRenderContext());
-  return `${noticeBlock(rendered)}\nverify: ${STATUS_ARGV.join(' ')}`;
+  return `${noticeBlock(rendered)}\nverify: ${commandText(STATUS_ARGV)}`;
 }
 
 /**

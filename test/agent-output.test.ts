@@ -53,7 +53,7 @@ describe('renderAction', () => {
   test('command comes only from argv via shellQuote; mcp dropped unless callable', () => {
     const r = renderAction(action({ argv: ['gbrain', 'get', '--', 'notes/a b'], mcp: { tool: 'get_page', arguments: { slug: 'notes/a b' } } }),
       ctx({ isCallable: () => false, transport: 'cli' }));
-    expect(r.command).toBe("gbrain get -- 'notes/a b'");
+    expect(r.command).toBe("foresights get -- 'notes/a b'");
     expect(r.mcp).toBeUndefined();
   });
 
@@ -64,7 +64,7 @@ describe('renderAction', () => {
 
   test('then renders recursively; docs become absolute', () => {
     const r = renderAction(action({ docs: 'docs/guides/repair.md#x', then: action({ argv: ['gbrain', 'sync'] }) }), ctx({ transport: 'cli' }));
-    expect(r.then?.command).toBe('gbrain sync');
+    expect(r.then?.command).toBe('foresights sync');
     expect(r.docs).toBe('https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#x');
   });
 });
@@ -90,10 +90,10 @@ describe('injection and quoting', () => {
   });
 
   test('ids starting with - or --yes and shell metacharacters stay inert', () => {
-    expect(shellQuote(['gbrain', 'get', '--', '--yes'])).toBe('gbrain get -- --yes');
-    expect(shellQuote(['gbrain', 'get', '--', '$(rm -rf ~); echo'])).toBe("gbrain get -- '$(rm -rf ~); echo'");
-    expect(shellQuote(['gbrain', 'x', "it's"])).toBe("gbrain x 'it'\\''s'");
-    expect(shellQuote(['gbrain', ''])).toBe("gbrain ''");
+    expect(shellQuote(['gbrain', 'get', '--', '--yes'])).toBe('foresights get -- --yes');
+    expect(shellQuote(['gbrain', 'get', '--', '$(rm -rf ~); echo'])).toBe("foresights get -- '$(rm -rf ~); echo'");
+    expect(shellQuote(['gbrain', 'x', "it's"])).toBe("foresights x 'it'\\''s'");
+    expect(shellQuote(['gbrain', ''])).toBe("foresights ''");
   });
 
   test('argvFromCommand accepts only plain foresights commands', () => {
@@ -150,7 +150,7 @@ describe('notice ordering and CLI channel', () => {
 
   test('TTY → stderr lines; non-TTY → [AGENT] blocks; --json → the notices key', () => {
     const rendered = orderNotices(notices).map(n => renderNotice(n, ctx({ transport: 'cli' })));
-    expect(renderCliNotices(rendered, { json: false, tty: true }).stderr).toContain('Note [s]: safe\n  Fix: gbrain backup status');
+    expect(renderCliNotices(rendered, { json: false, tty: true }).stderr).toContain('Note [s]: safe\n  Fix: foresights backup status');
     const agent = renderCliNotices(rendered, { json: false, tty: false });
     expect(agent.stdout?.match(/\[AGENT\]/g)).toHaveLength(5);
     expect(renderCliNotices(rendered, { json: false, tty: false, stdoutIsData: true }).stdout).toBeUndefined();

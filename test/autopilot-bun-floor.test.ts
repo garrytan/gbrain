@@ -80,7 +80,7 @@ function writeDriver(path: string, h: Harness): void {
 
 /** A bun-link clone one commit behind an origin whose head pins `floor`. */
 function bunLinkInstall(h: Harness, floor: string): string {
-  const origin = join(h.root, 'remotes', 'garrytan', 'gbrain');
+  const origin = join(h.root, 'remotes', 'aimonk2025', 'gbrain');
   mkdirSync(origin, { recursive: true });
   git(['init', '-q', '-b', 'master'], origin);
   writeFileSync(join(origin, 'package.json'), JSON.stringify({ version: '0.0.1.0', engines: { bun: '>=1.4.0' } }));

@@ -88,6 +88,7 @@ import { recoveryVersionKnown, recoveryVersionUnsupported, type RecoveryTable } 
 import { previewChangedError } from './preview-approval.ts';
 import { faultPoint } from './fault-points.ts';
 import { KEEP_DISK_ABANDONED_PREFIX } from './verb-errors.ts';
+import { commandText } from '../brand.ts';
 
 export const RESOLUTION_OP = 'stuck-recovery-resolution';
 export type KeepChoice = 'prior' | 'disk' | 'withdrawn';
@@ -603,7 +604,7 @@ export function priorStageUnavailable(item: StuckRecovery, keep: KeepChoice, pre
   if (keep === 'prior' && item.choices.disk) {
     const argv = ['gbrain', 'repair', 'stuck-recovery', '--source', item.source_id, '--keep', 'disk', '--apply', '--expect', previewHash, '--yes'];
     return opError('recovery_prior_stage_unavailable', message,
-      `Nothing was changed. The prior bytes cannot be put back, so the remaining exit keeps the edited file and abandons the write. Ask the user, then run: ${argv.join(' ')}`,
+      `Nothing was changed. The prior bytes cannot be put back, so the remaining exit keeps the edited file and abandons the write. Ask the user, then run: ${commandText(argv)}`,
       { docs, fix: { argv, consent: ['destructive'], actor: 'agent', requires_exclusive: false, verify: { argv: status },
         why: 'Keeps the bytes on disk and abandons the write after backing up both versions; the recovery is then cleared and the worktree claims writes again.',
         user_message: `foresights's saved copy of the previous version of ${item.slug} ${what}, so that version cannot be put back. `
@@ -661,11 +662,11 @@ function strictKeptEdit(item: StuckRecovery, request: WriteRequest, checkout: st
   const shown = paths.join(' ');
   const next = `The bytes on disk are kept and the write's publication was abandoned (request ${request.state}). Source ${item.source_id} is git-canonical, so Git is the parent: `
     + `the kept bytes are an uncommitted edit at ${shown} in ${checkout}, and the page keeps its committed version until Git holds the edit. This command does not mark the page repaired. `
-    + `To publish the edit: foresights git commit-push --path ${checkout} -m "<message>" -- ${shown}, then ${sync.join(' ')}. `
-    + `To discard it: git -C ${checkout} restore -- ${shown}, then ${sync.join(' ')}. `
+    + `To publish the edit: foresights git commit-push --path ${checkout} -m "<message>" -- ${shown}, then ${commandText(sync)}. `
+    + `To discard it: git -C ${checkout} restore -- ${shown}, then ${commandText(sync)}. `
     + `Verify with git -C ${checkout} status --porcelain -- ${shown} (empty once it is committed or restored), then foresights sync status --source ${item.source_id} --json.`;
   return { next, fix: { ask_user: true, argv: ['gbrain', 'git', 'commit-push', '--path', checkout, '-m', '<MESSAGE>', '--', ...paths],
-    inputs: [{ name: 'MESSAGE', how: `A one-line commit message for the kept edit, once the user chooses to publish it. To discard it instead: git -C ${checkout} restore -- ${shown}, then ${sync.join(' ')}.` }],
+    inputs: [{ name: 'MESSAGE', how: `A one-line commit message for the kept edit, once the user chooses to publish it. To discard it instead: git -C ${checkout} restore -- ${shown}, then ${commandText(sync)}.` }],
     consent: [], actor: 'agent', requires_exclusive: false,
     why: 'Commits the kept edit, so Git holds it and the next sync imports it; whether to publish or discard it is the user\'s call.',
     user_message: `The edit to ${item.slug} in source ${item.source_id} is kept on disk but is not in Git yet. Publish it (commit it, then sync) or discard it (restore the committed version, then sync)?`,

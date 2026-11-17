@@ -16,6 +16,7 @@ import {
 import type { Check } from '../../doctor.ts';
 import { agentFix, checkError } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { argvOfCommandText } from '../../../core/brand.ts';
 
 const DOCS = 'docs/guides/write-refusals.md#revision-backfill';
 const LISTED = 5;
@@ -48,7 +49,7 @@ async function runRevisionBackfill(ctx: DoctorContext): Promise<Check[]> {
       ...(resumable > 0 || status.pending === 0 ? [`Resume the backfill on the brain host: ${REVISION_BACKFILL_RESUME_COMMAND} (it prints its progress).`] : []),
     ];
     const fix = resumable > 0 || status.pending === 0
-      ? agentFix(REVISION_BACKFILL_RESUME_COMMAND.split(' '),
+      ? agentFix(argvOfCommandText(REVISION_BACKFILL_RESUME_COMMAND),
         'Re-runs the schema migration pass on the brain host, which resumes the page revision backfill and prints its progress; it changes no page content.',
         'revision_backfill', { requires_exclusive: true, docs: DOCS })
       : agentFix(['gbrain', 'repair', 'orphan-children'],

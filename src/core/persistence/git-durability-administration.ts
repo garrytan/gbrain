@@ -35,6 +35,7 @@ import { refusalEnvelope, retryParkedEffects } from './effect-retry.ts';
 import { GIT_PUSH_CODES } from './git-push-holds.ts';
 import { patchManagedDurabilityBlock } from '../brain-repo-durability.ts';
 import { findResolverFile } from '../resolver-filenames.ts';
+import { commandText } from '../brand.ts';
 
 export const GIT_DURABILITY_PARAMS = ['source_id', 'enable', 'disable', 'pat_file', 'dry_run', 'admin_intent', 'expected_state'] as const;
 
@@ -192,7 +193,7 @@ async function formerWorktreeHolds(engine: BrainEngine, sourceId: string, worktr
   if (!row?.effects || !row.code) return {};
   const command = ['gbrain', 'sources', 'writer', 'settle-effects', sourceId, '--parked-code', row.code, '--dry-run'];
   return { former_worktree: { effects: Number(row.effects), command, worktree_ids: row.worktree_ids, requests: row.requests,
-    why: `${row.effects} held Git effect(s) of source ${sourceId} (requests ${row.requests.join(', ')}) belong to former canonical worktree ${row.worktree_ids.join(', ')}, not the current ${worktreeId}: retry cannot run them (their binding changed) and this preview does not resolve them, so its counts do not include them. Preview settling them on proof: ${command.join(' ')}` } };
+    why: `${row.effects} held Git effect(s) of source ${sourceId} (requests ${row.requests.join(', ')}) belong to former canonical worktree ${row.worktree_ids.join(', ')}, not the current ${worktreeId}: retry cannot run them (their binding changed) and this preview does not resolve them, so its counts do not include them. Preview settling them on proof: ${commandText(command)}` } };
 }
 
 export type ParkedPushRefusal = { source_id: string; request_id: string; code: string; message: string; suggestion?: string; fix?: Action };

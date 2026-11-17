@@ -21,6 +21,7 @@ import { GUEST_TRUST_CEILING } from '../../../core/guests/sources.ts';
 import { ownerCredentials, tokenGrantJsonSql } from '../../../core/guests/owner-credentials.ts';
 import { GUEST_NOTES_MIGRATION } from '../../../core/guests/migration.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const name = 'guest_source';
 type Finding = { level: 'fail' | 'warn'; text: string; fix?: string[] };
@@ -48,7 +49,7 @@ async function sourceFindings(engine: BrainEngine, s: GuestSourceRow): Promise<F
   const out: Finding[] = [];
   const init = ['gbrain', 'guests', 'init', '--source', s.id, '--yes'];
   const config = json(s.config);
-  const repair = '; its notes still read as guest notes, repair: ' + init.join(' ');
+  const repair = '; its notes still read as guest notes, repair: ' + commandText(init);
   if (s.writers === null) return [{ level: 'fail', text: 'source ' + s.id + ' says guest: true in its config but has no guest_sources row, so the two guest records disagree and nothing enforces its writer list or ceiling' + repair, fix: init }];
   if (config.guest !== true) out.push({ level: 'fail', text: 'source ' + s.id + ' has a guest_sources row but its config does not say guest: true, so the two guest records disagree' + repair, fix: init });
   const flags = [config.federated === true ? null : 'federated',

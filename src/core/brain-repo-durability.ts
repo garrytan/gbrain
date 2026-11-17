@@ -121,7 +121,7 @@ function resolveGbrainCliPath(): string {
     // of this function in commands/autopilot.ts for the full explanation
     // (Bun snapshots process.env at its own startup; execSync without an
     // explicit env is blind to any PATH mutation since then).
-    const which = execSync('which foresights', {
+    const which = execSync('which gbrain', {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
       env: process.env,

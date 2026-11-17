@@ -86,3 +86,24 @@ export function isBrandCommand(word: string | undefined | null): boolean {
   const base = word.split(/[\\/]/).pop()!.replace(/\.exe$/i, '');
   return base === BRAND.name || base === LEGACY.name;
 }
+
+/**
+ * An argv as the user sees it: a leading stored command name (`gbrain`) shows
+ * as the product's command. The argv itself is data and stays as written,
+ * because it is executed and older installs only have the `gbrain` command.
+ */
+export function displayArgv(argv: readonly string[]): string[] {
+  return argv.length > 0 && argv[0] === LEGACY.name ? [BRAND.name, ...argv.slice(1)] : [...argv];
+}
+
+/** displayArgv joined with spaces, for text that names a command without shell quoting. */
+export function commandText(argv: readonly string[]): string {
+  return displayArgv(argv).join(' ');
+}
+
+/** The argv of a command written as text: split on spaces, with the product's command read back as the stored one (`foresights x` -> ['gbrain', 'x']). */
+export function argvOfCommandText(command: string): string[] {
+  const argv = command.split(' ');
+  if (argv[0] === BRAND.name) argv[0] = LEGACY.name;
+  return argv;
+}

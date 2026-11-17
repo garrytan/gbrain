@@ -371,7 +371,7 @@ describe('doctor plugin_lane_collision (serial: env fixtures)', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe('warn');
     expect(rows[0].message).toContain('codex mcp remove foresights');
-    expect(rows[0].message).toContain('codex plugin remove foresights');
+    expect(rows[0].message).toContain('codex plugin remove gbrain');
     expect(rows[0].message).toContain('config signal, not a health signal');
   });
 

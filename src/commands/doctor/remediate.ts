@@ -35,6 +35,7 @@ import { findingSource, runWaveChecks, waveRepairKind, type WaveFinding } from '
 import { derivedCapExhaustedError, type CapSource } from '../../core/consent.ts';
 import { previewRemediationPlan, remediateConsent, remediateFlags, remediationPlanHash, type RemediateFlags } from './remediate-consent.ts';
 import { cliRenderContext, renderAction, renderNotice, type Action, type Notice } from '../../core/agent-output.ts';
+import { argvOfCommandText } from '../../core/brand.ts';
 
 export const REMEDIATE_HELP = `Usage: foresights doctor --remediation-plan [--target-score <n>] [--no-embed] [--json]
        foresights doctor --remediate [--yes [--expect <plan_hash>]] [--include-repairs] [--max-usd <n>] [--target-score <n>]
@@ -123,8 +124,8 @@ export function repairStepFix(step: Pick<RepairPlanStep, 'kind' | 'command' | 'p
     : `${llm === null ? ' and may call a paid chat model (price unknown)' : ` and may spend about $${llm.toFixed(4)} on a paid chat model`}`
       + `${embedUsd > 0 ? ` plus about $${embedUsd.toFixed(4)} in embeddings` : ''}`;
   return {
-    argv: step.command.split(' '),
-    preview_argv: repairPreviewCommand(step.kind).split(' '),
+    argv: argvOfCommandText(step.command),
+    preview_argv: argvOfCommandText(repairPreviewCommand(step.kind)),
     consent: ['destructive', ...(step.paid ? ['paid' as const] : [])],
     actor: 'agent',
     why: `Rewrites ${step.affected} stored item(s) for foresights repair ${step.kind}${cost}.`,

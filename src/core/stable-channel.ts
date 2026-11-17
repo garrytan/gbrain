@@ -23,7 +23,7 @@ export const STABLE_RECORD_URL = `https://raw.githubusercontent.com/${REPO_SLUG}
 export const RECORD_MAX_BYTES = 64 * 1024;
 const STABLE_ERRORS_DOCS = 'docs/guides/upgrades-auto-update.md#stable-channel-errors';
 const SHA_RE = /^[0-9a-f]{40}$/;
-const RUN_URL_RE = /^https:\/\/github\.com\/garrytan\/(?:foresights|gbrain)\/actions\/runs\/\d+(\/attempts\/\d+)?\/?$/;
+const RUN_URL_RE = /^https:\/\/github\.com\/aimonk2025\/gbrain\/actions\/runs\/\d+(\/attempts\/\d+)?\/?$/;
 
 export type StableCode = StableLookupError['code'];
 export type StableFailure = { ok: false; code: StableCode; cause: string };

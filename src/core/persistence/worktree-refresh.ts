@@ -52,6 +52,7 @@ import { refreshProgress, refreshRetryHint, seconds } from './refresh-retry-hint
 import { ledgerLocation, readLedger } from '../git/commit-ledger.ts';
 import { upstreamBeforeFetch, upstreamRewriteReason } from '../git/upstream-history.ts';
 import { gitDurabilityPolicy } from './git-durability-policy.ts';
+import { commandText } from '../brand.ts';
 
 export interface WorktreeRefreshRow {
   id: string; worktree_id: string; source_ids: string[]; principal_id: string; owner_epoch: string | number;
@@ -611,7 +612,7 @@ async function divergedRefusal(git: Git, root: string, sourceId: string, upstrea
   const argv = ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', root, '--json'];
   const error = refusal('refresh_diverged',
     `The checkout HEAD ${oldHead} is not an ancestor of ${upstreamRef} (${targetHead}); a fast-forward is impossible and nothing changed.${rewrite ? ` ${rewrite} ${REFRESH_PUBLISH_DIVERGED_KEY} does not publish it on its own.` : ''}`,
-    `Publish ${local} merged with ${upstreamRef}: ${argv.map(q).join(' ')} (it merges in memory, refuses on a conflict and never moves the checkout), then retry foresights sources refresh ${sourceId}. Ask the user first, because it pushes those commits (git -C ${q(root)} log --stat ${upstreamRef}..HEAD lists them). foresights sources reclone ${sourceId} replaces the checkout instead and drops them.${hint ?? (rewrite ? '' : ` To let every refresh publish a diverged checkout this way on its own, the user can run foresights config set ${REFRESH_PUBLISH_DIVERGED_KEY} true.`)}`);
+    `Publish ${local} merged with ${upstreamRef}: ${commandText(argv.map(q))} (it merges in memory, refuses on a conflict and never moves the checkout), then retry foresights sources refresh ${sourceId}. Ask the user first, because it pushes those commits (git -C ${q(root)} log --stat ${upstreamRef}..HEAD lists them). foresights sources reclone ${sourceId} replaces the checkout instead and drops them.${hint ?? (rewrite ? '' : ` To let every refresh publish a diverged checkout this way on its own, the user can run foresights config set ${REFRESH_PUBLISH_DIVERGED_KEY} true.`)}`);
   error.fix = { argv, consent: [], actor: 'user', ask_user: true, requires_exclusive: false,
     why: `HEAD has ${local} that ${upstreamRef} lacks while ${upstreamRef} moved on; pushing HEAD merged with it makes HEAD an ancestor of the upstream, so the refresh can fast-forward.`,
     user_message: rewrite ? `The checkout of source ${sourceId} cannot be published on its own: ${rewrite} Push this checkout's history merged with the remote anyway, or replace the checkout with foresights sources reclone ${sourceId}?`
@@ -1529,8 +1530,8 @@ export async function activeWorktreeRefreshes(engine: BrainEngine, sourceId?: st
       ...(Number(row.deferred_count) > 0 ? { deferred: { count: Number(row.deferred_count), oldest_age_ms: Number(row.deferred_oldest_ms ?? 0), refresh_id: row.id } } : {}),
       next: report.liveness === 'live' && row.state === 'draining' ? 'Writes to this worktree are refused while queued work drains; retry them after about a second.'
         : report.liveness === 'live' ? `Wait for it: ${describeHolder(report.holder)} holds the refresh lock and finishes it.`
-        : report.liveness === 'unknown' && report.fix?.argv ? `On host ${report.holder?.hostname ?? 'unknown'} (${report.holder?.host_id ?? row.owner_host_id ?? 'unknown host id'}), which holds the refresh lock: ${report.fix.argv.map(q).join(' ')}`
-        : report.fix?.argv?.map(q).join(' ') ?? `foresights sources refresh ${q(row.source_ids[0])} --resume` };
+        : report.liveness === 'unknown' && report.fix?.argv ? `On host ${report.holder?.hostname ?? 'unknown'} (${report.holder?.host_id ?? row.owner_host_id ?? 'unknown host id'}), which holds the refresh lock: ${commandText(report.fix.argv.map(q))}`
+        : (report.fix?.argv ? commandText(report.fix?.argv.map(q)) : undefined) ?? `foresights sources refresh ${q(row.source_ids[0])} --resume` };
   }));
 }
 

@@ -14,6 +14,7 @@ import { withStatementDeadline } from '../../../core/statement-deadline.ts';
 import { DEFERRED_READ_LABEL, repeatedPostprocessDeferrals } from '../../../core/cycle/synthesize-postprocess-deferral.ts';
 import { PERSISTENCE_REQUEST_ID_INDEX } from '../../../core/persistence/schema.ts';
 import type { TerminalSourceSummary } from '../../../core/persistence/terminal-failures.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const WINDOW_DAYS = 7;
 const SAMPLE = 10_000;
@@ -296,13 +297,13 @@ function rankTerminalFailures(sources: TerminalSourceSummary[], remote: boolean,
   const lines: string[] = [];
   if (blocking.length) {
     const shown = blocking.slice(0, 5).map(b => `${b.kind === 'recovery' ? 'recovery record' : 'checkpoint blocker'} ${b.request_id}${'slug' in b ? ` (${b.slug})` : ''} on source ${b.source_id} `
-      + `blocks ${b.blocks === 'sync_checkpoint' ? 'the managed-sync checkpoint of the source' : 'every queued write on the source\'s root'}${b.fix ? `; fix: ${b.fix.join(' ')}` : ''}`);
+      + `blocks ${b.blocks === 'sync_checkpoint' ? 'the managed-sync checkpoint of the source' : 'every queued write on the source\'s root'}${b.fix ? `; fix: ${commandText(b.fix)}` : ''}`);
     lines.push(`Blocking now (${blocking.length}): ${shown.join('; ')}${blocking.length > 5 ? `; +${blocking.length - 5} more in details.ranked.blocking` : ''}.`);
   }
   if (unresolved.rows) {
     const shown = groups.slice(0, 3).map(g => `${g.category}/${g.code} ×${g.rows} on ${g.source_id}${g.defect ? ' (foresights defect)' : g.needs_human ? ' (needs a person)' : ''}`);
     lines.push(`Unresolved, not blocking: ${unresolved.rows} row(s) on ${unresolved.pages} page(s) in ${groups.length} group(s): ${shown.join('; ')}${groups.length > 3 ? `; +${groups.length - 3} more group(s)` : ''}. `
-      + `Group them: ${unresolved.group_by.slice(0, 2).map(argv => argv.join(' ')).join('; ')} (each group carries its fix and drill-down).`);
+      + `Group them: ${unresolved.group_by.slice(0, 2).map(argv => commandText(argv)).join('; ')} (each group carries its fix and drill-down).`);
   }
   if (historical.rows) lines.push(`Historical: ${historical.rows} row(s) a later write superseded or an older build wrote; nothing to do.`);
   return { ranked: { blocking, unresolved, historical }, text: lines.join(' ') };

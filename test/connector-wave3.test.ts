@@ -367,7 +367,7 @@ test('migration 176: re-keys the newest committed checkpoint, re-walks a compact
     expect(await engine.executeRaw("SELECT fingerprint FROM op_checkpoints WHERE op='managed-connector' AND fingerprint=$1", [archivedKey])).toHaveLength(1);
     expect(report.rewalking).toEqual([compacted.id]);
     expect(lines.join('\n')).toContain(`${live.id}: resumed from pre-upgrade checkpoint of`);
-    expect(lines.join('\n')).toContain(`to re-walk: foresights sync --source ${live.id} --reset-checkpoint`);
+    expect(lines.join('\n')).toContain(`to re-walk: gbrain sync --source ${live.id} --reset-checkpoint`);
     const fingerprints = (await engine.executeRaw<{ op: string; fingerprint: string }>("SELECT op,fingerprint FROM op_checkpoints WHERE op IN ('managed-connector','managed-connector-retry')")).map(row => row.fingerprint);
     expect(fingerprints).not.toContain(orphan);
     expect(fingerprints).toContain(newer);

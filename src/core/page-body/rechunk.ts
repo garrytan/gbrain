@@ -23,6 +23,7 @@ import { openSegmentedStaging, segmentWriteScope, stageOccurrenceChunks } from '
 import { readPageBodyPolicy, STAGE_BATCH_BYTES } from './limits.ts';
 import { SEGMENTED_CHUNKER_VERSION } from './segment-chunks.ts';
 import type { JsonObject, ManifestRow, SegmentChunkInput } from './types.ts';
+import { commandText } from '../brand.ts';
 
 export interface SegmentedRechunkPage {
   source_id: string;
@@ -260,8 +261,8 @@ export function formatSegmentedRechunkReceipt(r: SegmentedRechunkReceipt): strin
       + `${p.segments_changed} segment(s) change, ${p.new_chunk_texts} new chunk text(s)${p.state ? `  ${p.state}` : ''}`
       + `${p.vectors_reused ? `, ${p.vectors_reused} vector(s) reused` : ''}${p.error ? `: ${p.error}` : ''}`);
   }
-  if (r.commands.apply) lines.push(`Apply: ${r.commands.apply.join(' ')}`);
+  if (r.commands.apply) lines.push(`Apply: ${commandText(r.commands.apply)}`);
   if (r.commands.embed) lines.push(`New chunk texts get vectors from the embed sweep: ${r.commands.embed.join(' ')}`);
-  if (r.pages.some(p => p.state === 'moved')) lines.push(`A page changed while it was re-chunked; run again: ${r.commands.preview.join(' ')} --apply`);
+  if (r.pages.some(p => p.state === 'moved')) lines.push(`A page changed while it was re-chunked; run again: ${commandText(r.commands.preview)} --apply`);
   return lines;
 }

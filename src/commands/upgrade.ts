@@ -320,7 +320,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   }
   // Run features scan to show what's new and what to fix
   try {
-    execSync('foresights features', { stdio: 'inherit', timeout: 30_000 });
+    execSync('gbrain features', { stdio: 'inherit', timeout: 30_000 });
   } catch {
     // features scan is best-effort
   }
@@ -505,7 +505,7 @@ function postSwapSmoke(newVersion: string, r: SmokeRecovery): boolean {
  */
 function installedDespiteFailure(oldVersion: string): boolean {
   try {
-    const observed = execSync('foresights --version', { encoding: 'utf-8', timeout: 10_000 }).trim().replace(/^(?:foresights|gbrain)\s*/i, '');
+    const observed = execSync('gbrain --version', { encoding: 'utf-8', timeout: 10_000 }).trim().replace(/^(?:foresights|gbrain)\s*/i, '');
     const o = parseSemver(observed), prior = parseSemver(oldVersion);
     if (!o || !prior || !semverGt(o, prior)) return false;
     console.log(`The install step did not finish cleanly, but foresights ${observed} is installed. Migrations run in post-upgrade.`);
@@ -702,7 +702,7 @@ function findBunInstallRootFromArgv(): string | null {
 
 function verifyUpgrade(): string {
   try {
-    const output = execSync('foresights --version', { encoding: 'utf-8', timeout: 10_000 }).trim();
+    const output = execSync('gbrain --version', { encoding: 'utf-8', timeout: 10_000 }).trim();
     return output.replace(/^(?:foresights|gbrain)\s*/i, '').trim();
   } catch {
     return '';

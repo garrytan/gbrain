@@ -75,7 +75,7 @@ describe('autopilot pause marker (A3 quiesce)', () => {
     // able to tell what wrote it and when, rather than guessing why autopilot
     // stopped doing work.
     const body = `${MIGRATE_PAUSE_MARKER_PREFIX} at ${new Date(0).toISOString()}\n`;
-    expect(body).toContain('foresights migrate');
+    expect(body).toContain('gbrain migrate');
     expect(body).toMatch(/\d{4}-\d{2}-\d{2}T/);
   });
 });

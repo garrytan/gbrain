@@ -17,6 +17,7 @@ import { takesAutoEmbedEnabled } from '../../../core/embed-takes.ts';
 import type { Check } from '../../doctor.ts';
 import { agentFix } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { argvOfCommandText } from '../../../core/brand.ts';
 
 export const VECTOR_COVERAGE_DOCS = 'docs/GBRAIN_VERIFY.md#5a-fact-and-take-vectors';
 
@@ -93,7 +94,7 @@ async function runFactTakeVectors(ctx: DoctorContext): Promise<Check[]> {
       fix: factSources.length
         ? agentFix(['gbrain', 'embed', '--facts', '--stale', '--source', factSources[0], '--dry-run', '--json'],
           `Previews the fact re-embed for source '${factSources[0]}' (count and cost) without calling the provider; run it without --dry-run once the user approves the spend.`, 'fact_take_vectors', { docs: VECTOR_COVERAGE_DOCS })
-        : agentFix(takesFix.split(' '), 'Embeds the takes that have no current-model vector; this calls the embedding provider.', 'fact_take_vectors', { consent: ['paid'], docs: VECTOR_COVERAGE_DOCS }),
+        : agentFix(argvOfCommandText(takesFix), 'Embeds the takes that have no current-model vector; this calls the embedding provider.', 'fact_take_vectors', { consent: ['paid'], docs: VECTOR_COVERAGE_DOCS }),
     });
   } catch (err) {
     checks.push({ name: 'fact_take_vectors', status: 'warn',

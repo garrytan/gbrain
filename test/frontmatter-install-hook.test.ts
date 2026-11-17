@@ -94,7 +94,7 @@ describe('frontmatter install-hook (B13)', () => {
     const hookPath = join(tmp, '.githooks', 'pre-commit');
     expect(existsSync(hookPath)).toBe(true);
     const content = readFileSync(hookPath, 'utf8');
-    expect(content).toContain('foresights frontmatter');
+    expect(content).toContain('gbrain frontmatter');
     expect(content).toContain('git diff --cached');
     // install() masks the developer's global config, so the clean-machine
     // branch is the only one here; the "already set elsewhere" branch has its
@@ -142,7 +142,7 @@ describe('frontmatter install-hook (B13)', () => {
     expect(result).toBe('installed');
     expect(existsSync(hookPath + '.bak')).toBe(true);
     expect(readFileSync(hookPath + '.bak', 'utf8')).toContain('user hook');
-    expect(readFileSync(hookPath, 'utf8')).toContain('foresights frontmatter');
+    expect(readFileSync(hookPath, 'utf8')).toContain('gbrain frontmatter');
   });
 
   test('installHook on existing foresights hook refreshes silently (no .bak)', async () => {
@@ -415,7 +415,7 @@ describe('frontmatter install-hook (B13)', () => {
     writeFileSync(join(tmp, '.githooks', 'post-commit'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     writeFileSync(join(tmp, '.githooks', 'README.md'), 'docs, not a hook\n');
     expect(await install(tmp)).toBe('installed_unwired');
-    expect(readFileSync(join(tmp, '.githooks', 'pre-commit'), 'utf8')).toContain('foresights frontmatter');
+    expect(readFileSync(join(tmp, '.githooks', 'pre-commit'), 'utf8')).toContain('gbrain frontmatter');
     expect(localHooksPath(tmp)).toBe('');
   });
 

@@ -30,6 +30,7 @@ import { StatementDeadlineError } from '../../core/statement-deadline.ts';
 import type { Check, DoctorReport } from '../doctor.ts';
 import { agentFix } from './check-fix.ts';
 import type { DoctorTier } from './context.ts';
+import { commandText } from '../../core/brand.ts';
 
 export const DOCTOR_TIERS: readonly DoctorTier[] = ['ops', 'quick', 'standard', 'deep'];
 /** Default `--budget-ms` for `--tier ops`; the other tiers have no overall deadline unless one is given. */
@@ -179,7 +180,7 @@ export function budgetUnknownCheck(name: string, elapsedMs: number, budgetMs: nu
   const why = `Runs only this check with a ${n} ms budget, above the ${elapsedMs} ms it already took; read-only.`;
   return {
     name, status: 'warn', elapsed_ms: elapsedMs,
-    message: `Not finished within ${which}. Health is unknown, not clear; rerun this check alone: ${argv.join(' ')}`
+    message: `Not finished within ${which}. Health is unknown, not clear; rerun this check alone: ${commandText(argv)}`
       + (n < wanted ? ` (capped to fit an agent tool call; if it stops again, run it in a terminal with --budget-ms ${wanted})` : ''),
     details: { health: 'unknown', reason: 'budget', limit, exact: false, elapsed_ms: elapsedMs, budget_ms: budgetMs, rerun_budget_ms: n, ...(n < wanted ? { terminal_budget_ms: wanted } : {}) },
     fix: n <= agentCap ? agentFix(argv, why, name)

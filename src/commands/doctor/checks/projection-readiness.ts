@@ -9,6 +9,7 @@ import { isMultimodalEnabled } from '../../../core/sync.ts';
 import { readCredentialResealHolds } from '../../../core/page-state/credential-reseal.ts';
 import type { Check } from '../../doctor.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const DOCS = 'docs/guides/repair.md#projection-drain';
 const UNCHANGED = 'No repair or embedding was started by this check.';
@@ -99,7 +100,7 @@ export async function checkProjectionReadiness(engine: BrainEngine, scope: PageR
       : { name: 'text_projection_readiness', status: 'ok', message: 'Visible text projections match their canonical revisions.', details };
   }
   const heldText = held.length ? `${held.length} page(s) holding a private key failed their credential-safe re-chunk and stay withheld from search${opts.remote ? '' : ` (${held.slice(0, 3)
-    .map(hold => `${hold.source_id}:${hold.slug} ${hold.code}`).join(', ')}${held.length > 3 ? ', ...' : ''})`}; retry them with ${[...new Set(held.map(hold => `\`${hold.fix.argv!.join(' ')}\``))].join(', ')}.` : '';
+    .map(hold => `${hold.source_id}:${hold.slug} ${hold.code}`).join(', ')}${held.length > 3 ? ', ...' : ''})`}; retry them with ${[...new Set(held.map(hold => `\`${commandText(hold.fix.argv!)}\``))].join(', ')}.` : '';
   const text = backlog.pending || (work === 0 && readiness.status === 'projection_pending')
     ? `Visible pages have missing or stale text projections${backlog.pending ? ` (${backlog.pending} queued Markdown/code page(s)${backlog.failed ? `, ${backlog.failed} last failed` : ''})` : ''}; ${readiness.status === 'projection_pending'
       ? 'search and code results may be incomplete.' : 'search keeps answering from the index these pages had before the upgrade until each is rebuilt.'} ${opts.resident

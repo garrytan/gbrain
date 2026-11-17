@@ -439,7 +439,7 @@ describe('serve listener', () => {
     const printed = err.join('');
     expect(printed).toContain('socket_identity_mismatch');
     expect(printed).toContain('env AZURE_OPENAI_API_VERSION differs');
-    expect(printed).toContain('gbrain doctor --only cli_socket_refusals --json');
+    expect(printed).toContain('foresights doctor --only cli_socket_refusals --json');
     expect(printed.match(/socket_identity_mismatch/g)!.length).toBe(1);
   });
 

@@ -11,6 +11,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { agentFix, checkError, infoCheck } from '../check-fix.ts';
+import { commandText } from '../../../core/brand.ts';
 
 
 export async function checkSynopsisTierCoverage(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
@@ -43,7 +44,7 @@ export async function checkSynopsisTierCoverage(engine: BrainEngine, opts: { sou
       large_title_pages: coverage.large_title_pages,
       large_title_chunks: coverage.large_title_chunks,
       ...(last ? { sweep_jobs: last.jobs, last_sweep_finished_at: last.last_finished_at } : {}),
-      fix: sweep.SYNOPSIS_SWEEP_ARGV.join(' '),
+      fix: commandText(sweep.SYNOPSIS_SWEEP_ARGV),
     };
     const message = sweep.formatSynopsisCoverageLine(coverage) + sweepNote;
     const missingMost = coverage.coverage_pct !== null && coverage.coverage_pct < sweep.SYNOPSIS_COVERAGE_WARN_PCT;

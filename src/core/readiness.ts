@@ -360,6 +360,7 @@ function syncConfigEntry(cfg: GBrainConfig): ReadinessEntry | null {
 // ── lock ownership + exclusive fixes ───────────────────────────────────────
 
 import { exclusiveFix } from './exclusive-fix.ts';
+import { commandText } from './brand.ts';
 
 export { exclusiveFix };
 
@@ -427,7 +428,7 @@ function stdioRegistration(h: ReadinessHarness, bin: string, chosen?: McpSurface
     const why = `foresights setup already registered foresights for ${HARNESS_LABEL[h]}; rerunning it with the hooks, source and binary it recorded rewrites the entry in ${HARNESS_DESTINATION[h]}.`;
     // foresights setup codex rewrites the shared hooks.json and recomputes its trust, so only the user runs it.
     if (h === 'codex') return { consent: [], actor: 'user', requires_exclusive: false, why, verify: VERIFY('harness_wiring'), docs: MEMORY_VERBS_INSTALL,
-      user_message: `foresights setup codex rewrites the Codex hooks.json and its trust entries, so run it yourself: ${rerun.join(' ')}` };
+      user_message: `foresights setup codex rewrites the Codex hooks.json and its trust entries, so run it yourself: ${commandText(rerun)}` };
     return { argv: rerun, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, why, verify: VERIFY('harness_wiring'), docs: MEMORY_VERBS_INSTALL,
       user_message: `I'd like to rerun foresights setup for ${HARNESS_LABEL[h]} with the decisions it recorded, which rewrites its MCP entry in ${HARNESS_DESTINATION[h]}. OK?` };
   }

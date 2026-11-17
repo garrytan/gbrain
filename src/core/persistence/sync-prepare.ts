@@ -79,6 +79,7 @@ import { VERSION } from '../../version.ts';
 import { bindOrigin } from './origin-guard.ts';
 import { segmentedOutcome } from './searchable.ts';
 import { isQuarantined } from '../quarantine.ts';
+import { commandText } from '../brand.ts';
 
 /** The options that select a managed sync cursor (its key), recorded so a refusal can print the exact retry. */
 export interface SyncCursorOptions { full: boolean; workingTree: boolean; srcSubpath: string | null; exclude: string[]; includeHidden: string[]; strategy: string | null }
@@ -226,7 +227,7 @@ function syncInspectFix(row: WriteRequest, requestId: string, owner: boolean): A
 function syncPublicationRefusal(code: RegistryCode, message: string, row: WriteRequest, p: SyncIntent | null, cause: string, inspectOwner = false, extra: OpErrorOpts = {}): OperationError {
   const fix = syncInspectFix(row, row.request_id, inspectOwner);
   const rerun = checkpointRetryCommand({ sourceId: row.source_id, processingOptions: p?.processingOptions, syncOptions: p?.syncOptions, repoPath: p?.repoPath });
-  return opError(code, message, `${cause} Request ${row.request_id} in ${row.source_id} was refused; inspect it first (${fix.argv!.join(' ')}) and do not resubmit it. `
+  return opError(code, message, `${cause} Request ${row.request_id} in ${row.source_id} was refused; inspect it first (${commandText(fix.argv!)}) and do not resubmit it. `
     + `Once it is final and the cause is fixed, run: ${rerun}`, { fix, ...extra });
 }
 
@@ -237,7 +238,7 @@ function syncPublicationRefusal(code: RegistryCode, message: string, row: WriteR
 function supersededRefusal(message: string, row: WriteRequest, cause: string): OperationError {
   const status = ['gbrain', 'sync', 'status', '--source', row.source_id, '--json'];
   return opError('revision_conflict', message,
-    `${cause} Request ${row.request_id} in ${row.source_id} published nothing; the run that replaced its cursor covers its page, and ${status.join(' ')} shows that run. Do not resubmit it.`,
+    `${cause} Request ${row.request_id} in ${row.source_id} published nothing; the run that replaced its cursor covers its page, and ${commandText(status)} shows that run. Do not resubmit it.`,
     { fix: readFix('Shows the sync cursor, the root cause of this refusal and the next step, read-only.', { argv: status }) });
 }
 

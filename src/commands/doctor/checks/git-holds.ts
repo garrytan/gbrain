@@ -9,6 +9,7 @@ import { agentFix } from '../check-fix.ts';
 import { isContentRefusal } from '../../../core/import-screen.ts';
 import { SETTLE_MISMATCH_STREAK } from '../../../core/persistence/sync-pass-row.ts';
 import { noncanonicalPrivateRequest } from '../../../core/persistence/visibility-request.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const SAMPLE_PATHS = 5;
 
@@ -180,7 +181,7 @@ export async function frontmatterHoldsBannerNote(engine: BrainEngine): Promise<s
       + `automatically; to do it now run ${ids.map(id => `foresights sync --source ${id} --no-pull`).join('; ')}. The file is then held and the rest of the source imports; `
       + `inspect it with ${ids.map(id => `foresights sources status ${id}`).join('; ')} and preview the backlog fix with ${ids.map(id => `foresights repair frontmatter --source ${id}`).join('; ')} (writes nothing; ask the user before applying)`);
   }
-  if (hooks.length) parts.push(`an older frontmatter pre-commit hook is installed; refresh it with ${hooks.map(hook => hook.fix.join(' ')).join('; ')}`);
+  if (hooks.length) parts.push(`an older frontmatter pre-commit hook is installed; refresh it with ${hooks.map(hook => commandText(hook.fix)).join('; ')}`);
   return parts.length ? `frontmatter_holds: ${parts.join('. ')}. Recipe: docs/guides/repair.md#held-files` : null;
 }
 

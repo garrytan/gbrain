@@ -8,6 +8,7 @@
  * constraint on purpose, so adding a value never needs a migration.
  */
 import type { DecideSlot } from './types.ts';
+import { commandText } from '../../brand.ts';
 
 /** Per-slot receipt outcomes. `error` and `skipped` are valid for every slot. */
 export const SLOT_OUTCOMES: Readonly<Record<DecideSlot, readonly string[]>> = {
@@ -69,7 +70,7 @@ export const REFUSAL_CATALOG: Readonly<Record<string, RefusalEntry>> = {
   egress_fallback_missing: { problem: 'Refused items have no fallback provider.', cause: 'decide.egress_fallback is none', fix: 'foresights config set decide.egress_fallback llm:<provider:model>', anchor: '#egress_fallback_missing' },
   split_mismatch: { problem: 'The calibration was built from a different dataset split.', cause: 'split_hash differs from the eval split or calibrate_only is false', fix: 'foresights decide calibrate --slot <slot> --dataset <jsonl>', anchor: '#split_mismatch' },
   pinned_model_unavailable: { problem: 'The pinned model is no longer served.', cause: 'the provider returned unknown or unavailable model', fix: 'foresights config set decide.provider typesafe:<new-id> && foresights decide calibrations list', anchor: '#pinned_model_unavailable' },
-  unpriced_model: { problem: 'The decide model has no price, so its spend cannot be metered.', cause: 'the configured typesafe:<model> id has no shipped tariff and no pricing.overrides entry', fix: UNPRICED_MODEL_FIX_ARGV.join(' '), anchor: '#unpriced_model' },
+  unpriced_model: { problem: 'The decide model has no price, so its spend cannot be metered.', cause: 'the configured typesafe:<model> id has no shipped tariff and no pricing.overrides entry', fix: commandText(UNPRICED_MODEL_FIX_ARGV), anchor: '#unpriced_model' },
   budget_exhausted: { problem: 'The daily decide budget is spent.', cause: 'decide_spend for the current UTC day reached decide.budget.daily_usd', fix: 'foresights config set decide.budget.daily_usd <usd>', anchor: '#budget_exhausted' },
   thin_client: { problem: 'foresights decide runs on the brain host.', cause: 'this install is a thin client', fix: 'run foresights decide on the brain host', anchor: '#thin_client' },
   malformed_response: { problem: 'The provider response failed validation.', cause: 'a requested id was missing or a value was non-numeric or out of range', fix: 'foresights decide probe', anchor: '#malformed_response' },

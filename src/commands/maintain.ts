@@ -28,6 +28,7 @@ import { writeCliError } from '../cli/cli-error.ts';
 import { opError } from '../core/ops/contract.ts';
 import { autoDetectSkillsDirReadOnly } from '../core/repo-root.ts';
 import { skillHealthSummary } from '../core/skill-health.ts';
+import { commandText } from '../core/brand.ts';
 
 type ActionStatus = 'ok' | 'would_apply' | 'applied' | 'blocked' | 'skipped';
 
@@ -358,8 +359,8 @@ async function runStatusCli(engine: BrainEngine, opts: MaintainOptions): Promise
   for (const p of status.parked) console.log(`Parked: ${p.key} since ${p.since} (${p.slices} slices)`);
   if (status.held.length) console.log(`Held back on this brain (they would call a provider): ${status.held.join(', ')}`);
   console.log(`Left for you (paid, opt-in; foresights dream or an autopilot runs them): ${status.paid_phases_opt_in.join(', ')}`);
-  if (fix) console.log(`Fix: ${fix.argv!.join(' ')}: ${fix.why}`);
-  if (alternative) console.log(`Or: ${alternative.argv!.join(' ')}: ${alternative.why}`);
+  if (fix) console.log(`Fix: ${commandText(fix.argv!)}: ${fix.why}`);
+  if (alternative) console.log(`Or: ${commandText(alternative.argv!)}: ${alternative.why}`);
 }
 
 /** Hash of exactly what a purge would remove, so --expect binds the apply to the preview the person saw. */
@@ -385,7 +386,7 @@ async function runPurgeCli(engine: BrainEngine, opts: MaintainOptions): Promise<
     console.log(`${pages.length} soft-deleted page(s) are past the ${retention}h recovery window.`);
     for (const p of pages.slice(0, 50)) console.log(`  ${p.source_id}/${p.slug}`);
     if (pages.length > 50) console.log(`  ...and ${pages.length - 50} more`);
-    if (pages.length) console.log(`Nothing was deleted. To purge exactly these, run: ${apply.join(' ')}`);
+    if (pages.length) console.log(`Nothing was deleted. To purge exactly these, run: ${commandText(apply)}`);
     return;
   }
   if (opts.expect !== hash) {

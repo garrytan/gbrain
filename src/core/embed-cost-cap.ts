@@ -12,6 +12,7 @@ import type { CapSource } from './consent.ts';
 import { BudgetExhausted, BudgetTracker, type PricingOverrides } from './budget/budget-tracker.ts';
 import { withBudgetTracker } from './ai/gateway.ts';
 import { shellQuote } from './shell-quote.ts';
+import { commandText } from './brand.ts';
 
 export interface EmbedCostCap {
   readonly signal: AbortSignal;
@@ -74,7 +75,7 @@ export function noteEmbedCostStop(result: EmbedCostStopFields, refusal: BudgetEx
   result.budget_reason = refusal.reason;
   result.cap_usd = refusal.cap;
   result.spent_usd = refusal.spent;
-  result.resume_command = ['gbrain', 'embed', ...resume].map(shellQuote).join(' ');
+  result.resume_command = commandText(['gbrain', 'embed', ...resume].map(shellQuote));
 }
 
 /** The stdout verdict line for a cost-cap stop. */

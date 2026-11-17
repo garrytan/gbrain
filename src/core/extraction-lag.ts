@@ -19,6 +19,7 @@ import { isMissingSchemaObject } from './utils.ts';
 import { managedPersistenceEnabled } from './persistence/ownership.ts';
 import { resolveIncludeFrontmatter } from './extract-frontmatter.ts';
 import { LINK_HOLD_THRESHOLD_RUNS, linkExtractionRetryFix } from './persistence/links-extraction-holds.ts';
+import { commandText } from './brand.ts';
 
 /** Warn threshold (percent of live pages actionable-stale); `GBRAIN_EXTRACTION_LAG_WARN_PCT` overrides it. */
 export const EXTRACTION_LAG_WARN_PCT_DEFAULT = 20;
@@ -96,7 +97,7 @@ export async function heldExtractionReport(engine: BrainEngine, held: number, so
     .map(row => `${row.source_id}:${row.slug} (${row.code})`);
   const fix = linkExtractionRetryFix(sourceId, true);
   return { fix, note: `. ${held} page(s) failed link extraction ${LINK_HOLD_THRESHOLD_RUNS} runs in a row and are held (${sample.join(', ')}${held > sample.length ? ', ...' : ''}); `
-    + `fix the cause the code names, then run ${fix.argv!.join(' ')}` };
+    + `fix the cause the code names, then run ${commandText(fix.argv!)}` };
 }
 
 export interface ExtractionLagVerdict { status: 'ok' | 'warn' | 'fail'; skipped: boolean; pct: number; warn_pct: number; fail_pct: number | null }
@@ -152,13 +153,13 @@ export function extractionRoutes(lag: Pick<ExtractionLag, 'actionable'>, opts: {
   const fix: Action = {
     argv: plainArgv, consent: [], actor: long ? (opts.remote ? 'host_admin' : 'user') : 'agent', requires_exclusive: false,
     why: `Derives links and timeline entries for ${lag.actionable} stale page(s); each run stops after ${runMinutes} minutes and the next resumes where it stopped; it changes no page content.`,
-    ...(long ? { user_message: `Run on the brain host, in a terminal rather than an agent tool call: ${routes[0]!.argv.join(' ')} (${routes[0]!.label}), or ${routes[1]!.argv.join(' ')} (${routes[1]!.label}).` } : {}),
+    ...(long ? { user_message: `Run on the brain host, in a terminal rather than an agent tool call: ${commandText(routes[0]!.argv)} (${routes[0]!.label}), or ${commandText(routes[1]!.argv)} (${routes[1]!.label}).` } : {}),
     verify: { argv: ['gbrain', 'extract', '--stale', '--dry-run', '--json', ...scope] },
     docs: 'docs/guides/troubleshooting.md#symptom-table',
   };
   const decision: Decision = {
     id: 'extraction_route', question: 'How should the link-extraction backlog finish?',
-    options: routes.map(route => ({ id: route.id, label: `${route.argv.join(' ')}: ${route.label}`, argv: route.argv })),
+    options: routes.map(route => ({ id: route.id, label: `${commandText(route.argv)}: ${route.label}`, argv: route.argv })),
     default: 'plain', default_reason: `Bounded runs fit cron and never hold the brain longer than ${runMinutes} minutes; the catch-up run finishes in one go.`,
   };
   return { fix, decision, routes };
@@ -171,7 +172,7 @@ export function extractionNudgeLines(lag: ExtractionLag, opts: { sourceId?: stri
   const mentions = lag.mention_due ? `; ${lag.mention_due} page(s) await the mention pass` : '';
   const where = fix.actor === 'agent' ? '' : ' Run it on the brain host, not inside an agent tool call.';
   return [`[sync] ${lag.actionable} page(s) have un-extracted edges (doctor: links_extraction_lag${blocked}${mentions}). Two ways to finish:${where}`,
-    ...routes.map(route => `[sync]   ${route.argv.join(' ')} — ${route.label}`)];
+    ...routes.map(route => `[sync]   ${commandText(route.argv)} — ${route.label}`)];
 }
 
 export interface StaleExtractionCounts { actionable: number; attendance_blocked: number; held: number; mention_due: number | null; complete: boolean }

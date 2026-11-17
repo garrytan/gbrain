@@ -13,6 +13,7 @@ import { enableArgv } from '../../../core/readiness.ts';
 import { readPrimaryEmbeddingStores, readStoredEmbeddingIdentity } from '../../../core/stored-embedding-identity.ts';
 import { checkError, doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const DOCS = 'docs/guides/troubleshooting.md#embedding-plane-disagreement';
 
@@ -36,7 +37,7 @@ export async function embeddingPlaneDisagreementCheck(engine: BrainEngine, file:
         why: 'Read-only: shows the vectors\' recorded model and width, which the enable command must match.' } };
     const argv = enableArgv(file, stored.model, stored.dimensions);
     return { name: 'embedding_plane_disagreement', status: 'warn', details,
-      message: `${message}With the provider key set, \`${argv.join(' ')}\` turns them back on for the same model and width; pages and vectors are kept.`,
+      message: `${message}With the provider key set, \`${commandText(argv)}\` turns them back on for the same model and width; pages and vectors are kept.`,
       fix: { argv, consent: ['credentials', 'paid'], actor: 'user', requires_exclusive: true, verify: doctorVerify('embedding_plane_disagreement'), docs: DOCS,
         why: `Re-enables ${stored.model} (${stored.dimensions}d), the model the stored vectors already use, and clears embedding_disabled; pages written meanwhile are embedded by foresights embed --stale.`,
         user_message: `Embeddings were switched off on this brain by a re-setup that could not find your provider key, although it already has vectors from ${stored.model}. With that key set, I can turn them back on (same model; embedding new pages costs a little). OK?` } };

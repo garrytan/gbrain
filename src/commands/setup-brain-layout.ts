@@ -36,6 +36,7 @@ import { probeBlock, removeBlock, spliceBlock, type BlockMarkers } from '../core
 import { writeUnlessChanged } from '../core/setup/brain-first.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
 import { readLine } from '../core/interaction.ts';
+import { commandText } from '../core/brand.ts';
 
 export type BrainShape = 'personal' | 'company' | 'both' | 'none';
 
@@ -513,11 +514,11 @@ export function describeLayout(o: LayoutOutcome, dryRun: boolean): string[] {
   }
   for (const p of o.pages) lines.push(`  page     ${p.action.padEnd(7)} ${p.slug}${p.source === COMPANY_SOURCE ? ` (source ${COMPANY_SOURCE})` : ''}${p.detail ? ` (${p.detail})` : ''}`);
   for (const [label, i] of [['notes', o.notes], ['docs', o.docs]] as const) {
-    if (i) lines.push(`  ${label.padEnd(8)} ${i.action === 'imported' ? `${would}import ${i.files} file(s) from ${i.dir} (read only)` : `${i.action}: ${i.detail ?? ''} (${i.argv.join(' ')})`}`);
+    if (i) lines.push(`  ${label.padEnd(8)} ${i.action === 'imported' ? `${would}import ${i.files} file(s) from ${i.dir} (read only)` : `${i.action}: ${i.detail ?? ''} (${commandText(i.argv)})`}`);
   }
   const t = o.transcripts;
   if (t) {
-    lines.push(t.action !== 'imported' ? `  calls    ${t.action}: ${t.detail ?? ''} (${t.argv.join(' ')})`
+    lines.push(t.action !== 'imported' ? `  calls    ${t.action}: ${t.detail ?? ''} (${commandText(t.argv)})`
       : `  calls    ${would}import ${t.files} call file(s) from ${t.dir} as ${CALLS_PREFIX}/<date>-<title> (read only, credentials redacted)`
         + (t.imported === undefined ? '' : `: ${t.imported} new, ${t.unchanged} unchanged, ${t.kept} kept, ${t.redactions} credential(s) redacted${t.detail ? `; ${t.detail}` : ''}`));
     if (t.readers) lines.push(`           readable by: ${t.readers.detail}`);
@@ -553,7 +554,7 @@ export function layoutNotices(o: LayoutOutcome | null, harness: string, scope: L
       why: `Setup could not write ${what.join(', ')} (${detail}); the rest of the install finished.`,
       fix: companyFailed
         ? { ask_user: true, argv, consent: [], actor: 'agent', requires_exclusive: true, why: 'The company source needs the user to fix its folder first; existing pages are kept.',
-          user_message: `Setup could not add the ${COMPANY_SOURCE} source: ${detail}. Once that is fixed, rerun ${argv.join(' ')}` }
+          user_message: `Setup could not add the ${COMPANY_SOURCE} source: ${detail}. Once that is fixed, rerun ${commandText(argv)}` }
         : { argv, consent: [], actor: 'agent', requires_exclusive: true, why: 'Rerun once the brain is free; existing pages are kept.' },
     });
   }

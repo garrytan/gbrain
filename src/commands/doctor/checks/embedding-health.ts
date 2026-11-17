@@ -23,6 +23,7 @@ import { embeddingProviderIsFree } from '../../../core/embed-consent.ts';
 import { providerDeclineRecord } from '../../../core/setup/local-receipts.ts';
 import { providerConsentFix } from './provider-consent.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { commandText } from '../../../core/brand.ts';
 
 /** The opt-in live probe: one ~9-token embedding request, so `paid` + `egress` (runs verbatim once approved). */
 export function embeddingProbeFix(model: string, free = false): Action {
@@ -152,7 +153,7 @@ async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
       }
     } else if (!(await embeddingProviderIsFree(configuredModel)) && providerDeclineRecord()) {
       const fix = providerConsentFix(providerDeclineRecord()!);
-      checks.push(infoCheck('embedding_provider', `Not probed: skipped by consent. foresights setup recorded provider use as declined, so the probe sends nothing to ${configuredModel}. The user decides; to allow provider use they run: ${fix.argv!.join(' ')}`,
+      checks.push(infoCheck('embedding_provider', `Not probed: skipped by consent. foresights setup recorded provider use as declined, so the probe sends nothing to ${configuredModel}. The user decides; to allow provider use they run: ${commandText(fix.argv!)}`,
         'disabled_by_choice', fix, { probed: false, model: configuredModel, dimensions: configuredDims }));
     } else {
       // Live embed test

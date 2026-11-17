@@ -33,7 +33,7 @@
  */
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { parseGlobalFlags } from './cli-options.ts';
-import { isBrandCommand } from './brand.ts';
+import { isBrandCommand, commandText } from './brand.ts';
 
 export type ProcessRole = 'serve' | 'autopilot' | 'supervisor' | 'worker' | 'mcp' | 'sync';
 
@@ -372,7 +372,7 @@ export interface RestartExecutor {
 export interface StepResult { step: RestartStep; ok: boolean; detail: string }
 
 const SUPERVISOR_RESPAWN_GRACE_MS = 3_000;
-const failed = (argv: string[], r: { status: number | null; output: string }) => `\`${argv.join(' ')}\` exited ${r.status ?? 'without a status'}: ${r.output.trim().split('\n')[0] ?? ''}`;
+const failed = (argv: string[], r: { status: number | null; output: string }) => `\`${commandText(argv)}\` exited ${r.status ?? 'without a status'}: ${r.output.trim().split('\n')[0] ?? ''}`;
 
 export async function runRestartSteps(plan: RestartPlan, exec: RestartExecutor): Promise<StepResult[]> {
   const results: StepResult[] = [];
@@ -390,7 +390,7 @@ export async function runRestartSteps(plan: RestartPlan, exec: RestartExecutor):
       results.push({ step, ok: false, detail: `could not replace the copy at ${step.root} (${failed(removed.status === 0 ? add : ['bun', 'remove', '-g', 'gbrain'], added)})${restored ? `; restored v${step.from}` : ''}` });
     } else if (step.kind === 'service') {
       const r = await exec.run(step.argv);
-      results.push({ step, ok: r.status === 0, detail: r.status === 0 ? `ran \`${step.argv.join(' ')}\`` : failed(step.argv, r) });
+      results.push({ step, ok: r.status === 0, detail: r.status === 0 ? `ran \`${commandText(step.argv)}\`` : failed(step.argv, r) });
     } else if (step.kind === 'supervisor') {
       const stop = await exec.run(step.stop);
       if (stop.status !== 0) { results.push({ step, ok: false, detail: failed(step.stop, stop) }); continue; }
@@ -461,7 +461,7 @@ export function restartProblems(plan: RestartPlan, processes: readonly HostProce
     }
     const role = step.kind === 'supervisor' ? 'supervisor' : step.role;
     if (!fresh.some(p => p.role === role)) {
-      problems.push(`${role} did not come back after ${step.kind === 'service' ? `\`${step.argv.join(' ')}\`` : 'the supervisor restart'}.`);
+      problems.push(`${role} did not come back after ${step.kind === 'service' ? `\`${commandText(step.argv)}\`` : 'the supervisor restart'}.`);
     } else if (step.kind === 'supervisor' && step.workers.length && !fresh.some(p => p.role === 'worker' && live.get(p.ppid ?? -1)?.role === 'supervisor' && !restarted.has(p.ppid!))) {
       problems.push(`the jobs worker did not come back under the restarted supervisor (\`${step.start.join(' ')}\`).`);
     }

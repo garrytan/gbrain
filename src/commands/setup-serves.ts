@@ -21,6 +21,7 @@ import { openclawStateDir } from '../core/setup/brain-first.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
 import { readRoster, rosterEmpty, type ServesReceipt, type ServesStatus, receiptLines, receiptOk } from './access-serves.ts';
+import { commandText } from '../core/brand.ts';
 
 export interface ServesFlags { serves?: 'one' | 'several'; members?: string; membersFile?: string; source?: string; stdioMember?: string; labelledOnly?: boolean; dryRun: boolean }
 
@@ -101,7 +102,7 @@ export function servesOneRefusal(status: ServesStatus | null, harness: string, e
   const argv = ['gbrain', 'setup', harness, '--serves', 'several', '--members', status.enabled_members.join(',') || '<id,...>'];
   return opError('setup_serves_several',
     `This brain serves several people (${why}), and the ${harness} connection setup would write is bound to nobody, so it would read every page no rule restricts for whoever asks. Nothing was written.`,
-    `Run ${argv.join(' ')} to label each person; add --stdio-member <member> only for a harness that one person alone uses.`,
+    `Run ${commandText(argv)} to label each person; add --stdio-member <member> only for a harness that one person alone uses.`,
     { fix: { argv, consent: ['credentials'], actor: 'user', ask_user: true, requires_exclusive: false,
       why: 'Adds a member, a folder only that member reads and a bound key for each person; the stdio server stays unbound unless the user names --stdio-member.',
       verify: { argv: ['gbrain', 'access', 'serves', '--json'] } } });

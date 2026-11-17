@@ -18,6 +18,7 @@ import { doctorVerify } from '../check-fix.ts';
 import { factsWithoutGitHome } from '../../sources-git-gap.ts';
 import { FACTS_HOME_DOCS, factsHomePreviewCommand, scanFactsHome, type FactsHomeGroup } from '../../../core/facts/facts-home.ts';
 import { censusWindow, doctorGitGapCensus, gitGapScanTimeoutMs } from './db-ahead-of-git.ts';
+import { argvOfCommandText } from '../../../core/brand.ts';
 
 interface SourceFacts { source_id: string; complete: boolean; window: string; outside_git: number; facts_on_unread_pages: number; held_over_30_days: number; groups: Partial<Record<FactsHomeGroup, number>>;
   held_fact_unmovable: Array<{ code: 'held_fact_unmovable'; fact_id: number; entity_slug: string | null; reason: string }> }
@@ -73,7 +74,7 @@ async function runStrictFactsOutsideGit(ctx: DoctorContext): Promise<Check[]> {
     checks.push({ name: 'strict_facts_outside_git', status: 'warn', details,
       message: `${flagged.length} strict source(s) hold facts that Git does not have, facts held for a page that has not appeared, or held facts that cannot move: ${flagged.map(describe).join('; ')}. `
         + 'A database rebuilt from Git would lose the facts without a Git home. Preview what the repair would do; it writes nothing until you apply the hash it prints.',
-      fix: { argv: [...factsHomePreviewCommand(first).split(' '), '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+      fix: { argv: [...argvOfCommandText(factsHomePreviewCommand(first)), '--json'], consent: [], actor: 'agent', requires_exclusive: false,
         why: `Lists the facts of ${first} without a Git home by group, read-only; its --apply --expect <hash> writes the ones it can to memory/unattributed. Repeat for each source in details.sources.`,
         verify: doctorVerify('strict_facts_outside_git') } });
   } catch (error) {

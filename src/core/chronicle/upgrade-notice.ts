@@ -9,6 +9,7 @@ import {
 } from './config.ts';
 import { CHRONICLE_RUN_NOW_ARGV, chronicleBackfillArgv } from './reasons.ts';
 import { agentBlock } from '../agent-markers.ts';
+import { commandText } from '../brand.ts';
 
 export interface ChronicleProviderView {
   /** Configured chat model id, or null when it cannot be resolved. */
@@ -40,7 +41,7 @@ export async function autoChronicleUpgradeNotice(engine: BrainEngine, view?: Chr
   const ceiling = settings.dailyLimit * settings.jobBudgetUsd;
   const since = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
   const runs = `On this ${engine.kind === 'pglite' ? 'PGLite' : 'Postgres'} brain, pending pages run in the autopilot cycle; ` +
-    `\`${CHRONICLE_RUN_NOW_ARGV.join(' ')}\` runs them now.`;
+    `\`${commandText(CHRONICLE_RUN_NOW_ARGV)}\` runs them now.`;
   const cost = provider.priced
     ? `Worst case: ${settings.dailyLimit} calls/day x $${settings.jobBudgetUsd.toFixed(2)} per-page cap = $${ceiling.toFixed(2)}/day with ${provider.model}. ` +
       'The cap is per page, not a daily budget; typical pages cost far less.'
@@ -62,9 +63,9 @@ export async function autoChronicleUpgradeNotice(engine: BrainEngine, view?: Chr
       consent: 'paid, egress',
       actor: 'user',
       next: 'ask_user',
-      if_yes: `Run ${AUTO_CHRONICLE_KEEP_ARGV.join(' ')} (records the user's answer). History is paid too; ask before running it. ` +
+      if_yes: `Run ${commandText(AUTO_CHRONICLE_KEEP_ARGV)} (records the user's answer). History is paid too; ask before running it. ` +
         `Preview: ${chronicleBackfillArgv({ since, dryRun: true }).join(' ')}. Guide: docs/guides/life-chronicle.md`,
-      if_no: `Run ${AUTO_CHRONICLE_OPT_OUT_ARGV.join(' ')}.`,
+      if_no: `Run ${commandText(AUTO_CHRONICLE_OPT_OUT_ARGV)}.`,
       verify: 'foresights doctor --only auto_chronicle_default_on --json',
     }, {
       showUser: 'Automatic event extraction is now on: each new or changed meeting, conversation or calendar page gets one paid chat call ' +

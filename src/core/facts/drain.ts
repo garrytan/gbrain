@@ -27,6 +27,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { Action, Notice } from '../agent-output.ts';
 import type { MinionJob } from '../minions/types.ts';
 import { FACTS_DRAIN_KEYS, parseFactsDrainKey, type FactsDrainKey } from './drain-config.ts';
+import { commandText } from '../brand.ts';
 export { FACTS_DRAIN_KEYS, validateFactsDrainConfigValue, type FactsDrainKey } from './drain-config.ts';
 
 
@@ -131,7 +132,7 @@ export async function factsDrainBacklog(engine: BrainEngine): Promise<FactsDrain
 }
 
 const fmtUsd = (n: number) => `$${n < 0.1 ? n.toFixed(3) : n.toFixed(2)}`;
-const command = (argv: readonly string[]) => argv.join(' ');
+const command = (argv: readonly string[]) => commandText(argv);
 
 function keySetupFix(): Action {
   return {

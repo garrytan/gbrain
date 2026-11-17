@@ -18,6 +18,7 @@ import { opError, OperationError, type OperationContext } from '../ops/contract.
 import { databaseRefusal } from '../persistence/publication-failure.ts';
 import { hasScope } from '../scope.ts';
 import type { BrainEngine } from '../engine.ts';
+import { commandText } from '../brand.ts';
 
 export const MEMORY_CONFIRM_SCOPE = 'memory_confirm';
 
@@ -58,7 +59,7 @@ export async function promptTypedConfirmation(target: ConfirmationTarget, io: Co
 /** DX-3: a fix for a tier-raising action. Always the user's to run; refuses an argv that would auto-confirm. */
 export function tierRaiseFix(argv: string[], why: string, userMessage?: string): Action {
   if (argv.some(arg => arg === '--yes' || arg === '-y' || arg.startsWith('--yes='))) {
-    throw new Error(`tier-raising fix must not carry --yes: ${argv.join(' ')}`);
+    throw new Error(`tier-raising fix must not carry --yes: ${commandText(argv)}`);
   }
   return { argv, consent: [], actor: 'user', why, requires_exclusive: false, ...(userMessage ? { user_message: userMessage } : {}) };
 }
@@ -75,7 +76,7 @@ export type OwnerConfirmation = { via: 'memory_confirm_scope' } | { via: 'tty' }
 export async function requireOwnerConfirmation(ctx: OperationContext, target: ConfirmationTarget): Promise<OwnerConfirmation> {
   const fix = tierRaiseFix(target.command,
     'Raising trust needs the owner: run this on the brain host in an interactive terminal and type the confirmation token when asked.',
-    `Run on the brain host, in a terminal: ${target.command.join(' ')}`);
+    `Run on the brain host, in a terminal: ${commandText(target.command)}`);
   if (ctx.remote !== false) {
     if (hasScope(ctx.auth?.scopes ?? [], MEMORY_CONFIRM_SCOPE)) return { via: 'memory_confirm_scope' };
     throw opError('insufficient_scope', `This connection cannot confirm memory: ${target.summary.toLowerCase()} needs the owner.`,

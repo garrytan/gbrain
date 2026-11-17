@@ -8,6 +8,7 @@
 import { cliRenderContext, renderNotice, type Action, type Notice } from '../../core/agent-output.ts';
 import { configPath, loadConfigFileOnly, saveConfig } from '../../core/config.ts';
 import type { ConfigReader } from '../../core/config-snapshot.ts';
+import { commandText } from '../../core/brand.ts';
 
 export type LegacyModelKey = 'chat_model' | 'expansion_model';
 export const isLegacyModelKey = (key: string): key is LegacyModelKey => key === 'chat_model' || key === 'expansion_model';
@@ -49,7 +50,7 @@ export async function reportLegacyModelWrite(engine: ConfigReader, key: LegacyMo
     return;
   }
   console.log(`Set ${key} = ${value}`);
-  if (notice) console.error(`[config] WARN: ${notice.why} Fix: ${notice.fix!.argv!.join(' ')} (${notice.fix!.why})`);
+  if (notice) console.error(`[config] WARN: ${notice.why} Fix: ${commandText(notice.fix!.argv!)} (${notice.fix!.why})`);
 }
 
 /** `foresights config unset chat_model|expansion_model --file`: drop only the config.json pin; the database value stays. */

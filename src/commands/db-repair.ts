@@ -78,6 +78,7 @@ import { writeJsonDocument } from '../core/cli-force-exit.ts';
 import { opError, type OperationError } from '../core/ops/contract.ts';
 import type { RegistryCode } from '../core/error-registry.ts';
 import { writeCliError, writeCliRefusal } from '../cli/cli-error.ts';
+import { commandText } from '../core/brand.ts';
 
 class UnknownFlagError extends Error {}
 
@@ -318,7 +319,7 @@ function emit(json: boolean, report: JsonReport, humanLines: string[], ranAutoTi
         why: 'Rewrites database_url in ~/.gbrain/config.json as the plan says (undo: foresights db-repair --yes --undo-last-rewrite).',
         user_message: 'foresights wants to rewrite the database connection URL in its config to reach your database. Allow it? (It can be undone.)' };
   const e = opError('database_error', d?.message ?? 'The database is still not reachable.',
-    fix?.argv ? `Apply the plan: ${fix.argv.join(' ')}` : (fix?.user_message ?? d?.remediation ?? 'Follow the remediation in the report.'),
+    fix?.argv ? `Apply the plan: ${commandText(fix.argv)}` : (fix?.user_message ?? d?.remediation ?? 'Follow the remediation in the report.'),
     { ...(report.reason ? { reason: report.reason } : {}), ...(fix ? { fix } : {}), ...(d?.remediation ? { why: d.remediation } : {}) });
   writeCliError(e, 'db-repair', { json: true, stderr: false, legacy: { ...report } });
 }

@@ -22,6 +22,7 @@ import { sha256 } from './digest.ts';
 import { claimableWriteSql, EARLIER_DEFERRED, EARLIER_HEAD, foregroundPrioritySql, SYNC_KIND } from './journal.ts';
 import { BACKOFF_ELAPSED } from './transient-retry.ts';
 import { recoveryUpgradeFix, recoveryVersionKnown, type RecoveryTable } from './recovery-version.ts';
+import { commandText } from '../brand.ts';
 
 export type HeadBlockerPredicate = 'worktree_owner' | 'refresh_fence' | 'effect_recovery' | 'withdrawal_mirror' | 'request_recovery'
   | 'zombie_publication' | 'lease' | 'root_hold' | 'transient_backoff';
@@ -220,7 +221,7 @@ export function headBlockerAction(blocker: HeadBlocker, sourceId: string, resume
         + `nor the bytes the write published, so recovery will not overwrite it, every write to source ${sourceId} waits, and waiting does not clear it. `
         + 'The preview changes no page or canonical file (it writes only private diffs) and lists the file, its diff and the choices; which version to keep is the user\'s call.',
       user_message: `${path} was edited while foresights was writing page ${slug}, so foresights will not touch the file and writes to source ${sourceId} are paused. `
-        + `Either undo the edit (put the file back as it was) and run: ${resumeCommand}. Or choose which version to keep with ${preview.join(' ')}, which shows the diff: `
+        + `Either undo the edit (put the file back as it was) and run: ${resumeCommand}. Or choose which version to keep with ${commandText(preview)}, which shows the diff: `
         + 'the bytes from before foresights\'s write, or the edited bytes. Do not delete the file.',
       verify: { argv: status } };
   }
@@ -233,7 +234,7 @@ export function headBlockerAction(blocker: HeadBlocker, sourceId: string, resume
         + `bytes it cannot account for, so every write to source ${sourceId} waits and waiting does not clear it. The preview changes nothing (it writes only private diffs) `
         + 'and lists the file with its only choice, --keep withdrawn; applying it is the user\'s call.',
       user_message: `${path} was edited while foresights was removing a withdrawn fact from it, so foresights will not touch the file and writes to source ${sourceId} are paused. `
-        + `Either restore the committed version (git -C ${dirname(path)} checkout -- ${basename(path)}) and run: ${resumeCommand}. Or run ${preview.join(' ')}, which shows the diff `
+        + `Either restore the committed version (git -C ${dirname(path)} checkout -- ${basename(path)}) and run: ${resumeCommand}. Or run ${commandText(preview)}, which shows the diff `
         + 'and offers --keep withdrawn: it backs the edited file up, then writes the version without the withdrawn fact. Do not delete the file. Either way, make the edit '
         + 'again afterwards, leaving the withdrawn fact out.',
       verify: { argv: status } };
@@ -246,7 +247,7 @@ export function headBlockerAction(blocker: HeadBlocker, sourceId: string, resume
 export function headBlockedNext(blocker: HeadBlocker, headRequestId: string | null, stalledSeconds: number, sourceId: string, resumeCommand: string):
   { command: string; safe_to_loop: false; retry_after_ms: 0; why: string; fix: RenderedAction } {
   const action = headBlockerAction(blocker, sourceId, resumeCommand);
-  return { command: action.argv!.join(' '), safe_to_loop: false, retry_after_ms: 0, fix: renderAction(action, cliRenderContext()),
+  return { command: commandText(action.argv!), safe_to_loop: false, retry_after_ms: 0, fix: renderAction(action, cliRenderContext()),
     why: `The queued write at the head of this source (${headRequestId ?? 'unknown request'}) cannot be claimed by any consumer: it is blocked by ${headBlockerText(blocker)}, `
       + `which no amount of waiting clears${stalledSeconds ? ` (quiet ${stalledSeconds}s)` : ''}. The cursor and accepted writes are intact. ${action.user_message ?? action.why}` };
 }
@@ -309,7 +310,7 @@ export async function readQueuedHeadBlockers(engine: BrainEngine, rows: Array<{ 
       ? `foresights cancel-write-request ${read.cancel.request_id}` : null;
     const action = headBlockerAction(read.blocker, source ?? '<source>', `foresights sync --source ${source ?? '<source>'}`);
     out.set(id, { fields: { claimable_here: false, blocked_by: read.blocker, ...(cancel ? { cancel_command: cancel } : {}) },
-      advice: `Blocked by ${headBlockerText(read.blocker)}: ${action.user_message ?? action.why}${read.blocker.predicate === 'refresh_fence' || (read.blocker.predicate === 'request_recovery' && read.blocker.intervention) ? ` Run: ${action.argv!.join(' ')}.` : ''}`
+      advice: `Blocked by ${headBlockerText(read.blocker)}: ${action.user_message ?? action.why}${read.blocker.predicate === 'refresh_fence' || (read.blocker.predicate === 'request_recovery' && read.blocker.intervention) ? ` Run: ${commandText(action.argv!)}.` : ''}`
         + `${cancel ? ` Cancelling the blocking request (it has not started publishing) also frees the head; a sync rerun admits it again: ${cancel}` : ''}` });
   }
   return out;

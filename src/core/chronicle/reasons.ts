@@ -3,6 +3,7 @@
 // and tests render from CHRONICLE_REASONS; nothing else spells these codes out.
 import { pricingSetCommand } from '../budget/no-pricing.ts';
 import type { Action, Actor } from '../agent-output.ts';
+import { commandText } from '../brand.ts';
 
 /**
  * Where a code is decided: `decision` when
@@ -196,8 +197,8 @@ export function renderChronicleReasonTable(): string {
   const rows = Object.entries(CHRONICLE_REASONS).map(([code, reason]) => {
     const entry: ChronicleReason = reason;
     const fix = entry.fix?.(ctx);
-    const command = fix?.argv ? `\`${fix.argv.map(shellWord).join(' ')}\`` : '—';
-    const preview = fix?.preview_argv ? ` (preview: \`${fix.preview_argv.map(shellWord).join(' ')}\`)` : '';
+    const command = fix?.argv ? `\`${commandText(fix.argv.map(shellWord))}\`` : '—';
+    const preview = fix?.preview_argv ? ` (preview: \`${commandText(fix.preview_argv.map(shellWord))}\`)` : '';
     const consent = fix && fix.consent.length > 0 ? fix.consent.join(', ') : '—';
     return `| \`${code}\` | ${entry.stage} | ${entry.meaning(ctx)} | ${fix ? `${command}${preview}` : '—'} | ${fix?.actor ?? '—'} | ${consent} |`;
   });

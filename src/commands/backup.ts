@@ -34,6 +34,7 @@ import {
   type BackupAssetVerdict,
   type BackupStatus,
 } from '../core/backup/status-file.ts';
+import { commandText } from '../core/brand.ts';
 
 const BACKUP_USAGE: Record<string, { usage: string; example: string }> = {
   create: { usage: 'foresights backup create --output /absolute/private/path/archive.gbrain-backup [--json]',
@@ -134,7 +135,7 @@ function renderHuman(s: BackupStatus, out: (line: string) => void): void {
     const mark = isVerifiedRecoverable(a) ? '✓' : a.state === 'no_remote' ? '✗' : a.state === 'info' ? '·' : '⚠';
     out(`  ${mark} [${a.kind}] ${a.id} — ${a.state}${a.verification ? `; remote evidence: ${isRemoteTimeout(a) ? 'timed out (unconfirmed, not missing)' : a.verification.state}` : ''}${a.detail ? `: ${a.detail}` : ''}`);
     const fix = suggestedFix(a);
-    if (fix) out(`      fix: ${fix.join(' ')}`);
+    if (fix) out(`      fix: ${commandText(fix)}`);
   }
   out(recoveryStatement(s));
   const timeouts = s.totals.remote_timeouts ?? 0;

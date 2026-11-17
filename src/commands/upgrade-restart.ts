@@ -32,6 +32,7 @@ import {
   classifyGbrainCommand, collectHostProcesses, copyFix, gbrainEntry, launcherName, mismatchedBuilds, PENDING_BUILD, planRestart, runRestartSteps, verifyRestart,
   type AutopilotLauncher, type HostProcess, type ProcessSources, type ProcessTableRow, type RestartExecutor, type RestartPlan, type ServiceHandle, type WarmSocketState,
 } from '../core/upgrade-restart.ts';
+import { commandText } from '../core/brand.ts';
 
 const DOCS = 'docs/guides/upgrades-auto-update.md#restart';
 const DRY_RUN_VERIFY = ['gbrain', 'upgrade', '--restart-only', '--dry-run', '--json'];
@@ -230,7 +231,7 @@ const describe = (p: Pick<HostProcess, 'role' | 'pid' | 'version'>) => `${p.role
 function describeSteps(plan: RestartPlan): string[] {
   const byPid = new Map(plan.stale.map(p => [p.pid, p]));
   const name = (pid: number) => byPid.has(pid) ? describe(byPid.get(pid)!) : `pid ${pid}`;
-  return plan.steps.map(step => step.kind === 'service' ? `${step.pids.map(name).join(', ')}: \`${step.argv.join(' ')}\``
+  return plan.steps.map(step => step.kind === 'service' ? `${step.pids.map(name).join(', ')}: \`${commandText(step.argv)}\``
     : step.kind === 'supervisor' ? `${[step.pid, ...step.workers].map(name).join(', ')}: \`${step.stop.join(' ')}\`, then \`${step.start.join(' ')}\``
     : step.kind === 'replace_copy' ? `${step.pids.map(name).join(', ')} run from the Bun global copy at ${step.root} (${step.from ? `v${step.from}` : 'version unknown'}): replace it with v${step.to} (BUN_INSTALL=${step.bun_install}: bun remove -g gbrain, then bun add -g the tag) before the restarts`
     : step.kind === 'handoff' ? `${name(step.pid)}: stop it (SIGTERM drains it); ${launcherName(step.launcher)} starts the installed build again (verified for up to ${Math.round(step.launcher.wait_ms / 60_000)} minutes)`
@@ -250,7 +251,7 @@ export function restartRefusal(plan: RestartPlan, rerunArgv: readonly string[], 
     : { argv: first.argv, consent: [], actor: 'user', requires_exclusive: false, docs: DOCS, why: first.instruction, verify: { argv: DRY_RUN_VERIFY } };
   return opError('restart_refused',
     `${plan.manual.length} foresights process(es) on this host cannot be restarted automatically, so nothing was restarted${installed ? '' : ' and nothing was installed'}: ${plan.manual.map(m => m.instruction).join(' ')}`,
-    `Handle each process as listed, then run \`${rerunArgv.join(' ')}\` again; \`foresights upgrade --no-restart\` installs without restarting (doctor then reports runtime_build_skew).`,
+    `Handle each process as listed, then run \`${commandText(rerunArgv)}\` again; \`foresights upgrade --no-restart\` installs without restarting (doctor then reports runtime_build_skew).`,
     { fix, docs: DOCS });
 }
 

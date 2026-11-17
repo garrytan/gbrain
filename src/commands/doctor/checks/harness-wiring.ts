@@ -51,6 +51,7 @@ import { launcherLaneFindings, setupRerunArgv } from '../../../core/setup/launch
 import { readSetupReceipt } from '../../../core/setup/claude-code.ts';
 import { readCodexSetupReceipt } from '../../../core/setup/codex.ts';
 import { brainFirstTarget, inspectBrainFirst, isBrainFirstHarness, readBrainFirstLedger, renderBrainFirstBlock, type BrainFirstAccess } from '../../../core/setup/brain-first.ts';
+import { commandText } from '../../../core/brand.ts';
 
 export const HARNESS_SMOKE_TIMEOUT_MS = 15_000;
 export const HARNESS_HTTP_PROBE_TIMEOUT_MS = 3_000;
@@ -511,7 +512,7 @@ function repairArgv(v: InstructionBlockView): Action {
   if (project) {
     const dir = v.harness === 'cursor' ? dirname(dirname(dirname(v.path))) : dirname(v.path);
     return { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME), why,
-      user_message: `The foresights instruction block in ${v.path} needs a refresh. From ${dir}, run: ${argv.join(' ')}` };
+      user_message: `The foresights instruction block in ${v.path} needs a refresh. From ${dir}, run: ${commandText(argv)}` };
   }
   return { argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(NAME), why };
 }
@@ -524,7 +525,7 @@ function repairArgv(v: InstructionBlockView): Action {
 export function instructionBlockUpgradeHints(): string[] {
   return instructionBlockViews(readHarnessRegistrations()).filter((v): v is InstructionBlockView & { state: 'missing' | 'stale' } => v.state === 'missing' || v.state === 'stale').map((v) => {
     const fix = repairArgv(v);
-    return fix.argv ? `Brain-first instructions: the ${v.harness} block in ${v.path} ${INSTRUCTION_PROBLEM[v.state]}. Run \`${fix.argv.join(' ')}\` to write only that block (\`--no-instructions\` opts out).` : fix.user_message!;
+    return fix.argv ? `Brain-first instructions: the ${v.harness} block in ${v.path} ${INSTRUCTION_PROBLEM[v.state]}. Run \`${commandText(fix.argv)}\` to write only that block (\`--no-instructions\` opts out).` : fix.user_message!;
   });
 }
 
@@ -583,18 +584,18 @@ export function hookLauncherFix(p: HookLauncherProblem): Action {
   const codexTrust = '`foresights setup codex` rewrites the Codex hooks.json and its trust entries, so run it yourself';
   const verify = doctorVerify(NAME);
   if (p.rerun) {
-    const run = `${p.rerunFrom ? `from ${p.rerunFrom}, ` : ''}run: ${p.rerun.join(' ')}`;
+    const run = `${p.rerunFrom ? `from ${p.rerunFrom}, ` : ''}run: ${commandText(p.rerun)}`;
     const laneWhy = `Rewrites the entry to start foresights from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session or MCP server starts there.${p.harness === 'codex' && p.rerun[1] === 'setup' ? " foresights setup codex repeats the install's recorded decisions and re-trusts setup's own hook groups." : ''}`;
     if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. Remove that file (foresights did not write it), then ${run}` };
     if (p.edited) return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. Remove or rewrite that entry in ${p.source} (setup never overwrites an edit), then ${run}` };
-    if (p.setupOwned && p.harness === 'codex') return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. ${codexTrust}: ${p.rerun.join(' ')}` };
+    if (p.setupOwned && p.harness === 'codex') return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. ${codexTrust}: ${commandText(p.rerun)}` };
     if (p.setupOwned) return { argv: p.rerun, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify, why: laneWhy };
     return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. To move it onto foresights's launcher, ${p.lane === 'mcp' && p.owner === 'none' ? `remove that entry from ${p.source} (foresights does not rewrite it), then ` : ''}${run}` };
   }
-  if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove that file (foresights did not write it), then run: ${argv.join(' ')}` };
-  if (p.edited) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove or rewrite that entry in ${p.source} (setup never overwrites an edit), then ${project ? `from ${project}, ` : ''}run: ${argv.join(' ')}` };
-  if (project) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `foresights's hooks for ${project} start foresights in the session's directory. From ${project}, run: ${argv.join(' ')}` };
-  if (p.harness === 'codex') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. ${codexTrust}: ${argv.join(' ')}` };
+  if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove that file (foresights did not write it), then run: ${commandText(argv)}` };
+  if (p.edited) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove or rewrite that entry in ${p.source} (setup never overwrites an edit), then ${project ? `from ${project}, ` : ''}run: ${commandText(argv)}` };
+  if (project) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `foresights's hooks for ${project} start foresights in the session's directory. From ${project}, run: ${commandText(argv)}` };
+  if (p.harness === 'codex') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. ${codexTrust}: ${commandText(argv)}` };
   return { argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify, why };
 }
 

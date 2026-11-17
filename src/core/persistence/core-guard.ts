@@ -31,6 +31,7 @@ import {
   CORE_DOCS, CORE_MAX_PAGES, coreChars, coreMarking, coreUsage, listCorePages, readCoreSettings, renderCorePage, type CoreSettings,
 } from '../core-memory.ts';
 import type { WriteRequest } from './model.ts';
+import { commandText } from '../brand.ts';
 
 /** Source rows a core-touching write locks: its own source and `default` (the brain-wide core lock). */
 export function coreLockSources(sourceId: string): string[] {
@@ -123,7 +124,7 @@ export async function prepareCoreGuard(engine: BrainEngine, input: CoreGuardInpu
       ? ['gbrain', 'core', 'add', '--source', row.source_id, row.slug]
       : before.core && !after.core ? ['gbrain', 'core', 'remove', '--source', row.source_id, row.slug]
         : ['gbrain', 'core', 'add', '--source', row.source_id, row.slug, '--priority', String(after.priority ?? before.priority ?? 100)];
-    throw opError('core_mark_owner_only', `Only the brain owner can change always_load or core_priority on ${row.source_id}:${row.slug}. Resubmit without changing them (omitted keys keep their stored values); if the core marking should change, ask the user to run: ${argv.join(' ')}`,
+    throw opError('core_mark_owner_only', `Only the brain owner can change always_load or core_priority on ${row.source_id}:${row.slug}. Resubmit without changing them (omitted keys keep their stored values); if the core marking should change, ask the user to run: ${commandText(argv)}`,
       'Nothing was written. Submit the content without changing always_load or core_priority (omitted keys keep their stored values), and ask the user to run the command in fix if the core marking itself should change.',
       { fix: ownerFix(row, argv, 'Changes which pages are always loaded, from the trusted local CLI.') });
   }

@@ -17,6 +17,7 @@ import { opError, type OperationError } from '../ops/contract.ts';
 import type {
   GraduationBlocker, GraduationErrorCode, GraduationTargetSpelling, Tombstone, VerifyFailure,
 } from './engine-graduation.types.ts';
+import { commandText } from '../brand.ts';
 
 export const GRADUATION_GUIDE = 'docs/guides/move-to-postgres.md';
 export const DEFAULT_TARGET_URL_ENV = 'GBRAIN_TARGET_URL';
@@ -128,7 +129,7 @@ export function embeddingDimensionMismatchError(opts: { column: string; source: 
 export function blockerAction(b: GraduationBlocker, rerun: string[]): Action {
   if (b.argv?.length) {
     return { argv: [...b.argv], consent: [], actor: b.needsUser ? 'user' : 'agent', requires_exclusive: false, verify: STATUS_VERIFY,
-      why: `${b.detail} Then run the move again: ${rerun.join(' ')}.` };
+      why: `${b.detail} Then run the move again: ${commandText(rerun)}.` };
   }
   return { argv: rerun, consent: [], actor: 'agent', requires_exclusive: false, verify: STATUS_VERIFY, why: b.detail };
 }

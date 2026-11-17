@@ -11,6 +11,7 @@ import type { Check } from '../../doctor.ts';
 import { agentFix, checkError } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { identityDowngradeReasonText, identityRestoreArgv, identityStatusArgv, listIdentityDowngrades, withIdentityRemedies } from '../../../core/sync-identity-downgrades.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const DOCS = 'docs/guides/live-sync.md#renaming-a-page';
 const SAMPLE = 5;
@@ -34,10 +35,10 @@ async function runRenameIdentityDowngrades(ctx: DoctorContext): Promise<Check[]>
     const restore = first.restore_available === false ? null : identityRestoreArgv(first).join(' ');
     const carry = first.remedy.disposition === 'carry';
     const route = carry
-      ? `To carry an old page's identity onto its new page, preview ${first.remedy.preview_argv.join(' ')} and, after the user agrees, apply it. `
+      ? `To carry an old page's identity onto its new page, preview ${commandText(first.remedy.preview_argv)} and, after the user agrees, apply it. `
       : first.remedy.carry_unavailable
-        ? `Carrying identity is unavailable on a managed source (${first.remedy.carry_unavailable}); to release the purge hold without carrying it, preview ${first.remedy.preview_argv.join(' ')} and, after the user agrees, apply it. `
-        : `The new file did not import; to release the purge hold, preview ${first.remedy.preview_argv.join(' ')} and, after the user agrees, apply it. `;
+        ? `Carrying identity is unavailable on a managed source (${first.remedy.carry_unavailable}); to release the purge hold without carrying it, preview ${commandText(first.remedy.preview_argv)} and, after the user agrees, apply it. `
+        : `The new file did not import; to release the purge hold, preview ${commandText(first.remedy.preview_argv)} and, after the user agrees, apply it. `;
     checks.push({ name: 'rename_identity_downgrades', status: 'warn', details: { ...details, restore_unavailable_sources: unrestorable },
       message: `${open.length} rename(s) did not keep their page identity, so each old page's facts, links and aliases stay on its soft-deleted slug, held from the purge until the pair is settled `
         + `(e.g. ${samples.map(record => `${record.source_id}:${record.from} -> ${record.to}, ${record.facts} fact(s) and ${record.links} link(s) on ${record.old_slug}`).join('; ')}; `

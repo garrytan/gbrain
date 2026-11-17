@@ -127,6 +127,7 @@ import {
 import { HARNESS_ADAPTERS } from '../core/harness/registry.ts';
 import { applyBrainLayout, askBrainShape, brainShapeDecision, describeLayout, layoutNotices, parseLayoutFlags, withBrainShape, type BrainShape, type LayoutOutcome } from './setup-brain-layout.ts';
 import { isInteractive } from '../core/interaction.ts';
+import { commandText } from '../core/brand.ts';
 
 export const SETUP_HELP = `foresights setup <harness> — give an agent harness memory in one command
 
@@ -640,7 +641,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     if (flags.dryRun) {
       const steps: SetupStep[] = [
         { step: 'receipt', action: found.prior?.status === 'installed' && found.hooksCurrent && (found.mcp.state === 'current' || !!pluginOwner) && !brainCreate ? 'keep' : 'write', detail: found.receiptPath },
-        ...(brainCreate ? [{ step: 'brain' as const, action: 'write' as const, detail: `would run: ${initArgv.join(' ')}` }] : []),
+        ...(brainCreate ? [{ step: 'brain' as const, action: 'write' as const, detail: `would run: ${commandText(initArgv)}` }] : []),
         { step: 'mcp', action: pluginOwner ? 'skip' : found.mcp.state === 'current' ? 'keep' : 'write', detail: `'${flags.name}' in ${found.configPath}${plan.stdioMember ? ` (serve --stdio-member ${plan.stdioMember})` : ''}` },
         { step: 'hooks', action: found.hooksCurrent ? 'keep' : 'write', detail: plan.events.length ? `${plan.events.join(', ')} in ${found.settingsPath}` : `no hooks (${found.settingsPath})` },
         ...Object.entries(found.edited).map(([event]) => ({ step: 'hooks' as const, action: 'preserve' as const, detail: `${event} was edited after setup wrote it; kept` })),
@@ -746,14 +747,14 @@ async function layoutFor(harness: SetupHarnessId, flags: SetupFlags, launcher: s
 
 /** Run the `foresights init --json` child that creates a new keyless brain; returns setup's form of its first-run bundle. */
 function runBrainInit(initArgv: string[], out: Out, harness: SetupHarnessId): Notice[] {
-  say(out, `Creating the brain: ${initArgv.join(' ')}`);
+  say(out, `Creating the brain: ${commandText(initArgv)}`);
   const child = Bun.spawnSync(initArgv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env });
   const initOut = child.stdout?.toString() ?? '';
   const initErr = child.stderr?.toString() ?? '';
   if (child.exitCode !== 0) {
     process.stderr.write(initErr);
     process.stderr.write(initOut);
-    throw new Error(`\`${initArgv.join(' ')}\` exited ${child.exitCode}; nothing else was written. Fix the init error above, then run setup again.`);
+    throw new Error(`\`${commandText(initArgv)}\` exited ${child.exitCode}; nothing else was written. Fix the init error above, then run setup again.`);
   }
   process.stderr.write(finishFreshSetupMigrations(initArgv[0]!, initErr));
   const hosted = hostedOptionNotice('setup', hostedOptionMuted());
@@ -840,7 +841,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
       const unchanged = found.prior?.status === 'installed' && found.hooksCurrent && found.trustCurrent && (found.mcp.state === 'current' || !!pluginOwner) && !brainCreate;
       const steps: CodexSetupStep[] = [
         { step: 'receipt', action: unchanged ? 'keep' : 'write', detail: found.receiptPath },
-        ...(brainCreate ? [{ step: 'brain' as const, action: 'write' as const, detail: `would run: ${initArgv.join(' ')}` }] : []),
+        ...(brainCreate ? [{ step: 'brain' as const, action: 'write' as const, detail: `would run: ${commandText(initArgv)}` }] : []),
         { step: 'mcp', action: pluginOwner ? 'skip' : found.mcp.state === 'current' ? 'keep' : 'write', detail: `[mcp_servers.${flags.name}] in ${found.configPath}${plan.stdioMember ? ` (serve --stdio-member ${plan.stdioMember})` : ''}` },
         { step: 'hooks', action: found.hooksCurrent ? 'keep' : 'write', detail: plan.events.length ? `${plan.events.join(', ')} in ${found.hooksPath}` : `no hooks (${found.hooksPath})` },
         { step: 'trust', action: found.trustCurrent ? 'keep' : 'write', detail: `trust entries for setup's groups in ${found.configPath}` },

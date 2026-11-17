@@ -33,6 +33,7 @@ import { GIT_OPERATION_MARKERS } from './git/commit-push.ts';
 import { gitChildEnv } from './git-env.ts';
 import { GIT_ENV } from './git-transport.ts';
 import { execFileSync } from './spawn.ts';
+import { commandText } from './brand.ts';
 
 export const UPSTREAM_BASELINE_KEY = 'upstream_baseline';
 export const UPSTREAM_DIVERGENCE_KEY = 'upstream_divergence';
@@ -239,5 +240,5 @@ export function renderUpstreamDivergence(report: UpstreamDivergenceReport): Omit
 
 /** The stderr line a classic sync prints when it records an observation. */
 export function formatUpstreamNotice(report: UpstreamDivergenceReport): string {
-  return `Warning [${report.code}]: ${report.message} Next${report.fix.ask_user ? ' (ask the user first)' : ''}: ${report.fix.argv!.join(' ')}. See ${UPSTREAM_DOCS}.`;
+  return `Warning [${report.code}]: ${report.message} Next${report.fix.ask_user ? ' (ask the user first)' : ''}: ${commandText(report.fix.argv!)}. See ${UPSTREAM_DOCS}.`;
 }

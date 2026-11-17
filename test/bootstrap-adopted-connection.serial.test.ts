@@ -125,7 +125,7 @@ describe('detectCodexProjectServer + fingerprint', () => {
     expect(detectCodexProjectServer(ws)).toBeNull();
     writeProjectConfig('[mcp_servers.other]\ncommand = "gbrain"\nargs = ["serve", "--source", "ws"]\n');
     expect(detectCodexProjectServer(ws)).toBeNull();
-    expect(detectCodexProjectServer(ws, 'other')).toMatchObject({ transport: 'stdio', target: 'foresights serve --source ws', header_names: [] });
+    expect(detectCodexProjectServer(ws, 'other')).toMatchObject({ transport: 'stdio', target: 'gbrain serve --source ws', header_names: [] });
     writeProjectConfig('[mcp_servers.gbrain\nurl = "https://x"\n');
     expect(() => detectCodexProjectServer(ws)).toThrow();
     expect(adoptedConnectionState(ws, home)).toEqual({ state: 'none' });

@@ -48,7 +48,7 @@ describe('renderTemplateReadme', () => {
       'https://raw.githubusercontent.com/aimonk2025/gbrain/stable/BOOTSTRAP_FOR_AGENTS.md',
     );
     expect(readme).toContain('github:aimonk2025/gbrain#stable');
-    expect(readme).not.toMatch(/raw\.githubusercontent\.com\/garrytan\/(?:foresights|gbrain)\/(master|main|v\d)/);
+    expect(readme).not.toMatch(/raw\.githubusercontent\.com\/aimonk2025\/gbrain\/(master|main|v\d)/);
   });
 
   test('is deterministic and carries no timestamps [CX2-14]', () => {

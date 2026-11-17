@@ -36,6 +36,7 @@ import { ACTIVATION_REASON_FAMILIES, ACTIVATION_TIER_CEILING, activationSuppress
 import { claimPendingSql, TRUST_CLAIM_RESUME_COMMAND } from './claim-state.ts';
 import { listTrustAllowRules, type TrustAllowRule } from './allow-rules.ts';
 import { isQuarantined, QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
+import { commandText } from '../brand.ts';
 
 export const TRUST_REVIEW_KINDS = ['proposal', 'lowered_page', 'preference', 'hold', 'contradiction', 'flagged_page'] as const;
 export type TrustReviewKind = typeof TRUST_REVIEW_KINDS[number];
@@ -294,7 +295,7 @@ export async function buildTrustReview(engine: BrainEngine, filter: TrustReviewF
 }
 
 const shellWord = (arg: string): string => /^[\w@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`;
-export const renderArgv = (argv: readonly string[]): string => argv.map(shellWord).join(' ');
+export const renderArgv = (argv: readonly string[]): string => commandText(argv.map(shellWord));
 
 /** The human listing (pinned by the DX-16 snapshot test). */
 export function renderTrustReview(review: TrustReview): string {

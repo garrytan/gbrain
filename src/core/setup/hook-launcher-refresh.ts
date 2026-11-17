@@ -29,6 +29,7 @@ import { localSetupRecords } from './local-receipts.ts';
 import { ownedEntryFingerprint } from '../bootstrap/adopted-connections.ts';
 import { launcherLaneFindings, setupRerunArgv } from './launcher-lanes.ts';
 import { hasTurnRuleHook, isTurnRuleEntry, syncTurnRuleHook, TURN_RULE_LANE_TOKEN } from './turn-hook.ts';
+import { commandText } from '../brand.ts';
 
 /** True when this command starts foresights somewhere other than a current launcher. */
 function needsLauncher(command: string): boolean {
@@ -122,7 +123,7 @@ export async function refreshHookLaunchers(log: (line: string) => void = console
   try { await refreshSetup(log); } catch (e) { log(`Hook launcher: setup's hooks were not refreshed (${(e as Error).message}); run foresights doctor --only harness_wiring.`); }
   // The other lanes are named, never rewritten here: bootstrap's writers run from the workspace, and their Codex entries move trust.
   try {
-    for (const f of launcherLaneFindings().filter((x) => x.owner !== 'setup')) log(`Hook launcher: ${f.detail}; ${f.edited ? 'it was edited after setup wrote it, so it is kept as is; remove or rewrite it, then ' : f.owner === 'none' ? 'foresights does not rewrite it, so remove it, then ' : ''}${f.rerunFrom ? `from ${f.rerunFrom}, ` : ''}run ${f.rerun.join(' ')} to move it onto foresights's launcher.`);
+    for (const f of launcherLaneFindings().filter((x) => x.owner !== 'setup')) log(`Hook launcher: ${f.detail}; ${f.edited ? 'it was edited after setup wrote it, so it is kept as is; remove or rewrite it, then ' : f.owner === 'none' ? 'foresights does not rewrite it, so remove it, then ' : ''}${f.rerunFrom ? `from ${f.rerunFrom}, ` : ''}run ${commandText(f.rerun)} to move it onto foresights's launcher.`);
   } catch (e) { log(`Hook launcher: the bootstrap lanes were not checked (${(e as Error).message}); run foresights doctor --only harness_wiring.`); }
 }
 

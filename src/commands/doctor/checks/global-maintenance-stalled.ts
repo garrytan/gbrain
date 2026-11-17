@@ -15,6 +15,7 @@ import { agentFix, checkError } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { assessGlobalMaintenanceStall } from '../../../core/minions/global-maintenance-stall.ts';
 import { phaseRetryCommand } from '../../../core/minions/handlers/autopilot-global-maintenance.ts';
+import { argvOfCommandText } from '../../../core/brand.ts';
 
 const DOCS = 'docs/guides/troubleshooting.md#global-maintenance-stalled';
 
@@ -29,7 +30,7 @@ async function runGlobalMaintenanceStalled(ctx: DoctorContext): Promise<Check[]>
         { consent: ['paid'], docs: DOCS, preview_argv: [...verdict.fix, '--dry-run', '--json'] })
       : phase
       ? agentFix(verdict.fix, `Runs phase ${phase} in the foreground so its error is visible; LLM and embedding phases spend tokens, so ask the user first.`, 'global_maintenance_stalled',
-        { consent: ['paid'], docs: DOCS, then: agentFix(phaseRetryCommand(phase).split(' '), 'Ends the phase back-off so the next autopilot pass runs it again.', 'global_maintenance_stalled') })
+        { consent: ['paid'], docs: DOCS, then: agentFix(argvOfCommandText(phaseRetryCommand(phase)), 'Ends the phase back-off so the next autopilot pass runs it again.', 'global_maintenance_stalled') })
       : agentFix(verdict.fix, 'Shows the failed maintenance job and its error; it changes nothing.', 'global_maintenance_stalled', { docs: DOCS });
     const { status, message, fix: _argv, checked_at: _checked, ...state } = verdict;
     checks.push({ name: 'global_maintenance_stalled', status, message, details: { code: 'global_maintenance_stalled', ...state, docs: DOCS }, ...(fix ? { fix } : {}) });

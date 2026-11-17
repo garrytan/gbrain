@@ -33,7 +33,7 @@ let home: string;
 let blocker: string;
 
 /** The shell an agent runs a rendered command in: split on spaces (every argv here is space-free). */
-const argvOf = (command: string) => { const parts = command.split(' '); expect(parts[0]).toBe('gbrain'); return parts.slice(1); };
+const argvOf = (command: string) => { const parts = command.split(' '); expect(parts[0]).toBe('foresights'); return parts.slice(1); };
 const checkOf = (doc: Record<string, any>) => (doc.checks as Array<Record<string, any>>).find(c => c.name === CHECK)!;
 
 beforeAll(async () => {

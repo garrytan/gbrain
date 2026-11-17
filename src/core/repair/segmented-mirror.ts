@@ -45,6 +45,7 @@ import { retryWriteAdmission } from '../persistence/admission-retry.ts';
 import { isTerminal, type WriteRequest } from '../persistence/model.ts';
 import { digest } from '../persistence/digest.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
+import { commandText } from '../brand.ts';
 
 export const SEGMENTED_MIRROR_OPERATION = 'repair_segmented_mirror';
 const DOCS = 'docs/guides/repair.md#segmented-mirror';
@@ -272,7 +273,7 @@ export const segmentedMirrorRepair: RepairHandler = {
     return [
       ...stale.map(entry => `  re-mirror ${entry.source_id}:${entry.slug} (${entry.path}): file sha256 ${entry.file_sha256.slice(0, 16)}… ${entry.file_bytes} bytes, `
         + `canonical render sha256 ${entry.expected_sha256.slice(0, 16)}… ${entry.expected_bytes} bytes; the file still holds a withdrawn or purged row`),
-      ...held.map(entry => `  held ${entry.source_id}:${entry.slug} (${entry.reason}): not rewritten. ${entry.message}${entry.fix ? ` Read-only next step: ${entry.fix.join(' ')}` : ''}`),
+      ...held.map(entry => `  held ${entry.source_id}:${entry.slug} (${entry.reason}): not rewritten. ${entry.message}${entry.fix ? ` Read-only next step: ${commandText(entry.fix)}` : ''}`),
     ];
   },
 };

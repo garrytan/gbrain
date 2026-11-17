@@ -43,6 +43,7 @@ import { currentEmbeddingSignature } from './embedding.ts';
 import { budgetLimitedReport } from './held-embedding.ts';
 import type { PageType } from './types.ts';
 import { materializedSnapshot } from './persistence/segmented-apply.ts';
+import { commandText } from './brand.ts';
 
 /** The `page_embedding_budget.reason` a backfilled large page waits under. */
 export const BACKFILL_HOLD_REASON = 'upgrade_backfill';
@@ -215,7 +216,7 @@ export function formatOversizedBackfillReceipt(r: OversizedBackfillReceipt): str
   if (!r.embedding_enabled) lines.push('  Embeddings are off on this brain, so keyword search is the whole result; nothing is spent.');
   else if (r.held_for_approval) {
     lines.push(`  ${r.held_for_approval} large page(s) wait for approval before embedding (about $${(r.estimated_usd ?? 0).toFixed(2)} in total). `
-      + `Preview: ${r.commands.preview.join(' ')}${r.approvals.length ? `; with the user's agreement, approve one source at a time: ${r.approvals.join('; ')}` : ''}`);
+      + `Preview: ${commandText(r.commands.preview)}${r.approvals.length ? `; with the user's agreement, approve one source at a time: ${r.approvals.join('; ')}` : ''}`);
   } else if (r.estimated_usd !== null && r.chunks_pending_embedding) {
     lines.push(`  The embedding sweep embeds them under the existing caps (about $${r.estimated_usd.toFixed(2)}).`);
   }
@@ -242,7 +243,7 @@ export async function printOversizedBackfillUpgradeNotice(engine: BrainEngine): 
         consent: 'paid, egress',
         actor: 'user',
         next: 'ask_user',
-        if_yes: `Preview: ${receipt.commands.preview.join(' ')}. Then, one source at a time, run ${receipt.approvals.join('; ') || 'the approve command the preview prints'}.`,
+        if_yes: `Preview: ${commandText(receipt.commands.preview)}. Then, one source at a time, run ${receipt.approvals.join('; ') || 'the approve command the preview prints'}.`,
         if_no: 'Nothing to do: the pages stay keyword-searchable and doctor lists them under partial_embedding.',
         verify: 'foresights doctor --only partial_embedding --json',
       }, {

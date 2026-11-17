@@ -11,6 +11,7 @@ import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { agentFix } from '../check-fix.ts';
 import { ATOM_RESTORE_HOLD_DAYS, atomRetirementsSql } from '../../../core/persistence/atom-retirement-hold.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const DOCS = 'docs/guides/repair.md#atoms-restore';
 
@@ -44,7 +45,7 @@ export async function atomRetirementsRestorableCheck(engine: BrainEngine, source
         + `${details.oldest_retired_at ?? 'an unrecorded time'} and ${details.newest_retired_at ?? 'an unrecorded time'} `
         + `(${bySource.map(row => `${row.source_id}: ${row.count} from ${row.origins} origin(s)`).join('; ')}). `
         + `The purge holds them for ${ATOM_RESTORE_HOLD_DAYS} days after deletion; the first hold ends ${details.hold_until}. `
-        + `Preview the restore with ${preview.join(' ')} (read-only); apply the previewed set only after the user agrees.`,
+        + `Preview the restore with ${commandText(preview)} (read-only); apply the previewed set only after the user agrees.`,
       fix: agentFix(preview, 'Lists each restorable atom with its origin, source hash and retirement time and prints the apply command bound to that set; '
         + 'it writes nothing. Restoring is the user\'s call: show them the preview before running the apply.', 'atom_retirements_restorable', { docs: DOCS }) };
   } catch (error) {

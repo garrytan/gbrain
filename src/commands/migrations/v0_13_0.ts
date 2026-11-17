@@ -89,7 +89,7 @@ function phaseCVerify(opts: OrchestratorOpts): OrchestratorPhaseResult {
     // docs-only brains, and brains with no entity pages legitimately
     // produce 0. Phase B's own stdout shows `Links: created N` which is
     // the authoritative signal — user sees it during upgrade.
-    const out = execSync(gbrainChildCommand('foresights call get_stats'), {
+    const out = execSync(gbrainChildCommand('gbrain call get_stats'), {
       encoding: 'utf-8', timeout: 60_000, env: process.env,
     });
     const parsed = JSON.parse(out) as { link_count?: number; page_count?: number };

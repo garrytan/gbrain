@@ -44,7 +44,7 @@ export function prepareSwapReceipt(): string {
 /** `foresights --version` of the binary on PATH, or null when unreadable. */
 function probeInstalledVersion(): string | null {
   try {
-    const v = String(execSync('foresights --version', { encoding: 'utf-8', timeout: 10_000, env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' } }))
+    const v = String(execSync('gbrain --version', { encoding: 'utf-8', timeout: 10_000, env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' } }))
       .trim().replace(/^(?:foresights|gbrain)\s*/i, '');
     return isValidVersionString(v) ? v : null;
   } catch {

@@ -10,6 +10,7 @@ import type { Check } from '../../doctor.ts';
 import { agentFix } from '../check-fix.ts';
 import { findAtomFenceRows } from '../../../core/repair/atom-fence-rows.ts';
 import { PLAN_STATEMENT_MS } from '../../../core/repair/visibility.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const DOCS = 'docs/guides/repair.md#atom-fence-rows';
 
@@ -32,7 +33,7 @@ export async function atomFenceRowsCheck(engine: BrainEngine, sourceIds?: string
     const preview = ['gbrain', 'repair', 'atom-fence-rows', '--source', bySource[0]!.source_id, '--json'];
     return { name, status: 'warn', details,
       message: `${count} world atom(s) carry the claim of a fence row their source page shows only to the owner, so remote callers can read it `
-        + `(${bySource.map(row => `${row.source_id}: ${row.count}`).join('; ')}). Preview them with ${preview.join(' ')} (read-only); `
+        + `(${bySource.map(row => `${row.source_id}: ${row.count}`).join('; ')}). Preview them with ${commandText(preview)} (read-only); `
         + 'narrow the previewed set to private only after the user agrees.',
       fix: agentFix(preview, 'Lists each atom with its source page and the fence row kinds and numbers it carries, and prints the apply command bound to that set; '
         + 'it writes nothing. Narrowing the atoms is the user\'s call: show them the preview before running the apply.', name, { docs: DOCS }) };

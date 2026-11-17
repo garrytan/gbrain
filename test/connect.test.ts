@@ -208,7 +208,7 @@ describe('argv + command string', () => {
   });
   test('command string single-quotes the header (paste-safe)', () => {
     const cmd = cmdString('claude', buildClaudeMcpAddArgv({ name: 'gbrain', url: 'https://h/mcp', headerToken: 'TOK' }));
-    expect(cmd).toBe("claude mcp add foresights -t http https://h/mcp -H 'Authorization: Bearer TOK'");
+    expect(cmd).toBe("claude mcp add gbrain -t http https://h/mcp -H 'Authorization: Bearer TOK'");
   });
   test('a token with shell metacharacters cannot trigger command substitution on paste', () => {
     const cmd = cmdString('claude', buildClaudeMcpAddArgv({ name: 'gbrain', url: 'https://h/mcp', headerToken: 'gbrain_$(touch /tmp/pwned)`x`' }));
@@ -234,7 +234,7 @@ describe('redactToken', () => {
 describe('buildConnectBlock', () => {
   test('claude-code with a literal token inlines it + learn instruction', () => {
     const block = buildConnectBlock({ agent: 'claude-code', name: 'gbrain', url: 'https://h/mcp', token: 'TOK' });
-    expect(block).toContain("claude mcp add foresights -t http https://h/mcp -H 'Authorization: Bearer TOK'");
+    expect(block).toContain("claude mcp add gbrain -t http https://h/mcp -H 'Authorization: Bearer TOK'");
     expect(block).toContain(LEARN_INSTRUCTION);
     expect(block).not.toContain(PLACEHOLDER_TOKEN);
     expect(block).toMatch(/long-lived, full-access secret/);
@@ -253,7 +253,7 @@ describe('buildConnectBlock', () => {
   });
   test('codex emits the codex command + env-var export, token only in export', () => {
     const block = buildConnectBlock({ agent: 'codex', name: 'gbrain', url: 'https://h/mcp', token: 'TOK' });
-    expect(block).toContain('codex mcp add foresights --url https://h/mcp --bearer-token-env-var GBRAIN_REMOTE_TOKEN');
+    expect(block).toContain('codex mcp add gbrain --url https://h/mcp --bearer-token-env-var GBRAIN_REMOTE_TOKEN');
     expect(block).toContain('export GBRAIN_REMOTE_TOKEN=TOK');
     // the codex command itself must not carry the token
     expect(block).toMatch(/codex mcp add[^\n]*$/m);
@@ -745,7 +745,7 @@ describe('runConnect print mode', () => {
       installDeps(),
     );
     expect(r.exitCode).toBeUndefined();
-    expect(r.out.join('\n')).toContain("claude mcp add foresights -t http https://brain.example.com/mcp -H 'Authorization: Bearer gbrain_tok'");
+    expect(r.out.join('\n')).toContain("claude mcp add gbrain -t http https://brain.example.com/mcp -H 'Authorization: Bearer gbrain_tok'");
   });
 
   test('--json redacts the token', async () => {
@@ -800,7 +800,7 @@ describe('runConnect print mode', () => {
     const r = await runWithExitCapture(['https://brain.example.com/mcp', '--token', 'gbrain_tok', '--agent', 'codex'], installDeps());
     expect(r.exitCode).toBeUndefined();
     const out = r.out.join('\n');
-    expect(out).toContain('codex mcp add foresights --url https://brain.example.com/mcp --bearer-token-env-var GBRAIN_REMOTE_TOKEN');
+    expect(out).toContain('codex mcp add gbrain --url https://brain.example.com/mcp --bearer-token-env-var GBRAIN_REMOTE_TOKEN');
     expect(out).toContain('export GBRAIN_REMOTE_TOKEN=gbrain_tok');
   });
 
@@ -951,7 +951,7 @@ describe('opencode lane', () => {
     const out = cap.out.join('\n');
     expect(out).toContain('# Paste into opencode:');
     expect(out).toContain('export GBRAIN_REMOTE_TOKEN=');
-    expect(out).toContain('opencode mcp add foresights --url https://brain.example.com/mcp --header');
+    expect(out).toContain('opencode mcp add gbrain --url https://brain.example.com/mcp --header');
     expect(out).toContain('{env:GBRAIN_REMOTE_TOKEN}');
     expect(out).toContain('Restart opencode');
     expect(out).toContain('<paste-your-token>');
@@ -967,7 +967,7 @@ describe('opencode lane', () => {
     }
     const doc = JSON.parse(cap.out.join('\n')) as { agent: string; command: string; command_argv: string[]; token_redacted: boolean };
     expect(doc.agent).toBe('opencode');
-    expect(doc.command).toContain('opencode mcp add foresights');
+    expect(doc.command).toContain('opencode mcp add gbrain');
     expect(doc.command).toContain('{env:GBRAIN_REMOTE_TOKEN}');
     expect(doc.command).not.toContain('gbrain_tok');
     expect(doc.token_redacted).toBe(true);

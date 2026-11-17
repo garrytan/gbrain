@@ -14,6 +14,7 @@ import { newSourceJoinsDefaultSearch } from '../core/source-default-search.ts';
 import { localFederatedSourceIds } from '../core/source-resolver.ts';
 import { privatePagesFilterFragment, resolveExcludePrivatePages } from '../core/search/private-visibility.ts';
 import { quarantineFilterFragment } from '../core/quarantine.ts';
+import { commandText } from '../core/brand.ts';
 
 export interface SourcesAddNext {
   command: string;
@@ -31,7 +32,7 @@ export async function noGrantFloorNext(engine: BrainEngine, id: string): Promise
   if (row?.holds) return null;
   const argv = ['gbrain', 'sources', 'federate', id];
   return {
-    command: argv.join(' '),
+    command: commandText(argv),
     argv,
     why: `Connections with no source grant read only the default source and federated sources, and none of them holds a page, so their reads are refused until "${id}" is federated or they are granted sources.`,
   };

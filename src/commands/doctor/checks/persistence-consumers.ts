@@ -34,6 +34,7 @@ import { consumerOverlap, hostIdentityMismatches, ownersWithoutHeartbeat, OVERLA
 import { isEmbeddedIdentityValue, localHostIdentity } from '../../../core/persistence/identity.ts';
 import { agentFix, checkError, doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const DOCS = 'docs/guides/troubleshooting.md#two-consumers-on-host';
 const IDENTITY_DOCS = 'docs/guides/troubleshooting.md#host-identity-mismatch';
@@ -133,7 +134,7 @@ export async function serveBuildDriftCheck(engine: BrainEngine, hostId: string,
     return { name: 'serve_build_drift', status: 'warn', details,
       message: `serve_build_drift: serve is running an older build than this checkout; restart serve and workers. This binary is v${VERSION}; running: ${older.map(label).join('; ')}. `
         + 'Until they restart, one-shot commands from this checkout run newer code against an older consumer. '
-        + `Restart with \`${argv.join(' ')}\`${argv[0] === 'kill' ? ' and start it again the way it was launched' : ''}, then restart each other listed process. `
+        + `Restart with \`${commandText(argv)}\`${argv[0] === 'kill' ? ' and start it again the way it was launched' : ''}, then restart each other listed process. `
         + 'A serve that predates heartbeats writes no row; consumers_without_heartbeat names it.',
       fix: { argv, consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify('serve_build_drift'), docs: DRIFT_DOCS,
         why: `Restarts ${label(target)} on this build (v${VERSION}); restart every other listed process the same way.` } };

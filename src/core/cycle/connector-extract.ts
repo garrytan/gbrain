@@ -22,6 +22,7 @@ import type { PhaseResult } from '../cycle.ts';
 import { extractStaleFromDB } from '../../commands/extract.ts';
 import type { LinkExtractionFailure } from '../persistence/links-extraction-holds.ts';
 import type { LinkExtractionSystemic } from '../persistence/links-maintenance.ts';
+import { commandText } from '../brand.ts';
 
 /**
  * GBRA-130 A-1: a stale drain that left pages underived (`linkFailed`) or stopped a source (`linkSystemic`) as
@@ -34,7 +35,7 @@ export function staleDrainFailures(drained: { linkFailed?: number; linkFailures?
   const failed = (drained.linkFailures ?? []).map(f => ({ slug: f.slug, source_id: f.source_id, code: f.code, held: f.held }));
   const first = drained.linkFailures?.[0];
   const notes = [
-    ...(first ? [`${drained.linkFailed} page(s) failed link extraction (first: ${first.source_id}:${first.slug}, ${first.code}${first.held ? ', held' : ''}; fix: ${first.fix.argv!.join(' ')})`] : []),
+    ...(first ? [`${drained.linkFailed} page(s) failed link extraction (first: ${first.source_id}:${first.slug}, ${first.code}${first.held ? ', held' : ''}; fix: ${commandText(first.fix.argv!)})`] : []),
     ...systemic.map(s => `source ${s.source_id} stopped (${s.code}, most often ${s.reason}; fix the shared cause, then run ${s.fix?.argv?.join(' ')})`),
   ];
   return { details: { stale_drain_failed: failed, ...(drained.linkFailed ? { stale_drain_failed_total: drained.linkFailed } : {}),

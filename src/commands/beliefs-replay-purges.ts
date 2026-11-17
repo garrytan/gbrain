@@ -10,6 +10,7 @@ import { isAbsolute } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import { opError } from '../core/ops/contract.ts';
 import { purgeLinesFromDatabase, readPurgeMirror, replayPurges, type PurgeReplayResult } from '../core/belief/purge-mirror.ts';
+import { commandText } from '../core/brand.ts';
 
 const flag = (args: string[], name: string): string | undefined => {
   const at = args.indexOf(name);
@@ -55,6 +56,6 @@ export async function replayPurgesCli(engine: BrainEngine, args: string[]): Prom
   const value: ReplayPurgesReport = { ...result, applied: apply, archived_at: new Date(archivedAt).toISOString(), from: mirror ? 'purge_mirror' : 'database', ...(apply ? {} : { apply_argv: applyArgv }) };
   const counts = `${result.replays.length} purge(s) (${result.state}${result.ledger === 'absent' ? ', no belief ledger in the restored database' : ''})`;
   const text = apply ? `Replayed ${counts} into the restored database.`
-    : `Dry run: ${counts} would be replayed; nothing was written. Ask the user, then run ${applyArgv.join(' ')}.`;
+    : `Dry run: ${counts} would be replayed; nothing was written. Ask the user, then run ${commandText(applyArgv)}.`;
   return { value, text };
 }

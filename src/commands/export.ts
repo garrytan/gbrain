@@ -15,6 +15,7 @@ import { exportBodyLedger, inlineExportMarkdown, readExportPage, readExportWithd
 import { segmentedPageCeiling } from '../core/page-body/limits.ts';
 import { exportPolicyFiles } from '../core/access/policy-transfer.ts';
 import { isSegmentedPage } from '../core/page-body/page-shape.ts';
+import { commandText } from '../core/brand.ts';
 
 function option(args: string[], name: string): string | undefined {
   const indices = args.flatMap((arg, i) => arg === name || arg.startsWith(name + '=') ? [i] : []);
@@ -64,7 +65,7 @@ function printEscaped(escaped: EscapedExportPage[]): void {
   }
   if (shortened.length) {
     console.log(`${shortened.length} page(s) have a slug segment longer than a file name may be and were exported under a shortened name; import refuses those files until the page moves to a shorter slug:`);
-    for (const page of shortened) console.log(`  - ${page.source_id}:${page.slug} -> ${page.path}; fix: ${page.fix!.argv.join(' ')}, then delete_page ${page.slug}`);
+    for (const page of shortened) console.log(`  - ${page.source_id}:${page.slug} -> ${page.path}; fix: ${commandText(page.fix!.argv)}, then delete_page ${page.slug}`);
   }
 }
 

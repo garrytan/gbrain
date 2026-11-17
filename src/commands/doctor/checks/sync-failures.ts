@@ -13,6 +13,7 @@ import { classifyRecordedFault } from '../../../core/persistence/terminal-classi
 import { agentFix } from '../check-fix.ts';
 import { syncGitAsync } from '../../../core/persistence/sync-discovery.ts';
 import { readUpstreamDivergences } from '../../../core/sync-upstream-rewrite.ts';
+import { commandText } from '../../../core/brand.ts';
 
 /** #6518 [R18 vi]: the fast check cannot verify a mirror row; a warning there is uncertainty, never recovery. */
 const MIRROR_UNVERIFIED = (count: number) => `${count} mirrored managed sync failure(s) could not be verified without a database connection: `
@@ -23,7 +24,7 @@ export async function checkSyncFailures(engine: BrainEngine | null, opts: { sour
   const upstream = engine ? await readUpstreamDivergences(engine, opts.sourceIds) : [];
   if (!upstream.length) return check;
   const local = opts.remote === false;
-  const note = local ? upstream.map(report => `${report.message} Next${report.fix.ask_user ? ' (ask the user first)' : ''}: ${report.fix.argv!.join(' ')}.`).join(' ')
+  const note = local ? upstream.map(report => `${report.message} Next${report.fix.ask_user ? ' (ask the user first)' : ''}: ${commandText(report.fix.argv!)}.`).join(' ')
     : `${upstream.length} source(s) cannot pull because the checkout and its upstream diverged (${[...new Set(upstream.map(report => report.code))].join(', ')}); local HEAD keeps syncing. Ask the host operator to run foresights doctor --only sync_failures.`;
   return { ...check, name: 'sync_failures', status: check?.status === 'fail' ? 'fail' : 'warn', message: check && check.status !== 'ok' ? `${check.message} ${note}` : note,
     ...(local ? { details: { ...check?.details, upstream } } : {}),
@@ -61,7 +62,7 @@ async function checkRecordedSyncFailures(engine: BrainEngine | null, opts: { sou
   }
   const orphanSources = new Set(orphans.map(orphan => orphan.source_id));
   const repairArgv = ['gbrain', 'repair', 'managed-sync-orphans', ...(orphanSources.size === 1 ? ['--source', orphans[0]!.source_id] : [])];
-  const repairPreview = repairArgv.join(' ');
+  const repairPreview = commandText(repairArgv);
   const orphanNoteFor = (lead: string) => orphans.length ? ` ${lead} (${orphans.map(orphan => `${orphan.source_id}:${orphan.cursor_key.slice(0, 12)} ${orphan.reason}`).join(', ')}) cannot be resumed or cleared by any sync: `
     + `preview ${repairPreview} and apply with the hash it prints (docs/guides/repair.md#managed-sync-orphans). Retiring them says nothing about whether the current source's files are imported; foresights sync status --source <id> --json does.` : '';
   const orphanNote = orphanNoteFor(`${orphans.length} of these`);

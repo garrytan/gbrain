@@ -69,7 +69,7 @@ describe('detectInstallMethod — package-install classification (in-process)', 
   }
 
   test('canonical by repository.url: bun, no squatter warning', () => {
-    const r = detectFrom({ name: 'gbrain', repository: { url: 'git+https://github.com/GarryTan/GBrain.git' } }, 'dist/cli.js');
+    const r = detectFrom({ name: 'gbrain', repository: { url: 'git+https://github.com/AIMonk2025/GBrain.git' } }, 'dist/cli.js');
     expect(r.method).toBe('bun');
     expect(r.warnings).toBe('');
   });
@@ -469,7 +469,7 @@ describe('runUpgrade target verification (#4366)', () => {
       recordGitAndBun: true,
       setup: (h) => {
         mkdirSync(join(h, repoDir, '.git'), { recursive: true });
-        writeFileSync(join(h, repoDir, '.git', 'config'), '[remote "origin"]\n\turl = https://github.com/GarryTan/Foresights.git\n');
+        writeFileSync(join(h, repoDir, '.git', 'config'), '[remote "origin"]\n\turl = https://github.com/AIMonk2025/GBrain.git\n');
       },
     });
     try {
@@ -488,7 +488,7 @@ describe('runUpgrade target verification (#4366)', () => {
     }
   });
 
-  test('bun global install: `bun update --backend=copyfile foresights` runs in the bun global root', async () => {
+  test('bun global install: `bun update --backend=copyfile gbrain` runs in the bun global root', async () => {
     const { home, stdout } = await runUpgradeAgainstFakeInstall({
       observedVersion: OLD,
       driverDir: join('global', 'node_modules', 'gbrain', 'src'),
@@ -501,7 +501,7 @@ describe('runUpgrade target verification (#4366)', () => {
     try {
       expect(stdout).toContain('Detected install method: bun');
       const calls = readFileSync(join(home, 'calls.log'), 'utf-8').trim().split('\n');
-      expect(calls).toEqual([`${realpathSync(join(home, 'global'))}|update --backend=copyfile foresights`]);
+      expect(calls).toEqual([`${realpathSync(join(home, 'global'))}|update --backend=copyfile gbrain`]);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

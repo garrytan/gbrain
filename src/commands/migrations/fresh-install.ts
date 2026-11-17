@@ -14,10 +14,11 @@ import { VERSION } from '../../version.ts';
 import { appendCompletedMigration } from '../../core/preferences.ts';
 import { compareVersions } from '../../core/migration-ledger.ts';
 import { migrations } from './index.ts';
+import { commandText } from '../../core/brand.ts';
 
 /** The command that finishes the setup migrations init leaves pending (no service installed). */
 export const FINISH_SETUP_ARGV = ['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install'] as const;
-export const FINISH_SETUP_COMMAND = FINISH_SETUP_ARGV.join(' ');
+export const FINISH_SETUP_COMMAND = commandText(FINISH_SETUP_ARGV);
 /** `foresights setup`'s machine-readable run of it, optionally limited to one migration. */
 export function setupMigrationsArgv(launcher: string, version?: string): string[] {
   return [launcher, ...FINISH_SETUP_ARGV.slice(1), '--json', ...(version ? ['--migration', version] : [])];

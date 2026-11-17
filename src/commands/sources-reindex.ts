@@ -16,6 +16,7 @@ import { resolveSourceId } from '../core/source-resolver.ts';
 import { previewChangedError, previewHash } from '../core/persistence/preview-approval.ts';
 import { readShadowLevel } from '../core/persistence/sync-pass.ts';
 import type { SyncClass } from '../core/persistence/sync-classify.ts';
+import { commandText } from '../core/brand.ts';
 
 const USAGE = 'Usage: foresights sources reindex <source-id> --from-git [--dry-run | --apply --expect <hash> [--no-embed] [--no-extract]] [--json]';
 const DOCS = 'docs/designs/GIT_CANONICAL_MEMORY.md#the-model';
@@ -76,7 +77,7 @@ export async function previewReindex(engine: BrainEngine, sourceId: string): Pro
 function describe(preview: ReindexPreview): string {
   const lines = [`Source ${preview.source_id} at ${preview.head.slice(0, 12)}: Git's verdict replaces ${preview.overwrites.length} database version(s); the pass also imports ${preview.imports} and deletes ${preview.deletes} page(s) Git moved.`];
   for (const o of preview.overwrites) lines.push(`  ${o.action} ${o.path}${o.slug ? ` (page ${o.slug})` : ''}: replaces ${o.replaces}`);
-  lines.push(`Nothing changed. To apply: ${preview.apply.join(' ')}`);
+  lines.push(`Nothing changed. To apply: ${commandText(preview.apply)}`);
   return lines.join('\n');
 }
 

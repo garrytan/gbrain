@@ -18,6 +18,7 @@ import { nextListingCommand, parseListingFlags } from '../../core/bounded-listin
 import { HOLD_ATTEMPTS_NEEDS_HUMAN, HOLD_ESCALATE_MS } from '../../core/persistence/sync-fault-class.ts';
 import { CONTENT_REPAIR_HOLD_KINDS } from '../../core/repair/content-lane.ts';
 import { resolveSourceIdEngineFree } from '../../core/source-resolver.ts';
+import { commandText } from '../../core/brand.ts';
 
 /** The hold codes the content-repair lane clears today, for the help text. */
 const CONTENT_HOLD_CODES = Object.entries(CONTENT_REPAIR_HOLD_KINDS).filter(([, kind]) => kind).map(([code]) => code).join(', ');
@@ -269,7 +270,7 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
   if (landing?.status === 'ok') {
     console.log(`  synced but not searchable after ${landing.after_seconds} s (last ${landing.window_hours} h, ${landing.checked} page(s)${landing.complete ? '' : ', newest receipts only'}): ${landing.gaps}`
       + `${landing.gaps ? ` (${Object.entries(landing.by_state).map(([state, n]) => `${state} ${n}`).join(', ')})` : ''}`);
-    for (const page of landing.pages) console.log(`    ${page.slug}: ${page.state}, synced ${page.age_seconds} s ago${page.fix?.argv ? `; fix: ${page.fix.argv.join(' ')}` : ''}`);
+    for (const page of landing.pages) console.log(`    ${page.slug}: ${page.state}, synced ${page.age_seconds} s ago${page.fix?.argv ? `; fix: ${commandText(page.fix.argv)}` : ''}`);
   } else if (landing) console.log(`  synced but not searchable: ${landing.status} (${landing.reason})`);
   for (const hold of status.fence_holds) console.log(`  ${hold.kind} held (${hold.reason}) on ${hold.slug}: ${hold.rows} row(s) kept live; ASK THE USER: ${hold.fix.user_message ?? hold.fix.why}`);
   for (const hold of status.git_push_holds) console.log(`  git backups not pushed: ${hold.retrying} retrying, ${hold.parked} parked (${hold.codes.join(', ')}) since ${hold.oldest_at}${hold.conflict ? `; CONFLICT in ${hold.conflict.paths.join(', ')} needs a person` : ''}`);

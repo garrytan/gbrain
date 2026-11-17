@@ -13,6 +13,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import type { CliDispatchContext } from '../cli/command-table.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { commandText } from '../core/brand.ts';
 
 const HELP = `Usage:
   foresights transcripts archive run [--dry-run] [--source S] [--json]
@@ -101,7 +102,7 @@ export async function runTranscriptsArchive(engine: BrainEngine, args: string[],
   });
   out(result, () => {
     if (result.message) console.log(result.message);
-    if (result.fix?.argv) console.log('  next: ' + result.fix.argv.join(' '));
+    if (result.fix?.argv) console.log('  next: ' + commandText(result.fix.argv));
     if (!result.enabled && !result.dry_run) return;
     console.log('conversation archive ' + sub + (result.dry_run ? ' (dry run)' : '') + ': ' + result.from + ' to ' + result.to + ' in ' + result.timezone + ', source ' + result.source_id + ' (' + result.write_mode + ')');
     console.log('  days written ' + result.written + ', unchanged ' + result.unchanged + ', held ' + result.held + ', planned ' + result.planned + ', covered by legacy ' + result.skipped_legacy);

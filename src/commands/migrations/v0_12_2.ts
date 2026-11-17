@@ -66,7 +66,7 @@ function phaseCVerify(opts: OrchestratorOpts): OrchestratorPhaseResult {
     // Any accidental stdout progress from the child would break JSON.parse
     // (per Codex review #12). NOTE: we deliberately do NOT pass
     // --progress-json here — this child is parsed, not watched.
-    const out = execSync(gbrainChildCommand('foresights repair-jsonb --dry-run --json'), {
+    const out = execSync(gbrainChildCommand('gbrain repair-jsonb --dry-run --json'), {
       encoding: 'utf-8', timeout: 60_000, env: process.env,
       stdio: ['ignore', 'pipe', 'inherit'],
     });

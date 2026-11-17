@@ -30,6 +30,7 @@ import { FENCE_REPAIR_MEASURED_MODELS } from './measured.ts';
 import { FENCE_REASONS, renderFenceFix, type FenceMessageLocation } from './reasons.ts';
 import { fenceWhere } from './refusal.ts';
 import type { FenceReason, FenceTier } from './types.ts';
+import { commandText } from '../brand.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
@@ -178,7 +179,7 @@ export function fenceHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 
   const status = fenceHoldStatus(record.meta, auto);
   const source = record.source_id, path = record.path;
   const preview = fencePreviewArgv(source, path);
-  const command = preview.join(' ');
+  const command = commandText(preview);
   const verify = { argv: ['gbrain', 'sources', 'status', source, '--json'] };
   const held = `${path} is held because ${fenceHoldWhere(record.meta)} ${record.meta.reason === 'prepare_time' ? 'was refused against the stored page' : 'cannot be imported'} (${screenedReason(record.meta)}).`;
   const rest = 'The rest of the source keeps syncing.';
@@ -205,7 +206,7 @@ export function fenceHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 
       return { ...base, ...paid, consent: ['paid'], preview_argv: preview,
         why: `${held} Its model repair waits because ${paidWait(status.reason)}${status.reason === 'budget_exhausted' && status.auto_retry ? '; the maintenance run retries it after 00:00 UTC with no action' : ''}. `
           + `Spending more on fence repair is the user's call, so ask before running this; without it, fix the rows by hand (${command} names them, read-only, with the estimated cost). ${rest}`,
-        user_message: `foresights can repair a malformed facts or takes table in ${path} with the paid repair model, but ${paidWait(status.reason)}. May I run '${paid.argv.join(' ')}'? Otherwise I can fix the rows by hand.` };
+        user_message: `foresights can repair a malformed facts or takes table in ${path} with the paid repair model, but ${paidWait(status.reason)}. May I run '${commandText(paid.argv)}'? Otherwise I can fix the rows by hand.` };
     }
     case 'owner':
       return { ...base, actor: 'host_admin', argv: preview, why: `${held} Fence repairs write files only on the source's canonical owner host, and this host is not it (${status.reason}). `
@@ -242,5 +243,5 @@ export function fenceHoldRelay(record: Pick<GitHoldRecord, 'source_id' | 'meta'>
   return { argv: paid?.argv ?? preview, ...(paid?.inputs ? { inputs: paid.inputs } : {}), consent: paid ? ['paid'] : [], actor: 'host_admin', requires_exclusive: false, why,
     ...(paid ? { preview_argv: preview } : {}),
     user_message: `A facts or takes table in one of your brain's files could not be imported, so answers can show an older version of that page. `
-      + relayText(status, auto, `'${preview.join(' ')}'`, paid?.argv.join(' ') ?? '') };
+      + relayText(status, auto, `'${commandText(preview)}'`, (paid ? commandText(paid.argv) : '')) };
 }

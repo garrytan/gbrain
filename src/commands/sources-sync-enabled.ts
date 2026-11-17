@@ -13,6 +13,7 @@ import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { OperationError, opError } from '../core/ops/contract.ts';
 import { cliRenderContext, toAgentError } from '../core/agent-output.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
+import { commandText } from '../core/brand.ts';
 
 const USAGE = 'foresights sources set-sync <id> <on|off> [--dry-run] [--expect <on|off>] [--json]';
 type SyncSwitch = 'on' | 'off';
@@ -47,7 +48,7 @@ export async function setSourceSync(engine: BrainEngine, opts: ReturnType<typeof
   const preview = ['gbrain', 'sources', 'set-sync', opts.sourceId, opts.target, '--dry-run', '--json'];
   if (opts.expect && opts.expect !== current) {
     throw opError('preview_changed', `Automatic sync of source ${opts.sourceId} is ${current}, not ${opts.expect} as the preview showed; nothing changed.`,
-      `Preview again with ${preview.join(' ')} and apply the command it prints.`,
+      `Preview again with ${commandText(preview)} and apply the command it prints.`,
       { fix: { argv: preview, consent: [], actor: 'agent', requires_exclusive: false, why: 'Shows the current state and the apply command for it; changes nothing.' } });
   }
   const changed = current !== opts.target;
@@ -59,7 +60,7 @@ export async function setSourceSync(engine: BrainEngine, opts: ReturnType<typeof
 
 function describe(result: SetSyncResult): string {
   const what = result.target === 'on' ? 'included in automatic sync' : 'excluded from automatic sync (an explicit foresights sync --source still runs)';
-  if (result.dry_run) return `Source "${result.source_id}": automatic sync is ${result.current}; ${result.changed ? `it would be ${what}` : 'nothing would change'}.\nApply: ${result.apply!.join(' ')}`;
+  if (result.dry_run) return `Source "${result.source_id}": automatic sync is ${result.current}; ${result.changed ? `it would be ${what}` : 'nothing would change'}.\nApply: ${commandText(result.apply!)}`;
   return result.changed ? `Source "${result.source_id}" is now ${what} (was ${result.current}).` : `Source "${result.source_id}": automatic sync is already ${result.current}; nothing changed.`;
 }
 

@@ -149,7 +149,7 @@ export async function phaseFInstall(opts: OrchestratorOpts): Promise<Orchestrato
       repoNote = `repo path unreadable (${e instanceof Error ? e.message : String(e)}); the install resolves it itself`;
     }
     if (!autopilotInstalledForBrain()) return skipNotInstalled(repoPath);
-    execSync(gbrainChildCommand('foresights autopilot --install --yes'), { stdio: cliChildStdio(), timeout: 60_000, env: process.env });
+    execSync(gbrainChildCommand('gbrain autopilot --install --yes'), { stdio: cliChildStdio(), timeout: 60_000, env: process.env });
     return { name: 'install', status: 'complete' };
   } catch (e) {
     return { name: 'install', status: 'failed', reason: 'install_failed', detail: `${repoNote}: ${e instanceof Error ? e.message : String(e)}` };

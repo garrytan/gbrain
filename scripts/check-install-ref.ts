@@ -20,8 +20,8 @@ import { INSTALL_REF } from '../src/core/install-ref.ts';
 
 export interface InstallRefDrift { file: string; line: number; found: string; why: string }
 
-const PIN = /github:garrytan\/(?:foresights|gbrain)#([A-Za-z][A-Za-z0-9._-]*)/g;
-const ARTIFACT = /raw\.githubusercontent\.com\/garrytan\/(?:foresights|gbrain)\/([A-Za-z0-9._-]+)\/(BOOTSTRAP_FOR_AGENTS\.md|scripts\/setup-in-agent\.sh)/g;
+const PIN = /github:aimonk2025\/gbrain#([A-Za-z][A-Za-z0-9._-]*)/g;
+const ARTIFACT = /raw\.githubusercontent\.com\/aimonk2025\/gbrain\/([A-Za-z0-9._-]+)\/(BOOTSTRAP_FOR_AGENTS\.md|scripts\/setup-in-agent\.sh)/g;
 const HELPER_REF = /^gbrain_install_ref=([A-Za-z0-9._-]+)$/gm;
 const EXACT_PIN = /^v|^[0-9]|^[0-9a-f]{7,40}$/;
 const OWNER = 'src/core/install-ref.ts';

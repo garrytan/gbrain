@@ -25,6 +25,7 @@ import { storedManifestScope, worktreeManifest, type StoredWorktreeManifest } fr
 import { staleOwnedContent } from '../shared-skills/content-freshness.ts';
 import { ownedContentReceipt, rootIdentity } from '../shared-skills/receipt-root.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
+import { commandText } from '../brand.ts';
 
 type Verdict = { source_id: string; class: 'rebind' | 'not_owner_host' | 'root_missing' | 'source_path_mismatch' | 'tree_mismatch'; detail: string; fix?: Action;
   key: string; raw: string; next?: { root: string; root_identity: { device: number; inode: number } } };
@@ -123,6 +124,6 @@ export const contentReceiptRootRepair: RepairHandler = {
   },
   render(details) {
     const refused = (details.refused ?? []) as Array<{ source_id: string; class: string; detail: string; fix?: Action }>;
-    return refused.map(row => `refused ${row.source_id} (${row.class}): ${row.detail}${row.fix?.argv ? `; next: ${row.fix.argv.join(' ')}` : ''}`);
+    return refused.map(row => `refused ${row.source_id} (${row.class}): ${row.detail}${row.fix?.argv ? `; next: ${commandText(row.fix.argv)}` : ''}`);
   },
 };

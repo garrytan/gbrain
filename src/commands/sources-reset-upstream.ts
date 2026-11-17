@@ -30,6 +30,7 @@ import { execFileSync } from '../core/spawn.ts';
 import {
   clearUpstreamDivergence, gitRead, hasCommit, readCheckoutUpstream, readUpstreamBaseline, writeUpstreamBaseline, UPSTREAM_DOCS,
 } from '../core/sync-upstream-rewrite.ts';
+import { commandText } from '../core/brand.ts';
 
 const USAGE = 'Usage: foresights sources reset-upstream <id> --expect-local <sha> --expect-upstream <sha> [--dry-run] [--json]';
 const LIST_CAP = 20;
@@ -179,5 +180,5 @@ export async function runResetUpstream(engine: BrainEngine, args: string[]): Pro
   if (receipt.status === 'already_at_upstream') console.log(`${receipt.source_id}: HEAD is already the upstream ${to}; nothing to reset.`);
   else console.log(`${receipt.source_id}: ${receipt.dry_run ? 'would reset' : 'reset'} ${receipt.repo} from ${receipt.from.slice(0, 12)} to ${receipt.tracking_ref} ${to}; `
     + `${receipt.dropped_count} commit(s) leave the branch, kept under ${receipt.backup_ref}.`);
-  console.log(`Next: ${receipt.next.argv!.join(' ')}`);
+  console.log(`Next: ${commandText(receipt.next.argv!)}`);
 }

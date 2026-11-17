@@ -7,6 +7,7 @@ import { execFileSync } from './spawn.ts';
 import { parseDurationSeconds } from './sync-concurrency.ts';
 import { resolveStallAbortSecondsFromEnv } from './stall-env.ts';
 import { gitChildEnv } from './git-env.ts';
+import { commandText } from './brand.ts';
 
 /**
  * #2828 full-sync reconcile safety-valve thresholds. A reconcile that would
@@ -370,7 +371,7 @@ export function syncDeadlineStallNotice(args: string[], res: HardDeadlineResolut
   const why = 'No page was written, deleted or renamed and no sync cursor advanced before the deadline (screening unchanged files and legacy-sweep slices '
     + 'are not progress), so the run stopped as a stall instead of extending. Rerunning the same way is unlikely to commit either; sync status names what '
     + `the source is stuck on (read-only). Fix what it names, then rerun: ${resume}`;
-  const fix = { next: 'run', argv: status, command: status.join(' '), actor: 'agent', consent: [], requires_exclusive: false,
+  const fix = { next: 'run', argv: status, command: commandText(status), actor: 'agent', consent: [], requires_exclusive: false,
     why: 'Read-only: the source\'s state, holds, last error and the next step.', verify: { argv: status } };
   if (args.includes('--json')) {
     return JSON.stringify({ status: 'stalled', code: 'sync_deadline_stalled', message, why, reason: res.reason, deadline_seconds: deadlineSec, committed: 0,

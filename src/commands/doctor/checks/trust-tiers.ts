@@ -19,6 +19,7 @@ import { readTrustBackfillState, readTrustTierCounts } from '../../../core/trust
 import { TRUST_TIERS } from '../../../core/trust/tier.ts';
 import { readDerivedTaintShare } from '../../../core/trust/taint.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
+import { commandText } from '../../../core/brand.ts';
 
 
 async function runTrustTiers(ctx: DoctorContext): Promise<Check[]> {
@@ -47,7 +48,7 @@ async function runTrustTiers(ctx: DoctorContext): Promise<Check[]> {
     const argv = state.interrupted ? ['gbrain', 'trust', 'backfill', '--resume'] : ['gbrain', 'trust', 'backfill'];
     checks.push({ name: 'trust_tiers', status: 'warn', details: { ...details, unknown_pages: unknownPages },
       message: `${totals.unknown} of ${rows} row(s) (${unknownPct}%) have an unverified origin and the trust backfill has ${state.interrupted ? 'not finished' : 'not run'}. `
-        + `Run ${argv.join(' ')} on the brain host (foresights trust backfill --dry-run previews it); it classifies rows from deterministic signals only and never marks anything confirmed.${quotedNote}${derivedNote}`,
+        + `Run ${commandText(argv)} on the brain host (foresights trust backfill --dry-run previews it); it classifies rows from deterministic signals only and never marks anything confirmed.${quotedNote}${derivedNote}`,
       fix: agentFix(argv, 'Classifies legacy rows from deterministic signals in resumable batches; it never raises a row to confirmed and changes no content.', 'trust_tiers',
         { preview_argv: ['gbrain', 'trust', 'backfill', '--dry-run', '--json'] }) });
   } catch (err) {

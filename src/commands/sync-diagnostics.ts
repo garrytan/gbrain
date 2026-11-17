@@ -2,6 +2,7 @@ import type { SyncResult } from './sync.ts';
 import type { GitHoldItem } from '../core/persistence/sync-holds.ts';
 import { fenceWhere } from '../core/fence-repair/refusal.ts';
 import { sizeStateLines } from '../core/page-embedding-budget.ts';
+import { commandText } from '../core/brand.ts';
 
 const HOLD_LINES = 20;
 
@@ -10,7 +11,7 @@ export function holdLine(item: GitHoldItem, verb: string): string {
   const page = item.stale ? 'its page keeps its last good revision and is read-only for put_page until the file is repaired' : 'its page is missing until the file imports';
   // #6188 (D16): a fence hold names fence, section, rows, columns and its file line (never a cell), then the step its state calls for.
   const fence = item.fence ? ` in ${fenceWhere({ ...item.fence, line: item.line ?? item.fence.line })}${item.reason === 'prepare_time' ? ` (${item.fence.reason})` : ''}` : '';
-  const then = item.fix.then?.argv ? `, then ${item.fix.then.argv.join(' ')}` : '';
+  const then = item.fix.then?.argv ? `, then ${commandText(item.fix.then.argv)}` : '';
   const next = item.fix.argv?.join(' ') ?? item.fix.why;
   const step = item.fence?.auto_retry ? `No action needed: the next maintenance run repairs it. Preview: ${next}`
     : item.fix.consent.includes('paid') ? `Ask the user first, then: ${next}` : item.fix.actor === 'host_admin' ? `On the owner host: ${next}` : `Next: ${next}`;
@@ -36,10 +37,10 @@ export function printHoldNotes(result: SyncResult, write: (line: string) => void
   const shown = Math.min(result.held?.length ?? 0, HOLD_LINES);
   if ((result.held_count ?? 0) > shown) write(`  ... and ${(result.held_count ?? 0) - shown} more held this run (--json lists ${result.holds_truncated ? 'the first ones' : 'them all'}).`);
   const fix = result.holds_fix;
-  if (fix) write(`  ${result.holds_escalated ? 'HOLDS ESCALATED: ' : ''}${fix.user_message ?? `${fix.why} ${fix.argv?.[1] === 'repair' ? 'Preview the repair' : 'Next'}: ${fix.argv!.join(' ')}`}`);
+  if (fix) write(`  ${result.holds_escalated ? 'HOLDS ESCALATED: ' : ''}${fix.user_message ?? `${fix.why} ${fix.argv?.[1] === 'repair' ? 'Preview the repair' : 'Next'}: ${commandText(fix.argv!)}`}`);
   if (result.converted_from_failed?.length) write(`  Converted ${result.converted_from_failed.length} failed request(s) of the blocked cursor in place: ${result.converted_from_failed.join(', ')}.`);
   const recovered = result.recovered_frontmatter?.fix;
-  if (recovered) write(`  ${recovered.why} Preview: ${recovered.argv!.join(' ')}`);
+  if (recovered) write(`  ${recovered.why} Preview: ${commandText(recovered.argv!)}`);
   // #6188: lossless fence rewrites (committed), and in a dry run the ones a real run would make.
   if (result.fences_normalized) write(`  Normalized fences in ${result.fences_normalized.count} file(s) (${classList(result.fences_normalized.by_class)}). ${result.fences_normalized.fix.why}`);
   if (result.fence_issues) write(`  ${result.fence_issues.why} ${result.fence_issues.sample.slice(0, 5).map(item => item.path).join(', ')}`);

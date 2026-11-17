@@ -37,6 +37,7 @@ import type { Action } from '../agent-output.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { persistenceHome } from './identity.ts';
 import type { WorktreeBinding } from './ownership.ts';
+import { commandText } from '../brand.ts';
 
 export const OWNER_UNAVAILABLE_REASONS = ['host_mismatch', 'transfer_in_progress', 'clone_in_progress', 'binding_missing', 'incarnation_changed',
   'coordination_path_missing', 'local_path_missing'] as const;
@@ -159,7 +160,7 @@ export function ownerRefusal(input: OwnerRefusalInput): OwnerRefusal {
           inputs: [{ name: 'admin_state', how: `admin_state from foresights sources writer status ${sourceId} --json on the owner host` }],
           why: `Cancels the prepared transfer on the owner host: the worktree returns to active at epoch ${epoch} and the prepared manifest is cleared; pages and files are untouched. Run the --dry-run preview first.`,
           user_message: `A writer transfer of source ${sourceId} was prepared ${minutes} minutes ago and never accepted, so ${work} is paused. Either finish it on the successor host (${accept}) `
-            + `or cancel it on this owner host (${apply.join(' ')}). Which do you want?` } };
+            + `or cancel it on this owner host (${commandText(apply)}). Which do you want?` } };
     }
     case 'clone_in_progress':
       return { reason, retryable: true, message: `Source ${sourceId}'s worktree is being cloned or recloned, so ${work} waits.`,

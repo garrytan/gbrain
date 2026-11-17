@@ -12,6 +12,7 @@ import { pinRouting, type FixRouting } from '../fix-routing.ts';
 import { admittedPendingReceipt, type WriteReceipt } from './types.ts';
 import { WIRE_WRITE_WAIT_MAX_MS } from './params.ts';
 import { shellQuote } from '../shell-quote.ts';
+import { commandText } from '../brand.ts';
 
 /** Agent and server callers keep the historical bounded wait. */
 export const AGENT_WRITE_WAIT_MS = 5_000;
@@ -143,7 +144,7 @@ export function writeErrorExitCode(error: unknown, acceptPending: boolean): numb
 export function pollCommand(requestId: string, fix?: { argv?: readonly string[] }, routing?: FixRouting): string {
   const argv = fix?.argv?.[0] === 'gbrain' && fix.argv[1] === 'write-request' && fix.argv.includes(requestId)
     ? fix.argv : pinRouting(['gbrain', 'write-request', '--', requestId], routing);
-  return argv.map(shellQuote).join(' ');
+  return commandText(argv.map(shellQuote));
 }
 
 /**

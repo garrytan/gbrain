@@ -29,6 +29,7 @@ import {
 } from './page-summary.ts';
 import { reservationCostUsd } from './budget/reservation-cost.ts';
 import type { CRMode } from './types.ts';
+import { commandText } from './brand.ts';
 
 export const SYNOPSIS_SWEEP_JOB = 'contextual_reindex_per_chunk';
 export const SYNOPSIS_SWEEP_ARGV = ['gbrain', 'reindex', '--synopsis'] as const;
@@ -244,6 +245,6 @@ export function formatSynopsisCoverageLine(c: SynopsisCoverage): string {
   const large = c.large_title_pages ? ` ${c.large_title_pages} large page(s) (${c.large_title_chunks} chunk(s)) stay on the title tier by design.` : '';
   const pending = c.eligible_chunks - c.synopsis_chunks;
   return `Synopsis tier: ${c.coverage_pct}% of chunks (${c.synopsis_chunks}/${c.eligible_chunks}) and ${c.synopsis_pages}/${c.eligible_pages} page(s) carry per-chunk synopsis vectors`
-    + (pending > 0 ? `; ${pending} chunk(s) search on title-tier vectors. Preview the sweep: ${SYNOPSIS_SWEEP_ARGV.join(' ')}` : '')
+    + (pending > 0 ? `; ${pending} chunk(s) search on title-tier vectors. Preview the sweep: ${commandText(SYNOPSIS_SWEEP_ARGV)}` : '')
     + `.${large}`;
 }

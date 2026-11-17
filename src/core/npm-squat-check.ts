@@ -17,6 +17,7 @@ import { closeSync, openSync, readFileSync, readSync, realpathSync } from 'node:
 import { dirname, join, sep } from 'node:path';
 import type { Action } from './agent-output.ts';
 import { INSTALL_PIN } from './install-ref.ts';
+import { commandText } from './brand.ts';
 
 export type GbrainBinaryKind = 'real' | 'foreign' | 'broken' | 'unknown';
 
@@ -68,9 +69,9 @@ const SCHEMA_RECOVERY_ARGV = ['gbrain', 'apply-migrations', '--yes', '--no-autop
 /** The documented install/remediation path, reused in doctor output. */
 export const NPM_SQUAT_REMEDIATION =
   `Remove the unrelated package (\`bun remove -g gbrain\` or \`npm uninstall -g gbrain\`) ` +
-  `and install/upgrade only via the documented path: \`${INSTALL_ARGV.join(' ')}\` ` +
+  `and install/upgrade only via the documented path: \`${commandText(INSTALL_ARGV)}\` ` +
   `(or \`git clone https://github.com/${REAL_REPO_MARKER}.git && bun install && bun link\`). ` +
-  `If the schema is then behind (#218), run \`${SCHEMA_RECOVERY_ARGV.join(' ')}\`.`;
+  `If the schema is then behind (#218), run \`${commandText(SCHEMA_RECOVERY_ARGV)}\`.`;
 
 /**
  * A `bun build --compile` foresights binary is a native executable, not a script.

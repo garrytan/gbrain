@@ -30,6 +30,7 @@ import { listLiveLocks } from '../core/db-lock.ts';
 import { drainProjections, queuePageProjection } from '../core/page-state/projections.ts';
 import { carryChunkMetadata } from '../core/embed-stale.ts';
 import { normalizeAliasList } from '../core/search/alias-normalize.ts';
+import { commandText } from '../core/brand.ts';
 
 interface MigrateOpts {
   targetEngine: 'postgres' | 'pglite';
@@ -903,7 +904,7 @@ function reportLoopRowFailures(tables: Record<string, MigrateSimpleTableResult>,
   for (const f of failures.slice(0, 20)) console.error(`  - ${f.table} id ${f.id} (${f.code}): ${f.reason}`);
   if (failures.length > 20) console.error(`  ... and ${failures.length - 20} more`);
   const retry = ['gbrain', 'migrate', '--to', opts.targetEngine, ...(opts.targetPath ? ['--path', opts.targetPath] : []), ...(opts.targetUrl ? ['--url', '<the same connection string>'] : [])];
-  console.error(`The active engine was NOT switched. Fix the cause each reason names on the target, then re-run: ${retry.join(' ')}`);
+  console.error(`The active engine was NOT switched. Fix the cause each reason names on the target, then re-run: ${commandText(retry)}`);
   setCliExitVerdict(1);
   return failures.length;
 }

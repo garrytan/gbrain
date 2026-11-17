@@ -29,6 +29,7 @@ import type { AutoDecision } from './reconcile-additive.ts';
 import { publishesDatabaseOnly, readCanonicalAsImported } from './page-prepare.ts';
 import { isMirrorOnlyPage, staleMirrorPage } from './mirror-read-only.ts';
 import { hardenedGitSync } from '../hardened-git.ts';
+import { argvOfCommandText } from '../brand.ts';
 
 export interface ReconcilePins {
   brain_id: string; source_id: string; source_incarnation: string; slug: string; page_id: number;
@@ -341,7 +342,7 @@ export async function assertReconcileRevision(engine: BrainEngine, snapshot: Pag
         : `Resume the backfill on the brain host with ${REVISION_BACKFILL_RESUME_COMMAND} (the command in fix), then preview the page again.`),
     { fix: exhausted
       ? { ...readFix('Previews orphaned child rows and lists torn page bodies (torn_pages) without changing anything.', { argv: ['gbrain', 'repair', 'orphan-children'] }), verify, docs: 'docs/guides/repair.md#orphan-children' }
-      : { argv: REVISION_BACKFILL_RESUME_COMMAND.split(' '), consent: [], actor: 'agent', requires_exclusive: true, verify, docs: 'docs/guides/write-refusals.md#revision-backfill',
+      : { argv: argvOfCommandText(REVISION_BACKFILL_RESUME_COMMAND), consent: [], actor: 'agent', requires_exclusive: true, verify, docs: 'docs/guides/write-refusals.md#revision-backfill',
         why: 'Re-runs the schema migration pass on the brain host, which resumes the page revision backfill and prints its progress; it changes no page content.' } });
 }
 export function assertReconcilePins(expected: ReconcilePins, actual: ReconcilePins): void {

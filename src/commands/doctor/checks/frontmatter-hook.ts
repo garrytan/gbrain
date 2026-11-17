@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { agentFix } from '../check-fix.ts';
+import { commandText } from '../../../core/brand.ts';
 
 export interface OutdatedFrontmatterHook { source_id: string; hook_path: string; version: number; fix: string[] }
 
@@ -34,7 +35,7 @@ export async function frontmatterHookCheck(engine: BrainEngine, sourceIds?: stri
     if (!hooks.length) return { name: 'frontmatter_hook', status: 'ok', message: 'No outdated foresights frontmatter pre-commit hook is installed.', details };
     return { name: 'frontmatter_hook', status: 'warn', details,
       message: `${hooks.length} foresights frontmatter pre-commit hook(s) predate this release and check working-tree files instead of what is staged: `
-        + `${hooks.map(hook => `${hook.source_id} (${hook.hook_path}, v${hook.version})`).join('; ')}. Refresh with ${hooks.map(hook => hook.fix.join(' ')).join('; ')}.`,
+        + `${hooks.map(hook => `${hook.source_id} (${hook.hook_path}, v${hook.version})`).join('; ')}. Refresh with ${hooks.map(hook => commandText(hook.fix)).join('; ')}.`,
       fix: agentFix(hooks[0]!.fix, 'Rewrites the installed foresights pre-commit hook with the current script (validates staged blobs in one process); hooks that are not foresights\'s are never touched.',
         'frontmatter_hook') };
   } catch (error) {

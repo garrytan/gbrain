@@ -396,7 +396,7 @@ describe('#2753 — the doctor-proposed gateway-loop command is accepted by `con
     // recommending a trailing `--force`, that has to fail here — the entire
     // point of #2753 is that the recommended command works without it.
     const tokens = match![1].trim().split(/\s+/);
-    expect(tokens.slice(0, 3)).toEqual(['gbrain', 'config', 'set']);
+    expect(tokens.slice(0, 3)).toEqual(['foresights', 'config', 'set']);
     expect(tokens).not.toContain('--force');
     const args = tokens.slice(1); // ['config','set',key,value,...]
     expect(args).toEqual(['config', 'set', 'agent.use_gateway_loop', 'true']);

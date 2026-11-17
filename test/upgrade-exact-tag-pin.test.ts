@@ -80,7 +80,7 @@ describe('#5311 bare upgrade on an exact-tag pin', () => {
       // #5034 / B-NEW-5: remove before add; an in-place global tag swap fails (Bun 1.3) or silently corrupts the lock (Bun 1.4).
       expect(r.stderr).toContain('bun remove -g gbrain && bun add -g --backend=copyfile github:aimonk2025/gbrain');
       expect(r.stderr).not.toContain('not published yet');
-      expect(readFileSync(join(r.home, 'bun-calls.log'), 'utf-8')).toContain('update --backend=copyfile foresights');
+      expect(readFileSync(join(r.home, 'bun-calls.log'), 'utf-8')).toContain('update --backend=copyfile gbrain');
       // No false "just upgraded" breadcrumb for an upgrade that never happened.
       expect(existsSync(join(r.home, '.gbrain', 'just-upgraded-from'))).toBe(false);
       const errors = readFileSync(join(r.home, '.gbrain', 'upgrade-errors.jsonl'), 'utf-8').trim().split('\n').map(l => JSON.parse(l));

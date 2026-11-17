@@ -31,6 +31,7 @@ import { syncGit, syncGitPath } from '../persistence/sync-discovery.ts';
 import { readSyncImportProvenances, writeGitHold } from '../persistence/sync-holds.ts';
 import { fileDriftHold } from '../persistence/sync-page-fault.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairScope } from './core.ts';
+import { argvOfCommandText } from '../brand.ts';
 
 const DOCS = 'docs/guides/repair.md#overwritten-edits';
 const COMMAND = 'foresights repair overwritten-edits';
@@ -111,7 +112,7 @@ export const overwrittenEditsRepair: RepairHandler = {
     if (!opts.expect) {
       throw opError('invalid_params', `${COMMAND} --apply restores only the set a preview printed.`,
         `Preview first: ${command} — show the user both versions, then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
-        { fix: readFix('Previews the database edits a sync import overwrote; writes nothing.', { argv: command.split(' ').concat('--json') }), docs: DOCS });
+        { fix: readFix('Previews the database edits a sync import overwrote; writes nothing.', { argv: argvOfCommandText(command).concat('--json') }), docs: DOCS });
     }
     const loaded = await loadApprovedSet<ApprovedEdit>(engine, { command: 'overwritten-edits', hash: opts.expect, previewCommand: command,
       emptyHash: async () => hashOf(scope, selection, (await scanScope(engine, scope, slugs)).flatMap(scan => scan.edits).filter(edit => edit.confidence === 'high')) });

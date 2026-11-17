@@ -173,7 +173,7 @@ function buildFixture(label: string, aheadFloor = '>=1.4.0'): Fixture {
 
   // The bare origin lives at a path whose text contains `aimonk2025/gbrain`,
   // so the clone's .git/config remote URL carries the detection marker.
-  const origin = join(base.root, 'remotes', 'garrytan', 'gbrain');
+  const origin = join(base.root, 'remotes', 'aimonk2025', 'gbrain');
   mkdirSync(join(base.root, 'remotes', 'garrytan'), { recursive: true });
   git(['clone', '-q', '--bare', seed, origin]);
 

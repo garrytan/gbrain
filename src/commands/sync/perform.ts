@@ -29,6 +29,7 @@ import { runConnectorSync } from './connector.ts';
 import { performSyncInner } from './incremental.ts';
 import { isConnectorSourceKind } from '../../core/persistence/connector-kinds.ts';
 import { ignoredPrivacyLabelRunNotice } from '../../core/search/ignored-privacy-labels.ts';
+import { commandText } from '../../core/brand.ts';
 
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
   const since = opts.dryRun ? null : await syncStartedAt(engine);
@@ -261,7 +262,7 @@ async function countSyncGhosts(engine: BrainEngine, sourceId: string): Promise<{
 /** Prints the ghost-page line of a scan and returns its report. */
 function reportSyncGhosts({ sourceId, ghosts }: Awaited<ReturnType<typeof countSyncGhosts>>): SyncResult['ghostPages'] | null {
   if (ghosts) serr(`[sync] ${ghosts.count}${ghosts.truncated ? '+' : ''} live page(s) of ${sourceId} have no canonical file (ghost pages${ghosts.samples.length ? `, e.g. ${ghosts.samples.join(', ')}` : ''}); `
-    + `sync leaves them in place. Preview with ${ghosts.fix.argv!.join(' ')} (read-only), or restore the files and sync.`);
+    + `sync leaves them in place. Preview with ${commandText(ghosts.fix.argv!)} (read-only), or restore the files and sync.`);
   return ghosts;
 }
 

@@ -39,6 +39,7 @@ import { parseSourceConfig } from '../../../core/sources-load.ts';
 import { checkError } from '../check-fix.ts';
 import { checkpointMovedFix, firstSyncRunning, noSuccessfulSync, stoppedConnectorIssues, type SyncOutcomeEntry } from '../sync-outcome.ts';
 import { haltReasonsWithUnknown, readRecordedHaltReasons7d, topHaltReason } from '../../../core/extract/rollup-writer.ts';
+import { commandText } from '../../../core/brand.ts';
 
 /** Local alias; the shared warn-once memo lives in core so it can't fork per module. */
 const _resolveSyncFreshnessHours = resolveHoursEnv;
@@ -137,7 +138,7 @@ export async function checkLinksExtractionLag(
     const { fix, decision, routes } = extractionRoutes(lag, { sourceId, remote: opts?.remote });
     details.routes = routes;
     details.decision = decision;
-    const fixText = `Run: ${routes.map(route => `${route.argv.join(' ')} (${route.label})`).join(', or ')}`;
+    const fixText = `Run: ${routes.map(route => `${commandText(route.argv)} (${route.label})`).join(', or ')}`;
     const what = verdict.status === 'fail' ? `need link/timeline extraction (> ${verdict.fail_pct}% fail threshold)` : 'have un-extracted edges';
     if (heldFix) details.held_fix = heldFix;
     return { name, status: verdict.status, message: `${stale}/${total} pages (${pctStr}%)${scope} ${what}${mentionNote}. ${fixText}${blockedNote}${heldNote}`, details, fix };

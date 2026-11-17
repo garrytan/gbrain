@@ -46,6 +46,7 @@ import { IDENTITY_DOWNGRADE_OP, IDENTITY_HOLD_RELEASE, MANAGED_REMEDY_UNAVAILABL
   renameIdentityPreviewArgv, settleIdentityDowngrade, withIdentityRemedies, type IdentityDowngrade, type IdentityRemedyDisposition, type IdentityRemedyParts } from '../sync-identity-downgrades.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions } from './core.ts';
 import { assertOriginUnclaimed } from '../persistence/origin-guard.ts';
+import { commandText } from '../brand.ts';
 
 const DOCS = 'docs/guides/repair.md#rename-identity';
 /** The restore alternative, named only where the source admits a restore (an unbound Postgres source with a checkout does not). */
@@ -158,7 +159,7 @@ async function listingPlan(engine: BrainEngine, sourceId: string, open: Identity
   const entries = await withIdentityRemedies(engine, open);
   return { items: [], residuals: { open_pairs: entries.length },
     listing: entries.map(record => ({ item: `${record.source_id}:${record.old_slug} -> ${record.new_slug ?? record.to}`, class: record.reason,
-      detail: `preview: ${record.remedy.preview_argv.join(' ')}; hold releases ${record.remedy.hold_releases}` })),
+      detail: `preview: ${commandText(record.remedy.preview_argv)}; hold releases ${record.remedy.hold_releases}` })),
     details: { pairs: entries.map(record => ({ old_slug: record.old_slug, new_slug: record.new_slug, from: record.from, to: record.to, remedy: record.remedy })), docs: DOCS } };
 }
 

@@ -3,6 +3,7 @@
 // the operator already set `feedback.enabled`.
 import type { BrainEngine } from '../engine.ts';
 import { agentBlock } from '../agent-markers.ts';
+import { commandText } from '../brand.ts';
 
 export const FEEDBACK_NOTICE_SHOWN_KEY = 'feedback.notice_shown';
 export const FEEDBACK_ENABLE_ARGV = ['gbrain', 'config', 'set', 'feedback.enabled', 'true'] as const;
@@ -26,7 +27,7 @@ export async function retrievalFeedbackUpgradeNotice(engine: BrainEngine): Promi
       consent: 'none',
       actor: 'user',
       next: 'ask_user',
-      if_yes: `Run ${FEEDBACK_ENABLE_ARGV.join(' ')}. Guide: docs/guides/retrieval-feedback.md`,
+      if_yes: `Run ${commandText(FEEDBACK_ENABLE_ARGV)}. Guide: docs/guides/retrieval-feedback.md`,
       if_no: 'Nothing to run; it stays off.',
       verify: 'foresights feedback status --json',
     }, {

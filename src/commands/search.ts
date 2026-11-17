@@ -59,6 +59,7 @@ import {
   type TuneRecommendation,
 } from '../core/search/tune-recommendations.ts';
 import { ROUTERS, SEARCH_SUBCOMMANDS, subcommandHelpRequested } from '../cli/subcommands.ts';
+import { isBrandCommand } from '../core/brand.ts';
 
 function formatModesText(report: SearchModesReport): string {
   const lines: string[] = [];
@@ -458,7 +459,7 @@ async function maybeApplyRecommendation(engine: BrainEngine, r: TuneRecommendati
   // re-parse it to call setConfig / unsetConfig directly so the call
   // happens in-process.
   const parts = r.apply_command.split(/\s+/);
-  if (parts[0] !== 'gbrain' || parts[1] !== 'config') return false;
+  if (!isBrandCommand(parts[0]) || parts[1] !== 'config') return false;
   if (parts[2] === 'set' && parts.length === 5) {
     await engine.setConfig(parts[3], parts[4]);
     return true;

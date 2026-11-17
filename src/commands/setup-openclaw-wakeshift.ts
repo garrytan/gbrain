@@ -15,6 +15,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { bunSpawnSync } from '../core/spawn.ts';
 import { openclawConfigPath, parseJson5ish } from '../core/setup/brain-first.ts';
+import { commandText } from '../core/brand.ts';
 
 export const WAKESHIFT_OPENCLAW_PACKAGE = '@wakeshift/openclaw';
 export const WAKESHIFT_OPENCLAW_VERSION = '1.4.31';
@@ -63,7 +64,7 @@ export function networkHooksQuestion(bind: string | null): string | null {
   if (!bind || bind === 'loopback') return null;
   return `Your OpenClaw gateway listens beyond this computer (gateway.bind: ${bind}). Wakeshift's plugin turns on OpenClaw's hooks endpoint, `
     + 'with a token of its own and only for conversations that connect through Wakeshift, and on this gateway that endpoint is reachable wherever the gateway is. '
-    + `The plugin turns nothing on there until you agree. To agree, run: ${ALLOW_NETWORK_HOOKS_ARGV.join(' ')} (and block /hooks/ from other machines with a firewall or proxy rule). foresights never sets this for you.`;
+    + `The plugin turns nothing on there until you agree. To agree, run: ${commandText(ALLOW_NETWORK_HOOKS_ARGV)} (and block /hooks/ from other machines with a firewall or proxy rule). foresights never sets this for you.`;
 }
 
 /** The installed plugin's version from `openclaw plugins inspect`, or null when it is not installed or the output names none. */

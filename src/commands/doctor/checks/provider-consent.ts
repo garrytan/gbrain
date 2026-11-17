@@ -15,6 +15,7 @@ import { localSetupRecords, type LocalSetupRecord } from '../../../core/setup/lo
 import type { Check } from '../../doctor.ts';
 import { checkError, doctorVerify, infoCheck } from '../check-fix.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const DOCS = 'docs/guides/setup.md#provider-use-declined';
 
@@ -28,7 +29,7 @@ export function providerConsentFix(record: LocalSetupRecord): Action {
     consent: ['paid', 'egress'],
     actor: 'user',
     why: 'Setup recorded provider use as declined, so foresights contacts no model provider on its own. Re-running setup with --providers records it as accepted; provider calls then follow the configured keys.',
-    user_message: `foresights contacts no AI provider on its own because you declined provider use at setup; a command you run yourself with a provider key, such as foresights embed, still uses it. To allow it, run \`${argv.join(' ')}\`${record.scope === 'project' ? ' in that project directory' : ''}.`,
+    user_message: `foresights contacts no AI provider on its own because you declined provider use at setup; a command you run yourself with a provider key, such as foresights embed, still uses it. To allow it, run \`${commandText(argv)}\`${record.scope === 'project' ? ' in that project directory' : ''}.`,
     verify: doctorVerify('provider_consent'),
     docs: DOCS,
     requires_exclusive: false,
@@ -56,7 +57,7 @@ async function runProviderConsent(_ctx: DoctorContext): Promise<Check[]> {
     const env = keys.length ? ` even though ${keys.join(', ')} ${keys.length === 1 ? 'is' : 'are'} set in this environment` : '';
     const fix = providerConsentFix(declined);
     checks.push(infoCheck('provider_consent',
-      `Provider check skipped by consent: foresights setup recorded provider use as declined (${declined.path}), so foresights sends no request to a model provider on its own${env}: model discovery and the embedding probe are skipped, while a command the user runs with a provider key, such as foresights embed, still uses it. The user decides; to allow provider use they run: ${fix.argv!.join(' ')}`,
+      `Provider check skipped by consent: foresights setup recorded provider use as declined (${declined.path}), so foresights sends no request to a model provider on its own${env}: model discovery and the embedding probe are skipped, while a command the user runs with a provider key, such as foresights embed, still uses it. The user decides; to allow provider use they run: ${commandText(fix.argv!)}`,
       'disabled_by_choice', fix,
       { decision: 'declined', receipt: declined.path, harness: declined.harness, provider_env: keys, probed: false }));
     return checks;

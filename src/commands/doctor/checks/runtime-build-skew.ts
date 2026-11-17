@@ -40,6 +40,7 @@ import { readSupervisorBuild, readSupervisorPid } from '../../../core/minions/su
 import { checkError, doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { restartArgv, type ServiceHost } from './persistence-consumers.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const DOCS = 'docs/guides/troubleshooting.md#runtime-build-skew';
 const CHILD_WINDOW_HOURS = 24;
@@ -135,7 +136,7 @@ export async function runtimeBuildSkewCheck(engine: BrainEngine, hostId: string,
         + `${running}${childLines.length ? `; ${childLines.join('; ')}` : ''}. `
         + 'A process keeps the build it started with, and every job child it spawns runs the build its install holds on disk now. '
         + `\`foresights upgrade --restart-only\` restarts every listed process onto the installed build and verifies one build runs (it refuses, naming the step, for a process it cannot restart). `
-        + `By hand: restart with \`${argv.join(' ')}\`${restartHow}, then restart each other process listed on an older build. Nothing restarts automatically.${unknownNote}`,
+        + `By hand: restart with \`${commandText(argv)}\`${restartHow}, then restart each other process listed on an older build. Nothing restarts automatically.${unknownNote}`,
       fix: { ask_user: true, argv: RESTART_ARGV, consent: [], actor: 'agent', requires_exclusive: false, verify: doctorVerify('runtime_build_skew'), docs: DOCS,
         why: `Restarts every foresights process on this host that is not on the installed build (first ${label(target)}), drain-first, then verifies they all report one build and the warm CLI socket accepts it.`,
         user_message: `foresights processes on this host run different builds (${running}). Restart them onto the installed build with \`foresights upgrade --restart-only\`? Serve and the jobs worker drain and come back within a minute.` } };

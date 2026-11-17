@@ -16,6 +16,7 @@ import { connectedEngine, type DoctorContext, type DoctorEntry } from '../contex
 import { agentFix, checkError } from '../check-fix.ts';
 import { PINNED_FUNCTION_NAMES, PINNED_PATH_SQL } from '../../../core/function-search-path.ts';
 import { v277 } from '../../../core/schema-migrations/v277-function-search-path-pg-temp.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const DOCS = 'docs/guides/troubleshooting.md#function-search-path';
 
@@ -56,7 +57,7 @@ async function runFunctionSearchPath(ctx: DoctorContext): Promise<Check[]> {
     } else {
       checks.push({
         name: 'function_search_path', status: 'fail',
-        message: `${risk} Fix: run this SQL on the database host, connected to this brain's database as the role that owns each function (migration v${v277.version} and every migration run already did the ones the migrating role owns): ${fix.join(' ')} See ${DOCS}.`,
+        message: `${risk} Fix: run this SQL on the database host, connected to this brain's database as the role that owns each function (migration v${v277.version} and every migration run already did the ones the migrating role owns): ${commandText(fix)} See ${DOCS}.`,
         fix_unavailable_reason: 'no_safe_automatic_fix',
         details: { functions, sql: fix, docs: DOCS },
       });

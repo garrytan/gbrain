@@ -18,6 +18,7 @@ import {
 } from './mode.ts';
 import { describeRerankerFix } from '../ai/reranker-readiness.ts';
 import { rerankerReadinessForEngine } from '../ai/reranker-readiness-engine.ts';
+import { commandText } from '../brand.ts';
 
 export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   cache_enabled: 'Semantic query cache on/off',
@@ -255,7 +256,7 @@ export async function buildModesReport(engine: BrainEngine): Promise<SearchModes
     if (c.config.configured) {
       synopsis_coverage = { eligible_pages: c.eligible_pages, eligible_chunks: c.eligible_chunks, synopsis_pages: c.synopsis_pages,
         synopsis_chunks: c.synopsis_chunks, coverage_pct: c.coverage_pct, large_title_pages: c.large_title_pages,
-        line: sweep.formatSynopsisCoverageLine(c), fix: sweep.SYNOPSIS_SWEEP_ARGV.join(' ') };
+        line: sweep.formatSynopsisCoverageLine(c), fix: commandText(sweep.SYNOPSIS_SWEEP_ARGV) };
     }
   } catch { /* coverage is advisory; the doctor check synopsis_tier_coverage reports read failures */ }
 

@@ -89,7 +89,7 @@ async function phaseASchema(opts: OrchestratorOpts): Promise<OrchestratorPhaseRe
 function phaseBSmoke(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'smoke', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync(gbrainChildCommand('foresights jobs smoke'), { stdio: cliChildStdio(), timeout: 30_000, env: process.env });
+    execSync(gbrainChildCommand('gbrain jobs smoke'), { stdio: cliChildStdio(), timeout: 30_000, env: process.env });
     return { name: 'smoke', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

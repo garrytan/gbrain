@@ -13,6 +13,7 @@
  */
 
 import type { AdvisorReport } from './types.ts';
+import { commandText } from '../brand.ts';
 
 export type ApplyResolution =
   | { ok: true; argv: string[]; display: string }
@@ -36,5 +37,5 @@ export function resolveApplyTarget(report: AdvisorReport, id: string): ApplyReso
   if (!argv.every((a) => typeof a === 'string' && !SHELL_META.test(a))) {
     return { ok: false, error: `Refusing to run: fix command contains unexpected characters.`, runnable };
   }
-  return { ok: true, argv, display: argv.join(' ') };
+  return { ok: true, argv, display: commandText(argv) };
 }

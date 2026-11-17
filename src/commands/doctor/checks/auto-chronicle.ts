@@ -18,10 +18,11 @@ import type { ReadinessState } from '../../../core/readiness.ts';
 import type { Check } from '../../doctor.ts';
 import { doctorVerify, infoCheck } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { commandText } from '../../../core/brand.ts';
 
 export const AUTO_CHRONICLE_DOCS = 'docs/guides/life-chronicle.md';
 
-const command = (argv: readonly string[]) => argv.join(' ');
+const command = (argv: readonly string[]) => commandText(argv);
 const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 
 async function chatAvailable(): Promise<boolean> {

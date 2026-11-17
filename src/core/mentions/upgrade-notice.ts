@@ -9,6 +9,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { agentBlock } from '../agent-markers.ts';
 import { previewMentionPass } from './stale.ts';
+import { commandText } from '../brand.ts';
 
 /**
  * Planning rate for the catch-up estimate. The 52k-document world ran its
@@ -31,7 +32,7 @@ export async function mentionIndexUpgradeNotice(engine: BrainEngine): Promise<st
         '(coverage: pending) and documents that name an account, person or company by name or code are not linked to it.',
       consent: 'none (free: no model calls, no egress)',
       actor: 'agent',
-      next: `run: ${MENTION_CATCH_UP_ARGV.join(' ')} (about ${minutes} minute(s) for ${preview.due} page(s); resumable, and autopilot cycles continue it otherwise)`,
+      next: `run: ${commandText(MENTION_CATCH_UP_ARGV)} (about ${minutes} minute(s) for ${preview.due} page(s); resumable, and autopilot cycles continue it otherwise)`,
       verify: 'foresights extract --stale --dry-run --json (mention_due_pages: 0)',
     }).trimEnd(),
     '',

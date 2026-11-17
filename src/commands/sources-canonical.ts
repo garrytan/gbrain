@@ -14,6 +14,7 @@ import { startMemoryTrace } from '../core/memory-trace.ts';
 import { applyApprovedConversion, applyGitConversion, applyMixedConversion, assertConversionCaller, CONVERSION_GROUP_MAX, conversionApproval, conversionIncompleteFix, conversionRecovery,
   conversionReviewList, planGitConversion, planMixedConversion, readConversionApproval, readConversionDecisions, writeConversionFile,
   type ConversionProgress, type ConversionRecovery, type GitConversionPreview, type GitConversionResult, type MixedConversionPreview } from '../core/persistence/git-conversion.ts';
+import { commandText } from '../core/brand.ts';
 
 const USAGE = 'Usage: foresights sources canonical <source-id> --to git|mixed [--dry-run [--list-out <file>] [--approval-out <file>] | --apply (--expect <hash> | --approved <file>) [--no-embed] [--no-extract]] [--decisions <file>] [--json]';
 const DOCS = 'docs/designs/GIT_CANONICAL_MEMORY.md#conversion';
@@ -69,7 +70,7 @@ export function describeGitPreview(p: GitConversionPreview): string {
       ? `; ${p.discard.by.no_record_both_moved + p.discard.by.no_record_no_evidence} wait on a decision (--list-out <file> writes the review list; fill in "decision" and pass it back with --decisions <file>)` : ''}.`] : []),
     ...(p.decisions.digest ? [`Decisions: ${p.decisions.applied} applied, ${p.decisions.stale} stale (the page moved since), ${p.decisions.unused} unused${p.decisions.sample.length ? ` (${p.decisions.sample.join(', ')})` : ''}.`] : []),
     ...(causes.length ? [`  By cause: ${causes.join(', ')}.`] : []), ...sample(p.discard.sample)];
-  lines.push(p.remaining === 0 && p.strict ? 'Nothing is left to convert.' : `Nothing changed. To apply: ${p.apply.join(' ')}`);
+  lines.push(p.remaining === 0 && p.strict ? 'Nothing is left to convert.' : `Nothing changed. To apply: ${commandText(p.apply)}`);
   return lines.join('\n');
 }
 
@@ -89,12 +90,12 @@ function describeRecovery(r: ConversionRecovery): string {
   return [`Stopped in ${r.phase} with the source ${r.mode === 'git' ? 'git-canonical' : 'mixed'}: ${r.commits.length} door commit(s) made${r.commits.length ? ` (${r.commits.map(sha => sha.slice(0, 12)).join(', ')})` : ''}, push ${r.push?.state ?? 'not attempted'}; `
     + `accepted writes: ${r.accepted.adopted} adopted, ${r.accepted.withheld} withheld, ${r.accepted.holds_cleared} hold(s) cleared, ${r.accepted.pass_writes} page write(s) by the strict passes.`,
     ...(r.reclassified.length ? [`Held instead of overwritten: ${r.reclassified.slice(0, 20).join(', ')}.`] : []),
-    r.rollback.length ? `Rollback (nothing is rewritten; preview each, then apply its hash): ${r.rollback.map(argv => argv.join(' ')).join(', then ')}.`
+    r.rollback.length ? `Rollback (nothing is rewritten; preview each, then apply its hash): ${r.rollback.map(argv => commandText(argv)).join(', then ')}.`
       : 'No rollback is needed: the source is still mixed, and the commits made hold the bytes the database already has.'].join('\n');
 }
 
 function describeMixed(p: MixedConversionPreview): string {
-  return p.strict ? `Source ${p.source_id} is git-canonical; --to mixed removes canonical: git and changes nothing else (Git keeps every door commit).\nNothing changed. To apply: ${p.apply.join(' ')}`
+  return p.strict ? `Source ${p.source_id} is git-canonical; --to mixed removes canonical: git and changes nothing else (Git keeps every door commit).\nNothing changed. To apply: ${commandText(p.apply)}`
     : `Source ${p.source_id} is not git-canonical; there is nothing to change.`;
 }
 

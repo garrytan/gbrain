@@ -23,7 +23,7 @@ export PATH="$(dirname "$GBRAIN_BUN"):$PATH"
 GBRAIN_DIR=/opt/gbrain
 # Pinned to stable — the SAME ref the canonical local install uses.
 if [ ! -d "$GBRAIN_DIR/.git" ]; then
-  git clone --depth 1 --branch stable https://github.com/garrytan/gbrain "$GBRAIN_DIR"
+  git clone --depth 1 --branch stable https://github.com/aimonk2025/gbrain "$GBRAIN_DIR"
 else
   # Fail loud (set -e) on a broken update — never npm-install + run stale code
   # as root against a half-updated checkout.

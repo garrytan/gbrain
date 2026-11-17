@@ -5,6 +5,7 @@
  */
 import { cliRenderContext, renderAction, type RenderedAction } from '../core/agent-output.ts';
 import type { TerminalFailureGroup, TerminalFailureListing, TerminalFailureRow } from '../core/persistence/terminal-failures.ts';
+import { commandText } from '../core/brand.ts';
 
 type Rendered<T> = Omit<T, 'inspect' | 'fix'> & { inspect: RenderedAction; fix: RenderedAction };
 type RenderedGroup = Omit<TerminalFailureGroup, 'fix' | 'samples'> & { fix: RenderedAction; samples: Array<Omit<TerminalFailureGroup['samples'][number], 'inspect'> & { inspect: RenderedAction }> };
@@ -49,7 +50,7 @@ export function renderWriterFailures(listing: TerminalFailureListing, json: bool
     const first = rows[0];
     if (first) lines.push(`  Next for the newest: ${first.fix.command ?? first.fix.why}`, `  Inspect one: foresights write-request <request> --json`);
   }
-  if (rendered.truncated && rendered.next) lines.push(`  More: ${rendered.next.join(' ')}`);
+  if (rendered.truncated && rendered.next) lines.push(`  More: ${commandText(rendered.next)}`);
   if (!rendered.groups?.length && !rendered.rows?.length) lines.push('  Nothing to show: no receipt in the window ended without committing.');
   return `${lines.join('\n')}\n`;
 }

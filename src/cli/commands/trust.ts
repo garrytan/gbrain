@@ -15,6 +15,7 @@ import type { TrustBackfillReport } from '../../core/trust/backfill.ts';
 import type { CliDispatchContext } from '../command-table.ts';
 import { TRUST_OWNER_USAGE, isTrustOwnerSubcommand, localTrustBackend, reportTrustCliError, runTrustOwnerCommand } from '../../commands/trust.ts';
 import { TRUST_CLAIM_USAGE } from '../../commands/trust-claim.ts';
+import { commandText } from '../../core/brand.ts';
 
 export const TRUST_BACKFILL_USAGE = [
   'Usage: foresights trust backfill [--dry-run] [--resume] [--batch-size N] [--json]',
@@ -81,7 +82,7 @@ async function runMarkerRepair(engine: BrainEngine, rest: string[], args: string
     if (jsonRequested(args)) await writeStdoutFinal(`${JSON.stringify(result, null, 2)}\n`);
     else if (result.mode === 'preview') console.log(renderMarkerRepairPreview(result));
     else console.log([...result.repaired.map(r => `Repaired ${r.page}: marker unknown -> ${r.marker_after ?? 'removed'} (tier stays ${r.tier}).`),
-      `Verify with: ${result.verify.join(' ')}`].join('\n'));
+      `Verify with: ${commandText(result.verify)}`].join('\n'));
   } catch (error) {
     if (await reportTrustCliError(error, jsonRequested(args))) return;
     throw error;

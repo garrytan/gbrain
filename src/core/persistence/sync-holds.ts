@@ -56,6 +56,7 @@ import { chunkerStamp } from '../chunkers/code.ts';
 import { gitBlobOid, sha256 } from './digest.ts';
 import { HOLD_ATTEMPTS_NEEDS_HUMAN, HOLD_ESCALATE_MS } from './sync-fault-class.ts';
 import { retiredSyncSetting, type RetiredSyncKeyName } from '../sync-config-keys.ts';
+import { commandText } from '../brand.ts';
 
 export const GIT_HOLD_OP = 'sync-hold';
 export const GIT_HOLD_SUMMARY_OP = 'sync-hold-summary';
@@ -715,8 +716,8 @@ export function holdRepairSteps(sourceId: string, route: HoldRepairRoute, auto?:
   const concurrentText = `for each concurrent-write hold, preview the reconciliation with foresights sources reconcile ${sourceId} <slug> --preview `
     + `(foresights sources status ${sourceId} names each slug and the database write that raced the import), resolve and apply it, then run foresights sources retry-held ${sourceId} and foresights sync --source ${sourceId} --no-pull`;
   const stalled = stalledHoldSteps(sourceId);
-  const stalledText = `the ${route.stalled ?? 0} preparation-stalled hold(s) are not file problems and need no repair: inspect the writer with ${stalled.status.join(' ')} (read-only), `
-    + `fix what it names or upgrade foresights, then run ${stalled.retry.join(' ')} and the same sync again (${stalled.sync.join(' ')} with the run's options)`;
+  const stalledText = `the ${route.stalled ?? 0} preparation-stalled hold(s) are not file problems and need no repair: inspect the writer with ${commandText(stalled.status)} (read-only), `
+    + `fix what it names or upgrade foresights, then run ${commandText(stalled.retry)} and the same sync again (${commandText(stalled.sync)} with the run's options)`;
   const unblock = ['gbrain', 'sync', 'unblock', '--source', sourceId, '--apply'];
   const dirtyText = `the ${route.dirty ?? 0} worktree-dirty hold(s) are uncommitted edits in the checkout that sync would not overwrite: commit them (foresights sources status ${sourceId} names each file), `
     + `then run ${unblock.join(' ')}, which re-screens every held file that is now committed, and the same sync`;
@@ -724,7 +725,7 @@ export function holdRepairSteps(sourceId: string, route: HoldRepairRoute, auto?:
     : `for each file-drift hold, preview the resolution with foresights repair file-drift --source ${sourceId} --slug <slug> --prefer database (or --prefer file) `
     + `(foresights sources status ${sourceId} names each slug and the database write sync did not overwrite) and decide with the user. ${FILE_DRIFT_APPLY_STEP} Then run foresights sync --source ${sourceId} --no-pull`;
   if (route.stalled && !route.others && !content && !route.concurrent && !route.dirty && !route.drift) {
-    return { argv: stalled.status, commands: [stalled.status.join(' '), stalled.retry.join(' '), stalled.sync.join(' ')], text: stalledText };
+    return { argv: stalled.status, commands: [commandText(stalled.status), commandText(stalled.retry), commandText(stalled.sync)], text: stalledText };
   }
   if (route.dirty && !route.others && !content && !route.concurrent && !route.stalled && !route.drift) {
     return { argv: unblock, commands: [`foresights sources status ${sourceId} --json`, unblock.join(' '), `foresights sync --source ${sourceId} --no-pull`], text: dirtyText };
@@ -733,7 +734,7 @@ export function holdRepairSteps(sourceId: string, route: HoldRepairRoute, auto?:
     const parts = [...(route.others ? [frontmatterText] : []), ...(content ? [fenceText] : []), ...(route.concurrent ? [concurrentText] : []), ...(route.stalled ? [stalledText] : []),
       ...(route.dirty ? [dirtyText] : []), ...(route.drift ? [driftText] : [])];
     const commands = [...(route.others ? [frontmatter.join(' ')] : []), ...(content ? [fences.join(' ')] : []),
-      ...(route.stalled ? [stalled.status.join(' ')] : []), `foresights sources status ${sourceId} --json`, ...(route.dirty ? [unblock.join(' ')] : []), `foresights sources retry-held ${sourceId}`, `foresights sync --source ${sourceId} --no-pull`];
+      ...(route.stalled ? [commandText(stalled.status)] : []), `foresights sources status ${sourceId} --json`, ...(route.dirty ? [unblock.join(' ')] : []), `foresights sources retry-held ${sourceId}`, `foresights sync --source ${sourceId} --no-pull`];
     return { argv: route.others ? frontmatter : content ? fences : route.concurrent || route.drift ? ['gbrain', 'sources', 'status', sourceId, '--json'] : route.stalled ? stalled.status : unblock, commands, text: parts.join('; ') };
   }
   if (content && !route.others) return { argv: fences, commands: [fences.join(' ')], text: fenceText };

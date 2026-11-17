@@ -252,7 +252,7 @@ export function resolveGbrainCliPath(): string {
       // process at this exact call site. Same fix already applied to
       // detectTini() in spawn-helpers.ts (see its comment) - this call site
       // was missed.
-      const which = execSync('which foresights', {
+      const which = execSync('which gbrain', {
         encoding: 'utf-8',
         stdio: ['ignore', 'pipe', 'ignore'],
         env: process.env,
@@ -501,7 +501,7 @@ export async function attemptAutopilotSelfUpgrade(
     const receiptPath = prepareSwapReceipt();
     let swapError: unknown = null;
     try {
-      execSync('foresights upgrade --swap-only', {
+      execSync('gbrain upgrade --swap-only', {
         stdio: 'inherit',
         timeout: 300_000,
         env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1', [SWAP_RECEIPT_ENV]: receiptPath },

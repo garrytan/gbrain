@@ -218,7 +218,7 @@ describe('foresights upgrade on the stable channel', () => {
       await withRun(['--channel', channel, '--swap-only'], { spec: 'github:aimonk2025/gbrain#0123456789abcdef0123456789abcdef01234567' }, r => {
         expect(r.stdout).toContain('pinned to github:aimonk2025/gbrain#0123456789abcdef0123456789abcdef01234567');
         expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:aimonk2025/gbrain#v${NEWEST}`]);
-        expect(r.bunCalls).not.toContain('update --backend=copyfile foresights');
+        expect(r.bunCalls).not.toContain('update --backend=copyfile gbrain');
         expect(r.stdout).toContain(`Now running: foresights ${NEWEST}`);
         expect(r.exitCode).toBe(0);
       });

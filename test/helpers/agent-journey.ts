@@ -154,7 +154,7 @@ export async function waitFor(pred: () => Promise<boolean> | boolean, ms = 30_00
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 const ISO = /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}(?::?\d{2})?)?/g;
-const DOCS = /https:\/\/github\.com\/garrytan\/(?:foresights|gbrain)\/blob\/[^/\s"]+/g;
+const DOCS = /https:\/\/github\.com\/aimonk2025\/gbrain\/blob\/[^/\s"]+/g;
 const VOLATILE_KEYS = new Set(['duration_s', 'root_identity', 'plan_hash', 'doctor_run_id']);
 
 export interface GoldenVars { home: string; pids?: number[] }

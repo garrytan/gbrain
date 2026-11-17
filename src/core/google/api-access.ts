@@ -17,6 +17,7 @@ import type { Action } from '../agent-output.ts';
 import type { GoogleAccessProvider } from './access.ts';
 import { CalendarClient, GmailClient, GoogleApiDisabledError, PeopleClient, type FetchImpl } from './google-clients.ts';
 import { ALL_GOOGLE_SERVICES, GOOGLE_SERVICE_API, type GoogleApiProblem, type GoogleService } from './types.ts';
+import { commandText } from '../brand.ts';
 
 export interface GoogleIdentityClients {
   gmail: Pick<GmailClient, 'getProfile'>;
@@ -134,10 +135,10 @@ export function googleApiAccessFix(account: string, problems: readonly GoogleApi
   const reauth = ['gbrain', 'google', 'connect', '--reauth', account];
   const steps = [
     ...disabled.map(problem => `enable the ${problem.api_title} (${problem.api}) for Google Cloud project ${problem.project ?? 'that owns the OAuth client'}: ${problem.enable_url}`),
-    ...(ungranted.length ? [`grant ${ungranted.map(problem => problem.service).join(', ')} access: ${reauth.join(' ')}`] : []),
+    ...(ungranted.length ? [`grant ${ungranted.map(problem => problem.service).join(', ')} access: ${commandText(reauth)}`] : []),
   ];
   const userMessage = `Google account ${account} cannot reach ${problems.map(problem => problem.service).join(', ')}. To fix it, ${steps.join('; ')}. `
-    + `Then re-check with: ${verify.join(' ')}`;
+    + `Then re-check with: ${commandText(verify)}`;
   const shared = { consent: [], actor: 'user' as const, user_message: userMessage, verify: { argv: verify }, docs: 'docs/guides/google-connect.md#api-access', requires_exclusive: false };
   if (disabled.length > 0) {
     return { ask_user: true, ...shared,

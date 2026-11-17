@@ -27,6 +27,7 @@ import { clearDrainStep, DrainPassAbandoned, markPassAbandoned, readDrainStep } 
 import { PUBLICATION_CEILING_DEFAULT_MS, readPublicationCeilingMs } from './publication-deadline.ts';
 import { isOwnerThisProcess, stampLastSql, WAITING_ON, type ClaimLastSql, type WaitingOn } from './claim-phase.ts';
 import { describeHostConsumer, headBlockedNext, headBlockerText, headClaimability, type HeadBlocker } from './head-blocker.ts';
+import { commandText, argvOfCommandText } from '../brand.ts';
 
 export type DrainOutcome = 'synced' | 'resumable' | 'blocked';
 /** Why a drain ended short of `synced`. Each value has an error-catalogue entry (DX-A4). */
@@ -976,21 +977,21 @@ function passNext(stop: DrainStopReason | undefined, result: SyncResult, resumeC
       const streak = result.pass?.not_converged_streak ?? 0;
       if (streak < NOT_CONVERGED_REPORT_STREAK) return { command: resumeCommand, safe_to_loop: true, retry_after_ms: 0, code: 'not_converged',
         why: `The pass ran ${result.pass?.round ?? 'its'} rounds without the level settling (another writer kept changing it); everything it admitted stands. The next sync reads the level again: rerun ${resumeCommand}.`,
-        fix: render({ argv: resumeCommand.split(' '), actor: 'agent', why: 'Reruns the pass; it starts from what the last one settled.' }) };
-      return { command: status.join(' '), safe_to_loop: false, retry_after_ms: 0, code: 'not_converged',
+        fix: render({ argv: argvOfCommandText(resumeCommand), actor: 'agent', why: 'Reruns the pass; it starts from what the last one settled.' }) };
+      return { command: commandText(status), safe_to_loop: false, retry_after_ms: 0, code: 'not_converged',
         why: `${streak} passes in a row ended without the level settling, so rerunning is not converging. Report it with the status (read-only) and foresights doctor --json; the writer changing the checkout is named there.`,
         fix: render({ actor: 'agent', why: `${streak} consecutive passes did not converge; report it instead of rerunning.` }) };
     }
-    case 'admission_paused': return { command: status.join(' '), safe_to_loop: false, retry_after_ms: 0, code: 'admission_paused',
+    case 'admission_paused': return { command: commandText(status), safe_to_loop: false, retry_after_ms: 0, code: 'admission_paused',
       why: 'sync.admission is not normal, so the pass admitted only what it allows and stopped; nothing failed. Restoring it is the owner\'s decision: foresights config set sync.admission normal, then the next sync continues.',
       fix: render({ argv: ['gbrain', 'config', 'set', 'sync.admission', 'normal'], actor: 'user', why: 'Restores what managed sync may write; never run automatically.',
         user_message: `Managed sync of ${sourceId} is paused by sync.admission. To resume it, run: foresights config set sync.admission normal` }) };
-    case 'grant_scope': case 'reconcile_host_required': return { command: status.join(' '), safe_to_loop: false, retry_after_ms: 0, code: stop,
+    case 'grant_scope': case 'reconcile_host_required': return { command: commandText(status), safe_to_loop: false, retry_after_ms: 0, code: stop,
       why: stop === 'grant_scope'
         ? `This writer's grant covers only part of source ${sourceId}, so the pass admitted what it could see and cannot finish the source; the owner host's sync finishes it: ${hostSync}.`
         : `What is left in source ${sourceId} needs the owner host (holds, markers or decisions a remote caller never writes); everything this run admitted stands. On the owner host run: ${hostSync}.`,
       fix: render({ argv: hostSync.split(' '), actor: 'user', why: 'Only the source\'s owner host finishes the pass.', user_message: `On the host that owns source ${sourceId}, run: ${hostSync}` }) };
-    case 'reconcile_read_incomplete': return { command: status.join(' '), safe_to_loop: false, retry_after_ms: 0, code: 'reconcile_read_incomplete',
+    case 'reconcile_read_incomplete': return { command: commandText(status), safe_to_loop: false, retry_after_ms: 0, code: 'reconcile_read_incomplete',
       why: `A Git listing of source ${sourceId}'s checkout did not finish cleanly, so the pass classified nothing and wrote nothing. Check the checkout (git status), then report it with foresights doctor --json if it repeats.`,
       fix: render({ actor: 'agent', why: 'The checkout could not be listed; report it with foresights doctor --json.' }) };
     default: return null;
@@ -1033,7 +1034,7 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
     const held = result.leaseHeld;
     return { command: resumeCommand, safe_to_loop: true, retry_after_ms: held?.retry_after_ms ?? d?.retry_after_ms ?? 0, ...estimate, code: 'sync_drain_lease_held',
       why: held?.fix.why ?? 'Another drainer holds this source\'s drain lease and resumes the same cursor; rerun after retry_after_ms.',
-      ...(held ? { fix: renderAction({ ...held.fix, argv: resumeCommand.split(' ') }, cliRenderContext()) } : {}), docs: ERROR_CATALOGUE.sync_drain_lease_held.docs };
+      ...(held ? { fix: renderAction({ ...held.fix, argv: argvOfCommandText(resumeCommand) }, cliRenderContext()) } : {}), docs: ERROR_CATALOGUE.sync_drain_lease_held.docs };
   }
   const pass = passNext(d?.stop_reason, result, resumeCommand, sourceId);
   if (pass) return { ...pass, ...estimate, docs: ERROR_CATALOGUE[STOP_DOCS[d!.stop_reason!]].docs };
@@ -1099,7 +1100,7 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
   if (d?.stop_reason === 'drain_stalled' && d.stall?.cause === 'owner_restart_required') {
     const stall = d.stall, owner = `the foresights ${stall.owner_row?.kind ?? stall.owner_kind ?? 'owner'} process (pid ${stall.owner_row?.pid ?? stall.owner_pid ?? '?'})`;
     const status = ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'];
-    return { command: status.join(' '), safe_to_loop: false, retry_after_ms: 0, ...estimate, code: 'drain_stalled', cause: 'owner_restart_required',
+    return { command: commandText(status), safe_to_loop: false, retry_after_ms: 0, ...estimate, code: 'drain_stalled', cause: 'owner_restart_required',
       why: `The write at the head of this source (${stall.head_request_id ?? stall.request_id}) is held by ${owner} on this host${stall.phase ? `, ${stall.phase}${stall.step ? ` at step ${stall.step}` : ''}` : ''}, `
         + 'and that process reports restart_required: it claims no write until it restarts, and the root it holds stays held until it exits, so waiting or rerunning does not clear it. '
         + `Nothing failed and the cursor is intact. Restart that process, then rerun: ${resumeCommand}`,
@@ -1115,7 +1116,7 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
     const where = `${stall.step ? ` at step ${stall.step}` : ''}${stall.waiting_on && stall.waiting_on !== 'unknown' ? `, waiting on ${stall.waiting_on}` : ''}${stall.last_sql ? `, last statement ${stall.last_sql.label}` : ''}`;
     const ahead = !stall.past_ceiling && (d.retry_after_ms ?? 0) > 0;
     const action: Action = ahead
-      ? { argv: resumeCommand.split(' '), consent: [], actor: 'agent', requires_exclusive: false,
+      ? { argv: argvOfCommandText(resumeCommand), consent: [], actor: 'agent', requires_exclusive: false,
         why: `The ${owner} on this host still renews the claim; its own budget frees the root at the ceiling in ${formatDuration(Math.ceil((d.retry_after_ms ?? 0) / 1000))}. Rerun this after retry_after_ms (safe in a loop): it resumes the cursor and holds the entry if it stalls again.`,
         verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] } }
       : { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'], consent: [], actor: 'host_admin', requires_exclusive: false,

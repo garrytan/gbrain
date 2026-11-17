@@ -97,7 +97,7 @@ describe('generated files (pure)', () => {
   });
 
   test('Windows: the schtasks line to add by hand', () => {
-    expect(windowsScheduleCommand(['C:\\gbrain\\gbrain.exe'])).toBe('schtasks /Create /SC HOURLY /MO 6 /TN gbrain-maintain /TR "C:\\foresights\\gbrain.exe maintain --unattended --runner schedule"');
+    expect(windowsScheduleCommand(['C:\\gbrain\\gbrain.exe'])).toBe('schtasks /Create /SC HOURLY /MO 6 /TN gbrain-maintain /TR "C:\\gbrain\\gbrain.exe maintain --unattended --runner schedule"');
   });
 });
 

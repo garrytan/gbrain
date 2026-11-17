@@ -36,6 +36,7 @@ import { canAnalyzePages, missingSearchStatistics, readProjectionStatistics } fr
 import type { Check } from '../../doctor.ts';
 import { doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { argvOfCommandText } from '../../../core/brand.ts';
 
 async function runPlannerStats(ctx: DoctorContext): Promise<Check[]> {
   const engine = connectedEngine(ctx);
@@ -70,7 +71,7 @@ async function runPlannerStats(ctx: DoctorContext): Promise<Check[]> {
       const listed = stale.map(t => `${t.table} (${t.pending} rows changed since ANALYZE, threshold ${Math.round(t.threshold)})`).join(', ');
       checks.push({ name: 'planner_stats_stale', status: 'warn',
         message: `${why}${listed ? ` Also stale: ${listed}.` : ''}${expression ? ` Also: ${expression}` : ''} Fix on the brain host: ${PLANNER_STATS_REPAIR_COMMAND}${owner ? '' : ' as the table owner'}.`, details,
-        fix: { argv: PLANNER_STATS_REPAIR_COMMAND.split(' '), consent: [], actor: owner ? 'agent' : 'host_admin', why,
+        fix: { argv: argvOfCommandText(PLANNER_STATS_REPAIR_COMMAND), consent: [], actor: owner ? 'agent' : 'host_admin', why,
           verify: doctorVerify('planner_stats_stale'), requires_exclusive: false } });
       return checks;
     }

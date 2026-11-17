@@ -22,6 +22,7 @@ import { GRANT_MIRROR_WINDOW_ENDS, grantFromTokenRow, type LegacyGrantAxis } fro
 import type { Check } from '../../doctor.ts';
 import { doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const DOCS = 'docs/mcp/ADMIN.md#legacy-token-grants';
 const NULL_SCOPE_DOCS = 'docs/mcp/ADMIN.md#tokens-without-scopes';
@@ -88,7 +89,7 @@ async function runLegacyTokenGrants(ctx: DoctorContext): Promise<Check[]> {
       ? 'Every active legacy token has explicit scopes.'
       : `${nullScope.length} active legacy token(s) have no scopes, so they hold full read+write+admin access (grandfathered). `
         + 'Ask the user, then narrow each: '
-        + nullScope.slice(0, 5).map(t => `${t.name}: ${t.argv.join(' ')}`).join('; ')
+        + nullScope.slice(0, 5).map(t => `${t.name}: ${commandText(t.argv)}`).join('; ')
         + `${nullScope.length > 5 ? `; and ${nullScope.length - 5} more in details.tokens` : ''}. See ${NULL_SCOPE_DOCS}.`,
     details: { null_scope_count: nullScope.length, tokens: nullScope, docs: NULL_SCOPE_DOCS },
     ...(fix ? { fix } : {}),

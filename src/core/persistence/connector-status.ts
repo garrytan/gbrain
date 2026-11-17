@@ -21,6 +21,7 @@ import type { ItemHoldRecord } from '../connectors/item-holds.ts';
 import { fenceAutoRepairFor, gitHoldItem, readGitHoldListing, readSyncConversions, readSyncHoldPolicy, type GitHoldItem, type SyncConversion } from './sync-holds.ts';
 import { holdLine } from '../../commands/sync-diagnostics.ts';
 import { pageSortedRows, type ListingRequest } from '../bounded-listing.ts';
+import { commandText } from '../brand.ts';
 
 /** Fix wave 4: `sources status` lists this many held items per source, then "+N more". */
 export const HELD_STATUS_LIMIT = 10;
@@ -103,7 +104,7 @@ export function connectorStatusLines(sourceId: string, status: ConnectorSourceSt
     const where = failure.slug ? ` on ${failure.slug}${failure.request_id ? ` (request ${failure.request_id})` : ''}` : '';
     lines.push(`    ${status.stopped ? `STOPPED: the last ${failure.consecutive} connector syncs` : `the last ${failure.consecutive === 1 ? 'connector sync' : `${failure.consecutive} connector syncs`}`} ended on ${failure.code}${where} `
       + `at ${failure.at.slice(0, 19).replace('T', ' ')}: ${failure.message}`);
-    lines.push(`    nothing after that point of the run was imported; next: ${connectorFailureFix(sourceId, failure).argv!.join(' ')}`);
+    lines.push(`    nothing after that point of the run was imported; next: ${commandText(connectorFailureFix(sourceId, failure).argv!)}`);
   }
   if (status.purged_items.length) {
     lines.push(`    ${status.purged_items.length} item(s) recently skipped as purged content (the purge tombstone working; they do not stop the sync): `
@@ -222,7 +223,7 @@ export function gitHoldStatusLines(sourceId: string, status: GitHoldStatus): str
     lines.push(`  ${sourceId}: ${status.count} held file(s): not imported, and they do not block sync. A page whose newer file is held keeps its last good revision and is read-only for put_page until the file is repaired.`);
     for (const item of status.items.slice(0, HELD_STATUS_LIMIT)) lines.push(`    ${holdLine(item, 'Held').trim()} Held since ${day(item.held_since)}.`);
     if (status.count > HELD_STATUS_LIMIT) lines.push(`      +${status.count - HELD_STATUS_LIMIT} more; --json lists ${status.truncated ? `the first ${status.items.length}` : 'all'}`);
-    lines.push(`    Most holds re-screen on the next sync by themselves (the file changed or was deleted, or a newer foresights can read it): ${status.sync_argv.join(' ')}`);
+    lines.push(`    Most holds re-screen on the next sync by themselves (the file changed or was deleted, or a newer foresights can read it): ${commandText(status.sync_argv)}`);
     lines.push(`    to re-screen the held files on that sync even if nothing changed: foresights sources retry-held ${sourceId}`);
   }
   if (status.recent_conversions?.length) {

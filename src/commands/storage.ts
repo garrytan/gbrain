@@ -14,6 +14,7 @@ import { opError, OperationError, type OperationContext } from '../core/ops/cont
 import { readFix } from '../core/ops/op-fix.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { PENDING_WRITE_EXIT_CODE } from '../core/exit-codes.ts';
+import { commandText } from '../core/brand.ts';
 
 /**
  * Distinct nominal types for the two tier-keyed numeric maps. Both shapes
@@ -479,7 +480,7 @@ async function runStorageInit(engine: BrainEngine, args: string[]): Promise<void
     const result = await initStorageSource(engine, { dir: value('--dir'), pushRemote: value('--push-remote'), dryRun: args.includes('--dry-run') || expect === undefined && args.includes('--dir'), expect });
     if (json) { console.log(JSON.stringify(result)); return; }
     for (const line of result.summary) console.log(line);
-    if (result.dry_run && result.apply) console.log(`Apply (after the user agrees): ${result.apply.join(' ')}`);
+    if (result.dry_run && result.apply) console.log(`Apply (after the user agrees): ${commandText(result.apply)}`);
     else if (!result.dry_run && result.action !== 'none') console.log('Done: the storage shelf exists.');
   } catch (error) {
     if (!(error instanceof OperationError)) throw error;
@@ -510,7 +511,7 @@ async function shelfRefusal(error: unknown, json: boolean): Promise<void> {
   setCliExitVerdict(writeCliError(error, 'storage', { json }));
 }
 
-const argvText = (argv: string[]) => argv.map(shellQuote).join(' ');
+const argvText = (argv: string[]) => commandText(argv.map(shellQuote));
 
 type ShelfOutcome = { side_effects: string; failure?: { item: string; code: string; message: string }; pending?: Array<{ item: string; request_id: string; poll: string[] }>; rerun?: string[] };
 

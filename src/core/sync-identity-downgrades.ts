@@ -22,6 +22,7 @@ import { readManagedMode } from './persistence/managed-mode.ts';
 import { previewHash } from './persistence/preview-approval.ts';
 import { canonicalOriginPage, pickCanonicalOrigin } from './persistence/origin-guard.ts';
 import { resolveSlugForPath, type DowngradedRename, type RenameDowngradeReason } from './sync.ts';
+import { commandText } from './brand.ts';
 
 export const IDENTITY_DOWNGRADE_OP = 'sync-identity-downgrade';
 
@@ -251,7 +252,7 @@ export function identityDowngradeLines(records: readonly IdentityDowngradeEntry[
     ...records.flatMap(record => [`  Identity not kept: ${record.from} -> ${record.to} (git similarity ${record.similarity}%; ${REASON_TEXT[record.reason]}). `
       + `${record.facts} fact(s), ${record.links} link(s) and ${record.aliases} alias(es) stay on the soft-deleted ${record.old_slug}; `
       + `${record.new_slug ? `${record.new_slug} starts fresh.` : 'the new file did not import.'} The purge holds ${record.old_slug} until ${record.remedy.hold_releases}.`,
-    `    ${remedyAction(record)}: preview ${record.remedy.preview_argv.join(' ')}, then apply ${record.remedy.argv.join(' ')}`
+    `    ${remedyAction(record)}: preview ${commandText(record.remedy.preview_argv)}, then apply ${commandText(record.remedy.argv)}`
       + (record.restore_available === false ? '' : `; or keep ${record.old_slug} as its own page: ${identityRestoreArgv(record).join(' ')}`)]),
     '  A move keeps its page when the files share a frontmatter id: (or a unique slug: line or title); to move and rewrite a page, move, commit and sync, then edit.',
   ];

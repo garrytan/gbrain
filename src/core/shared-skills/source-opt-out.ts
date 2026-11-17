@@ -5,6 +5,7 @@ import { parseSourceConfig } from '../sources-load.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { migrationCheckpointKey, parkedReason, type SharedSourceMigration, type SharedSourceParked } from './migration.ts';
 import { SHARED_SKILLS_OPT_OUT_DOCS, sharedSkillSourcePolicyOrPreserve } from './setup-source-policy.ts';
+import { commandText } from '../brand.ts';
 
 export type SharedSkillsAction = 'on' | 'off' | 'status';
 
@@ -31,7 +32,7 @@ export function sharedSkillsNotFound(sourceId: string): OperationError {
 export function sharedSkillsRemoteRefusal(sourceId: string, action: SharedSkillsAction): OperationError {
   const argv = ['gbrain', 'sources', 'shared-skills', sourceId, action];
   return opError('trusted_local_only', `sources shared-skills runs only from the trusted local CLI on the brain host.`,
-    `Ask the brain host's operator to run \`${argv.join(' ')}\` on the brain host.`, {
+    `Ask the brain host's operator to run \`${commandText(argv)}\` on the brain host.`, {
       why: 'A source\'s shared-skills setting decides whether the host migration may write skills into that repository, so only the brain host can read or change it.',
       fix: { argv, consent: [], actor: 'host_admin', requires_exclusive: false, docs: SHARED_SKILLS_OPT_OUT_DOCS,
         why: 'Runs on the brain host, which owns the source configuration.', verify: { argv: statusArgv(sourceId) } },

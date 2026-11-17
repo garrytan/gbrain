@@ -36,6 +36,7 @@ import { OperationError, opError } from '../core/ops/contract.ts';
 import type { Action } from '../core/agent-output.ts';
 import { usageError } from '../cli/cli-error.ts';
 import { intFlagValue, numberFlagValue } from '../cli/flag-values.ts';
+import { commandText } from '../core/brand.ts';
 
 export interface RunAllOpts {
   help: boolean;
@@ -377,7 +378,7 @@ export async function runEvalRunAll(_engine: BrainEngine | null, args: string[])
   if (!opts.suitesExplicit) {
     process.stderr.write(
       `[eval run-all] running the wired suites (${WIRED_SUITES.join(', ')}). longmemeval and replay run through their own commands, once per mode:\n` +
-      Object.values(UNWIRED_SUITE_ARGV).map(argv => `[eval run-all]   ${argv.join(' ')}\n`).join(''),
+      Object.values(UNWIRED_SUITE_ARGV).map(argv => `[eval run-all]   ${commandText(argv)}\n`).join(''),
     );
   }
 

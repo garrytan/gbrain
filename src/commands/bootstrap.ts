@@ -112,6 +112,7 @@ import { verifyWorkspace, resolveVerifySourceId, deriveWorkspaceSourceId } from 
 import { auditWritebackContract, repairWritebackContract } from '../core/bootstrap/contract.ts';
 import { INSTALL_PIN } from '../core/install-ref.ts';
 import { OperationError } from '../core/ops/contract.ts';
+import { commandText } from '../core/brand.ts';
 
 export const BOOTSTRAP_HELP = `foresights bootstrap — paste-in agent install (Claude Code / Codex / opencode)
 
@@ -1468,7 +1469,7 @@ async function runHooks(
       if (res.code !== 0) {
         const already = /already exists|already registered/i.test(res.stderr + res.stdout);
         if (!already) {
-          console.error(`MCP registration failed (${argv.join(' ')}): ${res.stderr.trim() || `exit ${res.code}`}`);
+          console.error(`MCP registration failed (${commandText(argv)}): ${res.stderr.trim() || `exit ${res.code}`}`);
           return 1;
         }
         // [FIX7] "already registered" is NOT proof the registration is OURS.
@@ -1494,7 +1495,7 @@ async function runHooks(
           const rm = await runner(rmArgv);
           if (rm.code !== 0) {
             console.error(
-              `\`${rmArgv.join(' ')}\` failed (${rm.stderr.trim() || `exit ${rm.code}`}) — remove the stale ` +
+              `\`${commandText(rmArgv)}\` failed (${rm.stderr.trim() || `exit ${rm.code}`}) — remove the stale ` +
                 `registration by hand (\`${argv[0]} mcp get ${mcpName}\` shows where it lives), then re-run ` +
                 `\`foresights bootstrap hooks --harness ${harness} --repair\`.`,
             );
@@ -1502,7 +1503,7 @@ async function runHooks(
           }
           const re = await runner(surfaceFlag ? argv : buildArgvs(priorSurface === undefined ? 'full' : priorSurface, priorAdvertise)[0]);
           if (re.code !== 0 && !/already exists|already registered/i.test(re.stderr + re.stdout)) {
-            console.error(`MCP re-registration failed (${argv.join(' ')}): ${re.stderr.trim() || `exit ${re.code}`}`);
+            console.error(`MCP re-registration failed (${commandText(argv)}): ${re.stderr.trim() || `exit ${re.code}`}`);
             return 1;
           }
           // Re-add can itself return "already exists" if a racing writer

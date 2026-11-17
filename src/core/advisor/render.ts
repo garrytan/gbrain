@@ -7,6 +7,7 @@
  */
 
 import type { AdvisorFinding, AdvisorReport, AdvisorSeverity } from './types.ts';
+import { commandText } from '../brand.ts';
 
 const BAR = '='.repeat(72);
 
@@ -18,7 +19,7 @@ const SEV_LABEL: Record<AdvisorSeverity, string> = {
 
 function fixLine(f: AdvisorFinding): string | null {
   if (!f.fix.command_argv || f.fix.command_argv.length === 0) return null;
-  return f.fix.command_argv.join(' ');
+  return commandText(f.fix.command_argv);
 }
 
 /** Render a full advisor report as the agent-readable `=`-bar block. */

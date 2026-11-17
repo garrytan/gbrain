@@ -35,6 +35,7 @@ import type { Action } from '../../../core/agent-output.ts';
 import { doctorVerify } from '../check-fix.ts';
 import { conversationPaidSql, conversationTriedSql } from '../../../core/facts/conversation-memo.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { commandText } from '../../../core/brand.ts';
 
 export const UNLINKED_NEW_SHARE_WARN = 0.25;
 export const UNLINKED_NEW_MIN_FACTS = 20;
@@ -195,8 +196,8 @@ export function unlinkedFactsVerdict(stats: UnlinkedFactsStats | null, opts: { t
   const conversationHint = !c ? '' : c.fix === 'manual'
     ? ` ${c.pages} conversation page(s) in source ${c.source_id} (${c.slugs.join(', ')}) were re-extracted on their current content and free relink still could not resolve their facts with no entity; link each by hand (forget it and remember it again with --entity). Re-extraction is offered again when a page's content changes.`
     : c.fix === 'relink'
-      ? ` Conversation facts are derived from their page, so plain relink never examines them; link them for free (preview first): ${fix!.preview_argv!.join(' ')}. Facts it cannot resolve fall back to a paid re-extraction.`
-      : ` Free conversation relink could not resolve these conversation facts; re-extract instead (paid, preview first): ${fix!.preview_argv!.join(' ')}.`;
+      ? ` Conversation facts are derived from their page, so plain relink never examines them; link them for free (preview first): ${commandText(fix!.preview_argv!)}. Facts it cannot resolve fall back to a paid re-extraction.`
+      : ` Free conversation relink could not resolve these conversation facts; re-extract instead (paid, preview first): ${commandText(fix!.preview_argv!)}.`;
   return {
     status: warn ? 'warn' : 'ok',
     message: `${parts.join('; ')}${warn || w.unlinked > 0 ? `. ${warn ? `Over ${UNLINKED_NEW_SHARE_WARN * 100}% of new facts are unlinked; ` : ''}${hint}` : ''}${conversationHint}`,

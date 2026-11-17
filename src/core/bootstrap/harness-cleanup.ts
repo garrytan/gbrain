@@ -28,6 +28,7 @@ import { TOKEN_ID_RE } from '../token-mint.ts';
 import type { HarnessReceipt } from './format.ts';
 import { probeLivePgliteHolder } from './uninstall.ts';
 import type { resolveHarnessDeps } from './harness.ts';
+import { commandText } from '../brand.ts';
 
 type SkillsEntry = NonNullable<HarnessReceipt['shared_skills']>[number];
 type Deps = ReturnType<typeof resolveHarnessDeps>;
@@ -269,7 +270,7 @@ export function harnessCleanupFix(items: CleanupItem[], raw: readonly string[]):
     ...(!revokeStep && inputs ? { inputs } : {}),
     consent: [], actor: 'user', verify, docs: HARNESS_CLEANUP_DOCS, requires_exclusive: false,
     why: 'A re-run alone cannot finish this cleanup; the owner of the old credential acts first.',
-    user_message: `${blocked.map(item => item.user_message).join(' ')} Then re-run: ${rerun.argv.join(' ')}`,
+    user_message: `${blocked.map(item => item.user_message).join(' ')} Then re-run: ${commandText(rerun.argv)}`,
   };
 }
 

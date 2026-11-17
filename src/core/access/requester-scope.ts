@@ -29,6 +29,7 @@ import { createAuditWriter } from '../audit/audit-writer.ts';
 import { credentialScopeFields } from './token-binding.ts';
 import { stdioBindRoute } from './stdio-bind-route.ts';
 import { classifyPgAccessError } from '../pg-access-classify.ts';
+import { commandText } from '../brand.ts';
 
 /**
  * Read operations that read no page: the caller's own identity, the brain's identity and health, search mode names,
@@ -86,7 +87,7 @@ function why(policy: ServesPolicy): string {
 
 function alternatives(c: Connection): string {
   if (!c.optOut) return `On the brain host (foresights access member list names the members): ${c.route}`;
-  return `On the brain host, see what the connection reads with ${c.check!.join(' ')}, then bind it to the person it serves: ${c.argv.join(' ')} (foresights access member list names the members). `
+  return `On the brain host, see what the connection reads with ${commandText(c.check!)}, then bind it to the person it serves: ${commandText(c.argv)} (foresights access member list names the members). `
     + `A shared agent instead lists whom it may act for (--may-act-for <members>) and names the person on each call (X-Gbrain-On-Behalf-Of). `
     + `Last resort, for a team that shares everything: ${c.optOut.join(' ')} lets it read every page no rule restricts for whoever is asking.`;
 }
@@ -294,7 +295,7 @@ export async function printUnscopedReadsUpgradeNotice(engine: Pick<BrainEngine, 
       next: 'Relay the list below to the user. Each command runs on the brain host; MEMBER is the person the connection serves (foresights access member list names them). A team that shares everything may mark one connection with --reads-unscoped --yes on foresights auth rescope instead.',
       verify: 'foresights doctor --only unscoped_shared_reads --json',
     }).trimEnd());
-    for (const c of pending) console.log(`  ${c.connection}: ${c.state}${c.refuses_at ? ` until ${c.refuses_at}` : ''}. Fix: ${c.argv.join(' ')}`);
+    for (const c of pending) console.log(`  ${c.connection}: ${c.state}${c.refuses_at ? ` until ${c.refuses_at}` : ''}. Fix: ${commandText(c.argv)}`);
   } catch { /* cosmetic; never blocks the upgrade */ }
 }
 

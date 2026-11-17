@@ -10,6 +10,7 @@ import { compareVersions, hostWorkInspectArgv, hostWorkPendingForVersion } from 
 import type { CompletedMigrationEntry } from '../../../core/preferences.ts';
 import type { Check } from '../../doctor.ts';
 import { agentFix } from '../check-fix.ts';
+import { commandText } from '../../../core/brand.ts';
 
 export function migrationHostWorkCheck(history: Map<string, CompletedMigrationEntry[]>, declined: ReadonlySet<string>, hostWork: ReadonlySet<string>): Check | null {
   const versions = [...history.keys()].filter(v => !declined.has(v) && hostWork.has(v) && hostWorkPendingForVersion(v, history)).sort(compareVersions);
@@ -19,7 +20,7 @@ export function migrationHostWorkCheck(history: Map<string, CompletedMigrationEn
     name: 'minions_migration',
     status: 'warn',
     message: `Migration(s) ${versions.join(', ')} applied_pending_host_work: the checkpoint is recorded, but host publication or source setup is not done. `
-      + `Inspect each source's next step: ${argv.join(' ')}; once that work is done, \`foresights apply-migrations --yes\` records it.`,
+      + `Inspect each source's next step: ${commandText(argv)}; once that work is done, \`foresights apply-migrations --yes\` records it.`,
     fix: agentFix(argv, "Lists each source's pending host step (writer setup, publication) and its command; changes nothing.", 'minions_migration'),
     details: { code: 'migration_host_work_pending', applied_pending_host_work: versions },
   };

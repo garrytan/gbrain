@@ -11,6 +11,7 @@ import { readLastSyncAttempt, type SyncAttemptState } from '../../core/sync-atte
 import { classifyManagedSyncOrphans } from '../../core/persistence/managed-sync-orphans.ts';
 import { isOwnedContentSchemaMissing, staleOwnedContent } from '../../core/shared-skills/content-freshness.ts';
 import { agentFix, doctorVerify } from './check-fix.ts';
+import { commandText } from '../../core/brand.ts';
 
 export interface SyncOutcomeEntry {
   source_id: string;
@@ -58,7 +59,7 @@ export async function noSuccessfulSync(engine: BrainEngine, sourceId: string, di
     ? `no attempt recorded${attempt.unreadable ? ` (last attempt unreadable: ${attempt.unreadable})` : ''}`
     : `last attempt ${attempt.last_attempt_at ?? 'at an unknown time'}, result ${attempt.result ?? 'unknown'}, ${attempt.held} held`;
   const step = attempt.state === 'attempt_queued' ? 'wait for the queued sync' : attempt.state === 'holds_pending' ? `inspect holds with \`foresights sync status --source ${sourceId}\``
-    : `run \`${retry.argv!.join(' ')}\``;
+    : `run \`${commandText(retry.argv!)}\``;
   return {
     issue: `Source ${display}: no successful sync recorded; ${what}; ${step}`,
     entry: { source_id: sourceId, code: 'sync_no_successful_sync', reason: attempt.state, last_attempt_at: attempt.last_attempt_at, result: attempt.result,
@@ -77,7 +78,7 @@ function contentReceiptStale(sourceId: string, display: string): { issue: string
       + 'The preview checks the owner\'s tree against the recorded manifest and prints the apply command with its hash, or names what to fix first; writes nothing.',
     'sync_freshness', { docs: 'docs/guides/repair.md#content-receipt-root' });
   return {
-    issue: `Source ${display}: no successful sync recorded; it is a gbrain-owned content directory whose content receipt names an old root, so sync does not apply and doctor cannot exempt it; run \`${fix.argv!.join(' ')}\``,
+    issue: `Source ${display}: no successful sync recorded; it is a gbrain-owned content directory whose content receipt names an old root, so sync does not apply and doctor cannot exempt it; run \`${commandText(fix.argv!)}\``,
     entry: { source_id: sourceId, code: 'content_receipt_stale', reason: 'receipt_root_moved', last_attempt_at: null, result: null, held: 0, job_id: null, fix },
   };
 }
@@ -97,7 +98,7 @@ export async function stoppedConnectorIssues(engine: BrainEngine, sources: Array
     if (!failure?.stopped) continue;
     issues.set(source.id, { fail: !source.last_sync_at || new Date(source.last_sync_at).getTime() < failBeforeMs,
       issue: `Source '${source.id}' is STOPPED: its last ${failure.consecutive} connector syncs ended on ${failure.code}${failure.slug ? ` at ${failure.slug}` : ''} `
-        + `(last ${failure.at.slice(0, 16).replace('T', ' ')}), so nothing from it is imported; inspect with \`${failure.fix.argv!.join(' ')}\`` });
+        + `(last ${failure.at.slice(0, 16).replace('T', ' ')}), so nothing from it is imported; inspect with \`${commandText(failure.fix.argv!)}\`` });
   }
   return issues;
 }
@@ -114,5 +115,5 @@ export async function checkpointMovedFix(engine: BrainEngine, staleIds: string[]
   const fix = agentFix(['gbrain', 'repair', 'managed-sync-orphans', ...(ids.length === 1 ? ['--source', ids[0]!] : [])],
     `The unfinished sync of ${ids.join(', ')} can never checkpoint (its source's last_commit moved outside the run), so a plain sync stays blocked. The preview lists the cursor and prints the apply command with its hash; writes nothing.`,
     'sync_freshness', { docs: 'docs/guides/repair.md#managed-sync-orphans' });
-  return { fix, note: `. ${fix.why} Run \`${fix.argv!.join(' ')}\`` };
+  return { fix, note: `. ${fix.why} Run \`${commandText(fix.argv!)}\`` };
 }

@@ -26,6 +26,7 @@ import { ALL_SOURCES } from '../source-id.ts';
 import { outOfAttemptsHold, GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP, contentRepairArgv, fenceAutoRepairFor, gitHoldDocs, gitHoldFix, holdRepairSteps, type GitHoldCode, type GitHoldReason, type GitHoldRecord, type HoldRepairRoute } from './sync-holds.ts';
 import { fenceHoldLocation, fenceHoldRelay, type FenceAutoRepair, type FenceHoldLocation } from '../fence-repair/hold-fix.ts';
 import { COVERAGE_COUNT_CAP, type CoverageRelevance } from '../search/retrieval-coverage.ts';
+import { commandText } from '../brand.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
@@ -249,7 +250,7 @@ export function heldFilesNotice(coverage: HeldCoverage[], remote: boolean, could
     const preview = ['gbrain', 'embed', '--held', '--dry-run'];
     const fix: Action = remote
       ? { argv: preview, consent: [], actor: 'host_admin', requires_exclusive: false, why: 'Lists the held and capped large pages with the cost to finish embedding them; read-only.',
-        user_message: `Some large pages in your brain are waiting for embedding approval, so semantic search cannot find them. Please run '${preview.join(' ')}' on the brain host to see them and the cost to finish.` }
+        user_message: `Some large pages in your brain are waiting for embedding approval, so semantic search cannot find them. Please run '${commandText(preview)}' on the brain host to see them and the cost to finish.` }
       : { argv: preview, consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists the held and capped large pages with the cost to finish embedding them; read-only. Approving the spend is the user\'s call.' };
     return { code: 'held_files', kind: 'degraded', why: remote ? `${why} Only the brain host operator can approve embedding them.` : why, fix, ...escalation };
   }

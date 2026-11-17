@@ -31,6 +31,7 @@ import { MIN_ENTITY_PAGES_FOR_COVERAGE } from '../types.ts';
 import { ORPHANED_ALIAS_COUNTS_SQL, SOFT_DELETED_ALIAS_COUNT_SQL } from '../repair/aliases.ts';
 import { repairPreviewCommand } from '../repair/registry.ts';
 import { isMissingSchemaObject } from '../utils.ts';
+import { argvOfCommandText } from '../brand.ts';
 
 /** Shared shape returned by all four checks. */
 export interface OnboardCheckResult {
@@ -800,7 +801,7 @@ export async function checkDanglingAliases(
         `${n} alias rows point at missing/deleted pages ` +
         `(${slugAliases} slug redirects; ${pageAliases} free-text page aliases). ${orphanedText}${softText}`.trimEnd(),
       details: { orphaned, soft_deleted: soft },
-      ...(orphaned.length ? { fix: { argv: commands[0]!.split(' '), consent: [], actor: 'agent' as const, requires_exclusive: false,
+      ...(orphaned.length ? { fix: { argv: argvOfCommandText(commands[0]!), consent: [], actor: 'agent' as const, requires_exclusive: false,
         why: 'Lists the orphaned alias rows of that source without changing anything; its output prints the apply command.' } } : {}),
     },
     remediations: [],

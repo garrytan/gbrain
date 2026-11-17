@@ -50,6 +50,7 @@ import {
 import { registrationAdvertise, shellQuote } from '../core/mcp-registration.ts';
 import { cliRenderContext, renderNotice } from '../core/agent-output.ts';
 import { EXPOSE_FRICTION_REASONS, hostedOptionLine, hostedOptionMuted, hostedOptionNotice } from '../core/onboard/hosted-option.ts';
+import { commandText } from '../core/brand.ts';
 
 export const MCP_EXPOSE_HELP = `foresights mcp expose — publish the MCP server on your Tailscale tailnet and keep it running
 
@@ -571,10 +572,10 @@ async function rollbackAfterThrow(d: Resolved, s: Session, opts: ExposeOptions, 
       : !re?.view ? 'state unknown (off exited 0 but tailscale serve status could not be re-read; run `tailscale serve status`)'
         : findProxiedHandler(re.view, opts.port) ? 'NOT turned off (off exited 0 but the handler is still present; run `tailscale serve status`)'
           : 'turned off again';
-    s.check('rollback', outcome === 'turned off again' ? 'ok' : 'warn', `tailscale ${offArgv.join(' ')}: ${outcome}; no receipt written`);
+    s.check('rollback', outcome === 'turned off again' ? 'ok' : 'warn', `tailscale ${commandText(offArgv)}: ${outcome}; no receipt written`);
   } catch (offError) {
     outcome = `NOT turned off (${offError instanceof Error ? offError.message : String(offError)}; run \`tailscale serve status\`)`;
-    s.check('rollback', 'warn', `tailscale ${offArgv.join(' ')}: ${outcome}; no receipt written`);
+    s.check('rollback', 'warn', `tailscale ${commandText(offArgv)}: ${outcome}; no receipt written`);
   }
   return new Error(`${message} — the tailscale handler published by this run was ${outcome}; no receipt written`);
 }
@@ -852,8 +853,8 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
       const re = r?.status === 0 ? await readServeView(d, binary!) : null;
       const restored = re?.view ? findProxiedHandler(re.view, opts.port)?.funnel === true : false;
       return restored
-        ? `; the previous funnel handler was restored (tailscale ${argv.join(' ')}) and the existing receipt kept`
-        : `; the previous funnel handler could NOT be restored (tailscale ${argv.join(' ')}: ${r ? `exit ${r.status ?? 'null'}` : 'runner threw'}) — run \`tailscale serve status\`; the existing receipt was kept`;
+        ? `; the previous funnel handler was restored (tailscale ${commandText(argv)}) and the existing receipt kept`
+        : `; the previous funnel handler could NOT be restored (tailscale ${commandText(argv)}: ${r ? `exit ${r.status ?? 'null'}` : 'runner threw'}) — run \`tailscale serve status\`; the existing receipt was kept`;
     };
     const publishArgv = tailscaleServeArgv(opts.port, { funnel: opts.funnel });
     const pub = await d.run([binary, ...publishArgv], { timeoutMs: PUBLISH_TIMEOUT_MS });
@@ -862,9 +863,9 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
       if (pub.status === null) {
         // Killed at the deadline: most likely the CLI was waiting for an
         // enablement step the pre-checks could not see. Say so, never guess.
-        const hint = `\`tailscale ${publishArgv.join(' ')}\` did not finish within ${PUBLISH_TIMEOUT_MS / 1000}s (it may be waiting for you to enable a feature). Run it by hand to see what it prints, then re-run: ${rerun}`;
+        const hint = `\`tailscale ${commandText(publishArgv)}\` did not finish within ${PUBLISH_TIMEOUT_MS / 1000}s (it may be waiting for you to enable a feature). Run it by hand to see what it prints, then re-run: ${rerun}`;
         s.check('tailscale.publish', 'fail', `unknown: timed out after ${PUBLISH_TIMEOUT_MS / 1000}s${restored}`);
-        s.nextActions.push(`tailscale ${publishArgv.join(' ')}`);
+        s.nextActions.push(`tailscale ${commandText(publishArgv)}`);
         return s.finish('error', 1, { reason: 'tailscale_unknown', message: hint });
       }
       const cls = classifyTailscaleError(pub.stderr || pub.stdout, { platform: d.platform, user: d.user });
@@ -877,7 +878,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
     const confirmed = afterRead.view ? findProxiedHandler(afterRead.view, opts.port) : null;
     if (!confirmed) {
       const why = afterRead.view ? `serve status shows no / handler for port ${opts.port}` : describeServeReadFailure(d, afterRead).detail;
-      s.check('tailscale.publish', 'fail', `tailscale ${publishArgv.join(' ')} exited 0 but ${why}${await restorePrevious()}`);
+      s.check('tailscale.publish', 'fail', `tailscale ${commandText(publishArgv)} exited 0 but ${why}${await restorePrevious()}`);
       s.nextActions.push('tailscale serve status', 'foresights mcp expose --remove --yes');
       return s.finish('error', 1, { reason: 'tailscale_publish_unconfirmed', message: `Tailscale accepted the command but ${afterRead.view ? 'does not show the handler' : 'its serve status could not be read afterwards'}. Run \`tailscale serve status\` to inspect; \`foresights mcp expose --remove --yes\` clears a handler for port ${opts.port} without a receipt (add --force when no wrapper or service of foresights's is on this host yet).` });
     }

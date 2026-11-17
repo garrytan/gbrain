@@ -24,6 +24,7 @@ import type { Action } from './agent-output.ts';
 import { agentBlock } from './agent-markers.ts';
 import { managedPersistenceEnabled } from './persistence/ownership.ts';
 import type { SqlEngine } from './persistence/model.ts';
+import { commandText } from './brand.ts';
 
 /** Default clone dir for a remote-URL source: $GBRAIN_HOME/clones/<id>/ */
 export function defaultCloneDir(id: string): string {
@@ -133,12 +134,12 @@ export async function urlClonePullBlock(engine: SqlEngine, sourceId: string): Pr
 
 /** The cycle's sync-phase summary for a pull an owned clone's local changes blocked. */
 export function urlClonePullBlockSummary(block: UrlClonePullBlock): string {
-  return `git pull blocked (${block.code}): ${block.paths.length} file(s) of the clone have local changes; ask the user, then preview ${block.fix.argv!.join(' ')}`;
+  return `git pull blocked (${block.code}): ${block.paths.length} file(s) of the clone have local changes; ask the user, then preview ${commandText(block.fix.argv!)}`;
 }
 
 /** The stderr lines sync prints for a pull an owned clone's local changes blocked. */
 export function formatUrlClonePullBlock(block: UrlClonePullBlock): string {
-  const preview = block.fix.argv!.join(' ');
+  const preview = commandText(block.fix.argv!);
   return `[foresights] ${block.code}: ${block.message}\n` + agentBlock({
     ask: block.fix.user_message,
     why: block.fix.why,
@@ -148,6 +149,6 @@ export function formatUrlClonePullBlock(block: UrlClonePullBlock): string {
     next: 'ask_user',
     if_yes: `Run ${preview}, then the apply command it prints (--apply --expect <hash> --yes), then foresights sync --source ${block.source_id}.`,
     if_no: 'Every sync of this source keeps stopping at the pull; its pages stay at the last pulled commit.',
-    verify: block.fix.verify!.argv!.join(' '),
+    verify: commandText(block.fix.verify!.argv!),
   });
 }

@@ -17,6 +17,7 @@ import type { Action, Transport } from '../agent-output.ts';
 import { ERROR_CATALOGUE } from '../error-catalogue.ts';
 import { splitProviderModelId } from '../model-id.ts';
 import type { BudgetKind } from './reservation-cost.ts';
+import { commandText } from '../brand.ts';
 
 export interface NoPricingGuidance {
   /** Stable wire code. */
@@ -51,7 +52,7 @@ export function pricingSetArgv(modelId: string, kind: BudgetKind): string[] {
 
 /** The registration command for one model, in the units its kind bills. */
 export function pricingSetCommand(modelId: string, kind: BudgetKind): string {
-  return pricingSetArgv(modelId, kind).map((a, i) => (i === 3 ? shellArg(a) : a)).join(' ');
+  return commandText(pricingSetArgv(modelId, kind).map((a, i) => (i === 3 ? shellArg(a) : a)));
 }
 
 export function noPricingGuidance(modelId: string, kind: BudgetKind): NoPricingGuidance {

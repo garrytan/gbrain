@@ -313,7 +313,7 @@ export function _setPromptReaderForTest(fn: PromptReader | null): void {
 export type UpgradeRunner = () => void;
 
 function defaultRunUpgrade(): void {
-  execSync('foresights upgrade', { stdio: 'inherit' });
+  execSync('gbrain upgrade', { stdio: 'inherit' });
 }
 
 let _upgradeRunner: UpgradeRunner = defaultRunUpgrade;

@@ -85,7 +85,7 @@ describe('foresights setup openclaw --wakeshift', () => {
     expect(code).not.toBe(0);
     expect(ran).toEqual([]);
     expect(err).toContain('openclaw_not_found');
-    expect(err).toContain('Fix: gbrain setup openclaw --wakeshift');
+    expect(err).toContain('Fix: foresights setup openclaw --wakeshift');
   });
 
   test('--dry-run lists the commands and runs nothing; a failed install exits 1 and stops before enable', async () => {

@@ -47,6 +47,7 @@ import { claimColumns } from '../facts/typed-claim.ts';
 import {
   addTrustAllowRule, getTrustAllowRule, normalizeTrustAllowRule, parseAllowRuleRef, principalLabel, removeTrustAllowRule, type TrustAllowRule,
 } from './allow-rules.ts';
+import { commandText } from '../brand.ts';
 
 export const OWNER_ACTIONS = ['confirm', 'drop', 'release', 'revert', 'allow', 'allow_remove', 'disable', 'enable'] as const;
 export type OwnerActionName = typeof OWNER_ACTIONS[number];
@@ -460,7 +461,7 @@ export async function previewOwnerAction(engine: BrainEngine, input: OwnerAction
 /** DX-3: the fix an owner action emits when it needs the user. Tier-raising actions never carry --yes and are never `run`. */
 export function ownerActionFix(preview: OwnerActionPreview) {
   return tierRaiseFix(preview.command, `${preview.summary}. Only the owner can do this, in an interactive terminal on the brain host.`,
-    `Run on the brain host, in a terminal: ${preview.command.join(' ')}`);
+    `Run on the brain host, in a terminal: ${commandText(preview.command)}`);
 }
 
 // ---------------------------------------------------------------------------

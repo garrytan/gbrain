@@ -23,6 +23,7 @@ import { reservationCostUsd } from './budget/reservation-cost.ts';
 import { estimateCostFromChars, lookupEmbeddingPrice } from './embedding-pricing.ts';
 import { DEFAULT_CHARS_PER_TOKEN } from './ai/embed-batch-plan.ts';
 import { getRecipe } from './ai/recipes/index.ts';
+import { commandText } from './brand.ts';
 
 /** Price assumed for a model with no known rate (the conservative OpenAI large rate). */
 export const UNPRICED_RATE_PER_MTOK = 0.13;
@@ -102,7 +103,7 @@ export function heldApproveAction(target: HeldTarget, free: boolean): Action {
 
 /** The rendered shell command of an Action (routing pinned, as every printed fix is). */
 export function renderedCommand(action: Action, ctx: RenderContext = cliRenderContext()): string {
-  return renderAction(action, ctx).command ?? action.argv!.join(' ');
+  return renderAction(action, ctx).command ?? commandText(action.argv!);
 }
 
 /**

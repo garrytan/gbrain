@@ -63,6 +63,7 @@ import { INJECTION_PATTERNS } from '../../core/think/sanitize.ts';
 import { formatTrajectoryBlock } from '../../core/trajectory-format.ts';
 import type { ThinkLLMClient } from '../../core/think/index.ts';
 import type { ChunkInput } from '../../core/types.ts';
+import { commandText } from '../../core/brand.ts';
 
 /** The ONE token rule: no provider tokenizer exists in the repo, so every lane counts `ceil(chars / 3)`. */
 export const CALL_PLAN_CHARS_PER_TOKEN = 3;
@@ -109,7 +110,7 @@ export function gateCommand(args: readonly string[]): string {
     if (a.startsWith('--call-plan=') || a.startsWith('--call-plan-gate=')) continue;
     kept.push(a);
   }
-  return ['gbrain', 'eval', 'longmemeval', ...kept.map(shellQuote)].join(' ');
+  return commandText(['gbrain', 'eval', 'longmemeval', ...kept.map(shellQuote)]);
 }
 
 export class CallPlanRefusal extends Error {

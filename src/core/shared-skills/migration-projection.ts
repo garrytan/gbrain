@@ -9,6 +9,7 @@ import { parseTakesFence } from '../takes-fence.ts';
 import { takesPreparation } from '../takes-write.ts';
 import { buildTakeRows } from '../batch-rows.ts';
 import { deriveResolutionTuple } from '../takes-resolution.ts';
+import { commandText } from '../brand.ts';
 
 type Row = Record<string, unknown>;
 
@@ -37,7 +38,7 @@ function compileForExport(page: ParsedMarkdown, sourceId: string): void {
   } catch (error) {
     if (!(error instanceof OperationError) || error.canonicalCode !== 'invalid_fence') throw error;
     const argv = ['gbrain', 'repair', 'fences', '--source', sourceId, '--slug', page.slug];
-    error.suggestion = `Page ${page.slug} in source ${sourceId} was not exported: the fence the message names does not parse. Preview its repair with ${argv.join(' ')} `
+    error.suggestion = `Page ${page.slug} in source ${sourceId} was not exported: the fence the message names does not parse. Preview its repair with ${commandText(argv)} `
       + '(read-only; it names the exact edit when foresights will not repair it), apply the plan it prints, then preview the export again.';
     error.fix = readFix(`Previews the fence repair of ${page.slug}, read-only, with the apply command.`, { argv });
     throw error;
