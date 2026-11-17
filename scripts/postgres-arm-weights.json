@@ -505,6 +505,7 @@
   "test/purge-root-metafile-7613.test.ts": 13254,
   "test/purge-scrub-followups-9068.test.ts": 9315,
   "test/purge-sync-tombstone-hold-7130.test.ts": 50265,
+  "test/purged-change-reasons-repair-gst2886.test.ts": 15032,
   "test/qm-attest-write-boundary.test.ts": 7200,
   "test/qm-memory-propose.test.ts": 19584,
   "test/qm-memory-tools.test.ts": 32903,
