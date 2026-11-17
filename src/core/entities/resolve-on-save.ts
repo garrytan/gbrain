@@ -73,26 +73,21 @@ function isAbortError(err: unknown): boolean {
  *
  * Unresolved references keep the fact unparented. Ordinary resolver failures
  * increment resolution_errors. Abort and BudgetExhausted propagate.
- * `sources`, when given, receives each fact's resolution source by index
- * (null for a fact with no entity, an unresolved one or a resolver error).
  */
 export async function resolveExtractedEntitiesForSave(
   engine: BrainEngine,
   sourceId: string,
   facts: ExtractedFact[],
   onError?: (raw: string, message: string) => void,
-  sources?: Array<ResolutionSource | null>,
 ): Promise<SaveTimeResolutionCounts> {
   const stats = emptySaveTimeResolutionCounts();
   for (let i = 0; i < facts.length; i++) {
-    if (sources) sources[i] = null;
     const raw = facts[i].entity_slug;
     if (raw === null) continue;
     try {
       const resolved = await resolveEntitySlugWithSource(engine, sourceId, raw);
       facts[i] = { ...facts[i], entity_slug: resolved?.source === 'fallback_slugify' ? null : resolved?.slug ?? null };
       if (!resolved) continue;
-      if (sources) sources[i] = resolved.source;
       stats.counts[resolved.source] = (stats.counts[resolved.source] ?? 0) + 1;
       if (resolved.source === 'fallback_slugify') {
         stats.fallback_slugify_count++;

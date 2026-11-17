@@ -135,7 +135,7 @@ describe('through extract-conversation-facts', () => {
     return { seen, result, rows };
   }
 
-  test('the main call stays slot-free; the tagging call sees only the exactly named person fact, never a prefix or basename match; its slot is stored', async () => {
+  test('the main call stays slot-free; the tagging call sees the person facts named by slug or in full, never a prefix guess; the slot is stored', async () => {
     const { seen, rows, result } = await run('conversations/2026-03-10/slot-tag-ok', 'Alice Example joined Acme Example as head of design.', () => reply('{"slots":[{"i":1,"dimension":"role","value":"head of design"}]}'));
     const main = seen.filter(o => o.system !== SLOT_TAG_SYSTEM);
     const tags = seen.filter(o => o.system === SLOT_TAG_SYSTEM);
@@ -145,7 +145,8 @@ describe('through extract-conversation-facts', () => {
       expect(JSON.stringify(o.responseSchema ?? null)).not.toContain('slot');
     }
     expect(tags).toHaveLength(1);
-    expect(tags[0]!.messages).toEqual([{ role: 'user', content: '1. [Alice Example] Alice Example joined Acme Example as head of design.' }]);
+    expect(tags[0]!.messages).toEqual([{ role: 'user', content:
+      '1. [Alice Example] Alice Example joined Acme Example as head of design.\n2. [Alice Example] Alice Example works from a studio in Lisbon.' }]);
     expect(rows.filter(r => r.fact.endsWith('Lisbon.')).map(r => [r.fact, r.entity_slug, r.dimension])).toEqual([
       ['Alice moved to Lisbon.', ALICE, null], ['Alice Example works from a studio in Lisbon.', ALICE, null]]);
     expect(rows.filter(r => r.dimension)).toEqual([{ fact: 'Alice Example joined Acme Example as head of design.', entity_slug: ALICE, dimension: 'role', value: 'head of design' }]);
