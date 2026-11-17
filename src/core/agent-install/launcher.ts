@@ -1,9 +1,13 @@
+import { dirname } from 'node:path';
 import { shellQuote } from '../mcp-registration.ts';
 import { AGENT_ENV_SHELL_PATTERN } from './environment.ts';
 
 /** Shared by local PGLite and hosted thin-client installs. No shell profiles or cwd routing. */
 export function renderAgentLauncher(p: { root: string; bunPath: string; cliPath?: string; sourceId?: string; repairHint?: string; mode?: 'local' | 'thin-client' }): string {
   const missing = `! -x ${shellQuote(p.bunPath)}` + (p.cliPath ? ` || ! -f ${shellQuote(p.cliPath)}` : '');
+  const treeDir = p.cliPath ? dirname(dirname(p.cliPath)) : undefined;
+  const depsMissing = p.mode === 'thin-client' && treeDir ? `! -f ${shellQuote(`${treeDir}/node_modules/js-yaml/package.json`)}` : undefined;
+  const depsMessage = treeDir ? `GBrain thin-client dependencies are missing; run \`${shellQuote(p.bunPath)} install --frozen-lockfile --ignore-scripts\` in ${shellQuote(treeDir)}` : '';
   const invocation = shellQuote(p.bunPath) + (p.cliPath ? ` --no-env-file ${shellQuote(p.cliPath)}` : '');
   const repair = p.repairHint ?? 'Restore the runtime used by this launcher, then repeat this installation.';
   const routing = p.mode === 'thin-client'
@@ -27,6 +31,10 @@ if [[ ${missing} ]]; then
   printf '%s\\n' ${shellQuote(`GBrain runtime is missing. ${repair}`)} >&2
   exit 1
 fi
-exec ${invocation}${brainArg} "$@"
+${depsMissing ? `if [[ ${depsMissing} ]]; then
+  printf '%s\\n' ${shellQuote(depsMessage)} >&2
+  exit 1
+fi
+` : ''}exec ${invocation}${brainArg} "$@"
 `;
 }
