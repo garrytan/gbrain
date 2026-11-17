@@ -25,10 +25,10 @@
  * (#7010; the owner's Git effects publish this way). CLI-only; never exposed
  * over MCP (it pushes with host credentials).
  */
-import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { rangeSecretRefusal, scanRange } from './range-secret-scan.ts';
-import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { literalPathspecs } from '../git-env.ts';
 import { git, gitOk, type GitRun } from './git-run.ts';
 export type { SkippedPath } from './skipped-paths.ts';
@@ -40,8 +40,9 @@ import { acquireNativeLock, acquireNativeLockSync, type NativeLockSyncHandle } f
 import { recordCommit, recordIntent } from './commit-ledger.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { shellQuote, type Action } from '../agent-output.ts';
-import { isSyncable, resolveSlugForPath } from '../sync.ts';
-import { isDeclaredDbOnlySlug, storageConfigFromYaml, unresolvedDbOnlyIn, type StorageConfig } from '../storage-config.ts';
+import { isSyncable } from '../sync.ts';
+import { untrackAdmitted, untrackTargets, type UntrackPageVerdict } from './untrack-admission.ts';
+export { untrackAdmitted, untrackPageCandidates } from './untrack-admission.ts';
 
 export const COMMIT_LOCK_NAME = 'brain-commit.lock';
 /** Taken by pre-#6530 helpers and hooks; held too so they still exclude us during the mixed-version window. */
@@ -134,6 +135,8 @@ export interface CommitPushOptions {
   pending?: boolean;
   /** `--untrack` (#7753): remove the named paths from Git and the index, keeping the files on disk. */
   untrack?: boolean;
+  /** GST-2964: what the brain says about the code-extension files an untrack in a managed canonical worktree names (read by src/commands/git.ts); absent, they refuse. */
+  untrackPages?: UntrackPageVerdict;
   /** Commit and publish files outside the configured source root(s): the user's explicit choice, or gbrain's own scaffolding at the checkout root. */
   allowOutsideSourceRoot?: boolean;
   /** `--base <path>=<blob>`: the blob (or `absent`) each named path had at HEAD when the writer read it; a moved one refuses `commit_base_moved`. */
@@ -409,7 +412,7 @@ function restoreIndex(root: string, rel: string[], before: string[], flagged: st
  * `untrack`: commit the removal of the named paths instead (#7753); `db_only` (GST-2519, a managed canonical worktree)
  * admits only files under a storage.db_only dir HEAD's gbrain.yml declares (untrackAdmitted).
  */
-interface CommitScope { roots: string[]; lockPath: string; markHeld: boolean; bases?: ReadonlyMap<string, string>; untrack?: 'any' | { dbOnly: ManagedFilesystemRoot } }
+interface CommitScope { roots: string[]; lockPath: string; markHeld: boolean; bases?: ReadonlyMap<string, string>; untrack?: 'any' | { dbOnly: ManagedFilesystemRoot; pages?: UntrackPageVerdict } }
 
 /** A named path `git add -A` left out of the index while still exiting 0 (GST-2116). */
 
@@ -606,101 +609,6 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
   return { sha, skipped: unstagedPaths(root, landed.paths, landed.listed, dirtyBefore, sha) };
 }
 
-/** #7753: the files HEAD holds under each of `rel`; a named path HEAD holds nothing under is refused before anything changes. */
-function untrackTargets(root: string, rel: string[]): string[] {
-  const out = new Set<string>();
-  for (const path of rel) {
-    const held = git(root, ['ls-tree', '-r', '--name-only', '-z', 'HEAD', '--', ...literalPathspecs([path])]).stdout.split('\0').filter(Boolean);
-    if (!held.length) {
-      throw opError('commit_paths_invalid', `${path} is not tracked: the last commit holds no file there, so nothing was untracked.`,
-        'Name files or directories the branch\'s last commit holds (git ls-tree -r --name-only HEAD -- <path> lists them).', { detail: path });
-    }
-    for (const file of held) out.add(file);
-  }
-  const sparse = git(root, ['ls-files', '-v', '-z', '--', ...literalPathspecs([...out])]).stdout.split('\0').filter(entry => /^[sS] /.test(entry)).map(entry => entry.slice(2));
-  if (sparse.length) {
-    const list = `${sparse.slice(0, 10).join(', ')}${sparse.length > 10 ? ', ...' : ''}`;
-    throw opError('commit_paths_invalid', `${sparse.length} file(s) to untrack are marked skip-worktree, so git rm --cached would refuse them: ${list}. Nothing was untracked.`,
-      `They sit outside of your sparse-checkout definition (or carry the skip-worktree bit). Widen the sparse checkout (git sparse-checkout add <dir>) or clear the bit (git update-index --no-skip-worktree -- <path>), then rerun.`,
-      { detail: JSON.stringify({ paths: sparse }) });
-  }
-  return [...out];
-}
-
-/**
- * GST-2519: the files an untrack in a managed canonical worktree would remove, each under a storage.db_only dir that
- * gbrain.yml at HEAD and on disk declares (the database row is canonical there, so sync keeps the page when its file
- * leaves Git) and ignored by .gitignore (so no later commit adds it back). GST-2964: a file is matched by its path under
- * the declared dir, whatever its extension; a file sync may import as a page (Markdown, code) also needs its slug under a
- * declared dir, since sync keeps a page by slug. A tracked symlink pointing out of the dir, or a file reached through a
- * symlinked directory on disk, is refused. Anything else refuses `untrack_not_db_only` before the index is touched:
- * untracking any other page file would delete that page at the next sync.
- */
-export function untrackAdmitted(root: string, rel: string[], managed: ManagedFilesystemRoot): string[] {
-  const files = untrackTargets(root, rel);
-  const base = relative(root, managed.root).split(sep).join('/');
-  const prefix = base && !base.startsWith('..') ? `${base}/` : '';
-  const yml = git(root, ['show', `HEAD:${prefix}gbrain.yml`]);
-  let disk: string | null = null;
-  try { disk = readFileSync(join(managed.root, 'gbrain.yml'), 'utf8'); } catch { disk = null; }
-  const config = (text: string | null, label: string): StorageConfig | null => {
-    if (text === null) return null;
-    try {
-      const parsed = storageConfigFromYaml(text, label);
-      return parsed && !unresolvedDbOnlyIn(text, parsed) ? parsed : null;
-    } catch { return null; }
-  };
-  const committed = config(yml.code === 0 ? yml.stdout : null, `HEAD:${prefix}gbrain.yml`), onDisk = config(disk, join(managed.root, 'gbrain.yml'));
-  const declaredDir = (path: string) => committed?.db_only.find(dir => isDeclaredDbOnlySlug(path.toLowerCase(), { ...committed, db_only: [dir] }));
-  const declared = (path: string) => isDeclaredDbOnlySlug(path.toLowerCase(), committed) && isDeclaredDbOnlySlug(path.toLowerCase(), onDisk);
-  const ignored = new Set(git(root, ['check-ignore', '--no-index', '-z', '--stdin'], { input: files.map(f => `${f}\0`).join('') }).stdout.split('\0').filter(Boolean));
-  const links = new Map(git(root, ['ls-tree', '-r', '-z', 'HEAD', '--', ...literalPathspecs(rel)]).stdout.split('\0').filter(Boolean)
-    .map(entry => /^(\d+) \w+ ([0-9a-f]+)\t([\s\S]*)$/.exec(entry)).filter(m => m?.[1] === '120000').map(m => [m![3]!, m![2]!] as const));
-  const escapes = (file: string, dir: string): boolean => {
-    const parts = file.split('/');
-    for (let i = 1; i < parts.length; i++) {
-      try { if (lstatSync(join(root, ...parts.slice(0, i))).isSymbolicLink()) return true; } catch { break; }
-    }
-    const oid = links.get(file);
-    if (!oid) return false;
-    const target = git(root, ['cat-file', 'blob', oid]).stdout;
-    const resolved = posix.normalize(posix.join(posix.dirname(file.slice(prefix.length)), target));
-    return posix.isAbsolute(target) || !resolved.toLowerCase().startsWith(dir.toLowerCase());
-  };
-  const pageKind = (path: string) => isSyncable(path, { strategy: 'markdown', includeHidden: ['**'], metafilePage: () => true });
-  const refusals: Record<'undeclared' | 'unignored' | 'link' | 'slug', string[]> = { undeclared: [], unignored: [], link: [], slug: [] };
-  const slugs = new Map<string, string>();
-  for (const file of files) {
-    const path = file.slice(prefix.length);
-    const dir = file.startsWith(prefix) && declared(path) ? declaredDir(path) : undefined;
-    if (!dir) { refusals.undeclared.push(file); continue; }
-    if (escapes(file, dir)) { refusals.link.push(file); continue; }
-    if (!ignored.has(file)) { refusals.unignored.push(file); continue; }
-    if (!pageKind(path)) continue;
-    const slug = resolveSlugForPath(path);
-    if (!isDeclaredDbOnlySlug(slug, committed) || !isDeclaredDbOnlySlug(slug, onDisk)) { refusals.slug.push(file); slugs.set(file, slug); }
-  }
-  const refused = files.filter(file => Object.values(refusals).some(list => list.includes(file)));
-  if (!refused.length) return files;
-  const list = (paths: string[], label = (p: string) => p) => `${paths.slice(0, 10).map(label).join(', ')}${paths.length > 10 ? ', ...' : ''}`;
-  const slugDirs = [...new Set([...slugs.values()].filter(slug => slug.includes('/')).map(slug => `${posix.dirname(slug)}/`))];
-  const groups: Array<[string[], string, string]> = [
-    [refusals.undeclared, 'not under a storage.db_only dir that gbrain.yml declares both at HEAD and on disk',
-      'Declare the folder first: add it under storage.db_only in gbrain.yml and its <dir>/ line to .gitignore, commit both (gbrain git commit-push -m <msg> -- gbrain.yml .gitignore), then rerun the untrack.'],
-    [refusals.unignored, 'under a declared storage.db_only dir that .gitignore does not ignore',
-      'Add the folder\'s <dir>/ line to .gitignore and commit it (gbrain git commit-push -m <msg> -- .gitignore), then rerun the untrack.'],
-    [refusals.link, 'symbolic links pointing out of the declared dir, or reached through a symbolic link on disk',
-      'Untrack only real files inside the folder: a symbolic link that leaves it, or a folder reached through a symbolic link, is refused; name the other files, or replace the link with the file it points to.'],
-    [refusals.slug, 'page files whose page slug, which sync keeps a page by, falls outside the declared dir',
-      slugDirs.length ? `Declare the slug spelling too: add ${slugDirs.join(', ')} under storage.db_only in gbrain.yml and commit it (gbrain git commit-push -m <msg> -- gbrain.yml), then rerun the untrack.`
-        : 'These files are pages whose slug has no folder (a code file on a code or auto strategy source), so they cannot leave Git as database-only; untrack the folder\'s other files by name.'],
-  ];
-  const hit = groups.filter(([paths]) => paths.length);
-  throw opError('untrack_not_db_only', `${root} is the managed canonical worktree${managed.sourceId ? ` of source ${managed.sourceId}` : ''}, and ${refused.length} file(s) to untrack cannot leave Git as database-only: ${hit.map(([paths, why]) => `${why}: ${list(paths, p => slugs.has(p) ? `${p} (slug ${slugs.get(p)})` : p)}`).join('; ')}. Nothing was untracked.`,
-    hit.map(([, , fix]) => fix).join(' '),
-    { detail: JSON.stringify({ paths: refused }), docs: 'docs/guides/shared-checkout-git.md#untrack' });
-}
-
 /** The source roots a dry run checks paths against; a managed canonical worktree refuses --allow-outside-source-root as its real run does. */
 function previewRoots(root: string, allowOutsideSourceRoot?: boolean): { managed: ManagedFilesystemRoot | null; roots: string[] } {
   const managed = managedFilesystemRootFor(root);
@@ -742,11 +650,11 @@ export function previewPaths(root: string, rel: string[], opts: { allowOutsideSo
  * `--dry-run --untrack`: the real run's path checks (source roots, the files HEAD holds, and in a managed canonical
  * worktree the storage.db_only admission) with no lock taken and nothing written; each refusal is the real run's.
  */
-export function previewUntrack(root: string, rel: string[], opts: { allowOutsideSourceRoot?: boolean } = {}): string[] {
+export function previewUntrack(root: string, rel: string[], opts: { allowOutsideSourceRoot?: boolean; untrackPages?: UntrackPageVerdict } = {}): string[] {
   const { managed, roots } = previewRoots(root, opts.allowOutsideSourceRoot);
   const outside = rel.filter(p => !insideSourceRoots(p, roots));
   if (outside.length) throw outsideRootError(root, roots, outside, 'Refusing to commit');
-  return managed ? untrackAdmitted(root, rel, managed) : untrackTargets(root, rel);
+  return managed ? untrackAdmitted(root, rel, managed, opts.untrackPages) : untrackTargets(root, rel);
 }
 
 /**
@@ -757,7 +665,7 @@ export function previewUntrack(root: string, rel: string[], opts: { allowOutside
  * published, and the index is restored.
  */
 function untrackPaths(root: string, rel: string[], message: string, scope: CommitScope, before: string[], flagged: string[]): string {
-  const removed = scope.untrack === 'any' || !scope.untrack ? untrackTargets(root, rel) : untrackAdmitted(root, rel, scope.untrack.dbOnly);
+  const removed = scope.untrack === 'any' || !scope.untrack ? untrackTargets(root, rel) : untrackAdmitted(root, rel, scope.untrack.dbOnly, scope.untrack.pages);
   const parent = gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
   const rm = withIndexRetry(root, ['rm', '--cached', '-r', '-q', '--ignore-unmatch', '--', ...literalPathspecs(rel)], 'git rm --cached');
   if (rm.code !== 0) {
@@ -1498,7 +1406,7 @@ function commitPathsOnly(root: string, opts: CommitPushOptions, where: string, r
   try {
     assertNoOperationInProgress(root);
     commit = commitPaths(root, rel, opts.message.trim(), { roots, lockPath: lock.lockPath, markHeld: true, bases: scopeBases(root, opts, rel),
-      ...(opts.untrack ? { untrack: managed ? { dbOnly: managed } : 'any' as const } : {}) });
+      ...(opts.untrack ? { untrack: managed ? { dbOnly: managed, pages: opts.untrackPages } : 'any' as const } : {}) });
   } finally {
     lock.release();
   }
@@ -1536,7 +1444,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
     try {
       assertNoOperationInProgress(root);
       if (rel.length) ({ sha: committed, skipped } = commitPaths(root, rel, opts.message!.trim(), { roots: opts.allowOutsideSourceRoot ? [''] : roots, lockPath: lock.lockPath, markHeld: true, bases: scopeBases(root, opts, rel),
-        ...(opts.untrack ? { untrack: managed ? { dbOnly: managed } : 'any' as const } : {}) }));
+        ...(opts.untrack ? { untrack: managed ? { dbOnly: managed, pages: opts.untrackPages } : 'any' as const } : {}) }));
       settlePending(root);
     } finally {
       lock.release();

@@ -293,12 +293,29 @@ hook changed is taken back). A path the last commit holds nothing under, or a fi
 
 In a managed canonical worktree (the checkout gbrain's persistence owner writes), untracking a page file would
 make the next sync delete that page, so `--untrack` there only takes files under a `storage.db_only` directory
-that `gbrain.yml` at HEAD declares and that `.gitignore` ignores. The database row is canonical there, so every
-page stays live with its content. Anything else refuses `untrack_not_db_only` with the index as it was: declare
-the folder first (add it under `storage.db_only` and its `<dir>/` line to `.gitignore`, commit both with
-`gbrain git commit-push -m <msg> -- gbrain.yml .gitignore`), then rerun. The commit stays local, like every
-commit-push there; the owner's next Git publish, or `gbrain git commit-push --push-only --keep-checkout`,
-publishes it.
+that `gbrain.yml` declares, at HEAD and on disk, and that `.gitignore` ignores. A file is matched by its path under
+the declared directory, whatever its extension, with three extra checks:
+
+- A Markdown page file also needs its page slug under a declared directory, because sync keeps a page by its slug
+  (a folder spelled `Spaced Example/` gives slugs under `spaced-example/`; declare that spelling too).
+- A code-extension file (`.json`, `.ts`, `.yml` and the rest of sync's code list) is a page with a flattened slug on a
+  source whose sync strategy imports code (`code` or `auto`), and a database-only folder does not make that page
+  database-only. commit-push reads the brain for these files only: it admits one when the source's strategy does
+  not import code or when no live page comes from the file, refuses one that is a page, and refuses (fail closed)
+  when the brain cannot be read within 10 seconds, for example while another process holds a PGLite brain. The read
+  opens the brain without migrations and reads in one read-only transaction; on PGLite it takes the data
+  directory's one-process lock for the length of the read.
+- A tracked symbolic link that points out of the declared directory, or a file reached through a symlinked
+  directory on disk, is refused, and so is a sibling folder that only shares the name as a prefix
+  (`backups-old/` is not under `backups/`).
+
+The database row is canonical there, so every admitted page stays live with its content. Anything else refuses
+`untrack_not_db_only` with the index as it was, and the fix names what is missing for each file: declare the folder
+(add it under `storage.db_only` and its `<dir>/` line to `.gitignore`, commit both with
+`gbrain git commit-push -m <msg> -- gbrain.yml .gitignore`), add only the `.gitignore` line, declare the slug
+spelling, or keep the code-file pages tracked. `--dry-run --untrack` makes the same checks, the brain read included,
+and lists the files the real run removes. The commit stays local, like every commit-push there; the owner's next Git
+publish, or `gbrain git commit-push --push-only --keep-checkout`, publishes it.
 
 If you already ran `git rm --cached` by hand, a plain commit-push of those paths refuses
 `commit_paths_skipped` and names the `--untrack` command that commits the removal.

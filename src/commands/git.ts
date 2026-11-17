@@ -16,6 +16,9 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { commitAndPush, checkoutRoot, previewPaths, previewUntrack, pullShared, scopePaths, COMMIT_LOCK_NAME, SOURCE_ROOT_CONFIG, type Resolution } from '../core/git/commit-push.ts';
+import { readUntrackPageVerdict, untrackPageCandidates, UNTRACK_PAGE_READ_TIMEOUT_MS, type UntrackPageCandidate, type UntrackPageVerdict } from '../core/git/untrack-admission.ts';
+import type { BrainEngine } from '../core/engine.ts';
+import type { ManagedFilesystemRoot } from '../core/persistence/filesystem-guard.ts';
 import { guardStatus, installGuard, uninstallGuard } from '../core/git/commit-guard.ts';
 import { appendPushLog } from '../core/brain-repo-durability.ts';
 import { opError } from '../core/ops/contract.ts';
@@ -226,6 +229,39 @@ function runScan(p: Parsed): number {
   return 0;
 }
 
+/** Opens this machine's brain with no migration or startup step, reads the verdict, and closes it; any failure or a read past the timeout is `unreadable`. */
+export async function untrackPageVerdict(managed: ManagedFilesystemRoot, candidates: UntrackPageCandidate[]): Promise<UntrackPageVerdict> {
+  const { isThinClient, loadConfig, toEngineConfig } = await import('../core/config.ts');
+  const { createEngine } = await import('../core/engine-factory.ts');
+  let engine: BrainEngine | null = null, timer: ReturnType<typeof setTimeout> | undefined;
+  const read = (async (): Promise<UntrackPageVerdict> => {
+    const config = loadConfig();
+    if (!config) return { unreadable: 'no brain is configured on this machine' };
+    if (isThinClient(config) && !config.database_url) return { unreadable: 'this install is a thin client with no local brain' };
+    const engineConfig = config.engine === 'pglite' ? { ...toEngineConfig(config), pglite_shared_buffers: '32MB' } : { ...toEngineConfig(config), pool_max: 1 };
+    engine = await createEngine(engineConfig);
+    await engine.connect(engineConfig);
+    return readUntrackPageVerdict(engine, managed, candidates);
+  })();
+  const timeout = new Promise<UntrackPageVerdict>(done => { timer = setTimeout(() => done({ unreadable: `the read took longer than ${UNTRACK_PAGE_READ_TIMEOUT_MS / 1000} s (another process may hold the brain)` }), UNTRACK_PAGE_READ_TIMEOUT_MS); });
+  let settled = false;
+  void read.finally(() => { settled = true; }).catch(() => {});
+  try {
+    return await Promise.race([read.catch((error: unknown) => ({ unreadable: (error as { code?: string; message?: string })?.code ?? (error as Error)?.message ?? String(error) })), timeout]);
+  } finally {
+    clearTimeout(timer);
+    const close = () => (engine as BrainEngine | null)?.disconnect().catch(() => {});
+    if (settled) await close(); else void read.catch(() => {}).finally(close);
+  }
+}
+
+/** GST-2964: in a managed canonical worktree, what the brain says about the code-extension files an untrack names; the brain is opened only when there are any. */
+async function untrackPagesFor(repo: string, paths: string[]): Promise<UntrackPageVerdict | undefined> {
+  const managed = managedFilesystemRootFor(repo);
+  const candidates = managed && paths.length ? untrackPageCandidates(repo, paths, managed) : [];
+  return managed && candidates.length ? untrackPageVerdict(managed, candidates) : undefined;
+}
+
 function emit(json: boolean, doc: Record<string, unknown>, human: string): void {
   if (json) void writeStdoutFinal(`${JSON.stringify(doc)}\n`);
   else console.log(human);
@@ -270,7 +306,7 @@ export async function runGit(args: string[]): Promise<number> {
       const branch = execFileSync('git', ['-C', repo, 'symbolic-ref', '--quiet', '--short', 'HEAD'], { env: gitChildEnv({ ...GIT_ENV }) }).toString().trim();
       const paths = p.pull || p.pushOnly || !p.paths.length ? [] : scopePaths(repo, p.paths, cwd);
       const managed = managedFilesystemRootFor(repo);
-      const untracked = p.untrack && paths.length ? previewUntrack(repo, paths, { allowOutsideSourceRoot: p.allowOutside }) : undefined;
+      const untracked = p.untrack && paths.length ? previewUntrack(repo, paths, { allowOutsideSourceRoot: p.allowOutside, untrackPages: await untrackPagesFor(repo, paths) }) : undefined;
       if (!p.untrack && paths.length) previewPaths(repo, paths, { allowOutsideSourceRoot: p.allowOutside, bases, cwd });
       emit(json, { dry_run: true, repo, branch, lock, paths, mode: p.pull ? 'pull' : p.pushOnly ? 'push-only' : p.untrack ? 'untrack' : 'commit-push', managed, ...(untracked ? { untracked } : {}) },
         `dry run: ${p.pull ? 'pull' : p.pushOnly ? 'push-only' : `${p.untrack ? 'untrack' : 'commit'} ${paths.join(' ')}`} on ${branch} in ${repo} (lock ${lock}); ${managed ? `managed canonical worktree (${managed.evidence})` : 'not a managed worktree'}; nothing written`);
@@ -293,7 +329,7 @@ export async function runGit(args: string[]): Promise<number> {
       ...(p.keepCheckout ? { keepCheckout: true } : {}),
       ...(p.scanTimeout ? { scanTimeoutMs: Number(p.scanTimeout) * 1000 } : {}),
       scanProgress: (line: string) => process.stderr.write(`[gbrain] ${line}\n`),
-      ...(p.untrack ? { untrack: true } : {}),
+      ...(p.untrack ? { untrack: true, untrackPages: await untrackPagesFor(repo, scopePaths(repo, p.paths, cwd)) } : {}),
       ...(p.branch ? { branch: p.branch } : {}),
       ...(p.resolve.length ? { resolutions: parseResolutions(p.resolve) } : {}),
       ...(p.expectRemote ? { expectRemote: p.expectRemote } : {}),
