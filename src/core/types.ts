@@ -758,6 +758,19 @@ export interface ChunklessPageRow {
 }
 
 /**
+ * One stored chunk of a page as the import's vector-reuse planner sees it:
+ * its index, the recorded embedding input, the page's contextual-retrieval
+ * mode, and whether it holds a text-only embedding or no embedding at all.
+ */
+export interface ChunkReuseRow {
+  chunk_index: number;
+  embedding_input_hash: string | null;
+  contextual_retrieval_mode: string | null;
+  text_only: boolean;
+  unembedded: boolean;
+}
+
+/**
  * v0.42.7 (#1696) — a page that needs link/timeline extraction, returned by
  * `listStalePagesForExtraction`. Carries the page CONTENT (compiled_truth +
  * timeline + frontmatter) so `gbrain extract --stale` extracts in ~1 query per

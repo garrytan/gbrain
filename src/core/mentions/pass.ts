@@ -207,7 +207,7 @@ async function aliasWrite<T>(engine: BrainEngine, managed: boolean, sourceId: st
  * write). A page that is not a linkable entity, or linking that is off,
  * leaves no derived rows. Frontmatter rows are untouched.
  */
-export async function writeDerivedAliases(tx: Pick<BrainEngine, 'executeRaw' | 'getConfig'>, sourceId: string,
+export async function writeDerivedAliases(tx: Pick<BrainEngine, 'replaceDerivedAliases' | 'executeRaw' | 'getConfig'>, sourceId: string,
   page: { slug: string; title: string | null; type: string | null; compiled_truth: string | null; timeline?: string | null; frontmatter?: Record<string, unknown> | null },
   opts: { pack?: PackTypes | null; policy?: MentionPolicy | null } = {}): Promise<number> {
   // A config read that fails (null policy) leaves the rows for the next sweep rather than failing the caller's write.
@@ -215,13 +215,7 @@ export async function writeDerivedAliases(tx: Pick<BrainEngine, 'executeRaw' | '
   if (!policy) return 0;
   const types = policy.enabled ? linkableTypesFor(opts.pack !== undefined ? opts.pack : await loadSourcePack(tx, sourceId), policy) : [];
   const aliases = types.includes(page.type ?? '') ? deriveEntityAliases(page, aliasOptsOf(policy)).aliases : [];
-  await tx.executeRaw(`DELETE FROM page_aliases WHERE source_id = $1 AND slug = $2 AND origin IN ('declared','subject')`, [sourceId, page.slug]);
-  if (aliases.length) {
-    await tx.executeRaw(
-      `INSERT INTO page_aliases (source_id, alias_norm, slug, origin, case_sensitive, alias_text)
-       SELECT $1, a, $2, o, c::boolean, t FROM unnest($3::text[], $4::text[], $5::text[], $6::text[]) AS x(a, o, c, t) ON CONFLICT DO NOTHING`,
-      [sourceId, page.slug, aliases.map(a => a.alias_norm), aliases.map(a => a.origin), aliases.map(a => String(a.case_sensitive)), aliases.map(a => a.alias_text)]);
-  }
+  await tx.replaceDerivedAliases(page.slug, sourceId, aliases);
   return aliases.length;
 }
 

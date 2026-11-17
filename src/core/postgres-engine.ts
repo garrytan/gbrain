@@ -92,7 +92,7 @@ import { splitEmbeddingSignature, currentSpaceChunkPredicate, lockEmbeddingSourc
 import { SAFE_FENCE_CHUNKER_VERSION, bodyWriteChunkVersion, chunkManifestReads, currentTextProjectionFilter, requiresSafeChunks, safeChunksFilter } from './search/safe-chunks.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
-  Chunk, ChunkInput, StaleChunkRow, StalePageRow, ChunklessPageRow,
+  Chunk, ChunkInput, ChunkReuseRow, StaleChunkRow, StalePageRow, ChunklessPageRow,
   SearchResult, SearchOpts, ResolvedColumn,
   Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
@@ -158,6 +158,8 @@ import { frontmatterWhereSql } from './search/frontmatter-where.ts';
 import type { EmbeddingState, EmbeddingStateCounts, EmbeddingStateRow } from './embedding-state.ts';
 import * as chunksImpl from './engine-sql/chunks.ts';
 import * as searchReadsImpl from './engine-sql/search-reads.ts';
+import type { ChunkMove } from './page-state/chunk-moves.ts';
+import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import * as pageBodyImpl from './engine-sql/page-body.ts';
 import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput, SegmentChunkInput,
   SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from './page-body/types.ts';
@@ -1743,6 +1745,26 @@ export class PostgresEngine implements BrainEngine {
     return chunksImpl.deleteChunks(this.engineSql, slug, opts);
   }
 
+  async deleteChunksExcept(slug: string, keepIds: readonly number[], opts?: { sourceId?: string }): Promise<void> {
+    return chunksImpl.deleteChunksExcept(this.engineSql, slug, keepIds, opts);
+  }
+
+  async setChunkerVersion(slug: string, version: number, opts?: { sourceId?: string }): Promise<void> {
+    return chunksImpl.setChunkerVersion(this.engineSql, slug, version, opts);
+  }
+
+  async writeTextProjectionSeal(slug: string, opts: { sourceId: string; revision: string; timelineText: string }): Promise<void> {
+    return chunksImpl.writeTextProjectionSeal(this.engineSql, slug, opts);
+  }
+
+  async moveChunkIndexes(pageId: number, waves: readonly (readonly ChunkMove[])[]): Promise<void> {
+    return chunksImpl.moveChunkIndexes(this.engineSql, pageId, waves);
+  }
+
+  async getChunkReuseRows(slug: string, opts?: { sourceId?: string }): Promise<ChunkReuseRow[]> {
+    return chunksImpl.getChunkReuseRows(unscopedExecutor(this.engineSql, 'chunks: import reuse read ran unscoped on the pool on master (executeRaw)'), slug, opts);
+  }
+
   async countStalePagesForExtraction(opts?: { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked'; held?: 'exclude' | 'only'; wantedProducers?: readonly string[] }): Promise<number> {
     return this.withScopedReadTransaction(undefined, opts?.sourceId, tx => pagesImpl.countStalePagesForExtraction(scopedRead(this.engineSqlOn(tx)), opts));
   }
@@ -1924,6 +1946,14 @@ export class PostgresEngine implements BrainEngine {
 
   async removeTag(slug: string, tag: string, opts?: { sourceId?: string }): Promise<void> {
     return mutatePageTag(this, { sourceId: opts?.sourceId ?? 'default', slug }, tag, false);
+  }
+
+  async pruneFrontmatterTags(slug: string, keep: readonly string[], opts?: { sourceId?: string }): Promise<void> {
+    return tagsImpl.pruneFrontmatterTags(this.engineSql, slug, keep, opts);
+  }
+
+  async addPageTagsById(pageId: number, tags: readonly string[], opts?: { tagSource?: 'frontmatter' }): Promise<void> {
+    return tagsImpl.addPageTagsById(this.engineSql, pageId, tags, opts);
   }
 
   async getTags(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; liveOnly?: boolean }): Promise<string[]> {
@@ -2748,6 +2778,18 @@ export class PostgresEngine implements BrainEngine {
   async setPageAliases(slug: string, sourceId: string, aliasNorms: string[], opts?: { inline?: boolean }): Promise<void> {
     if (opts?.inline && this._pageTransaction) return pagesImpl.setPageAliases(this.engineSql, this, slug, sourceId, aliasNorms);
     return this.transaction(tx => pagesImpl.setPageAliases((tx as PostgresEngine).engineSql, tx, slug, sourceId, aliasNorms));
+  }
+
+  async replaceDerivedAliases(slug: string, sourceId: string, aliases: readonly DerivedAliasRow[]): Promise<void> {
+    return pagesImpl.replaceDerivedAliases(this.engineSql, slug, sourceId, aliases);
+  }
+
+  async getPageSealState(pageId: number): Promise<{ chunker_version: number | null } | null> {
+    return pagesImpl.getPageSealState(unscopedExecutor(this.engineSql, 'pages: seal-state read ran unscoped on the pool on master (executeRaw)'), pageId);
+  }
+
+  async refreshPageOrigin(slug: string, opts: { sourceId: string; sourcePath: string; sourceUri?: string | null }): Promise<void> {
+    return pagesImpl.refreshPageOrigin(this.engineSql, slug, opts);
   }
 
   // Config
