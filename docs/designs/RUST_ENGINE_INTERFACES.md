@@ -52,7 +52,7 @@ refused member must still end on that refusal.
 These files belong to core. If a family needs a change in one of them, it asks core for the change in a separate,
 small commit. Every other file in the table at the end belongs to exactly one family.
 
-- `rust/crates/gbrain-store/src/{lib.rs,keys.rs,kv.rs,redb_kv.rs,env.rs,error.rs,format.rs,cascade.rs,page_columns.rs,test_support.rs}`
+- `rust/crates/gbrain-store/src/{lib.rs,keys.rs,kv.rs,redb_kv.rs,env.rs,error.rs,format.rs,cascade.rs,page_columns.rs,page_index.rs,test_support.rs}`
 - `rust/crates/gbrain-store/src/{pages.rs,sources.rs,config.rs,chunks.rs,search.rs,links.rs,timeline.rs,journal.rs}`
   (the families core already built)
 - `rust/crates/gbrain-napi/src/{lib.rs,store_binding.rs,binding.rs,error.rs,pool.rs}` and `families/mod.rs`
@@ -62,7 +62,7 @@ small commit. Every other file in the table at the end belongs to exactly one fa
 - `test/engine-parity/{harness.ts,rust-arm.ts,coverage.ts}`, `test/rust-engine-shell.test.ts`,
   `test/rust-engine-store.test.ts`, `test/rust-arm-harness.test.ts`
 
-The list files (`lib.rs`, `families/mod.rs`, `index.ts`, `cascade.rs`, `page_columns.rs`, the reserved block in
+The list files (`lib.rs`, `families/mod.rs`, `index.ts`, `cascade.rs`, `page_columns.rs`, `page_index.rs`, the reserved block in
 `keys.rs`) already name every planned family once, so no family edits them.
 
 ## Shared contracts (frozen)
@@ -344,6 +344,34 @@ is the store's `moveSlugBindings`.
 - Sync's rename paths (`commands/sync/renames.ts`, `rename-collision.ts`) call `moveSlugBindings` too; they run
   through `executeRaw`, which the Rust engine refuses.
 
+#### Page index (`page_index::reindex_page`)
+
+```rust
+// In keyword.rs and page_ops.rs (full paths, so neither file needs an import line):
+pub(crate) fn reindex_page(
+    tx: &mut dyn crate::kv::KvWrite,
+    before: Option<&crate::pages::PageRecord>,
+    after: Option<&crate::pages::PageRecord>,
+) -> crate::Result<()>;
+```
+
+A family keeps its own index of page fields (title trigrams, slugs by content hash) in step with page writes, in the
+same transaction. `before` is the page as stored before the write; `after` is the page as stored after it.
+
+- `(None, Some(after))` is a new page, `(Some(before), Some(after))` is any change to a stored page (including a soft
+  delete, a restore, a rename, where `before.slug` is the old slug, and a tag change), and `(Some(before), None)` is a
+  hard delete, called before the page record is deleted.
+- `pages::write_page` and `pages::remove_page` call it; every page write goes through one of them, so a family that
+  writes pages through core keeps every index right with no extra step.
+- It fires on writes only, and on every write: also when no field the family indexes changed (a tag change, a
+  sealed text projection). Compare `before` and `after` and return early. One store call can fire it more than once:
+  a `putPage` that chunks the page writes the page, then writes it again to seal its text projection.
+- Cost: `write_page` reads the stored page once by id before it writes (the same read keeps the origin index).
+- **Owners:** keyword (`R` title trigram postings) and page_ops (its `p` indexes). A family that is not listed and
+  needs the hook asks core for one line.
+- The timeline date index (`u`, timeline_queries) is a different hook in `timeline.rs`; core adds it when that family
+  asks.
+
 #### Page origin (`source_path` on `putPage`)
 
 A page's origin is the file it records (`source_path`). PGLite allows one live page per origin in a source
@@ -424,7 +452,8 @@ A float score (cosine similarity, salience, rank) matches PGLite within an absol
 way the PGLite `ORDER BY` breaks them, usually by id. Postgres `REAL` columns (`emotional_weight`, take `weight`)
 are rounded to `f32` before arithmetic, then computed in `f64`. The store's keyword ranking is a plain BM25 today;
 the one keyword case that differs because of it is the row in `test/rust-expected-divergence/search.tsv`. The
-`ts_rank` compatibility ranker (design D5) is the parity baseline the keyword family builds toward; every other
+`ts_rank` compatibility ranker (design D5), which the keyword family writes in `keyword.rs` over the core `T`
+postings, is the parity baseline it builds toward; every other
 keyword, title and trigram case must match exactly.
 
 ### Expected differences
@@ -493,7 +522,7 @@ Batch page reads and writes the pages capability still refuses.
 - **Members (18), capability:** `pages` (17), `page_versions` (1).
 - **Store and binding:** `readPageSnapshotsBatch` (`read_page_snapshots_batch`), `findDuplicatePage` (`find_duplicate_page`), `findDuplicatePages` (`find_duplicate_pages`), `deletePages` (`delete_pages`), `resolveSlugsByPaths` (`resolve_slugs_by_paths`), `softDeletePages` (`soft_delete_pages`), `purgeDeletedPages` (`purge_deleted_pages`), `findPages` (`find_pages`), `countPagesBy` (`count_pages_by`), `getAllSlugs` (`get_all_slugs`), `listAllPageRefs` (`list_all_page_refs`), `listPrefixSampledPages` (`list_prefix_sampled_pages`), `listCorpusSample` (`list_corpus_sample`), `getContentFlagsByPageIds` (`get_content_flags_by_page_ids`), `getUnverifiedExtractionPageIds` (`get_unverified_extraction_page_ids`), `getPageTimestamps` (`get_page_timestamps`), `getEffectiveDates` (`get_effective_dates`), `revertToVersion` (`revert_to_version`).
 - **Postgres tables:** `pages` (read and soft/hard delete through `pages.rs`), `page_versions` (revert).
-- **Keys:** No rows of its own are needed for parity. Use `p` only for an index the reads need (for example `p 0x01 <source> 0x00 <source_path> 0x00 <slug>` for `resolveSlugsByPaths`, `p 0x02 <source> 0x00 <content_hash> 0x00 <page id>` for duplicate lookup), kept in step by an index hook in `write_page` from core.
+- **Keys:** No rows of its own are needed for parity. Use `p` only for an index the reads need (for example `p 0x01 <source> 0x00 <source_path> 0x00 <slug>` for `resolveSlugsByPaths`, `p 0x02 <source> 0x00 <content_hash> 0x00 <page id>` for duplicate lookup), kept in step by the core page index hook (`page_index::reindex_page`; the stub is in `page_ops.rs`). For `resolveSlugsByPaths`, the core `o` key already indexes live pages by `source_path` ("Page origin"); it holds no soft-deleted pages, so a read that needs them keeps scanning `all_pages` or adds its own `p` index.
 - **Depends on:** Core page helpers (`read_page`, `all_pages`, `remove_page`, `write_page`, `snapshot_in`). `deletePages` and `purgeDeletedPages` also remove the deleted slugs from eval candidates (`retrieved_slugs`): call the eval_capture family's `pub(crate) fn remove_retrieved_slugs`, so build eval_capture first. The other tables PGLite scrubs there (retrieval events, feedback, gazetteer entries) have no Rust records; the scrub is a no-op for them until a family stores them.
 - **Estimate:** about 9 days.
 - **Notes:** `revertToVersion` restores only `compiled_truth` and `frontmatter`, writes a version snapshot, and refuses for a segmented page. `findPages` and `countPagesBy` are the largest members (filters, frontmatter keys). `deletePages`, `softDeletePages` and `resolveSlugsByPaths` keep the `DELETE_BATCH_SIZE` input cap. `listAllPageRefs` orders by `(source_id, slug)` in byte order.
@@ -847,9 +876,9 @@ Keyword search members the keyword_search capability still refuses, and title tr
 - **Members (5), capability:** `keyword_search` (5).
 - **Store and binding:** `countKeywordPages` (`count_keyword_pages`), `searchKeywordPages` (`search_keyword_pages`), `searchTitles` (`search_titles`), `searchKeywordChunks` (`search_keyword_chunks`), `findByTitleFuzzy` (`find_by_title_fuzzy`).
 - **Postgres tables:** `content_chunks.search_vector`, `pages.search_vector`, title trigrams.
-- **Keys:** Postings stay core (`T`). `R <source> 0x00 <trigram> 0x00 <page id>` title trigram postings, kept by a core hook in `write_page`.
-- **Depends on:** Core search postings and the `ts_rank` compatibility ranker (design D5). Ports `pg_trgm` similarity for `findByTitleFuzzy` and `searchTitles`; the takes family reuses it.
-- **Estimate:** about 3 days.
+- **Keys:** Postings stay core (`T`). `R <source> 0x00 <trigram> 0x00 <page id>` title trigram postings, kept by the core page index hook (`page_index::reindex_page`; the stub is in `keyword.rs`).
+- **Depends on:** Core search postings (`T`). The family writes the `ts_rank` compatibility ranker (design D5) in `keyword.rs` over those postings; the facts keyword arm reuses it. Ports `pg_trgm` similarity for `findByTitleFuzzy` and `searchTitles`; the takes family reuses it.
+- **Estimate:** about 5 days: 3 for the members, about 2 for the `ts_rank` ranker (a judgment; the ranker came to this family after the first estimate).
 - **Notes:** Every keyword case except the one in `search.tsv` must match PGLite exactly, order and score within `1e-6`.
 - **Parity cases (4, in `links.test.ts`, `search.test.ts`):**
   - `links.test.ts`: findByTitleFuzzy returns the best title match above the threshold, honoring prefix and source
@@ -1002,7 +1031,7 @@ other family calls it. If both families are in progress at once, they agree on t
 
 ## Work plan toward Dec 1
 
-About 52 days of family work are open, against about 9 or 10 working days until Dec 1, so six people working at
+About 54 days of family work are open, against about 9 or 10 working days until Dec 1, so six people working at
 once is the plan. Every group below can start now; none waits for another group to finish before its first
 member lands. Within a group, build in the order shown.
 
@@ -1013,10 +1042,10 @@ member lands. Within a group, build in the order shown.
 | 3. Page bodies | page_body | yes | about 7 to 8 days | vector input to `stageSegmentChunks` refuses until embeddings; one case needs transactions |
 | 4. Memory records | dream, contradictions, facts, ontology, raw_files, stats | yes | about 9 days | three facts cases need takes (group 5); `getHealth` last |
 | 5. Takes and salience | eval_capture (first), takes, salience, code_edges | yes | about 7 to 8 days | the `takes` capability needs vectors and embeddings (core); code_edges uses the core chunk-delete hook (built) |
-| 6. Graph and search reads | timeline_queries, chunk_queries, link_queries, keyword | yes | about 9 days | keyword needs the `ts_rank` compatibility ranker; two chunk cases need embeddings |
+| 6. Graph and search reads | timeline_queries, chunk_queries, link_queries, keyword | yes | about 11 days | keyword writes the `ts_rank` compatibility ranker itself; two chunk cases need embeddings |
 
 Groups 1 and 2 share the `pages` capability: `pages` is reported only when page_ops, extraction and aliases are all
-done. Group 2 is the longest and sets the critical path. If time runs short, the candidates to leave refused for
+done. Groups 6 and 2 are the longest (about 11 and 10 days) and set the critical path. If time runs short, the candidates to leave refused for
 Dec 1 are `purgeDeletedPages`, `sweepSegments` and `getHealth`; each is a single member that refuses cleanly, so the
 rest of its family still ships.
 
@@ -1031,8 +1060,8 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Chunk-delete hook (`cascade::remove_chunk_rows`) | built | code_edges; vectors and embeddings listed |
 | Timeline entry helpers (`next_entry_id`, `read_entry`, `put_entry`) | built | timeline_queries (`upsertEventProjection`) |
 | Event projection delete (`timeline_queries::remove_event_projections`, called by `remove_page`) | built; the family fills in the body | timeline_queries |
-| Index hooks in `write_page` and `timeline.rs` if a family needs one | a family asking | page_ops, keyword, timeline_queries |
-| `ts_rank` compatibility ranker | nothing | keyword, facts keyword arm |
+| Page index hook (`page_index::reindex_page`, called by `write_page` and `remove_page`) | built; the family fills in the body | keyword (`R` title trigrams), page_ops |
+| Timeline date index hook in `timeline.rs` | a family asking | timeline_queries |
 | vectors (`X`): chunk and take vectors, vector search | the coming vector store work | embeddings, takes capability, page_body chunk vectors, `findCandidateDuplicates` with an embedding |
 | embeddings (`B`): stale counts, signatures, embedding state | vectors | stats `getHealth`, chunk_queries shared cases, takes capability |
 | transactions (`w`): the BrainEngine `transaction` callback across napi and `lockPageKeys` | a store transaction that stays open across napi calls | the nine cases that open a transaction |
