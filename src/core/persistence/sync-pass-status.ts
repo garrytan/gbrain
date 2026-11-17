@@ -88,6 +88,7 @@ const RESCREEN_PAGE = 500;
  * only re-hold a page that keeps moving build the streak too.
  * GST-2869: nor is a rewrite marked `retry_only` (re-checked only because `sync unblock` or `sources retry-held` asked, with
  * nothing due), nor one that brought a transient hold to its attempt cap: both leave the path where it was, waiting on a person.
+ * A `retry_only` rewrite that changed the hold's code or bytes restarted `held_at`, so the first branch still counts it once.
  */
 export async function passBanked(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, incarnation: string, telemetry: { pass_id: string; started_at: string }): Promise<boolean> {
   const [row] = await engine.executeRaw<{ banked: boolean }>(`SELECT EXISTS (SELECT 1 FROM persistence_requests r JOIN persistence_source_bindings b ON b.worktree_id=r.worktree_id
@@ -111,7 +112,7 @@ export async function passBanked(engine: Pick<BrainEngine, 'executeRaw'>, source
   }
 }
 
-export type PassStatusReason = 'pass_unfinished' | 'pass_interrupted' | 'pass_abandoned' | 'not_converged' | 'settle_mismatch' | 'deletes_withheld' | 'selection_scoped' | 'admission_paused' | 'writeback_failed';
+export type PassStatusReason = 'pass_unfinished' | 'pass_interrupted' | 'pass_terminated' | 'pass_abandoned' | 'not_converged' | 'settle_mismatch' | 'deletes_withheld' | 'selection_scoped' | 'admission_paused' | 'writeback_failed';
 
 /**
  * #7355: passes in a row that never ended, the newest open one included once its row has been quiet past the no-progress
@@ -141,6 +142,7 @@ export function passStatusState(row: PassRow, withheld: DeletesWithheld | null, 
   const t = row.value.telemetry;
   if (abandonedPasses(row, now, interrupted, banked) >= ABANDONED_REPORT_STREAK) return ['blocked', 'pass_abandoned'];
   if (t.outcome === 'open' && interrupted) return ['resumable', 'pass_interrupted'];
+  if (t.outcome === 'resumable' && t.stop_reason === 'terminated') return ['resumable', 'pass_terminated'];
   if (t.outcome === 'open' || (t.outcome === 'resumable' && t.stop_reason !== 'not_converged' && t.stop_reason !== 'admission_paused')) return ['resumable', 'pass_unfinished'];
   if (t.stop_reason === 'admission_paused') return ['resumable', 'admission_paused'];
   if (t.stop_reason === 'not_converged' || (row.value.obligations.not_converged_streak ?? 0) > 0) return ['resumable', 'not_converged'];
@@ -179,7 +181,9 @@ export function passStatusNext(sourceId: string, reason: PassStatusReason, row: 
         why: 'The preview names the parked effect and what a retry runs (read-only); until it commits, the source is never idle.' };
     case 'pass_abandoned':
       return { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false, verify,
-        why: `The last ${abandonedPasses(row, passReadClock(row), interrupted, banked)} sync passes of ${sourceId} stopped before they ended (the drain abandoned them for making no progress, or their process was killed) or on a transient stop that recurs (a statement timeout, a lost connection), so another plain sync is likely to stop the same way. Report what doctor shows, with the gbrain version and the newest sync run's drain.stall (read-only).${seen ? ` The newest pass was${seen}` : ''}` };
+        why: `The last ${abandonedPasses(row, passReadClock(row), interrupted, banked)} sync passes of ${sourceId} stopped before they ended (the drain abandoned them for making no progress, their process was killed, or a termination signal stopped them) or on a transient stop that recurs (a statement timeout, a lost connection), so another plain sync is likely to stop the same way. Report what doctor shows, with the gbrain version and the newest sync run's drain.stall (read-only).${seen ? ` The newest pass was${seen}` : ''}` };
+    case 'pass_terminated':
+      return { ...sync, why: `The newest pass of ${sourceId} was stopped by a termination signal (SIGTERM or SIGHUP: an outer timeout, a supervisor stop or a closed terminal) and recorded its stop at ${row.updated_at}. The plain sync continues it from the current level.` };
     case 'pass_interrupted':
       return { ...sync, why: `The newest pass of ${sourceId} stopped before it ended and no process holds its drain lease: its process was killed or crashed (an out-of-memory kill or a timeout), or stopped on an error it does not record (a dropped connection), so nothing recorded a failure. The plain sync continues it from the current level; if that pass stops the same way, status reads pass_abandoned.${seen ? ` It was${seen}` : ''}` };
     case 'selection_scoped':

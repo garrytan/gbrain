@@ -12,7 +12,8 @@
  */
 import { createHash } from 'node:crypto';
 import type { OperationContext } from '../ops/contract.ts';
-import { currentCallerAccess, folderRestrictedSql, isDerivationPrivate, privatePagesFilterForCaller, withFolderRestricted } from '../search/private-visibility.ts';
+import { currentCallerAccess, folderRestrictedSql, isDerivationPrivate, privateFactSources, privatePagesFilterForCaller, withFolderRestricted } from '../search/private-visibility.ts';
+import { factPagesOpenSql, unpagedFactSql } from '../facts/private-fact-pages.ts';
 import type { BrainEngine } from '../engine.ts';
 import { ACCESS_ID_RE, MEMBER_PAGE_PREFIX, normalizeReaders, SCOPE_PAGE_SLUG } from './principals.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
@@ -155,13 +156,27 @@ export async function ownMemberFactIds(engine: Pick<BrainEngine, 'executeRaw'>, 
   return new Set(rows.map(r => Number(r.id)));
 }
 
-/** A remote fact read's visibility list as SQL: the listed values, widened only by memberFactAdmitSql. */
+/**
+ * GBRA-575: the private facts the current caller's private-facts grant admits: a fact stamped private in a source the
+ * grant lists by id (privateFactSources) whose holding, provenance and entity pages are none of member,
+ * derivation-private (private, privacy alias, readable_by, folder rule), missing or quarantined (factPagesOpenSql, the
+ * same pages `gbrain repair open-facts` refuses to open), and that has a page to check: never an unpaged or
+ * transcript-lane fact (unpagedFactSql), conversation archive included. FALSE outside such a grant. Source ids passed
+ * isValidSourceId, so they embed as literals.
+ */
+export function grantedPrivateFactSql(alias: string): string {
+  const sources = privateFactSources();
+  if (!sources.length) return 'FALSE';
+  return `(${alias}.visibility = 'private' AND ${alias}.source_id IN (${sources.map(s => `'${s}'`).join(', ')}) AND NOT COALESCE(${unpagedFactSql(alias)}, false) AND ${factPagesOpenSql(alias)})`;
+}
+
+/** A remote fact read's visibility list as SQL: the listed values, widened only by memberFactAdmitSql and grantedPrivateFactSql. */
 export function factVisibilitySql(alias: string, visibility: readonly string[]): string {
   const known = (['world', 'private'] as const).filter(v => visibility.includes(v));
   const listed = known.length ? `${alias}.visibility IN (${known.map(v => `'${v}'`).join(', ')})` : 'FALSE';
   if (known.includes('private')) return listed;
-  const own = memberFactAdmitSql(alias);
-  return own === 'FALSE' ? listed : `(${listed} OR ${own})`;
+  const widened = [memberFactAdmitSql(alias), grantedPrivateFactSql(alias)].filter(sql => sql !== 'FALSE');
+  return widened.length ? `(${[listed, ...widened].join(' OR ')})` : listed;
 }
 
 /**

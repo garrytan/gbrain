@@ -19,7 +19,8 @@ export async function run(engine: BrainEngine, args: string[]): Promise<void> {
   const { runSync, SyncLockBusyError } = await import('../../commands/sync.ts');
   try {
     // #6696 (A5): an operator's sync is interactive; autopilot's sync jobs run outside this command, as background.
-    await withAdmissionOrigin('interactive', () => runSync(engine, args));
+    // GST-2869: only this entry lets sync own SIGTERM/SIGHUP; a worker's sync job (sync-retry-failed) keeps the worker's.
+    await withAdmissionOrigin('interactive', () => runSync(engine, args, { ownSignals: true }));
   } catch (err) {
     // D1/D2: a busy sync lock is a retryable sync_in_progress refusal (its
     // message names the holder and the --break-lock recovery), not an

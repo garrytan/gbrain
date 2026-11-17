@@ -96,7 +96,8 @@ export async function comparePage(engine: BrainEngine, sourceId: string, target:
   const held = { ...(side ? { side } : {}), ...(hold?.meta.state ? { state: hold.meta.state } : {}), ...(hold ? { path: hold.path } : {}) };
   if (side === 'deleted' && hold?.meta.state && hold.meta.state !== 'file_gone') {
     const state = hold.meta.state;
-    return { item, slug, ...held, would: 'needs_human', why: `the page at ${hold.path} is deleted and the file differs (${state}); --prefer database would ${fileDriftActionVerb('deleted', state, 'database')} and --prefer file would ${fileDriftActionVerb('deleted', state, 'file')}, so a person decides` };
+    return { item, slug, ...held, would: 'needs_human', why: target.mirror ? `the page at ${hold.path} is deleted and the file differs (${state}), so a person decides; ${mirrorDriftRoute(sourceId)}`
+      : `the page at ${hold.path} is deleted and the file differs (${state}); --prefer database would ${fileDriftActionVerb('deleted', state, 'database')} and --prefer file would ${fileDriftActionVerb('deleted', state, 'file')}, so a person decides` };
   }
   if (slug === null) return { item, slug, ...held, would: 'unknown', why: 'the hold names no page; the next sync re-classifies it' };
   try {

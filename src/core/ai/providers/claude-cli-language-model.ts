@@ -508,7 +508,7 @@ function runClaude(
 
     const onAbort = () => {
       child.kill('SIGTERM');
-      reject(new Error('claude-cli adapter aborted'));
+      reject(signal?.reason instanceof Error && signal.reason.name === 'TimeoutError' ? signal.reason : new Error('claude-cli adapter aborted'));
     };
     if (signal) {
       if (signal.aborted) {
