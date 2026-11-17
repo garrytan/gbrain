@@ -746,6 +746,13 @@ Each yes is quoted in the body of the PR that needs it.
   - Where earlier text in this plan differs, D21 wins until the Dec 1 goal is met or the maintainer changes it. Build sessions start now on the workstreams that do not need this plan text on master, and link this plan's PR until it lands.
   - Files to read: the research PR https://github.com/garrytan/gbrain/pull/9619 (`docs/research/rust-engine/multi-user-prior-art.md`), on how proven databases serve many users without whole-database locks.
   - Sections changed: Recommendation, Dec 1 schedule (new), Phases (Track 2 start), Phase 2 and the approval record.
+- **D22. Owner process before the freeze, one writer for Dec 1, PGLite's `stale` rule, names kept, a failed addon build blocks the release.** The maintainer, 2026-11-17 at about 7:20 AM PST, in Vorflux web chat: "Do it." That answer takes every recommendation in the list his Worker Bot put to him that morning:
+  - A1, process model: before the Nov 27 engine-benchmark freeze, another gbrain process reaches a Rust brain through its owner process (the owner protocol cut sized for the engine benchmark: no transactions over the socket, no owner handoff). A second process does not get a `store_locked` refusal. The full owner protocol in "Process model" (PR 18) follows after Dec 1.
+  - B1, writes for Dec 1: one writer with group commit. A slow result on the 16-client write workload is accepted and named in the benchmark report. The concurrent-writer store stays after parity (D21).
+  - C1, `stale` in search results. Where PGLite and Postgres differ in output, Rust matches PGLite. `stale` is true when a page has a timeline entry newer than the page. A separate small PR makes Postgres compute it the same way.
+  - Names: `engine_capability_missing` (D2) and `GBRAIN_RUST_ENGINE_ADDON` (D3) stay as they are.
+  - Release blocking: the default stays. A failed Rust addon build blocks the release.
+  - Where earlier text in this plan differs, D22 wins.
 
 ## Open questions
 
