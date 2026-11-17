@@ -279,6 +279,24 @@ The credential itself never reaches the store: callers pass its SHA-256. `write_
 `journalOutstanding` are additions; the TypeScript receipt keeps a separate failure detail row that
 this engine does not have.
 
+### Deterministic simulation
+
+`crates/gbrain-store/tests/sim.rs` runs the store on redb over `gbrain-sim`'s fault-injecting disk. A
+seed fixes three simulated clients (put, journaled write, replay, tag, soft delete, restore, delete,
+chunks, version, admit, finish), the clock and ids the store sees, and where the disk crashes, tears
+a write, fails an fsync or lies about one. After a reboot the recovered records must equal the
+replay of a prefix of the acknowledged commits (nothing lost, the batch in flight all or nothing),
+and the store's own invariants must hold: id index, chunks against postings, index totals, journal
+index and outstanding counters. A control run (every fsync lies, the checker is told the disk was
+honest) must report violations, or the harness is blind.
+
+```sh
+cd rust
+cargo test -p gbrain-store --test sim -- --nocapture          # 200 seeds per kind
+GBRAIN_SIM_SEEDS=10000 cargo test --release -p gbrain-store --test sim -- --nocapture crash fsync control
+GBRAIN_SIM_SEED=1234 cargo test -p gbrain-store --test sim     # repeat one seed
+```
+
 ## Error codes
 
 Errors from the addon are real `Error` objects with a `code`:
