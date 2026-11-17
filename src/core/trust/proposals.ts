@@ -54,6 +54,9 @@ export interface TrustProposalRow {
 
 /** The typed CLI ref of a trust proposal. */
 export const trustProposalRef = (id: number | string): string => `tp${id}`;
+
+/** GST-2897 B: the guard of a member's share about another member, held private on a confirm proposal for the brain owner. */
+export const SHARE_HELD_GUARD = 'remember.share_held';
 /** `tp<id>` (or a bare id) to the proposal id; null when the ref names something else. */
 export function parseTrustProposalRef(ref: string): number | null {
   const m = /^(?:tp)?(\d{1,18})$/.exec(ref.trim());

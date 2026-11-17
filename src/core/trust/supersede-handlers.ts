@@ -17,13 +17,13 @@ import { beliefStreamSlugs, beliefTransaction } from '../belief/writers.ts';
 import {
   applyProposalAction, type PairProposal, type PairProposalStore, type ProposalActionResult,
 } from '../facts/proposal-supersede.ts';
-import { currentWriteTrust, withTrustPromotion, withWriteAttribution } from '../persistence/context.ts';
+import { currentWriteTrust, withCoordinatedWrite, withTrustPromotion, withWriteAttribution } from '../persistence/context.ts';
 import { normalizeDimension, NOT_CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 import { verbError, type OperationError } from '../ops/contract.ts';
 import type { Principal } from '../persistence/model.ts';
 import { onOwnedMemoryPageSql } from '../access/member-facts.ts';
 import {
-  decisionResult, getTrustProposal, insertTrustProposal, pendingTrustProposalsFor, registerTrustProposalHandler, transitionTrustProposal, trustProposalRef,
+  decisionResult, getTrustProposal, insertTrustProposal, pendingTrustProposalsFor, registerTrustProposalHandler, SHARE_HELD_GUARD, transitionTrustProposal, trustProposalRef,
   type TrustDecision, type TrustDecisionContext, type TrustProposalAction, type TrustProposalRow,
 } from './proposals.ts';
 import { tierRaiseFix } from './confirm.ts';
@@ -101,6 +101,15 @@ export async function recordContestedFact(tx: BrainEngine, input: { sourceId: st
       ...(input.visibility ? { visibility: input.visibility } : {}), ...(input.visibility && input.pageless ? { pageless: true } : {}) },
   });
   return { proposal_ref: trustProposalRef(id) };
+}
+
+/** GST-2897 B: the pending confirm proposal holding a member's share about another member private; the owner's accept widens it. */
+export async function recordHeldShare(tx: BrainEngine, input: { sourceId: string; factId: number; tier: TrustTier; member: string; pageless: boolean }): Promise<{ proposal_ref: string; member: string }> {
+  const { id } = await insertTrustProposal(tx, {
+    action: 'confirm', sourceId: input.sourceId, target: { table: 'facts', id: input.factId }, related: { table: 'facts', id: input.factId }, proposer: SHARE_HELD_GUARD,
+    before: { guard: SHARE_HELD_GUARD, member: input.member, new: { id: input.factId, tier: input.tier }, visibility: { from: 'private', to: 'world' }, ...(input.pageless ? { pageless: true } : {}) },
+  });
+  return { proposal_ref: trustProposalRef(id), member: input.member };
 }
 
 /** The pending supersede_take proposal for a contested take write. */
@@ -292,7 +301,7 @@ function fromPairResult(proposal: TrustProposalRow, decision: TrustDecision, res
 }
 
 /** The actions this module registers handlers for. */
-export const SUPERSEDE_HANDLER_ACTIONS: readonly TrustProposalAction[] = ['supersede_fact', 'supersede_take', 'forget'];
+export const SUPERSEDE_HANDLER_ACTIONS: readonly TrustProposalAction[] = ['supersede_fact', 'supersede_take', 'forget', 'confirm'];
 
 registerTrustProposalHandler('supersede_fact', {
   async accept(engine, proposal, ctx: TrustDecisionContext) {
@@ -345,6 +354,46 @@ registerTrustProposalHandler('supersede_take', {
     const after = await getTrustProposal(engine, proposal.id);
     return after?.status === 'accepted' ? decisionResult(proposal, 'accept', 'accepted')
       : decisionResult(proposal, 'accept', 'refused', { reason: after?.status ?? 'not_found' });
+  },
+});
+
+type ShareOutcome = { status: 'accepted'; visibility: string } | { status: 'refused' | 'superseded'; reason: string };
+
+/**
+ * GST-2897 B: the owner shares a held fact. Its visibility widens when the fence still asks for it (or it has no page);
+ * its tier stays as written, so the member it is about can still withdraw it.
+ */
+registerTrustProposalHandler('confirm', {
+  async accept(engine, proposal, ctx: TrustDecisionContext) {
+    const { maintenanceAttribution, principalAttribution } = await import('../persistence/attribution.ts');
+    const { managedPersistenceEnabled } = await import('../persistence/ownership.ts');
+    const attribution = ctx.decidedBy ? principalAttribution(ctx.decidedBy) : await maintenanceAttribution(engine);
+    const managed = await managedPersistenceEnabled(engine);
+    const outcome = await engine.transaction(tx => {
+      const run = async (): Promise<ShareOutcome> => {
+        const row = await getTrustProposal(tx, proposal.id, true);
+        if (row?.status !== 'pending') return { status: 'refused' as const, reason: row?.status ?? 'not_found' };
+        const requested = await requestedVisibility(tx, proposal.id, proposal.target_id);
+        const [fact] = await tx.executeRaw<{ visibility: string }>('SELECT visibility FROM facts WHERE id = $1 AND source_id = $2 AND expired_at IS NULL',
+          [proposal.target_id, proposal.source_id]);
+        if (!requested || !fact) {
+          await transitionTrustProposal(tx, proposal.id, 'pending', 'superseded');
+          return { status: 'superseded' as const, reason: 'fact_missing' };
+        }
+        const widen = fact.visibility === requested.from && await fenceAsks(tx, proposal.target_id, requested.to, requested.pageless);
+        if (widen) {
+          await tx.executeRaw('UPDATE facts SET visibility = $3 WHERE id = $1 AND source_id = $2', [proposal.target_id, proposal.source_id, requested.to]);
+          await queueTierProjection(tx, 'facts', proposal.target_id);
+        }
+        const visibility = widen ? requested.to : fact.visibility;
+        await transitionTrustProposal(tx, proposal.id, 'pending', 'accepted', { decidedBy: ctx.decidedBy, after: { visibility } });
+        return { status: 'accepted' as const, visibility };
+      };
+      return managed ? withCoordinatedWrite(tx, [proposal.source_id], run, attribution) : withWriteAttribution(tx, attribution, run);
+    });
+    return outcome.status === 'accepted'
+      ? decisionResult(proposal, 'accept', 'accepted', { detail: { fact_id: String(proposal.target_id), visibility: outcome.visibility } })
+      : decisionResult(proposal, 'accept', outcome.status, { reason: outcome.reason });
   },
 });
 

@@ -691,6 +691,7 @@ test/serve-http-access.test.ts
 test/serve-http-memory-proposals.test.ts
 test/setup-company-access.test.ts
 test/setup-serves-several.test.ts
+test/share-about-member-gst2897.test.ts
 test/shared-content-freshness.test.ts
 test/shared-skills-catalog.test.ts
 test/shared-skills-retention-capacity.test.ts

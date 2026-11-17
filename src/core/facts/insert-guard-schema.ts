@@ -6,7 +6,8 @@
  *
  * - Purge refusal (purge-schema.ts `gbrain_refuse_purged_fact`): an inserted
  *   row whose fingerprint has a fact_purges tombstone for its source,
- *   visibility and subject ('*' or its entity_slug) aborts the statement with
+ *   visibility and subject ('*' or its entity_slug; any subject for a row on an
+ *   unbacked name key, GBRA-574 withdrawal-schema.ts unbackedEntitySql) aborts the statement with
  *   the same P0001 `purged_content` message and `{table, hash8}` detail,
  *   whatever its expired_at. When several rows match, the detail names the
  *   first one in insertion order, as the per-row trigger did.
@@ -16,7 +17,8 @@
  *   min(withdrawn_at) and valid_until = LEAST(valid_until, withdrawn_at).
  *   GST-2346: a row on a member page (memory/members/<id>) is stamped only
  *   by that page's own withdrawals, as in gbrain_preserve_fact_withdrawal
- *   (withdrawal-schema.ts).
+ *   (withdrawal-schema.ts); GBRA-574: a row on an unbacked name key by a
+ *   withdrawal of its claim under any subject.
  *   By default the per-row BEFORE INSERT trigger facts_preserve_withdrawal_insert
  *   stamps the row before it is written, so `INSERT ... RETURNING` reads the
  *   stamp. An insert made under FACT_WITHDRAWAL_STAMP_DEFERRED_SETTING (the
@@ -48,6 +50,7 @@
  */
 import { requireLedgerPoliciesSql } from '../derived-state-maintainers.ts';
 import { FACT_WITHDRAWAL_STAMP_SETTING } from '../persistence/attribution-schema.ts';
+import { ownedMemorySubjectSql, unbackedEntitySql } from './withdrawal-schema.ts';
 
 export const FACT_INSERT_GUARD_TRIGGER = 'facts_guard_inserted';
 /** Transaction-local; 'on' defers the withdrawal stamp of the following inserts to facts_guard_inserted. */
@@ -62,14 +65,14 @@ export const GUARD_OUTCOME_MARKER_SQL = "(i.source IN ('cli:extract-conversation
 
 /** The WITH clause naming, as m, the active inserted facts a withdrawal matches and its earliest withdrawn_at. */
 const WITHDRAWN_INSERTS_SQL = `WITH n AS MATERIALIZED (
-        SELECT i.id, i.source_id, i.visibility, i.entity_slug, i.source_markdown_slug,
+        SELECT i.id, i.source_id, i.visibility, i.entity_slug, i.source_markdown_slug, ${unbackedEntitySql('i')} AS unbacked,
           gbrain_fact_fingerprint(i.fact) AS fact_hash, gbrain_fact_fingerprint_v1(i.fact) AS fact_hash_v1
         FROM inserted_facts i WHERE i.expired_at IS NULL),
       m AS (
         SELECT n.id, min(w.withdrawn_at) AS withdrawn_at FROM n JOIN fact_withdrawals w
           ON w.source_id = n.source_id AND w.visibility = n.visibility
-          AND w.subject = ANY(CASE WHEN starts_with(COALESCE(n.source_markdown_slug, ''), 'memory/members/') THEN ARRAY[n.source_markdown_slug]
-            ELSE ARRAY['*', n.entity_slug] END) AND w.fact_hash IN (n.fact_hash, n.fact_hash_v1)
+          AND (CASE WHEN starts_with(COALESCE(n.source_markdown_slug, ''), 'memory/members/') THEN w.subject = n.source_markdown_slug
+            ELSE (n.unbacked AND NOT ${ownedMemorySubjectSql('w.subject')}) OR w.subject IN ('*', n.entity_slug) END) AND w.fact_hash IN (n.fact_hash, n.fact_hash_v1)
         GROUP BY n.id)`;
 
 /**
@@ -90,7 +93,7 @@ CREATE OR REPLACE FUNCTION gbrain_guard_inserted_facts() RETURNS trigger
         FROM inserted_facts i WHERE NOT ${GUARD_OUTCOME_MARKER_SQL})
       SELECT n.fact_hash INTO purged FROM n
         WHERE EXISTS (SELECT 1 FROM fact_purges p WHERE p.source_id = n.source_id AND p.visibility = n.visibility
-          AND p.subject IN ('*', n.entity_slug) AND p.fact_hash = n.fact_hash)
+          AND (p.subject IN ('*', n.entity_slug) OR ${unbackedEntitySql('n')}) AND p.fact_hash = n.fact_hash)
         ORDER BY n.ord LIMIT 1;
       IF purged IS NOT NULL THEN
         RAISE EXCEPTION USING ERRCODE = 'P0001',

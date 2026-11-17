@@ -55,7 +55,7 @@ import type { BrainEngine, LinkBatchInput } from '../engine.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { isCrossSourceLinksEnabled } from '../link-extraction.ts';
 import {
-  buildGazetteer, findMentionedEntities, gazetteerEntryKeys, tokenizeTitle,
+  buildGazetteer, entryNameNorm, findMentionedEntities, gazetteerEntryKeys, tokenizeTitle,
   type FindMentionsOpts, type Gazetteer, type GazetteerEntry, type GazetteerEntryKey, type Mention,
 } from '../by-mention.ts';
 import { bodyBlocks, detachedValue } from '../page-body/segment-blocks.ts';
@@ -458,7 +458,7 @@ function miniGazetteer(gazetteer: Gazetteer, keys: Set<string>): Gazetteer {
 
 function entryKey(e: GazetteerEntry | GazetteerEntryKey): string {
   if ('target_slug' in e) return `${e.source_id}\0${e.name_norm}\0${e.target_slug}\0${e.case_sensitive}`;
-  return `${e.source_id}\0${(e.caseTokens ?? e.tokens).join(' ')}\0${e.slug}\0${!!e.caseTokens}`;
+  return `${e.source_id}\0${entryNameNorm(e)}\0${e.slug}\0${!!e.caseTokens}`;
 }
 
 /**
