@@ -4832,6 +4832,24 @@ Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`.
 
 Reasons: `unsupported_target`, `not_installed`, `override_not_found`.
 
+### rust_store_locked
+
+<a id="rust_store_locked"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Rust engine could not open this brain because another gbrain process, or another engine in this process, has its store open, so nothing was opened or written. | A Rust brain has one owner at a time: the process that opened it holds the store until it disconnects. A second open does not wait. | Stop the other gbrain process that is using this brain, or disconnect the other engine, then try again. | user | `gbrain doctor --json` | 1 | yes |
+
+### rust_store_unreadable
+
+<a id="rust_store_unreadable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Rust engine could not read or write this brain's store directory (its format is one this gbrain does not read, its records failed their integrity check, or the disk failed), so the call did not complete and nothing past the last committed write changed. | The store checks its FORMAT file before it opens its records, and it verifies its records as it reads them. It stops rather than guess. | Check that the brain directory is the one you meant and that the disk is healthy. For a format from a newer gbrain, upgrade gbrain. For damaged records, restore the brain from a backup. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `format_unknown`, `store_corrupt`, `store_io`.
+
 ### schedule_install_failed
 
 <a id="schedule_install_failed"></a>

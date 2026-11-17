@@ -1,0 +1,50 @@
+/**
+ * What every store-backed member shares: reaching the open store, refusing options the store cannot answer exactly,
+ * and mapping the store's rejections (store-errors.ts).
+ */
+import type { Capability } from '../../engine-capabilities.ts';
+import { capabilityMissing } from '../errors.ts';
+import { RUST_ENGINE_MEMBERS } from '../members.ts';
+import { mapStoreError, type StoreErrorContext } from '../store-errors.ts';
+import type { StoreBrain } from '../store.ts';
+
+/** A member implemented on the store: `brain` first, then the arguments of the BrainEngine member it serves. */
+export type StoreMember<Args extends unknown[], R> = (brain: StoreBrain, ...args: Args) => Promise<R>;
+
+/** The capability a member belongs to in the Rust member table. */
+function memberCapability(member: string): Capability {
+  const cls = (RUST_ENGINE_MEMBERS as Record<string, string>)[member];
+  return cls as Capability;
+}
+
+/**
+ * The options of `member` the store reads. An option the member declares but the store cannot honour exactly (a
+ * privacy filter, a temporal policy, a keyset page) refuses with `engine_capability_missing` instead of being ignored,
+ * so a caller never gets rows a different engine would have filtered. Options in `ignored` change nothing on this
+ * engine (a cancellation signal, an audit label). Any other key refuses too: a new option must be handled on purpose.
+ */
+export function takeOptions(member: string, opts: object | undefined, supported: readonly string[], ignored: readonly string[] = []): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (opts === undefined || opts === null) return out;
+  for (const [key, value] of Object.entries(opts)) {
+    if (value === undefined) continue;
+    if (supported.includes(key)) out[key] = value;
+    else if (ignored.includes(key) || value === false) continue;
+    else throw capabilityMissing(memberCapability(member), `${member} (option ${key})`);
+  }
+  return out;
+}
+
+/** Refuses a member whose arguments need something the store does not have. */
+export function refuseMember(member: string, what: string): never {
+  throw capabilityMissing(memberCapability(member), `${member} (${what})`);
+}
+
+/** Runs one store call and maps a rejection. `ctx` names the page and source for the errors that need them. */
+export async function storeCall<T>(ctx: StoreErrorContext, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    throw mapStoreError(error, ctx);
+  }
+}
