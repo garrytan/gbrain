@@ -18,7 +18,7 @@ import {
   applyProposalAction, type PairProposal, type PairProposalStore, type ProposalActionResult,
 } from '../facts/proposal-supersede.ts';
 import { currentWriteTrust, withTrustPromotion, withWriteAttribution } from '../persistence/context.ts';
-import { normalizeDimension } from '../chronicle/ontology.ts';
+import { normalizeDimension, NOT_CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 import { verbError, type OperationError } from '../ops/contract.ts';
 import type { Principal } from '../persistence/model.ts';
 import { onOwnedMemoryPageSql } from '../access/member-facts.ts';
@@ -74,7 +74,8 @@ export async function lexicalContestCandidate(engine: BrainEngine, sourceId: str
 
 /**
  * GST-2875: the active non-world fact of `sourceId` on entity `entity` stating exactly `claim`, more trusted than `writer`,
- * while no active world fact states it. A world write of that claim restates it: the write is stored at the copy's visibility
+ * while no active world fact on that entity states it (GST-2891: a world copy the writer saved on another entity does not
+ * lift the hold). A world write of that claim restates it: the write is stored at the copy's visibility
  * and its proposal carries the widening, which only the owner's accept applies (the fence rule of GST-2511, for every
  * remember). Same entity only, as GST-2511 is same page only: the supersede_fact accept refuses a pair across entities.
  */
@@ -84,6 +85,7 @@ export async function restatedPrivateCopy(engine: BrainEngine, sourceId: string,
     `SELECT f.id, f.visibility, f.trust_tier FROM facts f WHERE f.source_id = $1 AND f.fact = $2 AND f.visibility <> 'world'
        AND f.entity_slug IS NOT DISTINCT FROM $4::text AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND ${trustRankSql('f.trust_tier')} > ${trustRankSql('$3::text')}
        AND NOT EXISTS (SELECT 1 FROM facts w WHERE w.source_id = $1 AND w.fact = $2 AND w.visibility = 'world' AND w.expired_at IS NULL
+         AND w.entity_slug IS NOT DISTINCT FROM $4::text
          AND (w.valid_until IS NULL OR w.valid_until > now()))
      ORDER BY f.id LIMIT 1`, [sourceId, claim, writer, entity]);
   return row ? { id: Number(row.id), visibility: row.visibility, trust_tier: storedTrustTier(row.trust_tier) } : null;
@@ -168,7 +170,7 @@ export async function contestOntologySupersession(tx: BrainEngine, sourceId: str
   const writer = (await currentWriteTrust(tx))?.tier ?? 'unknown';
   const [current] = await tx.executeRaw<{ id: number; trust_tier: string }>(
     `SELECT id, trust_tier FROM facts WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND id <> $4
-       AND expired_at IS NULL AND valid_until IS NULL AND (dim_status IS NULL OR dim_status = 'active')
+       AND expired_at IS NULL AND valid_until IS NULL AND (dim_status IS NULL OR dim_status = 'active') AND ${NOT_CONVERSATION_SLOT_SQL}
      ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1`, [sourceId, entitySlug, normalizeDimension(dimension), result.factId]);
   if (!current || !supersessionGuarded(writer, current.trust_tier)) return {};
   return { contested: await recordContestedFact(tx, { sourceId, oldId: Number(current.id), oldTier: storedTrustTier(current.trust_tier),
