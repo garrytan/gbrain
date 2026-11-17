@@ -420,7 +420,7 @@ src/core/derived-links.ts	execute_raw	10
 src/core/destructive-guard.ts	execute_raw	17
 src/core/eligibility/activation.ts	execute_raw	2
 src/core/eligibility/explain.ts	execute_raw	4
-src/core/eligibility/fence-overlay.ts	execute_raw	1
+src/core/eligibility/fence-overlay.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/eligibility/generation.ts	execute_raw	1
 src/core/eligibility/scan.ts	execute_raw	7
 src/core/eligibility/stamp.ts	execute_raw	5	came from master #9574 (held private restatements), which landed before this ratchet
@@ -529,6 +529,7 @@ src/core/generations/managed.ts	execute_raw	7
 src/core/generations/publish.ts	execute_raw	19
 src/core/generations/repair.ts	execute_raw	6
 src/core/ghost-pages.ts	execute_raw	4
+src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/github-source.ts	execute_raw	3
 src/core/google/attachment-backfill.ts	execute_raw	2
 src/core/google/counterparty.ts	execute_raw	2
@@ -641,8 +642,7 @@ src/core/oauth-provider.ts	sql_template	22
 src/core/onboard/checks.ts	execute_raw	5
 src/core/onboard/checks.ts	sql_template	2
 src/core/onboard/impact-capture.ts	execute_raw	3
-src/core/onboard/mcp-onboarding.ts	execute_raw	2
-src/core/onboard/mcp-onboarding.ts	sql_template	3
+src/core/onboard/mcp-onboarding.ts	execute_raw	1
 src/core/op-checkpoint.ts	execute_raw	7
 src/core/ops/admin.ts	execute_raw	4
 src/core/ops/attribution.ts	execute_raw	8
@@ -1067,8 +1067,6 @@ src/core/schema-pack/unify-types-handler.ts	execute_raw	1
 src/core/schema-verify.ts	execute_raw	2
 src/core/search-vector-backfill.ts	execute_raw	3
 src/core/search/alias-fanout.ts	execute_raw	4
-src/core/search/collapse.ts	execute_raw	2
-src/core/search/cosine-rescore.ts	execute_raw	1
 src/core/search/dedup.ts	execute_raw	1
 src/core/search/embedding-column.ts	execute_raw	1
 src/core/search/entity-anchor.ts	execute_raw	5
@@ -1076,18 +1074,15 @@ src/core/search/entity-facts.ts	execute_raw	1
 src/core/search/evidence-date.ts	execute_raw	3
 src/core/search/evidence-delivery.ts	execute_raw	2
 src/core/search/exact-scan.ts	execute_raw	2
-src/core/search/fact-relevance.ts	execute_raw	12
+src/core/search/fact-relevance.ts	execute_raw	13	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/search/facts-arm.ts	execute_raw	3
 src/core/search/feedback-boost.ts	execute_raw	1
 src/core/search/frontmatter-where.ts	execute_raw	1
-src/core/search/hybrid.ts	execute_raw	2
-src/core/search/hybrid/alias-resolved.ts	execute_raw	1
 src/core/search/ignored-privacy-labels.ts	execute_raw	3
 src/core/search/image-vector-presence.ts	execute_raw	1
 src/core/search/private-visibility.ts	execute_raw	4
 src/core/search/projection-readiness.ts	execute_raw	2
 src/core/search/projection-statistics.ts	execute_raw	11
-src/core/search/provenance-demotion.ts	execute_raw	3
 src/core/search/query-cache-gate.ts	execute_raw	2
 src/core/search/query-cache.ts	execute_raw	9
 src/core/search/relational-chain.ts	execute_raw	1
@@ -1189,6 +1184,7 @@ src/core/trust/min-trust.ts	execute_raw	3
 src/core/trust/owner-actions.ts	execute_raw	7
 src/core/trust/page-handlers.ts	execute_raw	7
 src/core/trust/page-write.ts	execute_raw	9
+src/core/trust/privacy-hold-reply.ts	execute_raw	1	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/trust/propagation.ts	execute_raw	4
 src/core/trust/proposals.ts	execute_raw	7
 src/core/trust/provenance-drift.ts	execute_raw	3

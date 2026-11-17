@@ -3,10 +3,11 @@
 # legacy_e2e = called by the Postgres-gated test/e2e/engine-parity*.test.ts suite (informational).
 # pglite/postgres/rust = what each arm must do: yes (runs, compared), same (Rust must match once its arm exists),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 198/198
+# covered: 208/208
 # lifecycle: 9/9
 # pages: 24/24
 # search: 7/7
+# search_reads: 9/9
 # chunks: 17/17
 # extraction: 7/7
 # links: 23/23
@@ -20,7 +21,7 @@
 # facts: 14/14
 # segmented_body: 14/14
 # versions: 3/3
-# stats_ingest: 4/4
+# stats_ingest: 5/5
 # sync_aliases: 9/9
 # config: 5/5
 # raw_sql: 4/4
@@ -41,13 +42,13 @@ getPage	pages	yes	24	yes	yes	yes	same
 readPageSnapshot	pages	yes	6	no	yes	yes	same
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	same
 lockPageKeys	pages	yes	1	no	yes	yes	same
-putPage	pages	yes	88	yes	yes	yes	same
+putPage	pages	yes	95	yes	yes	yes	same
 findDuplicatePage	pages	yes	1	no	yes	yes	same
 findDuplicatePages	pages	yes	1	no	yes	yes	same
 deletePage	pages	yes	2	yes	yes	yes	same
 deletePages	pages	yes	1	yes	yes	yes	same
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	same
-softDeletePage	pages	yes	16	yes	yes	yes	same
+softDeletePage	pages	yes	21	yes	yes	yes	same
 softDeletePages	pages	yes	1	yes	yes	yes	same
 restorePage	pages	yes	5	yes	yes	yes	same
 purgeDeletedPages	pages	yes	1	no	yes	yes	same
@@ -68,9 +69,18 @@ searchTitles	search	yes	1	yes	yes	yes	same
 searchVector	search	yes	2	yes	yes	yes	same
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	same
 searchKeywordChunks	search	yes	1	yes	yes	yes	same
+cosinesByChunkIds	search_reads	yes	1	no	yes	yes	same
+hasSupersedeEdges	search_reads	yes	1	no	yes	yes	same
+supersedingPageSlugs	search_reads	yes	1	no	yes	yes	same
+aliasCanonicalRefs	search_reads	yes	1	no	yes	yes	same
+pageCollapseFacts	search_reads	yes	1	no	yes	yes	same
+slugsEndingIn	search_reads	yes	1	no	yes	yes	same
+generatedPagesIn	search_reads	yes	1	no	yes	yes	same
+livePageIdsAt	search_reads	yes	1	no	yes	yes	same
+pagesLinkingTo	search_reads	yes	1	no	yes	yes	same
 upsertChunks	chunks	yes	11	yes	yes	yes	same
-sealChunks	chunks	yes	2	no	yes	yes	same
-getChunks	chunks	yes	14	yes	yes	yes	same
+sealChunks	chunks	yes	4	no	yes	yes	same
+getChunks	chunks	yes	15	yes	yes	yes	same
 getChunkPage	chunks	yes	3	no	yes	yes	same
 getChunkWindows	chunks	yes	1	no	yes	yes	same
 countStaleChunks	chunks	yes	5	no	yes	yes	same
@@ -92,7 +102,7 @@ markPagesAttendanceBlocked	extraction	yes	1	no	yes	yes	same
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	same
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	same
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	same
-addLink	links	yes	17	yes	yes	yes	same
+addLink	links	yes	20	yes	yes	yes	same
 addLinksBatch	links	yes	1	yes	yes	yes	same
 replaceDerivedLinks	links	yes	1	no	yes	yes	same
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	same
@@ -118,7 +128,7 @@ findOrphanPages	links	yes	1	yes	yes	yes	same
 addTag	tags	yes	5	yes	yes	yes	same
 removeTag	tags	yes	1	no	yes	yes	same
 getTags	tags	yes	1	yes	yes	yes	same
-addTimelineEntry	timeline	yes	5	yes	yes	yes	same
+addTimelineEntry	timeline	yes	6	yes	yes	yes	same
 addTimelineEntriesBatch	timeline	yes	1	no	yes	yes	same
 getTimeline	timeline	yes	3	yes	yes	yes	same
 getTimelineForDate	timeline	yes	2	no	yes	yes	same
@@ -135,7 +145,7 @@ getRawData	raw_files	yes	2	yes	yes	yes	same
 upsertFile	raw_files	yes	2	no	yes	yes	same
 getFile	raw_files	yes	2	no	yes	yes	same
 listFilesForPage	raw_files	yes	1	no	yes	yes	same
-addTakesBatch	takes	yes	19	yes	yes	yes	same
+addTakesBatch	takes	yes	20	yes	yes	yes	same
 updateTakeEmbeddings	takes	yes	1	no	yes	yes	same
 listTakes	takes	yes	11	no	yes	yes	same
 searchTakes	takes	yes	1	no	yes	yes	same
@@ -189,11 +199,12 @@ retireSegmentDerivations	segmented_body	yes	1	no	yes	yes	same
 createVersion	versions	yes	4	no	yes	yes	same
 getVersions	versions	yes	3	no	yes	yes	same
 revertToVersion	versions	yes	2	no	yes	yes	same
+countOnboardSignal	stats_ingest	yes	1	no	yes	yes	same
 getStats	stats_ingest	yes	2	yes	yes	yes	same
 getHealth	stats_ingest	yes	2	yes	yes	yes	same
 logIngest	stats_ingest	yes	1	no	yes	yes	same
 getIngestLog	stats_ingest	yes	1	no	yes	yes	same
-updateSlug	sync_aliases	yes	4	no	yes	yes	same
+updateSlug	sync_aliases	yes	5	no	yes	yes	same
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	same
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	same
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	same

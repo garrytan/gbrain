@@ -8,6 +8,9 @@ import type { EmbeddingState, EmbeddingStateCounts, EmbeddingStateRow } from './
 import type { DerivedLinkBatchItem, DerivedLinkOrigin, DerivedLinkReplacementOptions } from './derived-links.ts';
 import type { FindPagesQuery, FoundPages } from './page-find.ts';
 import type { PageCountQuery, PageCounts, TypeGrouper } from './page-counts.ts';
+import type { GeneratedPageRow, PageCollapseFactRow } from './engine-sql/search-reads.ts';
+import type { OnboardSignal } from './engine-sql/health.ts';
+import type { EntityTypeFilter } from './schema-pack/entity-types.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
@@ -1238,6 +1241,27 @@ export interface BrainEngine {
    * interpolation as defense in depth (D12).
    */
   getEmbeddingsByChunkIds(ids: number[], column?: string): Promise<Map<number, Float32Array>>;
+  /** Text-space cosine per visible chunk id with an embedding in `column`, computed in the database; absent ids did not hydrate (SQL in engine-sql/search-reads.ts). */
+  cosinesByChunkIds(ids: number[], column: string, query: Float32Array): Promise<Map<number, number>>;
+  // Search ranking-stage reads (hybrid search after fusion; SQL in engine-sql/search-reads.ts).
+  /** Whether any `supersedes` link exists (one index probe). */
+  hasSupersedeEdges(): Promise<boolean>;
+  /** Superseded page id -> slug of a live same-source page that supersedes it; under a policy all three pages must be readable. */
+  supersedingPageSlugs(pageIds: number[], policy?: PageReadPolicy): Promise<Map<number, string>>;
+  /** The refs that are the canonical slug of a `slug_aliases` row, on a page the policy may read. */
+  aliasCanonicalRefs(refs: Array<{ slug: string; source_id: string }>, policy?: PageReadPolicy): Promise<Array<{ source_id: string; canonical_slug: string }>>;
+  /** Collapse facts per existing page id: redirect target, bounded body length and, for `bodyIds`, body md5 and lead. */
+  pageCollapseFacts(ids: number[], bodyIds: number[]): Promise<PageCollapseFactRow[]>;
+  /** Up to two live slugs in a source that are `word` or end in `/word`. */
+  slugsEndingIn(sourceId: string, word: string): Promise<string[]>;
+  /** The pages among `ids` gbrain generated (`dream_generated: true` or type `extract_receipt`). */
+  generatedPagesIn(ids: number[]): Promise<GeneratedPageRow[]>;
+  /** Ids of the live pages at the given (source id, slug) refs. */
+  livePageIdsAt(refs: Array<{ slug: string; source_id: string }>): Promise<number[]>;
+  /** The pages among `fromIds` with a ranking link to a page in `toIds`. */
+  pagesLinkingTo(fromIds: number[], toIds: number[]): Promise<number[]>;
+  /** One brain-wide MCP onboarding count (SQL in engine-sql/health.ts). */
+  countOnboardSignal(signal: OnboardSignal, entityTypes: EntityTypeFilter, opts?: { signal?: AbortSignal }): Promise<number>;
 
   // Chunks
   /**

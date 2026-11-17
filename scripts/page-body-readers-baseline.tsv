@@ -206,6 +206,7 @@ src/core/engine-sql/pages.ts	refreshPageBody	sql	SEGW	UPDATE of the body columns
 src/core/engine-sql/pages.ts	revertToVersion	sql	SEGW	lane 1e: refuses a segmented page/version (revert deferred to PR 3)
 src/core/engine-sql/pages.ts	toDomainBankRow	field	LEAD	maps sampled rows; segmented pages are never sampled
 src/core/engine-sql/salience.ts	listEnrichCandidates	sql	META	
+src/core/engine-sql/search-reads.ts	generatedPagesIn	sql	LEAD	moved from search/provenance-demotion.ts readGeneratedPages (same statement, typed engine method)
 src/core/engine-sql/timeline.ts	getTimeline	sql	NONE	not the page body: SELECT * FROM pages inside a LATERAL used for the page id only
 src/core/enrichment-service.ts	planEntity	call:putPage	INLINE	
 src/core/enrichment-service.ts	planEntity	call:serializeMarkdown	INLINE	
@@ -651,7 +652,6 @@ src/core/search/evidence-delivery.ts	deliverEvidence	field	STREAM	inline pages: 
 src/core/search/evidence-delivery.ts	selectLongPages	sql	META	sizes a segmented page from its NULL body (0), so it is never selected as a long page; moves to body_bytes
 src/core/search/exact-scan.ts	buildExactBatchStatement	sql	META	#7191: octet_length of the body columns (stored size, never the body) decides an unreadable page
 src/core/search/provenance-demotion.ts	applyGeneratedDemotion	field	LEAD	
-src/core/search/provenance-demotion.ts	readGeneratedPages	sql	LEAD	
 src/core/search/read-enrichment.ts	readAliases	sql	NONE	not the page body: SELECT * FROM pages used for identity columns
 src/core/search/read-enrichment.ts	readChainHop	sql	META	SELECT * FROM pages by id; protectedBodyFilter(ev) reads body_flags for a segmented page
 src/core/search/relational-recall.ts	hydrate	field	LEAD	synopsis from boundedBodyPrefixSql
