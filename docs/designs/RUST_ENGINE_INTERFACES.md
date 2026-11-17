@@ -161,7 +161,8 @@ Reserved tags:
 
 ### Page delete cascade
 
-`pages::remove_page` deletes a page's versions, chunks, postings, links and timeline entries, then calls
+`pages::remove_page` deletes a page's versions, chunks, postings, links and timeline entries, then the event
+projections that name the page (`timeline_queries::remove_event_projections`, below), then calls
 `cascade::remove_page_rows`, which calls `remove_page_rows(tx, page)` in each family marked "yes" above. Today every
 one of those hooks is empty. A family fills in only its own hook, inside the same write transaction, so the page and
 everything under it go together or not at all. Soft delete never cascades: reads hide rows whose page has
@@ -207,6 +208,55 @@ pub(crate) fn set(&mut self, name: &str, value: Value);
 - **Cost:** one read per listed family per page returned. A family whose record is absent for most pages does one
   failed `get` each.
 - **Tests:** a store-level unit test can open a store in memory with `crate::test_support::store()`.
+
+#### Timeline entry helpers (`timeline.rs`)
+
+```rust
+pub(crate) fn next_entry_id(tx: &mut dyn KvWrite) -> Result<u64>;
+pub(crate) fn read_entry(read: &dyn KvRead, page_id: u64, date: &str, id: u64) -> Result<Option<TimelineRecord>>;
+pub(crate) fn put_entry(tx: &mut dyn KvWrite, old: Option<&TimelineRecord>, new: &TimelineRecord) -> Result<()>;
+```
+
+A family that writes timeline entries (timeline_queries, for `upsertEventProjection`) uses only these; it never
+writes `E`, `D` or `G` keys itself.
+
+- `next_entry_id` takes the next id from the counter `addTimelineEntry` uses, so ids stay in one sequence.
+- `read_entry` reads the entry at `E page_id date id`.
+- `put_entry` writes `new` and, when `old` is given, replaces it. `old` is the entry exactly as it is stored (read
+  it with `read_entry`); its `E` key goes, and its `D` key goes when that key still points at `old.id`. When `new`'s
+  `D` key points at another entry, it refuses with `constraint_violation` (the dedup unique index of
+  `timeline_entries`). Then it writes `new`'s `E` and `D` keys and raises `G` of `new.page_id`.
+- `G` only goes up. An update that moves an entry to an older `created_at`, or to another page, leaves `G` where it
+  was. Postgres computes the newest `created_at` each time, so if a parity case shows the difference, ask core.
+- On a refusal, return the error from the write closure: the transaction then keeps nothing.
+
+#### Event projection delete (`timeline_queries::remove_event_projections`)
+
+```rust
+pub(crate) fn remove_event_projections(tx: &mut dyn KvWrite, event_page_id: u64) -> Result<()>;
+```
+
+Postgres deletes a timeline entry when the page in its `event_page_id` is deleted (`ON DELETE CASCADE`), and that
+entry can sit on another page. `pages::remove_page` calls this function in the same write transaction, after the
+page's own entries go. Its body is empty. The timeline_queries family fills it in: it finds the entries through its
+own `u 0x01 <event_page_id be8> <date>` index and deletes each one's `E` and `D` keys and its index key.
+
+#### Page rename (`pages::rename_page`)
+
+```rust
+pub(crate) fn rename_page(tx: &mut dyn KvWrite, env: &dyn Env, page: &PageRecord, new_slug: &str) -> Result<PageRecord>;
+```
+
+The page move of `updateSlug` (`UPDATE pages SET slug = new, updated_at = now()`). Pass the page as it is stored;
+it returns the moved record.
+
+- The page keeps its id, so its chunks, links, tags, timeline entries and versions follow it.
+- A new slug takes a new `knowledge_revision` and clears `text_projection_revision`, as the Postgres revision trigger
+  does. The same slug changes only `updated_at`.
+- `new_slug` goes through `validate_slug` (refuses with `invalid_slug`; stores the lowercase form).
+- Refuses with `constraint_violation` when the source already holds a page at the new slug, live or soft deleted.
+  Return the error from the write closure: the transaction then keeps nothing.
+- It moves only the page. The caller versions the page before the move, and records the rename alias after it.
 
 ### Write transactions and the journal
 
@@ -382,7 +432,7 @@ Slug renames and page aliases.
 - **Store and binding:** `updateSlug` (`update_slug`), `resolveSlugWithAlias` (`resolve_slug_with_alias`), `resolveSlugWithAliasDetailed` (`resolve_slug_with_alias_detailed`), `resolveAliases` (`resolve_aliases`), `setPageAliases` (`set_page_aliases`), `updatePageContextualRetrievalState` (`update_page_contextual_retrieval_state`).
 - **Postgres tables:** `slug_aliases` (no FK to pages), `pages.slug` (rename), `pages.contextual_retrieval_mode`.
 - **Keys:** `k 0x01 <source> 0x00 <alias slug>` to the target slug and page id; `k 0x02 <page id> 0x00 <alias slug>` to list a page's aliases; `k 0x03 <page id>` for the contextual retrieval state. Removed by `remove_page_rows`. `getPage` returns `contextual_retrieval_mode` from that record through this family's `page_columns` hook (built).
-- **Depends on:** `updateSlug` moves the page key (`P`) from the old slug to the new one. That is a core page write: ask core for a `pages::rename_page(tx, page, new_slug)` helper before you start `updateSlug`. Links, chunks, tags, timeline and versions follow the page id and need no change.
+- **Depends on:** `updateSlug` moves the page key (`P`) from the old slug to the new one through core's `pages::rename_page` (built; "Core hooks"). This family versions the page first (`pages::snapshot_in`), then calls `rename_page`, then records the alias and moves its own slug bindings. Links, chunks, tags, timeline and versions follow the page id and need no change.
 - **Estimate:** about 5 to 6 days.
 - **Notes:** Same capability (`pages`) as page_ops and extraction. `resolveSlugWithAliasDetailed` returns how the slug was found; keep its result fields exact.
 - **Parity cases (6, in `sync-aliases.test.ts`):**
@@ -664,8 +714,8 @@ Timeline reads by date and event projections.
 - **Members (5), capability:** `timeline` (5).
 - **Store and binding:** `getTimelineForDate` (`get_timeline_for_date`), `getSince` (`get_since`), `getOnThisDay` (`get_on_this_day`), `getLastSeen` (`get_last_seen`), `upsertEventProjection` (`upsert_event_projection`).
 - **Postgres tables:** `timeline_entries`, `pages.effective_date`.
-- **Keys:** Reads core timeline rows (`E`, `D`, `G`) through `timeline.rs` helpers. `u <date> 0x00 <entry id>` date index if a read needs one, kept by a core hook in `timeline.rs`; event projections under `u 0x01 ...`.
-- **Depends on:** Core timeline helpers; ask core for a date index hook if a scan is too slow.
+- **Keys:** Reads and writes core timeline rows (`E`, `D`, `G`) only through the timeline entry helpers ("Core hooks"). `u <date> 0x00 <entry id>` date index if a read needs one, kept by a core hook in `timeline.rs`; event projections indexed under `u 0x01 <event_page_id be8> <date>`.
+- **Depends on:** The timeline entry helpers and the `remove_event_projections` stub (both built; fill in the stub). Ask core for a date index hook if a scan is too slow.
 - **Estimate:** about 1 to 2 days.
 - **Notes:** Dates are `YYYY-MM-DD` text. `getOnThisDay` matches month and day across years.
 - **Parity cases (5, in `timeline.test.ts`):**
@@ -846,7 +896,7 @@ member lands. Within a group, build in the order shown.
 | Group | Families (in order) | Can start now | Estimate | Waits on |
 |---|---|---|---|---|
 | 1. Page reads and deletes | page_ops | yes | about 9 days | nothing to start; `deletePages` calls the eval_capture helper, which group 5 builds first (about half a day) |
-| 2. Page state | extraction, then aliases | yes | about 10 days | `updateSlug` needs the core rename helper |
+| 2. Page state | extraction, then aliases | yes | about 10 days | `updateSlug` uses the core rename helper (built) |
 | 3. Page bodies | page_body | yes | about 7 to 8 days | vector input to `stageSegmentChunks` refuses until embeddings; one case needs transactions |
 | 4. Memory records | dream, contradictions, facts, ontology, raw_files, stats | yes | about 9 days | three facts cases need takes (group 5); `getHealth` last |
 | 5. Takes and salience | eval_capture (first), takes, salience, code_edges | yes | about 7 to 8 days | the `takes` capability needs vectors and embeddings (core); code_edges needs the core chunk-delete hook |
@@ -864,8 +914,10 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Core item | Waits on | Needed by |
 |---|---|---|
 | Page-columns hook (`page_columns.rs`): family values that `getPage` returns (`emotional_weight`, `contextual_retrieval_mode`, segmented-body fields) | built | salience, aliases, page_body; extraction listed, likely unused |
-| `pages::rename_page` helper | nothing | aliases (`updateSlug`) |
+| `pages::rename_page` helper | built | aliases (`updateSlug`) |
 | Chunk-delete hook (`cascade::remove_chunk_rows`) | nothing | code_edges |
+| Timeline entry helpers (`next_entry_id`, `read_entry`, `put_entry`) | built | timeline_queries (`upsertEventProjection`) |
+| Event projection delete (`timeline_queries::remove_event_projections`, called by `remove_page`) | built; the family fills in the body | timeline_queries |
 | Index hooks in `write_page` and `timeline.rs` if a family needs one | a family asking | page_ops, keyword, timeline_queries |
 | `ts_rank` compatibility ranker | nothing | keyword, facts keyword arm |
 | vectors (`X`): chunk and take vectors, vector search | the coming vector store work | embeddings, takes capability, page_body chunk vectors, `findCandidateDuplicates` with an embedding |
