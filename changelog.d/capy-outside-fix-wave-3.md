@@ -6,7 +6,7 @@
 <!-- behavior-change: doctor_only_engine_free_9527 -->
 
 ### Fixed
-- `gbrain connectors sync` now imports chat history on a brain whose writes go through the writer, the way `gbrain transcripts ingest` already does, instead of being refused. (#9124, reported and first fixed by @Masashi-Ono0611)
+- `gbrain connectors sync <provider>` run in the foreground now imports chat history on a brain whose writes go through the writer, the way `gbrain transcripts ingest` already does, instead of being refused. A `--background` or scheduled sync, and the `connector_sync` operation, still pass no write context. (#9124, reported and first fixed by @Masashi-Ono0611)
 - A Gmail message part labelled `text/plain` that is really an HTML document is now stripped to readable text instead of being stored with its raw tags and CSS. (#8937, reported and first fixed by @Masashi-Ono0611)
 - `gbrain repair captured-facts` now recognises facts captured from Codex sessions, in both the live and the archived Codex session folders, instead of counting them as unclassifiable. (#9554, reported and first fixed by @Masashi-Ono0611)
 - `gbrain doctor --only <check>` on a check that needs no database now reports "No finding" when the check has nothing to say, instead of a warning that the database checks stopped early. A connection that really failed still reports the stop. (#9527, reported and first fixed by @Masashi-Ono0611)
