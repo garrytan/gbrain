@@ -1,0 +1,4 @@
+---
+kind: default
+---
+A member credential's remember with share: true about another enabled member (an entity under people/<member>/ or people/<member>) is now stored private, with a pending proposal the brain owner lists with gbrain trust review and shares with gbrain trust confirm tp<N>, instead of being shared with every reader of the source at once. The reply says visibility "private" and carries a held field naming the proposal and the member. A share about the team's work, about the caller itself, or by the owner's own credential is unchanged. The member a shared fact is about can now withdraw it with forget, where only the brain host could before; it still cannot withdraw a shared fact about anyone else. A member's visibility "world" about another member is refused as before, and the refusal no longer tells the agent to retry with share: true.
