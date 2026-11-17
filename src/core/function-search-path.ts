@@ -95,10 +95,15 @@ function isConcurrentCatalogUpdate(error: unknown): boolean {
  * becomes `schema_lock_blocked`; a concurrent update of the same pg_proc row (`apply-migrations --force-schema` beside
  * another process's boot) is retried, since the step is idempotent. Prints nothing: the caller decides who is told.
  * It first re-creates any purge or withdrawal guard left without its ledger check that the role owns (guard-ledger-checks.ts,
- * #7659), best-effort and silent: v318 names the ones another role owns, and every later migration run retries them.
+ * #7659). Only a guard another role owns stays silent (SQLSTATE 42501): v318 and doctor's guard_ledger_checks name it, and
+ * every later migration run retries it. Any other failure of the re-create propagates.
  */
 export async function hardenFunctionSearchPaths(engine: BrainEngine, attempt = 1): Promise<string[] | null> {
-  if (attempt === 1) await failClosedLedgerGuards(engine).catch(() => undefined);
+  if (attempt === 1) {
+    await failClosedLedgerGuards(engine).catch(error => {
+      if ((error as { code?: string } | null)?.code !== '42501') throw error;
+    });
+  }
   if ((await legacySearchPathFunctions(engine)).length === 0) return [];
   const lockTimeoutMs = resolveSchemaLockTimeoutMs();
   try {

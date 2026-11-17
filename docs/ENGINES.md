@@ -480,6 +480,12 @@ CREATE POLICY page_segment_derivation_purge_pages_writer_note ON page_segment_de
 ```
 <!-- gbrain:ledger-rls-recipe:end -->
 
+A bulk fact insert (the fence import in `src/core/engine-sql/facts.ts`) defers the withdrawal
+stamp to the end of its statement, so when one of its rows matches a withdrawal the guard
+updates that row in `facts`, and the write role then needs a permissive `UPDATE` policy on
+`facts` covering the row, beside its `SELECT` policy, or the guard refuses the insert with the
+same `writer_coordinator_required` error.
+
 **Check that the upgrade replaced every guard.** Migration v318 can only replace a guard function
 the role running it owns. A guard owned by another role is left as it was, so it still lets a
 scoped writer without ledger policies through, and v318 only names it in one stderr line
