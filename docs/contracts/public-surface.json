@@ -2919,6 +2919,7 @@
     "serve_unhealthy_exit": 69,
     "settle_mismatch": 1,
     "setup_harness_unsupported": 2,
+    "setup_history_choice_required": 1,
     "setup_hosted_connection": 1,
     "setup_owner_conflict": 1,
     "setup_serves_several": 1,
