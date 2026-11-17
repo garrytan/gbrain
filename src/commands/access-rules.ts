@@ -393,7 +393,8 @@ async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: strin
       }
       const preview = await previewRules(engine, sourceId, store, persisted, desired);
       if (!yes) {
-        return print(json, { ...preview, applied: false }, () => previewLines(preview, `gbrain access rule ${[sub, ...args.filter(a => a !== '--json')].join(' ')} --yes`));
+        const kept = args.filter((a, i) => a !== '--json' && a !== '--expect' && args[i - 1] !== '--expect');
+        return print(json, { ...preview, applied: false }, () => previewLines(preview, `gbrain access rule ${[sub, ...kept].join(' ')} --yes --expect ${preview.expect}`));
       }
       const r = await writeRules(engine, sourceId, desired, { expect, operation, message, json });
       if (r.state === 'invalid') setCliExitVerdict(1);

@@ -68,10 +68,16 @@ export function withFix(fix: Action | undefined): { fix?: Action } {
  * surface-correct prose plus the matching read.
  */
 export function pageNotFoundError(
-  ctx: Pick<OperationContext, 'remote' | 'transport'>,
+  ctx: Pick<OperationContext, 'remote' | 'transport' | 'auth'>,
   slug: string,
   opts: { includeDeleted: boolean; sourceIdParam?: string; elsewhereSource?: string },
 ): OperationError {
+  // GBRA-585: a member's credential misses pages kept to other members too, and it reads the same for both, so it is
+  // sent neither after a deletion nor to the host CLI.
+  if (ctx.remote !== false && ctx.auth?.member) {
+    return opError('page_not_found', `Page not found: ${slug}`,
+      'This connection reads no page with this slug: it may not exist, or it may not be readable by this connection, since a page can be kept to other members. Do not create it to find out; ask the user whether the page exists and who can read it.');
+  }
   const retry = opts.includeDeleted ? `Check the slug or use ${paramUse(ctx, 'fuzzy')}` : `Page may be soft-deleted; pass ${paramUse(ctx, 'include_deleted')} to verify`;
   const where = opts.elsewhereSource;
   const explicit = opts.sourceIdParam !== ALL_SOURCES ? opts.sourceIdParam : undefined;
