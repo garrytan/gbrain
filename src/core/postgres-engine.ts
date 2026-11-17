@@ -2160,7 +2160,7 @@ export class PostgresEngine implements BrainEngine {
           AND confidence >= ${minConf} ${scope} ${privacy} ${visibility}
       )
       SELECT entity_slug, dimension,
-             json_agg(json_build_object('value', value, 'source', source, 'confidence', confidence, 'fact_id', fact_id)) AS values
+             json_agg(json_build_object('value', value, 'source', source, 'confidence', confidence, 'fact_id', fact_id) ORDER BY fact_id) AS values
       FROM cur
       GROUP BY entity_slug, dimension
       HAVING count(DISTINCT value) >= 2 AND count(DISTINCT source) >= 2
@@ -2220,27 +2220,27 @@ export class PostgresEngine implements BrainEngine {
     if (source && sourceIds) {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
         JOIN pages p ON p.id = rd.page_id ${privacy} ${alive}
-        WHERE p.slug = ${slug} AND rd.source = ${source} AND p.source_id = ANY(${sourceIds}::text[])`;
+        WHERE p.slug = ${slug} AND rd.source = ${source} AND p.source_id = ANY(${sourceIds}::text[]) ORDER BY p.source_id COLLATE "C", rd.source COLLATE "C"`;
     } else if (sourceIds) {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
         JOIN pages p ON p.id = rd.page_id ${privacy} ${alive}
-        WHERE p.slug = ${slug} AND p.source_id = ANY(${sourceIds}::text[])`;
+        WHERE p.slug = ${slug} AND p.source_id = ANY(${sourceIds}::text[]) ORDER BY p.source_id COLLATE "C", rd.source COLLATE "C"`;
     } else if (source && sourceId) {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
         JOIN pages p ON p.id = rd.page_id ${privacy} ${alive}
-        WHERE p.slug = ${slug} AND rd.source = ${source} AND p.source_id = ${sourceId}`;
+        WHERE p.slug = ${slug} AND rd.source = ${source} AND p.source_id = ${sourceId} ORDER BY p.source_id COLLATE "C", rd.source COLLATE "C"`;
     } else if (source) {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
         JOIN pages p ON p.id = rd.page_id ${privacy} ${alive}
-        WHERE p.slug = ${slug} AND rd.source = ${source}`;
+        WHERE p.slug = ${slug} AND rd.source = ${source} ORDER BY p.source_id COLLATE "C", rd.source COLLATE "C"`;
     } else if (sourceId) {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
         JOIN pages p ON p.id = rd.page_id ${privacy} ${alive}
-        WHERE p.slug = ${slug} AND p.source_id = ${sourceId}`;
+        WHERE p.slug = ${slug} AND p.source_id = ${sourceId} ORDER BY p.source_id COLLATE "C", rd.source COLLATE "C"`;
     } else {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
         JOIN pages p ON p.id = rd.page_id ${privacy} ${alive}
-        WHERE p.slug = ${slug}`;
+        WHERE p.slug = ${slug} ORDER BY p.source_id COLLATE "C", rd.source COLLATE "C"`;
     }
     return rows as unknown as RawData[];
   }
