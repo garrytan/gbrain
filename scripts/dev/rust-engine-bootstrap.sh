@@ -17,11 +17,13 @@
 #   GBRAIN_DEV_BUN_VERSION   Bun version (default: read from package.json)
 #   GBRAIN_DEV_PG_PORT       Postgres port when the script creates the cluster (default 5432)
 #   GBRAIN_DEV_PG_USER / GBRAIN_DEV_PG_PASSWORD / GBRAIN_DEV_PG_DB
-#                            role, password and database (default gbrain / gbrain / gbrain_test)
+#                            role, password and database (default gbrain / gbrain / gbrain_test;
+#                            letters, digits and _ only)
 #   GBRAIN_DEV_ENV_FILE      env file to write (default ~/.gbrain-rust-dev.env)
 #   GBRAIN_DEV_LINK_BINS=0   do not link bun, cargo, rustc and napi into /usr/local/bin
 #   GBRAIN_DEV_SKIP_RUST=1   skip the Rust toolchain and napi-rs CLI
 #   GBRAIN_DEV_BIN           where the napi wrapper goes (default ~/.gbrain-rust-dev/bin)
+#   GBRAIN_DEV_LOG_DIR       step logs (default ~/.gbrain-rust-dev/logs)
 #
 # The script never exports DATABASE_URL into your shell: the test preload
 # (test/helpers/database-url-guard-preload.ts) refuses every plain `bun test`
@@ -30,7 +32,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-LOG_DIR="${GBRAIN_DEV_LOG_DIR:-/var/tmp/gbrain-rust-bootstrap}"
+LOG_DIR="${GBRAIN_DEV_LOG_DIR:-$HOME/.gbrain-rust-dev/logs}"
 ENV_FILE="${GBRAIN_DEV_ENV_FILE:-$HOME/.gbrain-rust-dev.env}"
 PG_MAJOR=16
 PG_USER="${GBRAIN_DEV_PG_USER:-gbrain}"
@@ -46,7 +48,22 @@ DEV_BIN="${GBRAIN_DEV_BIN:-$HOME/.gbrain-rust-dev/bin}"
 export PATH="$DEV_BIN:$BUN_INSTALL/bin:$CARGO_HOME/bin:$PATH"
 export DEBIAN_FRONTEND=noninteractive
 
-mkdir -p "$LOG_DIR"
+# Logs live under the user's home, never a shared directory: a step run as
+# root must not follow a link another user planted there.
+mkdir -p -m 700 "$LOG_DIR" || { echo "cannot create log directory $LOG_DIR" >&2; exit 1; }
+if [ -L "$LOG_DIR" ] || [ ! -O "$LOG_DIR" ]; then
+  echo "log directory $LOG_DIR must be a real directory owned by $(id -un)" >&2
+  exit 1
+fi
+
+# Role, password and database go into SQL, a URL and the env file, so keep
+# them to characters that need no quoting anywhere.
+for _v in PG_USER PG_PASSWORD PG_DB; do
+  case "${!_v}" in
+    ''|*[!A-Za-z0-9_]*) echo "GBRAIN_DEV_${_v}: use letters, digits and _ only" >&2; exit 1 ;;
+  esac
+done
+case "$PG_PORT" in ''|*[!0-9]*) echo "GBRAIN_DEV_PG_PORT must be a number" >&2; exit 1 ;; esac
 T0=$SECONDS
 SUMMARY=()
 FAILED=0
@@ -69,6 +86,7 @@ run_step() {
     SUMMARY+=("FAIL  $(printf '%-12s %4ss' "$name" $((SECONDS - start)))  see $log")
     say "$name failed; last lines of $log:"
     tail -n 15 "$log" | sed 's/^/    /'
+    return 1
   fi
 }
 
@@ -207,25 +225,31 @@ start_postgres() {
 }
 
 create_database() {
+  # Every admin call names the 16/main port: with a second cluster on the
+  # machine, Ubuntu's psql wrapper would otherwise pick the default one.
+  PG_PORT="$(cluster_port)"
+  [ -n "$PG_PORT" ] || { echo "no $PG_MAJOR/main cluster"; return 1; }
   # cd / so `sudo -u postgres` does not warn about an unreadable cwd.
-  (cd / && as_postgres psql -v ON_ERROR_STOP=1 -q -d postgres \
-      -v role="$PG_USER" -v pw="$PG_PASSWORD" <<'SQL'
-SELECT format('CREATE ROLE %I', :'role')
-WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role') \gexec
+  # The password goes in on stdin, never in argv where `ps` shows it.
+  # PG_USER and PG_PASSWORD are already limited to [A-Za-z0-9_].
+  (cd / && as_postgres psql -p "$PG_PORT" -v ON_ERROR_STOP=1 -q -d postgres) <<SQL || return 1
+SELECT format('CREATE ROLE %I', '$PG_USER')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$PG_USER') \\gexec
 -- Superuser: the tests CREATE DATABASE and CREATE EXTENSION vector. Local dev only.
-ALTER ROLE :"role" WITH LOGIN SUPERUSER PASSWORD :'pw';
+ALTER ROLE "$PG_USER" WITH LOGIN SUPERUSER PASSWORD '$PG_PASSWORD';
 SQL
-  ) || return 1
-  if ! (cd / && as_postgres psql -tAq -d postgres -c "SELECT 1 FROM pg_database WHERE datname = '$PG_DB'") | grep -q 1; then
-    (cd / && as_postgres createdb -O "$PG_USER" "$PG_DB") || return 1
+  if ! (cd / && as_postgres psql -p "$PG_PORT" -tAq -d postgres -c "SELECT 1 FROM pg_database WHERE datname = '$PG_DB'") | grep -q 1; then
+    (cd / && as_postgres createdb -p "$PG_PORT" -O "$PG_USER" "$PG_DB") || return 1
   fi
   local url="postgresql://$PG_USER:$PG_PASSWORD@127.0.0.1:$PG_PORT/$PG_DB"
-  psql "$url" -v ON_ERROR_STOP=1 -q \
+  # Connect with the password in the environment, not on the command line.
+  local conn="postgresql://$PG_USER@127.0.0.1:$PG_PORT/$PG_DB"
+  PGPASSWORD="$PG_PASSWORD" psql "$conn" -v ON_ERROR_STOP=1 -q \
     -c 'CREATE EXTENSION IF NOT EXISTS vector' \
     -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm' \
     -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto' || return 1
   local exts
-  exts="$(psql "$url" -tA -c "SELECT string_agg(extname || ' ' || extversion, ', ' ORDER BY extname) FROM pg_extension WHERE extname IN ('vector','pg_trgm','pgcrypto')")" || return 1
+  exts="$(PGPASSWORD="$PG_PASSWORD" psql "$conn" -tA -c "SELECT string_agg(extname || ' ' || extversion, ', ' ORDER BY extname) FROM pg_extension WHERE extname IN ('vector','pg_trgm','pgcrypto')")" || return 1
   echo "extensions: $exts"
   case "$exts" in *vector*pg_trgm*|*pg_trgm*vector*) ;; *) echo "vector or pg_trgm missing"; return 1 ;; esac
   DB_URL="$url"
@@ -281,20 +305,25 @@ install_deps() {
 
 write_env_file() {
   local url="${DB_URL:-postgresql://$PG_USER:$PG_PASSWORD@127.0.0.1:$PG_PORT/$PG_DB}"
-  cat >"$ENV_FILE" <<EOF
-# Written by scripts/dev/rust-engine-bootstrap.sh. Source it: . $ENV_FILE
-export BUN_INSTALL="$BUN_INSTALL"
-export CARGO_HOME="$CARGO_HOME"
-export RUSTUP_HOME="$RUSTUP_HOME"
-case ":\$PATH:" in *":$BUN_INSTALL/bin:"*) ;; *) export PATH="$BUN_INSTALL/bin:\$PATH" ;; esac
-case ":\$PATH:" in *":$CARGO_HOME/bin:"*) ;; *) export PATH="$CARGO_HOME/bin:\$PATH" ;; esac
-case ":\$PATH:" in *":$DEV_BIN:"*) ;; *) export PATH="$DEV_BIN:\$PATH" ;; esac
-# Local test database. Not exported as DATABASE_URL on purpose: the test
-# preload refuses plain \`bun test\` while DATABASE_URL is set. Use:
-#   DATABASE_URL="\$RUST_ENGINE_DATABASE_URL" bash scripts/run-e2e.sh <files>
-export RUST_ENGINE_DATABASE_URL="$url"
-EOF
-  chmod 600 "$ENV_FILE"
+  local dir tmp d
+  dir="$(dirname "$ENV_FILE")"
+  mkdir -p "$dir" || return 1
+  tmp="$(mktemp "$dir/.gbrain-rust-dev.env.XXXXXX")" || return 1
+  {
+    echo "# Written by scripts/dev/rust-engine-bootstrap.sh. Source it: . $ENV_FILE"
+    printf 'export BUN_INSTALL=%q\n' "$BUN_INSTALL"
+    printf 'export CARGO_HOME=%q\n' "$CARGO_HOME"
+    printf 'export RUSTUP_HOME=%q\n' "$RUSTUP_HOME"
+    for d in "$BUN_INSTALL/bin" "$CARGO_HOME/bin" "$DEV_BIN"; do
+      printf 'case ":$PATH:" in *:%q:*) ;; *) export PATH=%q:"$PATH" ;; esac\n' "$d" "$d"
+    done
+    echo "# Local test database. Not exported as DATABASE_URL on purpose: the test"
+    echo "# preload refuses plain \`bun test\` while DATABASE_URL is set. Use:"
+    echo '#   DATABASE_URL="$RUST_ENGINE_DATABASE_URL" bash scripts/run-e2e.sh <files>'
+    printf 'export RUST_ENGINE_DATABASE_URL=%q\n' "$url"
+  } >"$tmp" || { rm -f "$tmp"; return 1; }
+  chmod 600 "$tmp" || { rm -f "$tmp"; return 1; }
+  mv -f "$tmp" "$ENV_FILE" || { rm -f "$tmp"; return 1; }
   detail "$ENV_FILE"
 }
 
@@ -303,9 +332,17 @@ say "repo: $REPO_ROOT  logs: $LOG_DIR"
 run_step preflight preflight
 if [ "$FAILED" -eq 0 ]; then
   run_step bun install_bun
-  run_step postgres install_postgres
-  run_step pg-start start_postgres
-  run_step pg-database create_database
+  # Each Postgres step needs the one before it: never touch roles or
+  # databases on a server this script did not verify.
+  if run_step postgres install_postgres; then
+    if run_step pg-start start_postgres; then
+      run_step pg-database create_database
+    else
+      SUMMARY+=("SKIP  pg-database  (pg-start failed)")
+    fi
+  else
+    SUMMARY+=("SKIP  pg-start     (postgres failed)" "SKIP  pg-database  (postgres failed)")
+  fi
   if [ "$SKIP_RUST" = "1" ]; then
     SUMMARY+=("SKIP  rust         (GBRAIN_DEV_SKIP_RUST=1)")
   else

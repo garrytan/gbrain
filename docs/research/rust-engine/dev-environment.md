@@ -16,7 +16,7 @@ It needs Ubuntu and root or passwordless sudo. It never prompts. Run it again
 at any time: it skips what is already there, and after a machine restart it
 only starts Postgres again. It ends with one line per step and
 `RESULT: PASS` or `RESULT: FAIL`. Each step's full output is in
-`/var/tmp/gbrain-rust-bootstrap/<step>.log`.
+`~/.gbrain-rust-dev/logs/<step>.log`.
 
 ## What it does
 
@@ -54,7 +54,8 @@ a word (`gbrain_test` does), or `test/helpers/db-guard.ts` refuses it.
 
 You can change the defaults before the run with `GBRAIN_DEV_BUN_VERSION`,
 `GBRAIN_DEV_PG_PORT`, `GBRAIN_DEV_PG_USER`, `GBRAIN_DEV_PG_PASSWORD`,
-`GBRAIN_DEV_PG_DB`, `GBRAIN_DEV_ENV_FILE` and `GBRAIN_DEV_BIN`. Set `GBRAIN_DEV_LINK_BINS=0` to
+`GBRAIN_DEV_PG_DB` (letters, digits and `_` only), `GBRAIN_DEV_ENV_FILE`,
+`GBRAIN_DEV_BIN` and `GBRAIN_DEV_LOG_DIR`. Set `GBRAIN_DEV_LINK_BINS=0` to
 leave `/usr/local/bin` alone, and `GBRAIN_DEV_SKIP_RUST=1` to skip Rust.
 
 ## Run the parity tests
@@ -87,14 +88,14 @@ On 2026-11-17, at master `0d78dcfa2e`, 8 CPUs:
 
 | Run | Result | Time |
 |---|---|---|
-| Script, fresh `ubuntu:24.04` container (no Bun, Postgres, Rust or Node; user with passwordless sudo) | PASS | 42 s |
+| Script, fresh `ubuntu:24.04` container (no Bun, Postgres, Rust or Node; user with passwordless sudo) | PASS | 52 s |
 | Script again, same container | PASS | 0 s |
 | `test/pglite-engine.test.ts`, same container | 110 pass, 0 fail | 6 s |
-| `test/e2e/engine-parity.test.ts`, same container, Postgres 16.16 + pgvector 0.8.7 | 76 pass, 0 fail | 58 s |
-| Script, Vorflux sandbox (Postgres 16 installed but stopped, Bun 1.3.14) | PASS | 36 s |
-| Script again, same sandbox | PASS | 1 s |
-| `test/pglite-engine.test.ts`, sandbox | 110 pass, 0 fail | 5 s |
-| `test/e2e/engine-parity.test.ts`, sandbox, Postgres 16.14 + pgvector 0.8.2 | 76 pass, 0 fail | 56 s |
+| `test/e2e/engine-parity.test.ts`, same container, Postgres 16.16 + pgvector 0.8.7 | 76 pass, 0 fail | 56 s |
+| Script, dev VM (Postgres 16 installed but stopped, Bun 1.3.14) | PASS | 36 s |
+| Script again, same VM | PASS | 1 s |
+| `test/pglite-engine.test.ts`, same VM | 110 pass, 0 fail | 5 s |
+| `test/e2e/engine-parity.test.ts`, same VM, Postgres 16.14 + pgvector 0.8.2 | 76 pass, 0 fail | 53 s |
 
 In the fresh container, most of the 42 s went to apt: base packages 16 s,
 Postgres 13 s. Rust took 8 s.
