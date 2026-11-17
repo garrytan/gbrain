@@ -33,6 +33,7 @@ import { parseClientRescopeArgs } from '../src/core/grants/cli.ts';
 import { readClientGrant, rescopeClientGrant } from '../src/core/grants/service.ts';
 import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { getBrainHotMemoryMeta, __resetHotMemoryCacheForTests } from '../src/core/facts/meta-hook.ts';
 import { operations } from '../src/core/operations.ts';
 import { parseAdminGrantRequest } from '../src/commands/serve-http-grants.ts';
 import { runAuth } from '../src/commands/auth.ts';
@@ -102,16 +103,16 @@ for (const kind of testBackends()) {
       rescopeClientGrant(engine, clientId, parseClientRescopeArgs(clientId, args).patch, { actor: 'test', expectedRevision: (await readClientGrant(engine, clientId)).revision });
 
     /** One MCP call as serve --http makes it: the verifier's AuthInfo, read live, and the transport's dispatch options. */
-    async function call(token: string, op: string, params: Record<string, unknown>): Promise<{ isError: boolean; text: string }> {
+    async function call(token: string, op: string, params: Record<string, unknown>, extra: { metaHook?: typeof getBrainHotMemoryMeta; sessionId?: string } = {}): Promise<{ isError: boolean; text: string; meta?: Record<string, unknown> }> {
       __resetPrivateVisibilityCacheForTests();
       const auth = await verify(token);
       const sourceId = auth.sourceId ?? 'default';
       const localFederated = await noGrantFederatedScope(engine, auth.hasSourceGrant, sourceId);
       const out = await dispatchToolCall(engine, op, { ...params }, {
         remote: true, transport: 'http', auth, sourceId, takesHoldersAllowList: auth.takesHoldersAllowList ?? ['world'],
-        ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
+        ...(localFederated ? { localFederatedSourceIds: localFederated } : {}), ...extra,
       });
-      return { isError: out.isError === true, text: out.content.map(c => c.text).join('\n') };
+      return { isError: out.isError === true, text: out.content.map(c => c.text).join('\n'), meta: (out as { _meta?: Record<string, unknown> })._meta };
     }
     const local = async (op: string, params: Record<string, unknown>) =>
       (await dispatchToolCall(engine, op, { ...params }, { remote: false, sourceId: GRANTED })).content.map(c => c.text).join('\n');
@@ -237,6 +238,18 @@ for (const kind of testBackends()) {
       });
     }, 120_000);
 
+    test('the hot-memory cache never serves a payload read under the grant to a credential without it', async () => {
+      const hot = async (who: string) => JSON.stringify((await call(tokens[who], 'search', { query: 'orchardline canary', fields: 'full' }, { metaHook: getBrainHotMemoryMeta, sessionId: 'pf-hot-session' })).meta?.brain_hot_memory ?? null);
+      __resetHotMemoryCacheForTests();
+      const cold = await hot('facts-plain');
+      __resetHotMemoryCacheForTests();
+      const granted = await hot('facts-bot');
+      const plain = await hot('facts-plain');
+      __resetHotMemoryCacheForTests();
+      expect({ cold: cold.includes(OPENS), granted: granted.includes(OPENS), plain: plain.includes(OPENS), closed: closedSeen(granted + plain) }).toEqual({ cold: false, granted: true, plain: false, closed: [] });
+      expect(plain).toBe(cold);
+    }, 120_000);
+
     test('another credential with the same sources and no switch is unaffected', async () => {
       for (const who of ['facts-plain', 'client-plain']) {
         const out = await call(tokens[who], 'recall', { entity: ENTITY });
@@ -357,6 +370,11 @@ describe('private_facts migration and operator output', () => {
     await withBrain(async engine => {
       await engine.executeRaw('ALTER TABLE access_tokens DROP COLUMN IF EXISTS private_facts');
       await engine.executeRaw('ALTER TABLE oauth_clients DROP COLUMN IF EXISTS private_facts');
+      // Value: protects=before the migration, --private-facts on a client or token refuses grant_schema_required and writes nothing; fails_when=the column guard or schemaError mapping is removed; why_new=no test drove a rescope on a brain without the column; seam=none; no_claim=Postgres error codes (PGLite only)
+      const clientRefusal = await rescopeClientGrant(engine, 'client-a', { privateFacts: 'granted_sources' }, { actor: 'test' }).then(() => null, (e: { code?: string }) => e);
+      expect(clientRefusal?.code).toBe('grant_schema_required');
+      const tokenRefusal = await rescopeLegacyToken(engine, parseRescopeTokenArgs(['alice-example', '--private-facts', 'granted-sources'])).then(() => null, (e: { code?: string }) => e);
+      expect(tokenRefusal?.code).toBe('grant_schema_required');
       await engine.setConfig('version', String(LATEST_VERSION - 1));
       await runMigrations(engine);
       expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
