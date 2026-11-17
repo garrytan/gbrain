@@ -528,8 +528,8 @@ impl Store {
     /// `updateSlug(oldSlug, newSlug, { sourceId })`: moves the page at `(sourceId ?? 'default',
     /// oldSlug)`, soft-deleted or not, to `newSlug`, and returns the number of pages moved (0 when
     /// there is none). The page is versioned as it stood first, then moved by
-    /// `pages::rename_page`; a real move records `old -> new` in the slug aliases and moves the
-    /// page's alias rows. `invalid_slug` for a bad new slug, `constraint_violation` when the new
+    /// `pages::rename_page`; a real move records `old -> new` in the slug aliases, moves the records
+    /// other families key by slug (`cascade::rename_slug_rows`) and moves the page's alias rows. `invalid_slug` for a bad new slug, `constraint_violation` when the new
     /// slug is taken; either keeps nothing.
     pub fn update_slug(
         &self,
@@ -547,6 +547,9 @@ impl Store {
             let moved = rename_page(tx, &*self.env, &page, &new_slug)?;
             if moved.slug != page.slug {
                 record_rename_alias(tx, source, &page.slug, &moved.slug)?;
+                // `moveSlugBindings`: the other families' records keyed by slug (steps 1-6), then
+                // this family's page aliases (steps 7-8).
+                crate::cascade::rename_slug_rows(tx, source, &page.slug, &moved.slug)?;
                 move_page_aliases(tx, source, &page.slug, &moved.slug)?;
             }
             Ok(1)
