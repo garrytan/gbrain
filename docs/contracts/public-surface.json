@@ -2830,6 +2830,7 @@
     "purge_mirror_unwritable": 1,
     "purge_replay_incomplete": 1,
     "purged_content": 1,
+    "push_credential_refused": 1,
     "push_unconfirmed": 4,
     "question_not_found": 1,
     "question_owner_only": 1,

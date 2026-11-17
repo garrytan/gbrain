@@ -347,11 +347,15 @@ export async function runGit(args: string[]): Promise<number> {
       } catch { /* best-effort */ }
     }
     if (failed.code === 'push_unconfirmed' || failed.code === 'integrate_conflict' || failed.code === 'commit_outside_source_root'
-      || failed.code === 'publish_secret_found' || failed.code === 'publish_scan_unreadable') {
+      || failed.code === 'publish_secret_found' || failed.code === 'publish_scan_unreadable' || failed.code === 'push_credential_refused') {
       try {
         const bi = args.indexOf('--branch');
         const branch = bi !== -1 && args[bi + 1] ? args[bi + 1].replace(/^refs\/heads\//, '') : currentBranchOf(args);
-        if (failed.code.startsWith('publish_')) appendPushLog('refused', branch, '', failed.code);
+        if (failed.code === 'push_credential_refused') {
+          const d = JSON.parse(String(failed.detail ?? '{}')) as { commit?: string; kind?: string; username?: string | null; helpers?: Array<{ helper: string; answered: boolean }> };
+          const answered = d.helpers?.find(h => h.answered);
+          appendPushLog('refused', branch, d.commit ?? '', `push_credential_refused: the host refused the credential git used (${d.kind === 'not_found' ? 'repository not found, HTTP 404' : 'HTTP 403'}${answered ? `, from ${answered.helper}${d.username ? ` for ${d.username}` : ''}` : ''})`);
+        } else if (failed.code.startsWith('publish_')) appendPushLog('refused', branch, '', failed.code);
         else appendPushLog(failed.code === 'integrate_conflict' ? 'conflict' : 'local-only', branch, failed.detail ?? '');
       } catch { /* best-effort */ }
     }

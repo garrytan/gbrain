@@ -4202,6 +4202,18 @@ More: [docs/guides/write-refusals.md#purge_replay_incomplete](../../docs/guides/
 
 More: [docs/guides/memory-boundaries.md#purge](../../docs/guides/memory-boundaries.md#purge)
 
+### push_credential_refused
+
+<a id="push_credential_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Git host refused the push for the credential git used ("Repository not found", HTTP 404, or HTTP 403); the commit is durable locally and nothing was pushed or retried. | A host answers "Repository not found" to an account that cannot see a private repository, and 403 to one that may not write to it. The same credential is refused on every attempt, so a retry only hides the fault while commits stay on this machine; which credential git uses is the user's configuration, and gbrain never changes it. | Relay the message to the user: it names the credential helpers git asked (with the scope and file that configure each), which one answered and its account login. Once they make git use a credential for an account that can push there, run gbrain git commit-push --push-only. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `not_found`, `forbidden`.
+
+More: [docs/guides/shared-checkout-git.md#push_credential_refused](../../docs/guides/shared-checkout-git.md#push_credential_refused)
+
 ### push_unconfirmed
 
 <a id="push_unconfirmed"></a>
