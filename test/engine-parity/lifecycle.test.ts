@@ -20,10 +20,12 @@
  * connect / disconnect run on a second engine from the harness's
  * `unconnectedEngine()`, never on the shared arm engine.
  *
+ * holdSchemaMigrationLock is optional on the interface and only Postgres
+ * implements it (PGLite serializes migrations in-process,
+ * src/core/schema-migration-lock.ts), so its case declares
+ * `requires: 'schema_migration_lock'` and runs on the Postgres arm only.
+ *
  * Skipped on purpose:
- *  - holdSchemaMigrationLock: optional on the interface, Postgres-only
- *    advisory-lock semantics (PGLite has no cross-process lock), and holding
- *    it from a case would block the harness's own migration path.
  *  - withReservedConnection with a connection query: ReservedConnection only
  *    exposes executeRaw, which cases may not call. Only the pass-through
  *    contract (return value, error propagation) is checked.
@@ -279,11 +281,9 @@ describe('engine parity: lifecycle', () => {
       await second.disconnect();
       expect(hooks).toEqual(['kept']);
       const hooksAfterFirst = [...hooks];
-      // parity-divergence: a second disconnect of a closed engine re-runs the shutdown hooks on Postgres
-      // (postgres-engine.ts disconnectInternal runs them unconditionally) and is a no-op on PGLite (it returns
-      // early when no database is open). The second count stays out of the observable until Ember decides.
+      // A second disconnect of a closed engine is a no-op on every engine: the shutdown hooks ran once.
       await second.disconnect();
-      expect(hooks.length).toBeGreaterThanOrEqual(1);
+      expect(hooks).toEqual(hooksAfterFirst);
       let afterDisconnect: string;
       try {
         await second.getPage('notes/second-engine');
@@ -294,7 +294,23 @@ describe('engine parity: lifecycle', () => {
       // The shared arm engine is untouched by the second engine's lifecycle.
       const armStillServes = (await engine.getConfig('embedding_model')) === 'voyage:voyage-4';
       expect(armStillServes).toBe(true);
-      return { title: read?.title, hooks: hooksAfterFirst, afterDisconnect, armStillServes };
+      return { title: read?.title, hooks: hooksAfterFirst, hooksAfterSecond: [...hooks], afterDisconnect, armStillServes };
+    },
+  );
+
+  parityTest(
+    'holdSchemaMigrationLock runs the callback under the held lock, returns its value, and releases on a throw',
+    { methods: ['holdSchemaMigrationLock', 'getPage'], requires: 'schema_migration_lock' },
+    async (engine) => {
+      const hold = engine.holdSchemaMigrationLock!.bind(engine);
+      const value = await hold(async (assertHeld) => { await assertHeld(); return 'migrated'; });
+      const thrown = await hold(async () => { throw new Error('migration failed'); })
+        .then(() => 'no error', (e: unknown) => (e instanceof Error ? e.message : String(e)));
+      // The throw released the lock: a second hold gets it again at once, and the engine still serves reads.
+      const again = await hold(async (assertHeld) => { await assertHeld(); return 'again'; });
+      const read = await engine.getPage('notes/nobody');
+      expect([value, thrown, again, read]).toEqual(['migrated', 'migration failed', 'again', null]);
+      return { value, thrown, again, read };
     },
   );
 });

@@ -77,6 +77,40 @@ describe('engine parity: chunks', () => {
   );
 
   parityTest(
+    'sealChunks replaces and seals chunks at the current revision; it refuses a stale revision, a deleted page and an unknown page',
+    { methods: ['putPage', 'readPageSnapshot', 'sealChunks', 'getChunks', 'searchKeyword', 'softDeletePage'] },
+    async (engine) => {
+      await engine.putPage('notes/sealed', PAGE('Sealed', 'a heliotrope paragraph. a second line.'));
+      const first = await engine.readPageSnapshot('notes/sealed');
+      await engine.sealChunks('notes/sealed', [chunk(0, 'a heliotrope paragraph.'), chunk(1, 'a second line.')], { expectedRevision: first!.revision });
+      const sealed = view(await engine.getChunks('notes/sealed'));
+      expect(sealed.map((c) => c.chunk_text)).toEqual(['a heliotrope paragraph.', 'a second line.']);
+      const found = (await engine.searchKeyword('heliotrope', { limit: 5 })).map((r) => [r.slug, r.chunk_text]);
+      expect(found).toEqual([['notes/sealed', 'a heliotrope paragraph.']]);
+
+      await engine.putPage('notes/sealed', PAGE('Sealed', 'a marigold paragraph only.'));
+      const refusal = async (run: () => Promise<void>) => {
+        try { await run(); return 'sealed'; } catch (e) { return e instanceof Error && /changed after it was read|not found/i.test(e.message) ? 'refused' : String(e); }
+      };
+      const stale = await refusal(() => engine.sealChunks('notes/sealed', [chunk(0, 'stale text')], { expectedRevision: first!.revision }));
+      const afterStale = view(await engine.getChunks('notes/sealed', { includeUnsealed: true })).map((c) => c.chunk_text);
+      expect([stale, afterStale]).toEqual(['refused', ['a heliotrope paragraph.', 'a second line.']]);
+      // The page edit unsealed the projection, so search serves nothing until the new chunks are sealed.
+      const unsealedSearch = (await engine.searchKeyword('heliotrope', { limit: 5 })).map((r) => r.slug);
+      await engine.sealChunks('notes/sealed', [chunk(0, 'a marigold paragraph only.')]);
+      const resealed = (await engine.searchKeyword('marigold', { limit: 5 })).map((r) => [r.slug, r.chunk_text]);
+      const oldText = (await engine.searchKeyword('heliotrope', { limit: 5 })).map((r) => r.slug);
+      expect([resealed, oldText]).toEqual([[['notes/sealed', 'a marigold paragraph only.']], []]);
+
+      const unknown = await refusal(() => engine.sealChunks('notes/nobody', [chunk(0, 'x')]));
+      await engine.softDeletePage('notes/sealed');
+      const deleted = await refusal(() => engine.sealChunks('notes/sealed', [chunk(0, 'x')]));
+      expect([unknown, deleted]).toEqual(['refused', 'refused']);
+      return { sealed, found, stale, afterStale, unsealedSearch, resealed, oldText, unknown, deleted };
+    },
+  );
+
+  parityTest(
     'upsertChunks replaces a page chunk set: edited text, new indexes, dropped tail',
     { methods: ['upsertChunks', 'getChunks', 'getChunkPage'] },
     async (engine) => {

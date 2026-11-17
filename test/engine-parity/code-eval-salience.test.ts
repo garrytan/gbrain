@@ -179,6 +179,21 @@ const CANDIDATE: EvalCandidateInput = {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * A cutoff just after the newest stored timestamp (the database's own clock,
+ * so no JS/DB skew on the old side), then a bounded wait until the wall clock
+ * passes it, so the next row is stamped after the cutoff.
+ */
+async function cutoffAfter(stamps: readonly Date[]): Promise<Date> {
+  const cutoff = new Date(Math.max(...stamps.map((d) => d.getTime())) + 1);
+  const deadline = Date.now() + 2_000;
+  while (Date.now() <= cutoff.getTime()) {
+    if (Date.now() > deadline) throw new Error(`wall clock did not pass ${cutoff.toISOString()} within 2 s`);
+    await delay(2);
+  }
+  return cutoff;
+}
+
 describe('engine parity: eval capture', () => {
   parityTest(
     'logEvalCandidate round-trips every field through listEvalCandidates, with tool filter and limit',
@@ -223,9 +238,7 @@ describe('engine parity: eval capture', () => {
     async (engine) => {
       await engine.logEvalCandidate({ ...CANDIDATE, query: 'old one' });
       await engine.logEvalCandidate({ ...CANDIDATE, query: 'old two' });
-      await delay(400);
-      const cutoff = new Date();
-      await delay(400);
+      const cutoff = await cutoffAfter((await engine.listEvalCandidates()).map((c) => c.created_at));
       await engine.logEvalCandidate({ ...CANDIDATE, query: 'new one' });
       const sinceCutoff = (await engine.listEvalCandidates({ since: cutoff })).map((c) => c.query);
       const future = await engine.listEvalCandidates({ since: new Date(Date.now() + 3_600_000) });
@@ -247,9 +260,7 @@ describe('engine parity: eval capture', () => {
       const none = await engine.listEvalCaptureFailures();
       await engine.logEvalCaptureFailure('db_down');
       await engine.logEvalCaptureFailure('scrubber_exception');
-      await delay(400);
-      const cutoff = new Date();
-      await delay(400);
+      const cutoff = await cutoffAfter((await engine.listEvalCaptureFailures()).map((f) => new Date(f.ts)));
       await engine.logEvalCaptureFailure('other');
       const all = await engine.listEvalCaptureFailures();
       const recent = await engine.listEvalCaptureFailures({ since: cutoff });
@@ -392,7 +403,8 @@ describe('engine parity: salience + enrich + anomalies', () => {
       }
       await engine.putPage('people/anom-solo', { type: 'person', title: 'Solo', compiled_truth: 'Solo.', timeline: '' });
       await engine.putPage('notes/anom-o', { type: 'note', title: 'Other', compiled_truth: 'Other.', timeline: '' }, { sourceId: 'anom-other' });
-      const today = new Date().toISOString().slice(0, 10);
+      // The day the pages were stamped by the database, not the JS clock, so a run across UTC midnight still matches.
+      const today = new Date((await engine.getPage('notes/anom-3'))!.updated_at).toISOString().slice(0, 10);
       const view = (rows: Awaited<ReturnType<typeof engine.findAnomalies>>) =>
         rows.map((r) => ({ ...pick(r, ['cohort_kind', 'cohort_value', 'count'] as const), baseline_mean: r.baseline_mean, baseline_stddev: r.baseline_stddev, page_slugs: sorted(r.page_slugs) }));
       const found = view(await engine.findAnomalies({ since: today, lookback_days: 7 }));
