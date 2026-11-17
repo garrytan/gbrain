@@ -13,6 +13,11 @@ import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { sqlFragment } from './fragment.ts';
 
+/** files.size_bytes is BIGINT: Postgres returns it as a BigInt, PGLite as a number. FileRow says number on every engine. */
+function fileRow(row: FileRow): FileRow {
+  return { ...row, size_bytes: row.size_bytes == null ? null : Number(row.size_bytes) };
+}
+
 export async function upsertFile(exec: SqlExecutor, spec: FileSpec): Promise<{ id: number; created: boolean }> {
     const sourceId = spec.source_id ?? 'default';
     const metadata = spec.metadata ?? {};
@@ -40,7 +45,7 @@ export async function getFile(exec: LegacyUnscopedRead, sourceId: string, storag
       WHERE source_id = ${sourceId} AND storage_path = ${storagePath}
       LIMIT 1
     `);
-    return rows.length > 0 ? rows[0] : null;
+    return rows.length > 0 ? fileRow(rows[0]) : null;
   }
 
 export async function listFilesForPage(exec: LegacyUnscopedRead, pageId: number): Promise<FileRow[]> {
@@ -50,5 +55,5 @@ export async function listFilesForPage(exec: LegacyUnscopedRead, pageId: number)
       WHERE page_id = ${pageId}
       ORDER BY created_at ASC
     `);
-    return rows;
+    return rows.map(fileRow);
   }
