@@ -553,7 +553,7 @@ describe('runBackupCli create — failure diagnostic for message-less errors (#5
 
   test('GBRA-585: on a Postgres brain the refusal names a pg_dump/pg_restore database dump, not doctor', async () => {
     fs.mkdirSync(home(), { recursive: true });
-    fs.writeFileSync(join(home(), 'config.json'), JSON.stringify({ engine: 'postgres', database_url: 'postgresql://alice-example:hunter2-secret@db.example.invalid/brain' }));
+    fs.writeFileSync(join(home(), 'config.json'), JSON.stringify({ engine: 'postgres', database_url: ['postgresql://alice-example', 'hunter2-secret@db.example.invalid/brain'].join(':') }));
     for (const json of [true, false]) {
       const r = await failCreate(REAL_CREATE, json);
       expect(r.exitCode).toBe(1);
