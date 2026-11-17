@@ -856,7 +856,7 @@ instead.
 | `behavior_changes` (safety) | the first tool result per brain | the first tool result per authenticated client (names no chain entries or providers) | once, on stderr, on the first command; `gbrain doctor --only behavior_changes` reads it again |
 | `chat_fallback_hop` (safety) | the first fallback hop of the server process | never | the first hop of the command |
 | `backup_coverage` | once per process | never | the CLI startup rail |
-| `degraded_recall`, `empty_retrieval`, `source_binding_narrowed` and the other per-call notices | every affected call (a keyless brain's configuration-only `degraded_recall`: once per session) | every affected call (redacted) | the command's own notices |
+| `degraded_recall`, `empty_retrieval`, `source_binding_narrowed` and the other per-call notices | every affected call (a no-provider brain's configuration-only `degraded_recall`: once per session) | every affected call (redacted) | the command's own notices |
 
 HTTP gets no onboarding coaching because the counts are brain-wide (they cross
 source-scoped grants) and every remedy runs on the brain host, which a remote
