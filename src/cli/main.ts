@@ -5,8 +5,7 @@
  * top-level help never pay for this module's import graph. Tests import the
  * helpers below from here.
  */
-import { affectsRecall } from '../core/types.ts';
-import { expectedWhenKeywordOnlyByChoice, KEYWORD_ONLY_BY_CHOICE_EMPTY, keywordOnlyByChoice } from '../core/degraded-stamp.ts';
+import { emptyRetrievalStages, KEYWORD_ONLY_BY_CHOICE_EMPTY } from '../core/degraded-stamp.ts';
 import { installSigchldHandler } from '../core/zombie-reap.ts';
 installSigchldHandler();
 
@@ -1506,10 +1505,7 @@ function describeEmptyRetrieval(): string {
   }
   // Ranking-only stages (a skipped reranker) never cause a miss — keep the
   // "retrieval healthy" verdict honest.
-  const byChoice = keywordOnlyByChoice(m.degraded);
-  const stages = Array.isArray(m.degraded)
-    ? [...new Set((m.degraded as Array<{ stage?: string }>).filter(affectsRecall).filter(d => !(byChoice && expectedWhenKeywordOnlyByChoice(d))).map(d => d?.stage).filter(Boolean))]
-    : [];
+  const { stages, byChoice } = emptyRetrievalStages(m.degraded);
   parts.push(stages.length > 0
     ? `degraded: ${stages.join(', ')}`
     : byChoice ? KEYWORD_ONLY_BY_CHOICE_EMPTY

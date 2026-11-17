@@ -23,8 +23,7 @@ import { credentialReadSources, stdioReadSources } from '../../../core/grants/sh
 import { grantFromClient, grantFromRow, grantFromTokenRow, type PrincipalGrant } from '../../../core/grants/model.ts';
 import { stdioMemberId } from '../../../core/access/caller.ts';
 import { ownerMemberId, ownerReadsRestrictedOn } from '../../../core/access/owner.ts';
-import { audienceMemberIds } from '../../../core/access/members.ts';
-import { MEMBER_PAGE_PREFIX } from '../../../core/access/principals.ts';
+import { ACCESS_ID_RE, MEMBER_PAGE_PREFIX } from '../../../core/access/principals.ts';
 
 const SAMPLE = 20;
 const SHOWN = 5;
@@ -92,7 +91,8 @@ async function pagesUnreadable(engine: BrainEngine, remote: boolean): Promise<Om
   }
   const owner = await ownerReadsRestrictedOn(engine) ? await ownerMemberId(engine) : null;
   const ownerLive = owner !== null && (await engine.executeRaw(`SELECT 1 FROM access_members m WHERE m.id = $1 AND ${ENABLED}`, [owner])).length > 0;
-  const ownPages = ownerLive ? [owner!, ...await audienceMemberIds(engine)].map(id => `${MEMBER_PAGE_PREFIX}${id}`) : [];
+  const audience = ownerLive ? await engine.executeRaw<{ id: string }>(`SELECT m.id FROM access_members m WHERE m.kind = 'audience' AND ${ENABLED}`) : [];
+  const ownPages = ownerLive ? [owner!, ...audience.map(a => a.id).filter(id => ACCESS_ID_RE.test(id))].map(id => `${MEMBER_PAGE_PREFIX}${id}`) : [];
   const rows = await bounded(engine, e => e.executeRaw<{ source_id: string; slug: string; readers: string[] | null; rules: string[] | null; total: number }>(
     `WITH readers AS MATERIALIZED (
        SELECT ARRAY['member:' || m.id] || COALESCE((SELECT array_agg('group:' || gm.group_id) FROM access_group_members gm WHERE gm.member_id = m.id), '{}'::text[]) AS identity

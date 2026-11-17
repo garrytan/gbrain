@@ -41,17 +41,27 @@ const KEYWORD_ONLY_BY_CHOICE = 'keyword_only_embedding_disabled';
 const byChoice = (d: Stage): boolean => d?.stage === 'embed_unavailable' && d.reason === 'embedding_disabled';
 
 /** Whether a `_meta.retrieval.degraded` list records a keyword-only run on a brain that turned embeddings off on purpose. */
-export function keywordOnlyByChoice(degraded: unknown): boolean {
+function keywordOnlyByChoice(degraded: unknown): boolean {
   return Array.isArray(degraded) && degraded.some(byChoice);
 }
 
 /** A stage such a run expects rather than a degradation: the keyword-only run itself, and its only arm finding nothing. */
-export function expectedWhenKeywordOnlyByChoice(d: Stage): boolean {
+function expectedWhenKeywordOnlyByChoice(d: Stage): boolean {
   return byChoice(d) || d?.stage === 'keyword_zero';
 }
 
 /** The one-line verdict on an empty result of such a run (MCP's `empty_retrieval` info notice and the CLI line). */
 export const KEYWORD_ONLY_BY_CHOICE_EMPTY = 'Search was keyword-only because embeddings are off on this brain on purpose, and no page holds these words: a true negative for these words, not a degraded search (a synonym or the display name may still match).';
+
+/** The recall-impairing stages an empty result names (ranking-only stages never cause a miss), minus those a keyword-only-by-choice run expects. */
+export function emptyRetrievalStages(degraded: unknown): { stages: string[]; byChoice: boolean } {
+  const choice = keywordOnlyByChoice(degraded);
+  const stages = (Array.isArray(degraded) ? degraded as Array<{ stage?: string; reason?: string }> : [])
+    .filter(d => affectsRecall(d) && !(choice && expectedWhenKeywordOnlyByChoice(d)))
+    .map(d => d.stage)
+    .filter((s): s is string => typeof s === 'string' && s.length > 0);
+  return { stages: [...new Set(stages)], byChoice: choice };
+}
 
 /** think and synthesize warnings that mean the gathered evidence is partial. */
 const QUESTION_EMBED_WARNINGS: ReadonlySet<string> = new Set(['QUESTION_EMBED_FAILED', 'QUESTION_EMBED_SKIPPED_EMBEDDING_DISABLED']);

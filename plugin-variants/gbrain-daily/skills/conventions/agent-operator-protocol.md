@@ -936,19 +936,13 @@ none. Notices can be deduped (a `degraded_recall` on a brain with no embedding
 provider shows once per session); the stamp never is, so it is on every
 affected call.
 
-**Keyword-only on purpose is not degraded.** On a brain whose embeddings were
-turned off on purpose (`gbrain init --no-embedding`, config
-`embedding_disabled`), search, query and recall run keyword-only by design.
-They carry no stamp and no `degraded_recall` notice, and the keyword arm
-finding nothing (`keyword_zero`) is not degraded either. `_meta.retrieval`
-still records the run (`vector_enabled: false` and the stage
-`embed_unavailable` with reason `embedding_disabled`), recall still returns
-`search_degraded: keyword_only_embedding_disabled`, and an empty search or
-query says it was keyword-only in its `empty_retrieval` info notice. An empty
-result there is a true negative for those words: you may tell the user no page
-holds them (a synonym or the display name may still match). A brain with no
-embedding provider or key configured (reason `no_provider`), a timeout or a
-failed arm is still stamped as before. think and synthesize are unchanged.
+**Keyword-only on purpose is not degraded.** With embeddings turned off on
+purpose (`gbrain init --no-embedding`), search, query and recall carry no stamp
+and no `degraded_recall`, nor for `keyword_zero`. `_meta.retrieval` still
+records `embed_unavailable` with reason `embedding_disabled`, and an empty
+result's `empty_retrieval` info notice says the search was keyword-only: no
+page holds those words (a synonym or the display name may still match). No
+provider configured (`no_provider`), timeouts and failed arms still stamp.
 
 | Output | Where the stamp is |
 |---|---|
