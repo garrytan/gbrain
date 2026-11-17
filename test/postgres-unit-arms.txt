@@ -563,6 +563,7 @@ test/purge-scrub-followups-9068.test.ts
 test/purge-slug-stores-9146.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
 test/purged-change-reason-8635.test.ts
+test/purged-change-reasons-repair-gst2886.test.ts
 test/qm-attest-write-boundary.test.ts
 test/qm-memory-propose.test.ts
 test/qm-memory-tools.test.ts
