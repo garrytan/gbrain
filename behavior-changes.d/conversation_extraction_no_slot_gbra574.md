@@ -1,4 +1,4 @@
 ---
 kind: fix
 ---
-`gbrain extract-conversation-facts` no longer asks the model for a slot (where a person lives, who employs them or their role), because asking made it save fewer facts, wishes and preferences most of all. New conversation facts carry no slot, so re-extracting pages with `--force` no longer adds slots: skip the paid re-extraction the 0.60.735.0 notice suggested for them. Facts already stored with a slot keep it, and the facts block still works out their validity windows.
+`gbrain extract-conversation-facts` no longer asks the model for a slot (where a person lives, who employs them or their role), because asking made it save fewer facts, wishes and preferences most of all. New conversation facts carry no slot, so skip the paid `--force` re-extraction the 0.60.735.0 notice suggested for adding slots: it now adds none. A fact stored with a slot under 0.60.735.0 keeps it, and its validity window, until its page is extracted again (with `--force`, or after the page changes); the new rows then have no slot, and those facts read as they did before 0.60.735.0. The fact text is kept either way.

@@ -197,7 +197,8 @@ records the write time (within a minute of `created_at`) reads `unknown`, so a
 header never presents when a fact was written as when it became true. An open
 validity end reads `unknown`. When a conversation fact carries a slot
 (`location`, `employer` or `role`; extraction does not ask the model for one
-at the moment, so only facts stored with one have it), the facts block and the temporal fact reserve work out its end
+at the moment, so only facts stored with one under 0.60.735.0 have it, until
+their page is extracted again), the facts block and the temporal fact reserve work out its end
 at read time: the start of the next different value for the same person, when
 that value came from the same conversation or its fact says the value changed
 (moved, joined, left and similar words). Otherwise both values stay open and
