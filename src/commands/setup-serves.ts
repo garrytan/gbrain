@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import { openclawStateDir } from '../core/setup/brain-first.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
+import { loadConfig } from '../core/config.ts';
 import { readRoster, rosterEmpty, type ServesReceipt, type ServesStatus, receiptLines, receiptOk } from './access-serves.ts';
 
 export interface ServesFlags { serves?: 'one' | 'several'; members?: string; membersFile?: string; source?: string; stdioMember?: string; labelledOnly?: boolean; dryRun: boolean }
@@ -56,8 +57,15 @@ export interface ServesOutcome {
   receipt?: ServesReceipt;
   proof?: ProofLine[];
   stdio?: { member: string | null; action: 'write' | 'keep' | 'remove' | 'unbound'; detail: string };
+  /** GBRA-585: on PGLite, what serving several people over `gbrain serve --http` costs the admin, and the move to Postgres. */
+  engine?: string;
   error?: string;
 }
+
+/** GBRA-585: a PGLite brain is opened by one process at a time, so a running `gbrain serve --http` blocks most admin commands. */
+export const PGLITE_SEVERAL_NOTE = 'PGLite lets one process at a time open this brain, so while gbrain serve --http runs for the members, '
+  + 'admin commands (access, sources, auth) and most reads refuse with pglite_busy until it stops, and every member\'s connection drops while it is down; '
+  + 'page and fact writes (put, remember) still work through it. For a brain several people use, move to Postgres first: gbrain migrate --to postgres (docs/ENGINES.md#pglite-live-serve)';
 
 function child(launcher: string, args: string[]): { ok: boolean; stdout: string; stderr: string } {
   const r = bunSpawnSync([launcher, ...args], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env });
@@ -173,7 +181,8 @@ export function servesApply(flags: ServesFlags, launcher: string, harness: strin
   const view: ServesStatus | null = preview ? { serves: 'several', from: 'config', enabled_members: plan.roster, since: null, owner: null, stdio_member: status?.stdio_member ?? null } : status;
   const stdio = bindStdio(harness, view, entry, flags.dryRun);
   if (!labelled && !stdio) return null;
-  const outcome: ServesOutcome = { ...(labelled ?? { mode: 'one' as const }), brain_serves: 'one', ...(stdio ? { stdio } : {}),
+  const pglite = several && (loadConfig()?.engine ?? 'pglite') === 'pglite';
+  const outcome: ServesOutcome = { ...(labelled ?? { mode: 'one' as const }), brain_serves: 'one', ...(stdio ? { stdio } : {}), ...(pglite ? { engine: PGLITE_SEVERAL_NOTE } : {}),
     ...(reread && 'error' in reread ? { error: `reading the brain back failed: ${reread.error}` } : {}) };
   const bound = !!stdio?.member && view?.serves === 'several';
   return { ...outcome, brain_serves: bound && servesOk(outcome) ? 'several' : 'one' };
@@ -219,6 +228,7 @@ export function servesLines(o: ServesOutcome, dryRun: boolean): string[] {
       ? `  proof      ${p.member} reads pages of another member's folder: ${p.leaked.join(', ')}`
       : `  proof      a read bound to ${p.member} sees its own folder (${p.own} page(s)) and no page of another member's folder${openTail(o.receipt, p.member)}`),
     ...(o.stdio ? [`  stdio      ${o.stdio.detail}`] : []),
+    ...(o.engine ? [`  engine     ${o.engine}`] : []),
     ...(o.note ? [`  labels     ${o.note}`] : []),
     ...(o.error ? [`  error      ${o.error}`] : []),
   ];
