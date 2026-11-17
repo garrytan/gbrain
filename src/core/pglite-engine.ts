@@ -2887,10 +2887,11 @@ export class PGLiteEngine implements BrainEngine {
     // Source-scope for remote / federated callers; unscoped only for trusted
     // local callers (mirrors the postgres engine).
     const scoped = opts?.sourceIds && opts.sourceIds.length > 0;
+    // id DESC breaks ties: PGLite's clock ticks in milliseconds, so rows written in one millisecond share created_at.
     const { rows } = await this.db.query(
       scoped
-        ? `SELECT id, source_id, source_type, source_ref, pages_updated, summary, created_at FROM ingest_log WHERE source_id = ANY($2::text[]) ORDER BY created_at DESC LIMIT $1`
-        : `SELECT id, source_id, source_type, source_ref, pages_updated, summary, created_at FROM ingest_log ORDER BY created_at DESC LIMIT $1`,
+        ? `SELECT id, source_id, source_type, source_ref, pages_updated, summary, created_at FROM ingest_log WHERE source_id = ANY($2::text[]) ORDER BY created_at DESC, id DESC LIMIT $1`
+        : `SELECT id, source_id, source_type, source_ref, pages_updated, summary, created_at FROM ingest_log ORDER BY created_at DESC, id DESC LIMIT $1`,
       scoped ? [limit, opts?.sourceIds] : [limit]
     );
     // Belt-and-suspenders source_id fallback for any pre-v50 row that
@@ -3158,7 +3159,7 @@ export class PGLiteEngine implements BrainEngine {
   async listEvalCaptureFailures(filter?: { since?: Date }): Promise<EvalCaptureFailure[]> {
     const since = filter?.since ?? new Date(0);
     const { rows } = await this.db.query(
-      `SELECT * FROM eval_capture_failures WHERE ts >= $1 ORDER BY ts DESC`,
+      `SELECT * FROM eval_capture_failures WHERE ts >= $1 ORDER BY ts DESC, id DESC`,
       [since]
     );
     return rows as unknown as EvalCaptureFailure[];

@@ -2752,8 +2752,9 @@ export class PostgresEngine implements BrainEngine {
     const scope = opts?.sourceIds && opts.sourceIds.length > 0
       ? sql`WHERE source_id = ANY(${opts.sourceIds}::text[])`
       : sql``;
+    // id DESC breaks ties: PGLite's clock ticks in milliseconds, so rows written in one millisecond share created_at.
     const rows = await sql`
-      SELECT id, source_id, source_type, source_ref, pages_updated, summary, created_at FROM ingest_log ${scope} ORDER BY created_at DESC LIMIT ${limit}
+      SELECT id, source_id, source_type, source_ref, pages_updated, summary, created_at FROM ingest_log ${scope} ORDER BY created_at DESC, id DESC LIMIT ${limit}
     `;
     // Belt-and-suspenders source_id fallback for any pre-v50 row.
     return (rows as unknown as IngestLogEntry[]).map(r => ({
@@ -3256,7 +3257,7 @@ export class PostgresEngine implements BrainEngine {
     const rows = await sql`
       SELECT * FROM eval_capture_failures
       WHERE ts >= ${since}
-      ORDER BY ts DESC
+      ORDER BY ts DESC, id DESC
     `;
     return rows as unknown as EvalCaptureFailure[];
   }
