@@ -309,8 +309,11 @@ brain. A file is matched by its path under the declared directory, whatever its 
 - A code-extension file (`.json`, `.ts`, `.yml` and the rest of sync's code list) is a page with a flattened slug on a
   source whose sync strategy imports code (`code` or `auto`), and a database-only folder does not make that page
   database-only. The same brain read admits one when no live page comes from the file and refuses one that is a page,
-  whatever the source's strategy is now. On PGLite the read takes the data directory's one-process lock
-  for its length.
+  whatever the source's strategy is now. It also refuses one the source's last finished sync has not seen at its
+  current version (a commit since that sync changed it, or the source has not finished a sync), because a sync that
+  imports it after the check would leave a page the next sync deletes: run `gbrain sync --source <id>` (it runs even
+  when automatic sync is off for the source), then rerun the untrack. On PGLite the read takes the data directory's
+  one-process lock for its length.
 - A tracked symbolic link that points out of the declared directory, or a file reached through a symlinked
   directory on disk, is refused, and so is a sibling folder that only shares the name as a prefix
   (`backups-old/` is not under `backups/`).

@@ -23,8 +23,13 @@ import { isCodeFilePath, isImageFilePath, isSyncable, resolveSlugForPath } from 
  * What the brain says about an untrack: the source's root, the slug root its sync uses (a source rooted in a folder of its
  * repository keeps slugs from the repository's top in `git-root` mode), the code-extension files the read checked and those
  * that are live pages; `unreadable` refuses every file (fail closed), and a code-extension file the read did not check refuses.
+ * A code file counts as checked only when the source's sync has processed it: the sync anchor (`sources.last_commit`, moved
+ * only by a finished pass) is on this branch's history, the commit that last changed the file is that anchor or an ancestor
+ * of it, and the anchor holds the file's current blob. Otherwise a sync running between this read and the untrack could
+ * import the file as a page that the next sync then deletes (`syncNote` says why the anchor did not count).
  */
-export type UntrackPageVerdict = { sourceRoot: string; slugRoot: 'git-root' | 'source-root'; checked: ReadonlySet<string>; live: ReadonlySet<string> } | { unreadable: string };
+export type UntrackPageVerdict = { sourceId: string; sourceRoot: string; slugRoot: 'git-root' | 'source-root'; checked: ReadonlySet<string>; live: ReadonlySet<string>;
+  syncNote?: string; syncOff?: boolean } | { unreadable: string };
 export interface UntrackPageCandidate { file: string; slugs: string[]; sourcePaths: string[] }
 
 export const UNTRACK_PAGE_READ_TIMEOUT_MS = 10_000;
@@ -40,8 +45,8 @@ export async function readUntrackPageVerdict(engine: BrainEngine, managed: Manag
     const canonical = (path: string) => { try { return realpathSync(path); } catch { return null; } };
     const top = canonical(root) ?? root, worktree = canonical(managed.root) ?? managed.root;
     const within = (outer: string, path: string) => !relativeEscapesRoot(relative(outer, path));
-    const rows = (await tx.executeRaw<{ id: string; local_path: string | null }>(managed.sourceId
-      ? 'SELECT id, local_path FROM sources WHERE id=$1' : 'SELECT id, local_path FROM sources WHERE local_path IS NOT NULL',
+    const rows = (await tx.executeRaw<{ id: string; local_path: string | null; last_commit: string | null; config: Record<string, unknown> | null }>(managed.sourceId
+      ? 'SELECT id, local_path, last_commit, config FROM sources WHERE id=$1' : 'SELECT id, local_path, last_commit, config FROM sources WHERE local_path IS NOT NULL',
     managed.sourceId ? [managed.sourceId] : [])).map(row => ({ ...row, path: row.local_path ? canonical(row.local_path) : null }));
     const matched = managed.sourceId ? rows : rows.filter(row => row.path && within(worktree, row.path));
     if (matched.length !== 1) return { unreadable: managed.sourceId ? `source ${managed.sourceId} is not in the brain` : `${matched.length ? 'more than one source' : 'no source'} in the brain is rooted in ${managed.root}` };
@@ -57,8 +62,27 @@ export async function readUntrackPageVerdict(engine: BrainEngine, managed: Manag
       [source.id, candidates.flatMap(c => c.slugs), candidates.flatMap(c => c.sourcePaths)]) : [];
     const live = new Set<string>();
     for (const c of candidates) if (pages.some(row => c.slugs.includes(row.slug) || (row.source_path !== null && c.sourcePaths.includes(row.source_path)))) live.add(c.file);
-    return { sourceRoot: source.path, slugRoot, checked: new Set(candidates.map(c => c.file)), live };
+    const { syncNote, processed } = syncProcessed(root, source.id, source.last_commit);
+    const { isSyncDisabledConfig } = await import('../sync-policy.ts');
+    return { sourceId: source.id, sourceRoot: source.path, slugRoot, checked: new Set(candidates.map(c => c.file).filter(processed)), live,
+      ...(syncNote ? { syncNote } : {}), ...(isSyncDisabledConfig(source.config) ? { syncOff: true } : {}) };
   }, { readOnly: true });
+}
+
+/** Whether the source's sync anchor has processed each file at its HEAD version, and why the anchor does not count when it does not. */
+function syncProcessed(root: string, sourceId: string, anchor: string | null): { syncNote?: string; processed: (file: string) => boolean } {
+  const never = () => false;
+  if (!anchor) return { syncNote: `source ${sourceId} has not finished a sync`, processed: never };
+  const commit = (rev: string) => { const r = git(root, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${rev}^{commit}`]); return r.code === 0 ? r.stdout.trim() : null; };
+  const synced = commit(anchor), head = commit('HEAD');
+  if (!synced || !head) return { syncNote: `source ${sourceId}'s last sync, ${anchor.slice(0, 12)}, is not a commit in this checkout`, processed: never };
+  const ancestor = (a: string, b: string) => git(root, ['merge-base', '--is-ancestor', a, b]).code === 0;
+  if (!ancestor(synced, head) && !ancestor(head, synced)) return { syncNote: `source ${sourceId}'s last sync, ${synced.slice(0, 12)}, is not on this branch's history`, processed: never };
+  const blob = (rev: string, file: string) => { const r = git(root, ['rev-parse', '--verify', '--quiet', `${rev}:${file}`]); return r.code === 0 ? r.stdout.trim() : null; };
+  return { processed: file => {
+    const last = git(root, ['rev-list', '-1', head, '--', ...literalPathspecs([file])]).stdout.trim();
+    return !!last && ancestor(last, synced) && blob(synced, file) !== null && blob(synced, file) === blob(head, file);
+  } };
 }
 
 /** The source root's path in the checkout, `<dir>/` or '' at the top. */
@@ -165,8 +189,8 @@ export function untrackAdmitted(root: string, rel: string[], managed: ManagedFil
       `Declare the slug spelling too: add ${slugDirs.join(', ')} under storage.db_only in ${prefix}gbrain.yml and commit it (gbrain git commit-push -m <msg> -- ${prefix}gbrain.yml), then rerun the untrack.`],
     [refusals.page, 'code files that are pages on this source, so untracking them would delete the page at the next sync',
       'These files are pages on this source and untracking them would delete the pages at the next sync: a database-only folder does not make a code file\'s page database-only. Keep them tracked and untrack the folder\'s other files by name.'],
-    [refusals.late, 'code files the last commit gained after the brain was read, so the read did not check them',
-      'These files reached the branch after the brain was read (another writer committed), so nothing was untracked; rerun the untrack.'],
+    [refusals.late, `code files the source's sync has not processed at their current version${source?.syncNote ? ` (${source.syncNote})` : ''}, or that reached the branch after the brain was read`,
+      `Sync has not yet decided whether these files are pages, and a sync that imports one after this check would leave a page the next sync deletes, so nothing was untracked. Run gbrain sync --source ${source?.sourceId ?? '<id>'}${source?.syncOff ? ' (automatic sync is off for this source; an explicit sync still runs)' : ''}, then rerun the untrack.`],
     [refusals.unchecked, `files the brain could not be read to check${pages && 'unreadable' in pages ? ` (${pages.unreadable})` : ''}`,
       'The brain could not be read to check whether these files are pages on this source, so nothing was untracked. If another process holds the brain (on PGLite, a running gbrain serve or a sync), stop it, then rerun the untrack; otherwise retry once the brain is reachable.'],
   ];

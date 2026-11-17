@@ -86,7 +86,7 @@ const managedAt = (root: string) => ({ root, evidence: 'test' });
 /** Every file the checkout holding `dir` tracks, by its path from the checkout's top: a brain read that checked them all. */
 const tracked = (dir: string) => new Set(git(dir, 'ls-files', '--full-name', '-z').split('\0').filter(Boolean));
 /** The brain's answer for a source rooted at `sourceRoot` where no named file is a page: every code-extension file is admitted by path. */
-const noPages = (sourceRoot: string): UntrackPageVerdict => ({ sourceRoot, slugRoot: 'source-root', checked: tracked(sourceRoot), live: new Set() });
+const noPages = (sourceRoot: string): UntrackPageVerdict => ({ sourceId: 'default', sourceRoot, slugRoot: 'source-root', checked: tracked(sourceRoot), live: new Set() });
 
 describe('GST-2964: untrackAdmitted matches a file by its path under the declared folder', () => {
   test('every tracked file under a declared, ignored folder is admitted, whatever its extension', () => {
@@ -189,8 +189,8 @@ describe('GST-2964: a code-extension file under the declared folder, decided by 
 
   test('a code file with no live page is admitted and one with a live page refuses, saying why, whatever the source\'s strategy', () => {
     const root = declaredCheckout();
-    expect(untrackAdmitted(root, [json], managedAt(root), { sourceRoot: root, slugRoot: 'source-root', checked: tracked(root), live: new Set() })).toEqual([json]);
-    const refused = refusalOf(() => untrackAdmitted(root, [DIR.slice(0, -1)], managedAt(root), { sourceRoot: root, slugRoot: 'source-root', checked: tracked(root), live: new Set([json]) }));
+    expect(untrackAdmitted(root, [json], managedAt(root), { sourceId: 'default', sourceRoot: root, slugRoot: 'source-root', checked: tracked(root), live: new Set() })).toEqual([json]);
+    const refused = refusalOf(() => untrackAdmitted(root, [DIR.slice(0, -1)], managedAt(root), { sourceId: 'default', sourceRoot: root, slugRoot: 'source-root', checked: tracked(root), live: new Set([json]) }));
     expect(refused.code).toBe('untrack_not_db_only');
     expect(JSON.parse(refused.detail!)).toEqual({ paths: [json] });
     expect(refused.suggestion).toContain('pages on this source and untracking them would delete the pages at the next sync');
@@ -200,7 +200,8 @@ describe('GST-2964: a code-extension file under the declared folder, decided by 
     const root = declaredCheckout();
     const refused = refusalOf(() => untrackAdmitted(root, [DIR.slice(0, -1)], managedAt(root), { ...noPages(root), checked: new Set([json]) } as UntrackPageVerdict));
     expect(JSON.parse(refused.detail!)).toEqual({ paths: [ts] });
-    expect(refused.suggestion).toContain('reached the branch after the brain was read');
+    expect(refused.message).toContain('or that reached the branch after the brain was read');
+    expect(refused.suggestion).toContain('Run gbrain sync --source default, then rerun the untrack');
     expect(refused.suggestion).not.toContain('could not be read');
   });
 
@@ -258,7 +259,7 @@ describe('GST-2964: untrackPageVerdict opens the brain only to read', () => {
       expect(await untrackPageVerdict(managed, root, rel)).toEqual({ unreadable: 'no brain is configured on this machine' });
     });
     await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
-      const answer: UntrackPageVerdict = { sourceRoot: root, slugRoot: 'git-root', checked: new Set(), live: new Set() };
+      const answer: UntrackPageVerdict = { sourceId: 'default', sourceRoot: root, slugRoot: 'git-root', checked: new Set(), live: new Set(), syncNote: 'source default has not finished a sync' };
       expect(await untrackPageVerdict(managed, root, rel)).toEqual(answer);
       expect(await untrackPageVerdict({ ...managed, sourceId: undefined }, root, rel)).toEqual(answer);
       expect(await untrackPageVerdict({ ...managed, sourceId: 'missing-example' }, root, rel)).toEqual({ unreadable: 'source missing-example is not in the brain' });
@@ -274,6 +275,53 @@ async function countingListener(): Promise<{ url: string; connections: () => num
   const { port } = server.address() as AddressInfo;
   return { url: `postgres://127.0.0.1:${port}/gbrain_example`, connections: () => count, close: () => server.close() };
 }
+
+describe('GST-2964: the sync anchor a code file needs, read from an unmanaged brain', () => {
+  test('an anchor that is not a commit in the checkout, or not on its branch\'s history, refuses the file; one that holds its current version admits it, including when a merge brought that version in or the checkout was reset behind the anchor', async () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-gst2964-anchor-')));
+    const brain = new PGLiteEngine();
+    try {
+      const root = join(home, 'content');
+      mkdirSync(root);
+      put(root, DIR + 'backup-1.json', '{}\n');
+      durableGitRepo(root, ['.']);
+      await brain.connect({ database_path: join(home, 'brain.pglite') });
+      await brain.initSchema();
+      await brain.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'", [root]);
+      const file = DIR + 'backup-1.json', managed = { root, sourceId: 'default', evidence: 'test' };
+      const note = async (anchor: string | null) => {
+        await brain.executeRaw("UPDATE sources SET last_commit=$1 WHERE id='default'", [anchor]);
+        const pages = await readUntrackPageVerdict(brain, managed, root, [file]);
+        return 'unreadable' in pages ? 'unreadable' : pages.checked.has(file) ? 'checked' : pages.syncNote ?? 'unchecked';
+      };
+      expect(await note(null)).toBe('source default has not finished a sync');
+      expect(await note('0'.repeat(40))).toBe('source default\'s last sync, 000000000000, is not a commit in this checkout');
+      const orphan = git(root, 'commit-tree', '4b825dc642cb6eb9a060e54bf8d69288fbee4904', '-m', 'an unrelated history');
+      expect(await note(orphan)).toBe('source default\'s last sync, ' + orphan.slice(0, 12) + ', is not on this branch\'s history');
+      const first = git(root, 'rev-parse', 'HEAD');
+      expect(await note(first)).toBe('checked');
+      put(root, file, '{"changed":1}\n'); git(root, 'add', '-f', file); git(root, 'commit', '-qm', 'a later version');
+      expect(await note(first)).toBe('unchecked');
+      expect(await note(git(root, 'rev-parse', 'HEAD'))).toBe('checked');
+      const branch = git(root, 'symbolic-ref', '--short', 'HEAD');
+      git(root, 'checkout', '-q', '-b', 'side-example');
+      put(root, file, '{"side":1}\n'); git(root, 'add', '-f', file); git(root, 'commit', '-qm', 'side edit');
+      const side = git(root, 'rev-parse', 'HEAD');
+      git(root, 'checkout', '-q', branch);
+      put(root, 'other-example.md', 'x\n'); git(root, 'add', 'other-example.md'); git(root, 'commit', '-qm', 'an unrelated change');
+      const beforeMerge = git(root, 'rev-parse', 'HEAD');
+      git(root, 'merge', '-q', '--no-ff', 'side-example', '-m', 'merge side');
+      expect(git(root, 'rev-list', '-1', 'HEAD', '--', file)).toBe(side);
+      expect(await note(beforeMerge)).toBe('unchecked');
+      expect(await note(side)).toBe('checked');
+      expect(await note(git(root, 'rev-parse', 'HEAD'))).toBe('checked');
+      put(root, 'other-example.md', 'y\n'); git(root, 'add', 'other-example.md'); git(root, 'commit', '-qm', 'a commit the checkout later resets away');
+      const ahead = git(root, 'rev-parse', 'HEAD');
+      git(root, 'reset', '-q', '--hard', 'HEAD~1');
+      expect(await note(ahead)).toBe('checked');
+    } finally { await brain.disconnect(); rmSync(home, { recursive: true, force: true }); }
+  }, 120_000);
+});
 
 describe('GST-2964: a classic checkout', () => {
   test('--dry-run --untrack lists exactly the files the real run removes, non-Markdown files included, and opens no brain', async () => {
@@ -355,11 +403,14 @@ const untrackWithBrain = async (engine: BrainEngine, root: string, paths: string
 for (const backend of testBackends()) describe(`[${backend}] GST-2964: --untrack in a managed canonical worktree`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
 
-  test('a code-importing source whose tracked, ignored .json files have no pages: the untrack is admitted, the dry run lists the same files, and the next sync creates and deletes nothing', () => managedBrain(async ({ engine, root }) => {
+  test('a code-importing source whose tracked, ignored .json files sync has processed without making pages (committed while the strategy was markdown): the untrack is admitted, the dry run lists the same files, and the next sync creates and deletes nothing', () => managedBrain(async ({ engine, root }) => {
     git(root, 'rm', '-q', '--cached', ...JSON_FILES); git(root, 'commit', '-qm', 'the backups arrive after the first import');
     await strategy(engine, 'auto');
     await syncAll(engine);
+    await strategy(engine, 'markdown');
     git(root, 'add', '-f', ...JSON_FILES); git(root, 'commit', '-qm', 'backups committed under the ignored folder');
+    await syncAll(engine);
+    await strategy(engine, 'auto');
     const before = await rows(engine);
     expect(Object.keys(before).filter(slug => slug.includes('json'))).toEqual([]);
     const previewed = (await untrackWithBrain(engine, root, [DIR.slice(0, -1)], { dryRun: true }) as string[]).sort();
@@ -389,6 +440,78 @@ for (const backend of testBackends()) describe(`[${backend}] GST-2964: --untrack
     expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
     await syncAll(engine);
     expect(await rows(engine)).toEqual(before);
+  }, { databaseUrl, setup: managedSetup }), 180_000);
+
+  test('a sync that imports a code file between the brain read and the untrack: the file refuses until sync has processed it, naming the sync to run, and no page is deleted', () => managedBrain(async ({ engine, root }) => {
+    await strategy(engine, 'auto');
+    await syncAll(engine);
+    const late = DIR + 'late-example.json';
+    put(root, late, '{"backup":2}\n');
+    git(root, 'add', '-f', late); git(root, 'commit', '-qm', 'a backup another writer committed; no sync has run yet');
+    const managed = { root, sourceId: 'default', evidence: 'test' };
+    const pages = await readUntrackPageVerdict(engine, managed, root, [late]);
+    await syncAll(engine);
+    const before = await rows(engine);
+    expect(before['health-dedupe-backups-late-example-json']).toMatchObject({ deleted: false });
+    const head = git(root, 'rev-parse', 'HEAD');
+    for (const run of [() => previewUntrack(root, [late], { untrackPages: pages }), () => commitAndPush({ repo: root, cwd: root, paths: [late], message: 'm', untrack: true, untrackPages: pages })]) {
+      const refused = refusalOf(run);
+      expect(refused.code).toBe('untrack_not_db_only');
+      expect(JSON.parse(refused.detail!)).toEqual({ paths: [late] });
+      expect(refused.suggestion).toContain('Run gbrain sync --source default, then rerun the untrack');
+    }
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
+    await syncAll(engine);
+    expect(await rows(engine)).toEqual(before);
+    const fresh = await readUntrackPageVerdict(engine, managed, root, [late]);
+    expect(refusalOf(() => previewUntrack(root, [late], { untrackPages: fresh })).suggestion).toContain('would delete the pages at the next sync');
+  }, { databaseUrl, setup: managedSetup }), 180_000);
+
+  test('the sync anchor decides, the same for the dry run and the real run: no finished sync, sync switched off, and a merge as the last change', () => managedBrain(async ({ engine, root }) => {
+    const file = JSON_FILES[0]!;
+    const managed = { root, sourceId: 'default', evidence: 'test' };
+    const refusedBoth = async (note: string) => {
+      const pages = await readUntrackPageVerdict(engine, managed, root, [file]);
+      const head = git(root, 'rev-parse', 'HEAD');
+      for (const run of [() => previewUntrack(root, [file], { untrackPages: pages }), () => commitAndPush({ repo: root, cwd: root, paths: [file], message: 'm', untrack: true, untrackPages: pages })]) {
+        const refused = refusalOf(run);
+        expect(refused.code).toBe('untrack_not_db_only');
+        expect(JSON.parse(refused.detail!)).toEqual({ paths: [file] });
+        expect(refused.message).toContain(note);
+        expect(refused.suggestion).toContain('Run gbrain sync --source default');
+      }
+      expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
+      return pages;
+    };
+    await refusedBoth('source default has not finished a sync');
+    await engine.executeRaw(`UPDATE sources SET config = config || '{"syncEnabled": false}'::jsonb WHERE id='default'`);
+    const off = await refusedBoth('source default has not finished a sync');
+    expect(refusalOf(() => previewUntrack(root, [file], { untrackPages: off })).suggestion).toContain('Run gbrain sync --source default (automatic sync is off for this source; an explicit sync still runs), then rerun the untrack');
+    await engine.executeRaw("UPDATE sources SET config = config - 'syncEnabled' WHERE id='default'");
+    await syncAll(engine);
+    expect(previewUntrack(root, [file], { untrackPages: await readUntrackPageVerdict(engine, managed, root, [file]) })).toEqual([file]);
+    const branch = git(root, 'symbolic-ref', '--short', 'HEAD');
+    git(root, 'checkout', '-q', '-b', 'side-example');
+    put(root, file, '{"side":1}\n'); git(root, 'add', '-f', file); git(root, 'commit', '-qm', 'side edit');
+    git(root, 'checkout', '-q', branch);
+    put(root, file, '{"main":1}\n'); git(root, 'add', '-f', file); git(root, 'commit', '-qm', 'main edit');
+    try { git(root, 'merge', '-q', '--no-ff', 'side-example', '-m', 'merge side'); } catch { /* the conflict is resolved below */ }
+    put(root, file, '{"merged":1}\n'); git(root, 'add', '-f', file); git(root, 'commit', '-qm', 'merge side, resolved');
+    expect(git(root, 'rev-list', '-1', 'HEAD', '--', file)).toBe(git(root, 'rev-parse', 'HEAD'));
+    expect(git(root, 'rev-list', '--parents', '-1', 'HEAD').split(' ').length).toBe(3);
+    await refusedBoth('');
+    await syncAll(engine);
+    const before = await rows(engine);
+    const pages = await readUntrackPageVerdict(engine, managed, root, [file]);
+    const dry = previewUntrack(root, [file], { untrackPages: pages });
+    expect(dry).toEqual([file]);
+    expect(commitAndPush({ repo: root, cwd: root, paths: [file], message: 'untrack the merged backup', untrack: true, untrackPages: pages })).toMatchObject({ outcome: 'committed_local' });
+    expect(changed(root)).toEqual(dry);
+    for (const full of [false, true]) {
+      const synced2 = await syncAll(engine, full);
+      expect(synced2.deleted).toBe(0);
+      expect(await rows(engine)).toEqual(before);
+    }
   }, { databaseUrl, setup: managedSetup }), 180_000);
 
   test('a source rooted in a folder of its repository: from either working directory the untrack reads that folder\'s gbrain.yml, the dry run lists what the real run removes, and the next syncs delete nothing; a folder only a stray top-level gbrain.yml declares refuses, naming the gbrain.yml read', () => managedBrain(async ({ engine, root }) => {
@@ -434,7 +557,10 @@ for (const backend of testBackends()) describe(`[${backend}] GST-2964: --untrack
     git(root, 'rm', '-q', '--cached', json[1]!); git(root, 'commit', '-qm', 'the second backup arrives after the first import');
     await strategy(engine, 'auto');
     await syncAll(engine);
+    await strategy(engine, 'markdown');
     git(root, 'add', '-f', json[1]!); git(root, 'commit', '-qm', 'the second backup committed under the ignored folder');
+    await syncAll(engine);
+    await strategy(engine, 'auto');
     const before = await rows(engine);
     expect(before['health-dedupe-backups-backup-1-json']).toMatchObject({ deleted: false });
     expect(before['health-dedupe-backups-backup-2-json']).toBeUndefined();
