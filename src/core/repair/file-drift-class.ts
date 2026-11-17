@@ -34,12 +34,13 @@ import { shellQuote } from '../agent-output.ts';
 import { VERSION } from '../../version.ts';
 import { digest, stableJson } from '../persistence/digest.ts';
 import { clearApprovedSet, loadApprovedSet, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { assertReconcileOutputPath } from '../persistence/reconcile-backup.ts';
 import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 import { sourceMirrorReadOnly } from '../persistence/mirror-read-only.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { journalLimitKey, readJournalLimits } from '../persistence/limits.ts';
 import { FILE_DRIFT_VERSION, fileDriftSide, GIT_HOLD_OP, readGitHold, type GitHoldRecord } from '../persistence/sync-holds.ts';
-import { runReconcileApply } from '../persistence/reconcile.ts';
+import { authorizeReconcile, runReconcileApply } from '../persistence/reconcile.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { fileCommitEvidenceBatch, heldLiveDrift, readDriftEvidence, type CommitEvidence } from './file-drift-compare.ts';
@@ -77,7 +78,8 @@ export const classPreviewArgv = (sel: ClassSelection, cursor?: string) =>
 const classApplyArgv = (sel: ClassSelection, hash: string) => [...classPreviewArgv(sel), '--apply', '--expect', hash, '--yes'];
 const compareArgv = (sel: ClassSelection) => ['gbrain', 'repair', 'file-drift', '--source', sel.sourceId, '--held', '--side', sel.side, ...argvSelection(sel), '--json'];
 const manifestPath = (hash: string) => join(artifactDirectory(), `class-${hash}.json`);
-const manifestHash = (manifest: ClassManifest) => previewHash({ kind: 'file-drift-class-v1', manifest });
+/** The hash binds what the class is (its pins, residual and walk), never `backup_bytes`: that estimate moves when a background text projection lands. */
+const manifestHash = ({ backup_bytes: _estimate, ...manifest }: ClassManifest) => previewHash({ kind: 'file-drift-class-v1', manifest });
 const requestIdFor = (hash: string, slug: string) => {
   const h = digest(['file-drift-class-request-v1', hash, slug]);
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
@@ -185,6 +187,7 @@ export async function previewFileDriftClass(engine: BrainEngine, scope: RepairSc
   const [held] = source ? await engine.executeRaw<{ n: number | string }>(`SELECT count(*) AS n FROM op_checkpoints h
     WHERE h.op=$1 AND h.completed_keys->0->>'source_id'=$2 AND h.completed_keys->0->>'incarnation'=$3 AND h.completed_keys->0->>'code'='file_drift'`, [GIT_HOLD_OP, sel.sourceId, source.incarnation]) : [];
   if (!resumed && Number(held?.n ?? 0) === 0) return { none: true, other: {} };
+  await assertReconcileOutputPath(engine, sel.sourceId, artifactDirectory());
   const mirror = await sourceMirrorReadOnly(engine, sel.sourceId);
   const manifest: ClassManifest = resumed?.manifest ?? { format_version: 1, kind: 'file-drift-class', gbrain_version: VERSION, file_drift_version: FILE_DRIFT_VERSION,
     reconcile_version: RECONCILE_ARTIFACT_VERSION, mirror, brain_id: scope.brain_id, source_id: sel.sourceId, side: sel.side, only: sel.only, skip: sel.skip,
@@ -195,9 +198,10 @@ export async function previewFileDriftClass(engine: BrainEngine, scope: RepairSc
   let partial: string | null = resumed?.hash ?? null;
   const written: string[] = [];
   const assessmentAt = new Date().toISOString();
+  const startWindows = manifest.windows;
   await asLocalCli(engine, async () => {
     for (;;) {
-      if (manifest.windows > (resumed?.manifest.windows ?? 0) && opts.deadline !== undefined && Date.now() >= opts.deadline) break;
+      if (manifest.windows > startWindows && opts.deadline !== undefined && Date.now() >= opts.deadline) break;
       const rows = await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT h.completed_keys->0 AS record FROM op_checkpoints h
         WHERE h.op=$1 AND h.completed_keys->0->>'source_id'=$2 AND h.completed_keys->0->>'incarnation'=$3 AND h.completed_keys->0->>'code'='file_drift'
           AND ($4::text IS NULL OR (h.completed_keys->0->>'path') COLLATE "C" > $4::text)
@@ -256,6 +260,7 @@ async function classifyPage(engine: BrainEngine, sel: ClassSelection, hold: GitH
   const slug = hold.slug;
   if (slug === null) return { kept: 'no_page', slug: hold.path, next: '' };
   try {
+    await authorizeReconcile(engine, sel.sourceId, slug);
     const live = await heldLiveDrift(engine, sel.sourceId, slug, { hold, mirror });
     if (live.reason === 'canonical_file_missing') return { kept: 'side_changed', slug, next: '' };
     if (live.still_present !== true) return { kept: live.reason === 'agrees' ? 'release_hold' : live.still_present === false ? 'no_drift' : `unknown_${live.reason}`, slug, next: '' };
