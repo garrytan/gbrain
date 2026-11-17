@@ -8,9 +8,10 @@
  *    `--private-facts none` turns it off on the next request; an upgraded brain starts every credential at none; no MCP
  *    operation or admin HTTP grant edit can set it.
  * 2. Fails when: a private fact reaches a credential at none, a credential with no source grant, a source the grant
- *    does not name (federated, or named by the request), another credential, or comes from a private, readable_by,
- *    member or derivation-private page; or the granted credential does not see a private fact on a world page in its
- *    granted source; or the axis is missing from `auth list`, `auth clients` or the rescope output.
+ *    does not list (federated, even after the grant is written, or named by the request), another credential, or comes
+ *    from a private, readable_by, member or derivation-private page, or has no page to check (no holding page, or a
+ *    transcript lane); or the granted credential does not see a private fact on a world page in its granted source; or
+ *    the axis or its plain warning is missing from `auth list`, `auth clients`, the help or the rescope output.
  * 3. Existing coverage (repair-open-facts-8194, private-pages-grant) pins world-only facts for every non-owner caller.
  * 4. Real seams: tokens and clients minted and rescoped through the grant service and CLI parsers, verified by the serve
  *    --http verifier, dispatched through MCP dispatch with remote=true; PGLite, and Postgres when DATABASE_URL is set.
@@ -35,6 +36,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { operations } from '../src/core/operations.ts';
 import { parseAdminGrantRequest } from '../src/commands/serve-http-grants.ts';
 import { runAuth } from '../src/commands/auth.ts';
+import { runSources } from '../src/commands/sources.ts';
 import { LATEST_VERSION, runMigrations } from '../src/core/migrate.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
@@ -51,12 +53,15 @@ const GRANTED = 'pf-alpha';
 const TEAM = 'pf-team';
 const OTHER = 'pf-bravo';
 const FED = 'pf-fed';
+/** A source created and federated after every grant is written: the floor credential reaches it, no grant lists it. */
+const LATE = 'pf-late';
 const ENTITY = 'companies/acme-example';
 
 /** The one private fact the switch opens: on a world page in the granted source. */
 const OPENS = 'orchardline canary alpha private';
 const WORLD = 'orchardline canary alpha world';
 const WORLD_FED = 'orchardline canary fed world';
+const WORLD_LATE = 'orchardline canary late world';
 /** Private facts the switch never opens, by why. */
 const CLOSED: Record<string, string> = {
   other_source: 'orchardline canary bravo private',
@@ -67,11 +72,16 @@ const CLOSED: Record<string, string> = {
   member_page: 'orchardline canary member page',
   derivation_private: 'orchardline canary derived private',
   quarantined_page: 'orchardline canary quarantined page',
+  unpaged: 'orchardline canary unpaged private',
+  transcript_lane: 'orchardline canary transcript lane private',
+  late_federated: 'orchardline canary late private',
 };
+/** The plain warning `auth rescope` prints when the switch turns on. */
+const WARNING = 'This key will read every private fact in the sources its grant names, including facts saved private on purpose';
 
 const worldPage = (title: string) => '---\ntype: company\ntitle: ' + title + '\n---\n\n# ' + title + '\n\nOrchardline company page.\n';
 
-async function dbFact(engine: BrainEngine, sourceId: string, fact: string, visibility: 'private' | 'world', holder: string, opts: { source?: string; session?: string } = {}): Promise<void> {
+async function dbFact(engine: BrainEngine, sourceId: string, fact: string, visibility: 'private' | 'world', holder: string | null, opts: { source?: string; session?: string } = {}): Promise<void> {
   await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => tx.executeRaw(
     'INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, source_session, source_markdown_slug) VALUES ($1, $2, $3, \'fact\', $4, $5, $6, $7)', // gbrain-allow-direct-insert: legacy database-only fact fixture
     [sourceId, ENTITY, fact, visibility, opts.source ?? 'mcp:extract_facts', opts.session ?? null, holder]), TEST_WRITE_ATTRIBUTION));
@@ -142,6 +152,8 @@ for (const kind of testBackends()) {
       await dbFact(engine, GRANTED, CLOSED.member_page, 'private', 'memory/members/alice-example');
       await dbFact(engine, GRANTED, CLOSED.quarantined_page, 'private', 'notes/held-back');
       await dbFact(engine, GRANTED, CLOSED.derivation_private, 'private', ENTITY, { source: 'mcp:put_page', session: 'put_page:notes/private-src' });
+      await dbFact(engine, GRANTED, CLOSED.unpaged, 'private', null);
+      await dbFact(engine, GRANTED, CLOSED.transcript_lane, 'private', ENTITY, { source: 'cli:extract-conversation-facts' });
 
       const mint = async (name: string, sources?: string[]) => {
         const minted = await mintLegacyToken(engine, { name, scopes: ['read'], takesHolders: ['world'], ...(sources ? { sourceGrant: sources } : {}) });
@@ -174,7 +186,8 @@ for (const kind of testBackends()) {
 
     test('fixture control: the trusted local caller recalls the private facts; a credential left at none sees only world ones', async () => {
       const all = await local('recall', { entity: ENTITY, source_id: GRANTED });
-      expect({ opens: all.includes(OPENS), world: all.includes(WORLD), page: all.includes(CLOSED.private_page) }).toEqual({ opens: true, world: true, page: true });
+      expect({ opens: all.includes(OPENS), world: all.includes(WORLD), page: all.includes(CLOSED.private_page), unpaged: all.includes(CLOSED.unpaged), transcript: all.includes(CLOSED.transcript_lane) })
+        .toEqual({ opens: true, world: true, page: true, unpaged: true, transcript: true });
       expect(await local('recall', { entity: ENTITY, source_id: FED })).toContain(CLOSED.federated_source);
       for (const who of ['facts-plain', 'client-plain']) {
         for (const [label, op, params] of reads()) {
@@ -193,7 +206,7 @@ for (const kind of testBackends()) {
       expect((await verify(tokens['client-facts'])).privateFacts).toEqual({ mode: 'granted_sources', sources: [GRANTED, TEAM] });
       for (const who of ['facts-plain', 'client-plain', 'facts-floor']) expect({ who, pf: (await verify(tokens[who])).privateFacts }).toEqual({ who, pf: undefined });
       const [stored] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM facts WHERE fact LIKE 'orchardline canary%' AND visibility = 'private'");
-      expect(stored.n).toBe(9);
+      expect(stored.n).toBe(11);
     });
 
     test('with the switch on, recall and search read the private fact on a world page in the granted source, and nothing it must not', async () => {
@@ -201,6 +214,16 @@ for (const kind of testBackends()) {
         for (const [label, op, params] of reads()) {
           const out = await call(tokens[who], op, params);
           expect({ who, label, isError: out.isError, opens: out.text.includes(OPENS), closed: closedSeen(out.text) }).toEqual({ who, label, isError: false, opens: true, closed: [] });
+        }
+      }
+    }, 120_000);
+
+    test('facts with no page to check stay hidden with the switch on: an unpaged fact and a transcript-lane fact with a holding page', async () => {
+      for (const who of ['facts-bot', 'client-facts']) {
+        for (const [label, op, params] of reads()) {
+          const out = await call(tokens[who], op, params);
+          expect({ who, label, opens: out.text.includes(OPENS), unpaged: out.text.includes(CLOSED.unpaged), transcript: out.text.includes(CLOSED.transcript_lane) })
+            .toEqual({ who, label, opens: true, unpaged: false, transcript: false });
         }
       }
     }, 120_000);
@@ -228,6 +251,29 @@ for (const kind of testBackends()) {
       }
       const team = await call(tokens['facts-bot'], 'recall', { entity: ENTITY, source_ids: [TEAM] });
       expect(team.text).not.toContain(OPENS);
+    }, 120_000);
+
+    test('a source the credential reaches but its grant does not list never opens, though federated after the grant is written', async () => {
+      await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [LATE]);
+      await importFromContent(engine, ENTITY, worldPage('Acme Example'), { sourceId: LATE });
+      await dbFact(engine, LATE, CLOSED.late_federated, 'private', ENTITY);
+      await dbFact(engine, LATE, WORLD_LATE, 'world', ENTITY);
+      await runSources(engine, ['federate', LATE]);
+      const [config] = await engine.executeRaw<{ federated: unknown }>("SELECT config->'federated' AS federated FROM sources WHERE id = $1", [LATE]);
+      expect(String(config.federated)).toBe('true');
+      expect(await local('recall', { entity: ENTITY, source_id: LATE })).toContain(CLOSED.late_federated);
+      expect((await verify(tokens['facts-bot'])).privateFacts).toEqual({ mode: 'granted_sources', sources: [GRANTED, TEAM] });
+      expect((await verify(tokens['client-facts'])).privateFacts).toEqual({ mode: 'granted_sources', sources: [GRANTED, TEAM] });
+      expect((await verify(tokens['facts-floor'])).privateFacts).toBeUndefined();
+      const reached = await call(tokens['facts-floor'], 'recall', { entity: ENTITY, source_ids: [LATE] });
+      expect({ reached: reached.text.includes(WORLD_LATE), closed: closedSeen(reached.text) }).toEqual({ reached: true, closed: [] });
+      for (const who of ['facts-floor', 'facts-bot', 'client-facts']) {
+        for (const [label, op, params] of [...reads(), ['recall late', 'recall', { entity: ENTITY, source_ids: [LATE] }] as [string, string, Record<string, unknown>]]) {
+          const out = await call(tokens[who], op, params);
+          expect({ who, label, closed: closedSeen(out.text) }).toEqual({ who, label, closed: [] });
+        }
+      }
+      for (const who of ['facts-bot', 'client-facts']) expect((await call(tokens[who], 'recall', { entity: ENTITY })).text).toContain(OPENS);
     }, 120_000);
 
     test('a credential with no source grant gets nothing from the switch, in default or a federated source it reads', async () => {
@@ -325,8 +371,13 @@ describe('private_facts migration and operator output', () => {
   test('auth rescope prints the before and after for a token and a client; auth list and auth clients show it', async () => {
     const token = await auth(['rescope', '--token', 'alice-example', '--private-facts', 'granted-sources']);
     expect(token).toContain('  Private facts: none -> ' + GRANTED_LABEL);
+    expect(token).toContain(WARNING);
     const client = await auth(['rescope', '--client', 'client-a', '--private-facts', 'granted-sources', '--dry-run']);
     expect(client).toContain('  Private facts: none -> ' + GRANTED_LABEL);
+    expect(client).toContain(WARNING);
+    const help = (await auth(['--help'])).replace(/\s+/g, ' ');
+    expect(help).toContain('including facts saved private on purpose');
+    expect(help).toContain('a fact with no page to check');
     await auth(['rescope', '--client', 'client-a', '--private-facts', 'granted-sources']);
     const listed = JSON.parse(await auth(['list', '--json'])) as Array<Record<string, unknown>>;
     expect(Object.fromEntries(listed.map(t => [t.name, t.private_facts]))).toEqual({ 'alice-example': 'granted_sources', 'bob-example': 'none' });
@@ -340,5 +391,6 @@ describe('private_facts migration and operator output', () => {
     expect(json.clients.find(c => c.client_id === 'client-a')?.private_facts).toBe('granted_sources');
     const off = await auth(['rescope', '--token', 'alice-example', '--private-facts', 'none']);
     expect(off).toContain('  Private facts: ' + GRANTED_LABEL + ' -> none');
+    expect(off).not.toContain(WARNING);
   }, 120_000);
 });
