@@ -22,6 +22,7 @@ import { inspectGraduationPath } from '../core/persistence/graduation-custody.ts
 import { readGraduationManifestSummary } from '../core/persistence/graduation-serve-guard.ts';
 import type { GraduationPathState } from '../core/persistence/engine-graduation.types.ts';
 import { existsSync } from 'node:fs';
+import { OperationError } from '../core/ops/contract.ts';
 
 import {
   envShadowDetected,
@@ -100,6 +101,8 @@ interface ProbeResult {
   mode?: unknown;
   pool_latency_ms?: { read: number | null; direct: number | null };
   diagnosis?: PgAccessDiagnosis;
+  /** A Rust brain's typed refusal (addon missing or mismatched, capability missing), reported as it is, not as a database error. */
+  refusal?: { code: string; reason?: string; message: string };
 }
 
 interface EngineStatusReport {
@@ -373,6 +376,9 @@ async function probeSafely(
   try {
     return await runProbe(engineKind, engineConfig, dataDir);
   } catch (e) {
+    if (engineKind === 'rust' && e instanceof OperationError && (e.code.startsWith('rust_engine_addon_') || e.code === 'engine_capability_missing')) {
+      return { ok: false, note: e.code, refusal: { code: e.code, ...(e.reason ? { reason: e.reason } : {}), message: e.message } };
+    }
     return { ok: false, diagnosis: classifyPgAccessError(e, { url, source, brainId }) };
   }
 }
@@ -403,6 +409,8 @@ function printHuman(r: EngineStatusReport): void {
   if (r.probe) {
     if (r.probe.ok) {
       lines.push(`Probe:   ok${r.probe.note ? ` (${r.probe.note})` : ''}${r.probe.latency_ms !== undefined ? ` ${r.probe.latency_ms}ms` : ''}`);
+    } else if (r.probe.refusal) {
+      lines.push(`Probe:   FAIL ${r.probe.refusal.code}${r.probe.refusal.reason ? ` (${r.probe.refusal.reason})` : ''} — ${r.probe.refusal.message}`);
     } else if (r.probe.diagnosis) {
       lines.push(`Probe:   FAIL ${r.probe.diagnosis.reason} — ${r.probe.diagnosis.remediation}`);
     } else {

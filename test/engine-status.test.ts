@@ -167,6 +167,21 @@ describe('gbrain engine status', () => {
     expect(existsSync(missing)).toBe(false);
   }, 60_000);
 
+  test('--probe on a rust brain whose addon is missing reports rust_engine_addon_missing, not an unclassified database error', () => {
+    const store = join(home, 'brain.rust');
+    writeConfig({ engine: 'rust', database_path: store });
+    const { stdout, status } = run(['engine', 'status', '--json', '--probe'], { GBRAIN_RUST_ENGINE_ADDON: join(home, 'missing.node') });
+    expect(status).toBe(1);
+    const report = parseReport(stdout);
+    expect(report.effective_engine).toBe('rust');
+    expect(report.probe.ok).toBe(false);
+    expect(report.probe.note).toBe('rust_engine_addon_missing');
+    expect(report.probe.refusal).toMatchObject({ code: 'rust_engine_addon_missing', reason: 'override_not_found' });
+    expect(report.probe.diagnosis).toBeUndefined();
+    expect(existsSync(store)).toBe(false);
+    expect(existsSync(join(home, '.gbrain', 'engines'))).toBe(false);
+  }, 60_000);
+
   test('unknown token reaching the command parser: exit 2', () => {
     // A bare token passes the CLI-level flag registry and hits
     // runEngineStatus's own parseArgs, which rejects with exit 2.
