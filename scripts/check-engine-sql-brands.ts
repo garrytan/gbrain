@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Engine-sql RLS brand guard (refactor wave 1, EO4 / AR2;
- * docs/TESTING.md#engine-sql-brands).
+ * docs/ci-guards.md#engine-sql-brands).
  *
  * src/core/engine-sql/brands.ts types each engine-sql read as `ScopedRead`
  * (ran inside withScopedReadTransaction on master) or `LegacyUnscopedRead`
@@ -31,7 +31,7 @@ import { dirname, join, normalize, relative } from 'node:path';
 import ts from 'typescript';
 
 const ROOT = process.env.GBRAIN_GUARD_ROOT ?? join(import.meta.dir, '..');
-const ANCHOR = 'docs/TESTING.md#engine-sql-brands';
+const ANCHOR = 'docs/ci-guards.md#engine-sql-brands';
 const BRANDS = 'src/core/engine-sql/brands.ts';
 const BRAND_KEY = /__obtainVia\w*/;
 const BRAND_TYPES = /\b(?:SqlExecutor|ScopedRead|LegacyUnscopedRead)\b/;
