@@ -2791,7 +2791,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Admin read: who created and who last changed a page, or one of its facts, takes or timeline entries. Each attribution names the request id, operation, principal (kind, id, current name), time and origin (request, maintenance or unrecorded), plus the row's trust_tier and write_origin (for derived rows, the inputs that set the tier). Remote callers stay inside their source grant and see only world facts.",
+    "description": "Admin read: who created and who last changed a page, or one of its facts, takes or timeline entries. Each attribution names the request id, operation, principal (kind, id, current name), time and origin (request, maintenance or unrecorded), plus the row's trust_tier and write_origin (for derived rows, the inputs that set the tier). Remote callers stay inside their source grant and see only world facts, except credentials bound to the brain owner.",
     "params": {
       "slug": {
         "type": "string",
