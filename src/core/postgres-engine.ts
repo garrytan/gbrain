@@ -1213,7 +1213,7 @@ export class PostgresEngine implements BrainEngine {
         effective_date, effective_date_source,
         message_id, thread_id, source_subject,
         chunk_id, chunk_index, chunk_text, chunk_source, score, bounded_rows,
-        false AS stale
+        CASE WHEN best_per_page.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = best_per_page.page_id) THEN true ELSE false END AS stale
       FROM best_per_page
       ORDER BY score DESC, page_id ASC, chunk_id ASC
       LIMIT ${limitParam}
@@ -1274,7 +1274,7 @@ export class PostgresEngine implements BrainEngine {
       (read, settings) => this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx => read(scopedRead(this.engineSqlOn(tx))), { alwaysTransaction: true, jitOff: true, settings }),
       query,
       opts,
-      { statementTimeout: await this.keywordStatementTimeoutSetting(), statementSettings: KEYWORD_STATEMENT_SETTINGS, relaxedPrefersIndex: true, staleProbe: false, chunkManifest: exec => chunkManifestReads(this, exec) },
+      { statementTimeout: await this.keywordStatementTimeoutSetting(), statementSettings: KEYWORD_STATEMENT_SETTINGS, relaxedPrefersIndex: true, chunkManifest: exec => chunkManifestReads(this, exec) },
     );
   }
 
@@ -1394,7 +1394,7 @@ export class PostgresEngine implements BrainEngine {
           THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
         cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
         ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
-        false AS stale
+        CASE WHEN p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id) THEN true ELSE false END AS stale
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
       JOIN sources s ON s.id = p.source_id
