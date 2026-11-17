@@ -2531,6 +2531,18 @@ at all: bind the client to the owner instead (`gbrain access owner set`, then
 `gbrain auth rescope --client <id> --member <owner>`), and it reads private
 facts without opening them to anyone else.
 
+On a shared brain with several clients and no owner, `gbrain auth rescope
+--token <name> --private-facts granted-sources` (or `--client <id>`) is the
+per-credential alternative to opening facts: that one credential reads every
+private fact in the sources its grant lists by id, including facts saved
+private on purpose, nobody else does, no fact changes, and `--private-facts
+none` switches it off on the next request. A source the credential only
+reaches (federated, now or later, or through a future "read every shared
+source" switch) never opens. It never reads a fact on a page this repair
+would refuse to open, nor an `unpaged:<lane>` fact (no holding page, or a
+transcript lane such as the conversation archive), which this repair opens
+only by class ([MCP administration](../mcp/ADMIN.md)).
+
 ### Lost fence rows
 
 A page rewrite that drops its `## Facts` or takes section is safe on its
@@ -2839,7 +2851,8 @@ sweep) skips gbrain's own claude-cli model sessions and text you paste into a
 conversation. Facts a gbrain older than v0.60.30.0 captured from them stay
 active, so recall and hot memory keep returning them. `gbrain repair captured-facts` expires them. It is
 explicit-only and preview-bound, and it runs on the brain host (it reads the
-Claude Code session directory and the session corpus there).
+Claude Code session directory, the live and archived Codex session folders
+and the session corpus there).
 
 **Say to your agent:** *"Doctor says some facts were captured from gbrain's own
 sessions or from pasted text. Show me which ones before removing anything."*
@@ -3738,7 +3751,8 @@ gbrain repair file-drift --source <id> --held --json           # compare every h
 
 <a id="file-drift-compare-mirror"></a>On a [read-only mirror](multi-source-brains.md#read-only-mirror-sources)
 (GST-2843), the held comparison reads each held page's file too: a page that
-differs reads `prefer_file` or `needs_human` with its `evidence`, one that
+differs reads `prefer_file` or `needs_human` with its `evidence` (a held deleted
+page whose file differs reads `needs_human` and names the same route), one that
 matches reads `release_hold`, and only a page whose file is gone reads
 `no_drift` with `database_only`. Every compared page in `details.pages`
 carries `evidence` (null when nothing was read). The comparison names no

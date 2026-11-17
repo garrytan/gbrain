@@ -63,6 +63,7 @@ test/belief-ledger-trust.test.ts
 test/belief-ledger-w5-time-model.test.ts
 test/belief-ledger-weekly-diff.test.ts
 test/belief-ledger-weekly-probes.test.ts
+test/belief-mention-disable-9548.test.ts
 test/capacity-bounded-read-6803.test.ts
 test/capture-consent-admission.test.ts
 test/capture-dispatch-provenance-6524.test.ts
@@ -731,6 +732,7 @@ test/sync-plain-directory-7973.test.ts
 test/sync-prescreen-both-delta-6712.test.ts
 test/sync-prescreen-drift-6712.test.ts
 test/sync-restored-file-purge.test.ts
+test/sync-sigterm-gst2869.test.ts
 test/sync-slug-root-mode-6694.test.ts
 test/sync-staged-catchup.test.ts
 test/sync-status-commits-waiting-gst2515.test.ts
