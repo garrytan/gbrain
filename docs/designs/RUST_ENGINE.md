@@ -629,7 +629,7 @@ Each yes is quoted in the body of the PR that needs it.
 
 ## Open questions
 
-1. Who lands gbrain-evals changes? The merge process covers this repository only, and the evals repository follows `gbrain#master` unpinned today. Resolved in D11: that repository's own maintainers write and land them from requests on a gbrain PR, and the pin follows gbrain's newest release through its pin tool.
+1. Who lands gbrain-evals changes? The merge process covers this repository only, and `research/11` describes an older, unpinned snapshot of the evals repository. Resolved in D11: that repository's own maintainers write and land them from requests on a gbrain PR, and the pin follows gbrain's newest release through its pin tool.
 2. If the bake-off picks bundled SQLite as the record store, `constructEngine`'s message that SQLite is unsupported and `docs/ENGINES.md` need rewording, since SQLite would be an internal detail of the Rust engine. Acceptable?
 3. Which public 1M-vector corpus (license and dimensions) serves the 1M benchmark, or is a paid one-time embedding of a public corpus preferred?
 4. Does any caller search inside its own write transaction? The guard test answers it; a positive answer needs a design note before that subsystem moves.
