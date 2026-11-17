@@ -42,7 +42,7 @@ The env file sets these:
 
 | Variable | Value |
 |---|---|
-| `PATH` | `~/.gbrain-rust-dev/bin`, `~/.bun/bin` and `~/.cargo/bin` in front |
+| `PATH` | `~/.gbrain-rust-dev/bin`, `~/.cargo/bin` and `~/.bun/bin` in front, in that order |
 | `BUN_INSTALL`, `CARGO_HOME`, `RUSTUP_HOME` | `~/.bun`, `~/.cargo`, `~/.rustup` |
 | `RUST_ENGINE_DATABASE_URL` | `postgresql://gbrain:gbrain@127.0.0.1:5432/gbrain_test` |
 
