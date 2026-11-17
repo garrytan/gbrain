@@ -71,6 +71,7 @@ import { parseFactsFenceFor, renderFactsTable, restoreHiddenFactRows, factsGapWa
 import { assertOriginUnclaimed, isOriginClaimRefusal } from './persistence/origin-guard.ts';
 import { fileBodyMatchesStored, readStoredBody } from './facts/file-body-guard.ts';
 import { currentEngineScope, needsEngineScope, runInEngineScope, withEngineScope } from './engine-scope.ts';
+import { forwardWholeOperation } from './rust-engine/owner-ipc/whole-op.ts';
 
 /**
  * #2044 / #4548: row-level, visibility-aware fence merge for one page
@@ -356,9 +357,9 @@ export async function importFromContent(
     onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void;
   } & ImportFenceOptions = {},
 ): Promise<ImportResult> {
-  // Normalize BEFORE any tx write: putPage lowercases via validateSlug but
-  // upsertChunks used to query by the caller's raw slug, so a mixed-case slug
-  // created the page row then failed the chunk upsert with "Page not found",
+  const viaOwner = forwardWholeOperation<ImportResult>(engine, 'importFromContent', [slug, content, opts]); if (viaOwner) return viaOwner;
+  // Normalize BEFORE any tx write: putPage lowercases via validateSlug but upsertChunks used to query by the
+  // caller's raw slug, so a mixed-case slug created the page row then failed the chunk upsert with "Page not found",
   // rolling back the whole import (#430).
   slug = validateSlug(slug);
 
@@ -1044,6 +1045,7 @@ export async function importFromFile(
     bodyPolicy?: PageBodyPolicy;
   } = {},
 ): Promise<ImportResult> {
+  const viaOwner = forwardWholeOperation<ImportResult>(engine, 'importFromFile', [filePath, relativePath, opts]); if (viaOwner) return viaOwner;
   if (needsEngineScope(engine)) return withEngineScope(engine, () => importFromFile(engine, filePath, relativePath, opts));
   // Defense-in-depth: reject symlinks before reading content.
   const lstat = lstatSync(filePath);
@@ -1880,6 +1882,7 @@ export async function importImageFile(
   relativePath: string,
   opts: ImportImageOptions = {},
 ): Promise<ImportResult> {
+  const viaOwner = forwardWholeOperation<ImportResult>(engine, 'importImageFile', [filePath, relativePath, opts]); if (viaOwner) return viaOwner;
   if (needsEngineScope(engine)) return withEngineScope(engine, () => importImageFile(engine, filePath, relativePath, opts));
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct file import', { sourceId: opts.sourceId ?? 'default' });
   // Defense-in-depth: reject symlinks before reading bytes.
