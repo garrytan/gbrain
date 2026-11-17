@@ -211,6 +211,40 @@ secondary indexes yet.
   `expectedRevision`. The check sees soft-deleted pages.
 - Tags are not part of `putPage`; `addTag` and `removeTag` change them, as in PGLite.
 
+### Chunks and keyword search
+
+A page's text is indexed as chunks (`chunk_source` is `compiled_truth`, `timeline`, `fenced_code` or
+`image_asset`; a chunk is one record plus one posting per word). `putPage` installs the chunks in the
+same transaction as the page: `opts.chunks` when the caller passes `ChunkInput[]`, otherwise the
+built-in chunker (paragraphs packed to about 1500 characters; simpler than the TypeScript chunker,
+so callers that need its exact chunks pass them). Installing chunks sets
+`text_projection_revision = knowledge_revision`. Search serves only pages in that state, as PGLite
+does, so a tag change, soft delete or restore hides a page from search until a `putPage` or an
+`upsertChunks` with `expectedRevision` indexes it again. Vectors are not stored; `embedding` is
+`null`.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.putPage(slug, page, { ..., chunks? })` | as above; `chunks` replaces the page's chunks | `putPage` plus `upsertChunks` |
+| `brain.upsertChunks(slug, chunks, { sourceId?, expectedRevision?, deferSeal? }?)` | `null`; replaces the page's chunks (a chunk that keeps its index keeps its id). `page_not_found`, `revision_conflict`, `invalid_argument` for a bad `chunk_source`. With `expectedRevision` the chunks are sealed to it | `upsertChunks` |
+| `brain.getChunks(slug, { sourceId?, sourceIds?, includeDeleted? }?)` | `Chunk[]` in index order, `embedding: null` | `getChunks` |
+| `brain.deleteChunks(slug, { sourceId? }?)` | `null`; the page stays | `deleteChunks` |
+| `brain.countChunks()` | number of chunks in the brain | none |
+| `brain.searchKeyword(query, opts?)` | `SearchResult[]` (`slug, page_id, title, type, source_id, chunk_text, chunk_source, chunk_id, chunk_index, score, stale: false`, plus `effective_date` when set) | `searchKeyword` |
+
+`searchKeyword` is not parity with PGLite. Ranking is BM25 over chunks with index-wide statistics
+(`k1` 1.2, `b` 0.75), not the Postgres `ts_rank`, so scores and order differ. There is no stemming;
+the English stop words are dropped from the query (a query of only stop words keeps them); each CJK
+character is its own term; `websearch` syntax (quotes, `or`, `-`) is not interpreted. Like PGLite:
+every term must match, a page is one result represented by its best chunk, order is `score DESC,
+page_id ASC, chunk_id ASC`, `limit` defaults to 20 and is clamped to 100, soft-deleted pages,
+archived sources and image chunks are hidden, `test/`, `attachments/` and `.raw/` slugs are hidden
+(`include_slug_prefixes` opts back in; `exclude_slug_prefixes` adds to them), and `type`, `types`,
+`exclude_slugs`, `sourceId`, `sourceIds` (wins), `detail: "low"` (compiled-truth chunks), `language`
+and `symbolKind` filter. `where`, `afterDate` and `beforeDate` reject `invalid_argument` instead of
+being ignored. A query reads the posting list of every term, so cost grows with the number of
+matching chunks.
+
 ## Error codes
 
 Errors from the addon are real `Error` objects with a `code`:

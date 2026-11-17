@@ -104,6 +104,15 @@ export interface Brain {
     slug: string,
     options?: PageScope & { limit?: number; includeBody?: boolean },
   ): Promise<Record<string, any>[]>;
+  upsertChunks(
+    slug: string,
+    chunks: Array<Record<string, any>>,
+    options?: { sourceId?: string; expectedRevision?: string; deferSeal?: boolean },
+  ): Promise<null>;
+  getChunks(slug: string, options?: PageScope): Promise<Array<Record<string, any>>>;
+  deleteChunks(slug: string, options?: { sourceId?: string }): Promise<null>;
+  countChunks(): Promise<number>;
+  searchKeyword(query: string, options?: Record<string, any>): Promise<Array<Record<string, any>>>;
 }
 
 export interface Addon {

@@ -7,6 +7,7 @@
 //!
 //! `list_pages` and `resolve_slugs` scan every page: there are no secondary indexes yet.
 
+use crate::chunks::{ChunkInput, auto_chunks, clear_chunks, replace_chunks};
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{
     EMPTY_OVERWRITE, INVALID_SLUG, PAGE_NOT_FOUND, REVISION_CONFLICT, REVISION_REQUIRED, Result,
@@ -153,6 +154,9 @@ pub struct PutPageOptions {
     #[serde(deserialize_with = "double_option")]
     pub expected_revision: Option<Option<String>>,
     pub force: Option<bool>,
+    /// Chunks installed with the page, in the same transaction. When absent the page's body is
+    /// split by the built-in chunker whenever its chunks are not current.
+    pub chunks: Option<Vec<ChunkInput>>,
 }
 
 /// Which pages a read may see. Mirrors `GetPageOpts`: `source_ids` wins when it is not empty.
@@ -353,7 +357,6 @@ pub(crate) fn read_page(
     get_json(read, &page_key(source_id, slug))
 }
 
-#[allow(dead_code)] // used by keyword search
 pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageRecord>> {
     let Some(key) = read.get(&keys::page_id(id))? else {
         return Ok(None);
@@ -413,7 +416,7 @@ fn scope_sources(
     Ok(ids)
 }
 
-fn find_in_scope(
+pub(crate) fn find_in_scope(
     read: &dyn KvRead,
     slug: &str,
     source_id: &Option<String>,
@@ -616,6 +619,17 @@ pub(crate) fn put_page_in(
         }
     };
     write_page(tx, &record)?;
+    let mut record = record;
+    match &options.chunks {
+        Some(chunks) => replace_chunks(tx, &mut record, chunks, true)?,
+        None if record.text_projection_revision.as_deref()
+            != Some(record.knowledge_revision.as_str()) =>
+        {
+            let chunks = auto_chunks(&record);
+            replace_chunks(tx, &mut record, &chunks, true)?
+        }
+        None => {}
+    }
     Ok(record)
 }
 
@@ -985,6 +999,7 @@ pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()>
     for key in doomed {
         tx.delete(&key)?;
     }
+    clear_chunks(tx, page.id)?;
     tx.delete(&keys::page(&page.source_id, &page.slug))?;
     tx.delete(&keys::page_id(page.id))
 }

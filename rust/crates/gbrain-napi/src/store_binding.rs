@@ -476,4 +476,68 @@ impl Brain {
             s.get_versions(&slug, &arg(options, "getVersions options")?)
         })
     }
+
+    /// `upsertChunks(slug, chunks, { sourceId?, expectedRevision?, deferSeal? }?)`: replaces the
+    /// page's chunks. With `expectedRevision` the chunks are sealed to it.
+    #[napi]
+    pub fn upsert_chunks<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        chunks: Value,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let chunks: Vec<gbrain_store::chunks::ChunkInput> =
+                required(chunks, "upsertChunks chunks")?;
+            s.upsert_chunks(&slug, &chunks, &arg(options, "upsertChunks options")?)
+        })
+    }
+
+    /// `getChunks(slug, { sourceId?, sourceIds?, includeDeleted? }?)`: `Chunk[]` without vectors.
+    #[napi]
+    pub fn get_chunks<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.get_chunks(&slug, &arg(options, "getChunks options")?)
+        })
+    }
+
+    /// `deleteChunks(slug, { sourceId? }?)`: removes the page's chunks; the page stays.
+    #[napi]
+    pub fn delete_chunks<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let scope: gbrain_store::pages::ReadScope = arg(options, "deleteChunks options")?;
+            s.delete_chunks(&slug, scope.source_id.as_deref())
+        })
+    }
+
+    /// `countChunks()`: chunks in the brain.
+    #[napi]
+    pub fn count_chunks<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_chunks())
+    }
+
+    /// `searchKeyword(query, opts?)`: `SearchResult[]`, one per page, best chunk first. Ranking is
+    /// BM25, not the Postgres full-text rank; see the README.
+    #[napi]
+    pub fn search_keyword<'env>(
+        &self,
+        env: &'env Env,
+        query: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.search_keyword(&query, &arg(options, "searchKeyword options")?)
+        })
+    }
 }

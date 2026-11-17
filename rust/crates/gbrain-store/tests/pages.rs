@@ -87,7 +87,10 @@ fn a_put_page_reads_back_with_the_page_shape() {
     assert_eq!(put["source_id"], "default");
     assert_eq!(put["page_kind"], "markdown");
     assert_eq!(put["id"], 1);
-    assert_eq!(put["text_projection_revision"], Value::Null);
+    assert_eq!(
+        put["text_projection_revision"], put["knowledge_revision"],
+        "putPage indexes the page, so its chunks are current"
+    );
     assert_eq!(put["deleted_at"], Value::Null);
     assert_eq!(put["content_hash"].as_str().unwrap().len(), 64);
     assert_eq!(put["created_at"], put["updated_at"]);

@@ -390,6 +390,13 @@ export const cases: Case[] = [
         });
         assert.equal(put.slug, 'people/ada');
         assert.equal(put.source_id, 'default');
+        assert.equal(put.text_projection_revision, put.knowledge_revision, 'put indexes the page');
+        const found = await brain.searchKeyword('first program');
+        assert.deepEqual(found.map(r => r.slug), ['people/ada']);
+        assert.equal(found[0].chunk_source, 'compiled_truth');
+        assert.equal(found[0].stale, false);
+        assert.deepEqual(await brain.searchKeyword('first program', { type: 'company' }), []);
+        assert.equal((await brain.getChunks('people/ada')).length, 1);
         assert.match(put.updated_at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/);
         const snapshot = await brain.readPageSnapshot('people/ada');
         assert.equal(snapshot!.page.title, 'Ada Lovelace');
@@ -421,6 +428,12 @@ export const cases: Case[] = [
         const again = new addon.Brain(pool);
         await again.open(dir);
         assert.equal((await again.readPageSnapshot('people/ada'))!.page.title, 'Ada Lovelace', 'the page survives a reopen');
+        await again.putPage('people/ada', { type: 'person', title: 'Ada Lovelace', compiled_truth: 'Wrote the first program.' });
+        assert.deepEqual((await again.searchKeyword('program')).map(r => r.slug), ['people/ada'], 'search works after a reopen');
+        assert.equal(await again.countChunks(), 1);
+        await again.upsertChunks('people/ada', [{ chunk_index: 0, chunk_text: 'engine notes', chunk_source: 'timeline' }]);
+        await again.deleteChunks('people/ada');
+        assert.equal(await again.countChunks(), 0);
         await again.deletePage('people/ada');
         assert.equal(await again.readPageSnapshot('people/ada', { includeDeleted: true }), null);
         await again.close();
