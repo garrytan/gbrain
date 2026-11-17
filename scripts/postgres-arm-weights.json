@@ -46,6 +46,7 @@
   "test/belief-ledger-w5-time-model.test.ts": 22130,
   "test/belief-ledger-weekly-diff.test.ts": 102700,
   "test/belief-ledger-weekly-probes.test.ts": 35614,
+  "test/belief-mention-disable-9548.test.ts": 10687,
   "test/capacity-bounded-read-6803.test.ts": 8904,
   "test/capture-consent-admission.test.ts": 10088,
   "test/capture-dispatch-provenance-6524.test.ts": 7201,
