@@ -45,3 +45,26 @@ secondary indexes yet.
   page rejects `revision_required`. `force: true` skips the check and cannot be combined with
   `expectedRevision`. The check sees soft-deleted pages.
 - Tags are not part of `putPage`; `addTag` and `removeTag` change them, as in PGLite.
+
+## Nullable page fields
+
+PGLite lets four `pages` columns hold NULL, and the page record holds NULL in the same four (`PageText` and
+`PageRecord` in `crates/gbrain-store/src/pages.rs` carry the same contract as doc comments):
+
+| Field | NULL means | Written as NULL by |
+| --- | --- | --- |
+| `compiled_truth`, `timeline` | a segmented shell page: its body lives in segment texts. PGLite's `pages_body_storage_chk` makes both NULL exactly when `body_storage = 'segmented'`; an inline page holds a string (`''` when empty) | the page_body family (`createSegmentedPageShell`, a generation flip); never `putPage` |
+| `content_hash` | a shell page whose body is not published yet, as `createSegmentedPageShell` leaves it | the page_body family; `putPage` always sets a hash |
+| `chunker_version` | the store has not recorded one. `putPage` keeps the stored value and sets none on a new page | the page_body family sets it; not part of the page JSON (PGLite's `rowToPage` leaves it out) |
+
+- The page JSON (`getPage`, `readPageSnapshot`, `listPages`) and version rows send each NULL as `null`. The
+  TypeScript codec turns a `null` body into PGLite's segmented page: `compiled_truth` and `timeline` read as `''`
+  behind getters that throw `page_body_segmented`. `content_hash` stays `null`.
+- Inside the store, a NULL body reads as `''` through `&str`, so inline readers (`auto_chunks`, sizes, text
+  matching) see an empty body. Use `is_null` or `as_deref` where NULL and `''` differ; equality never treats them as
+  the same, so writing an inline body over a shell is a canonical change.
+- A blank `putPage` over a live shell rejects `empty_overwrite` (`(segmented)` in the message) unless
+  `allowEmptyOverwrite`, as PGLite does.
+- A version snapshot copies the page's NULLs.
+- Format: records written before these fields were nullable hold strings and read unchanged; a record without
+  `chunker_version` reads it as NULL, and `chunker_version` is written only when set. `FORMAT_VERSION` stays 1.
