@@ -14,7 +14,10 @@ methods below. The key tag is the reserved `e`; `FORMAT_VERSION` stays 1.
 A page is stale when it has no stamp, when `versionTs` is newer than its stamp, or when it was
 updated after its stamp. Deleted (`deleted_at`) and quarantined (frontmatter has a `quarantine`
 key) pages are never stale, nor are pages of a guest source. A page deleted for good loses its
-record (`cascade::remove_page_rows`), so a page created again at the same slug starts unstamped.
+record (`cascade::remove_page_rows`), so a page created again at the same slug starts unstamped. A
+deleted source (`cascade::remove_source_rows`) loses the record of any page still in it; core
+removes those pages first, so this normally finds nothing. `extract_atoms_page_state`, the table
+Postgres cascades there, has no records in this engine.
 `getPage` returns none of these columns, as in PGLite, so the family's `page_columns` hook adds
 nothing.
 

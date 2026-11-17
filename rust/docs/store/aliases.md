@@ -25,6 +25,11 @@ only its contextual retrieval state, which is a column of the page row. `getPage
 `null` (`PAGE_ROW_DEFAULTS`) when it has none. The state is keyed by page id, so it survives
 `putPage`, a soft delete and a rename, as the columns do in PGLite.
 
+A deleted source loses every alias row of that source, as Postgres's `ON DELETE CASCADE` does:
+`remove_source_rows` (on core's `cascade::remove_source_rows` list) deletes the source's `k 0x01`,
+`0x02`, `0x03` and `0x05` keys and the state of any page still in it. The Rust engine does not
+serve source delete yet, so nothing calls it today.
+
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.updateSlug(oldSlug, newSlug, sourceId?)` | the number of pages moved, 0 or 1. The page at `(sourceId ?? 'default', oldSlug)`, soft-deleted or not, is versioned as it stood, moved by `pages::rename_page` (same id, new knowledge revision, cleared text projection revision, new `updated_at`), then its old slug becomes an alias of the new one and its alias rows move with it. `invalid_slug` for a bad new slug and `constraint_violation` for a taken one; either keeps nothing. Moving a page onto its own slug changes only `updated_at` | `updateSlug` |
@@ -49,9 +54,6 @@ Where this engine differs from PGLite:
   chunk vectors: this store keeps neither.
 - `putPage` with `contextualRetrieval` does not write the state; that option belongs to the page
   family.
-- Deleting a source does not yet remove its alias rows: this engine has no source delete, and the
-  source cascade must remove the `k 0x01`, `0x02`, `0x03` and `0x05` keys of the source when it
-  lands.
 - `slug_rename_history` is not kept: no typed member reads it.
 - The version a rename writes has no change reason (`pages::snapshot_in` writes none).
 - The `constraint_violation` message for a taken slug is `pages::rename_page`'s, not Postgres's

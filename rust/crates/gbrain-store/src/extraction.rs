@@ -437,8 +437,71 @@ pub(crate) fn page_columns(
     Ok(())
 }
 
-/// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`).
-/// Nothing to delete yet.
-pub(crate) fn remove_source_rows(_tx: &mut dyn KvWrite, _source_id: &str) -> Result<()> {
+/// Deletes this family's records of a source that is deleted (`cascade::remove_source_rows`): the
+/// record of every page still in the source. Core removes the source's pages first, which already
+/// removes their records through [`remove_page_rows`], so this normally finds nothing; it makes the
+/// cascade hold whatever order core calls it in. `extract_atoms_page_state`, the table Postgres
+/// cascades here, has no records in this engine.
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    for page in all_pages(&*tx)? {
+        if page.source_id == source_id {
+            tx.delete(&record_key(page.id))?;
+        }
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod source_delete_tests {
+    use super::*;
+    use crate::pages::{PageInput, PutPageOptions};
+    use crate::sources::SourceInput;
+
+    #[test]
+    fn a_source_delete_removes_the_records_of_that_source_only() {
+        let store = crate::test_support::store();
+        let other: SourceInput =
+            serde_json::from_value(json!({ "id": "other", "name": "other", "config": {} }))
+                .unwrap();
+        store.upsert_source(&other).unwrap();
+        let input = PageInput {
+            page_type: "note".into(),
+            title: "A".into(),
+            compiled_truth: "body".into(),
+            ..PageInput::default()
+        };
+        let in_other: PutPageOptions =
+            serde_json::from_value(json!({ "sourceId": "other" })).unwrap();
+        store
+            .put_page("a", &input, &PutPageOptions::default())
+            .unwrap();
+        store.put_page("a", &input, &in_other).unwrap();
+        let refs: Vec<ExtractedRef> = serde_json::from_value(json!([
+            { "slug": "a", "source_id": "default" },
+            { "slug": "a", "source_id": "other" },
+        ]))
+        .unwrap();
+        assert_eq!(
+            store
+                .mark_pages_extracted_batch(&refs, "2099-01-01T00:00:00.000Z")
+                .unwrap(),
+            2
+        );
+        let ids = |store: &Store| -> (u64, u64) {
+            let read = store.read().unwrap();
+            let a = read_page(&*read, "default", "a").unwrap().unwrap().id;
+            let b = read_page(&*read, "other", "a").unwrap().unwrap().id;
+            (a, b)
+        };
+        let (kept, gone) = ids(&store);
+        store.write(|tx| remove_source_rows(tx, "other")).unwrap();
+        let read = store.read().unwrap();
+        assert!(
+            read_record(&*read, kept)
+                .unwrap()
+                .links_extracted_at_us
+                .is_some()
+        );
+        assert!(read.get(&record_key(gone)).unwrap().is_none());
+    }
 }
