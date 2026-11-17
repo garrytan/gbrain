@@ -22,6 +22,9 @@
  * page_versions insert (null when the commit carries no reason trailer) and adds the valid-time advisory's read of the
  * written page after put_page's apply (persistence/valid-time-advisory.ts). #8194 adds the open-facts clause
  * (`gbrain.write_open_facts`, trust/fence-guard.ts) to the fence guard's two fact reads; same statements, same order.
+ * The typed engine methods of the import path rewrite three statement texts one-for-one: the config read
+ * (getConfigValues, `key = ANY($1::text[])`), the write-settings set_config (applyTransactionSettings, one unnest)
+ * and the managed-rows coverage read (parameters renumbered); same statements, same order.
  * CAPTURE_FOLD_NOOP=1 rewrites the fixture for the engine under test (only ever from the pre-hook commit).
  */
 import { describe, expect, test } from 'bun:test';

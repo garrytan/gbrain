@@ -31,8 +31,12 @@ function mockEngine(): BrainEngine {
       if (prop === 'transaction') return async (fn: (tx: BrainEngine) => Promise<any>) => fn(engine);
       return (...args: any[]) => {
         calls.push({ method: String(prop), args });
-        // Like a real engine, executeRaw always resolves to a row array. // #6482: the strict mode reader needs one well-formed unmanaged row.
-        return Promise.resolve(prop === 'executeRaw' ? (String(args[0]).includes('FROM persistence_brain') ? [{ enabled: false }] : []) : null);
+        // #6482: the strict mode reader needs one well-formed unmanaged row.
+        if (prop === 'readManagedModeRows') return Promise.resolve([{ enabled: false }]);
+        // The typed import-path reads answer like an empty brain, as executeRaw did before they were typed.
+        if (prop === 'readTransactionSettings') return Promise.resolve((args[0] as readonly string[]).map(() => null));
+        // Like a real engine, executeRaw (and the typed config read) always resolves to a row array.
+        return Promise.resolve(prop === 'executeRaw' || prop === 'getConfigValues' ? [] : null);
       };
     },
   });

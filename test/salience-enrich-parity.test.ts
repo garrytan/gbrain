@@ -14,6 +14,9 @@
  * Everything else below is one answer on both engines, and Rust must give it:
  * - Text order is code-point (C collation) order: tags and anomaly page slugs
  *   come back as ['B', 'Z', 'a', 'b', 'é'].
+ *   Postgres sorts with the database collation, so its brain here is created
+ *   with LC_COLLATE 'C'; on an en_US database Postgres gives en_US order
+ *   (follow-up collation_en_us_check).
  * - getRecentSalience breaks score ties by source_id, then slug, ascending.
  * - Anomalies with the same sigma keep tag cohorts before type cohorts, each
  *   by cohort value ascending.
@@ -89,7 +92,7 @@ for (const kind of backends) {
       engine.putPage(slug, { type: type as never, title: slug, compiled_truth: body, timeline: '', frontmatter } as never, sourceId ? { sourceId } as never : undefined);
 
     beforeAll(async () => {
-      if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!, 'instance', 1));
+      if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!, 'instance', 1, { collation: 'C' }));
       else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
       await raw(`INSERT INTO sources (id, name) VALUES ('src-b', 'src-b') ON CONFLICT DO NOTHING`);
       // Reverse order, so heap order is not the expected tie order.

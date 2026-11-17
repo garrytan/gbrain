@@ -15,6 +15,9 @@
  * - Tags are exact strings: case, spaces, '' and emoji are kept as given; a
  *   number is stored as its text. getTags and version tags come back in
  *   code-point (C collation) order: ['', ' a ', '5', 'A', 'B', 'a', 'z', 'é'].
+ *   Postgres sorts with the database collation, so its brain here is created
+ *   with LC_COLLATE 'C'; on an en_US database Postgres gives en_US order
+ *   (follow-up collation_en_us_check).
  * - An explicit addTag claims the tag ('added'); a frontmatter add claims only
  *   a legacy row whose tag_source is NULL and never takes over an 'added' row.
  * - addTag and removeTag work on a soft-deleted page. removeTag of a missing
@@ -99,7 +102,7 @@ for (const kind of backends) {
       ORDER BY p.source_id, p.slug, t.tag COLLATE "C"`)).map((r) => `${r.source_id}:${r.slug} ${JSON.stringify(String(r.tag).length > 20 ? 'long' : r.tag)} ${r.tag_source}`);
 
     beforeAll(async () => {
-      if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!, 'instance', 1));
+      if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!, 'instance', 1, { collation: 'C' }));
       else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
       await raw(`INSERT INTO sources (id, name) VALUES ('src-b', 'src-b') ON CONFLICT DO NOTHING`);
       await page('notes/a');

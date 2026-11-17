@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs';
 // to inline-drain.ts (dream-wave C7) and the re-export is part of its public
 // surface (patterns.ts + __testing depend on it).
 import { runDrainRenewalTick } from '../src/core/cycle/synthesize.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 describe('drain-loop wiring (structural — the shape guard only covers worker.ts)', () => {
   // The drain body lives in inline-drain.ts post-peel; the structural guard
@@ -54,10 +55,10 @@ describe('db-lock heartbeat wiring (structural — issue #6 cancellation)', () =
     // refresh() forwards the opts to the typed engine renewal as the trailing arg.
     expect(src).toMatch(/engine\.refreshCycleLock\(lockId, [^)]*\}, refreshOpts\)/);
     // The Postgres renewal runs on the direct pool (executeRawDirect) and hands the signal down to it.
-    const pg = readFileSync(new URL('../src/core/postgres-engine.ts', import.meta.url), 'utf-8');
+    const pg = surfaceFileSource('postgres-engine', 'src/core/postgres-engine.ts');
     expect(pg).toMatch(/directEngineSql[\s\S]{0,200}query: async \(sql, params, opts\) => \(\{ rows: await this\.executeRawDirect\(sql, params as unknown\[\] \| undefined, opts\)/);
     expect(pg).toMatch(/async refreshCycleLock\([^)]*queryOpts\?: \{ signal\?: AbortSignal \}\) \{ return cycleLocksImpl\.refreshCycleLock\(this\.directEngineSql, lockId, opts, queryOpts\)/);
-    const sql = readFileSync(new URL('../src/core/engine-sql/cycle-locks.ts', import.meta.url), 'utf-8');
+    const sql = surfaceFileSource('postgres-engine', 'src/core/engine-sql/cycle-locks.ts');
     expect(sql).toMatch(/REFRESH_SQL, \[[\s\S]*?\], queryOpts\)/);
   });
 });
