@@ -447,7 +447,7 @@ describe('setup --transcripts', () => {
     }
   }, 300_000);
 
-  test('GBRA-585: setup for several people says no member key reads the imported calls yet, and why the archive is on', async () => {
+  test('GBRA-585: setup for several people says the member keys it minted read the imported calls, and why the archive is on', async () => {
     const b = box();
     const r = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example', '--shape', 'company', '--transcripts', callsDir(b, plantedToken())]);
     expect(r.exitCode).toBe(0);
@@ -457,9 +457,9 @@ describe('setup --transcripts', () => {
     expect(t.imported).toBe(3);
     expect(t.readers.members).toBe('every_source_reader');
     expect(t.readers.serves).toBe('several');
-    expect(t.readers.detail).toStartWith('no member key setup minted reads them yet: source company is not federated');
-    expect(t.readers.detail).toContain('gbrain sources federate company would let every member read every page in it');
-    expect(t.readers.detail).not.toContain('alice-example');
+    expect(t.readers.detail).toStartWith('every member key gbrain setup minted, and other keys only when their grant names source company or it is in default search');
+    expect(t.readers.detail).toContain('this brain serves several people: alice-example, bob-example');
+    expect(r.doc.serves.regrant.keys.map((k: any) => [k.member, k.adds])).toEqual([['alice-example', ['company']], ['bob-example', ['company']]]);
     const archive = r.doc.brain_layout.archive;
     expect(archive.state).toBe('on');
     expect(archive.detail).toStartWith('on for now: this brain serves several people');

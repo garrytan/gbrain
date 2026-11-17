@@ -179,6 +179,35 @@ other pages no rule or `readable_by` restricts, which every member's key still r
 by folder, with the commands that label them; `--labelled-only` keeps each member to
 the pages labelled for it instead (never the owner). See
 [pages every member's key can read](access-designations.md#pages-every-members-key-can-read).
+When the brain serves one person and already holds such pages (a journal, DMs, chat,
+mail, the conversation archive), setup asks for that choice before it writes anything:
+it refuses with `setup_history_choice_required`, naming the count, how many are DMs,
+chat or mail and how many are in the conversation archive, until you pass
+`--labelled-only` (keep that history private) or `--open-history` (every member reads
+it). It also refuses when it could not count them, and the `--labelled-only` command it
+suggests leaves the owner out of `--members`, since the owner reads the whole brain. When the brain has the `company` source (`--shape company`), a `--labelled-only` run
+also adds one folder rule, `company/` in source `company`, readable by the owner, the
+run's members and every member who is not labelled-only, so the members still read the
+company pages and imported calls; only keys bound to those members read pages under
+`company/`. A re-run adds new members to that rule and never removes one; because that
+widens it, the new readers wait for `gbrain access apply --source company` (preview, then
+the `--yes --expect` line it prints). A run without `--labelled-only` adds no such rule. A
+new brain, one with no such pages and one that already serves several people are not asked.
+On a brain with no owner, setup also names one: `--owner <id>`, or by default your
+login name as a member id. It adds that member and runs `gbrain access owner set`;
+the preview shows it first, and an owner that is already set is kept. No key is
+rebound: the receipt lists each live token or OAuth client bound to no member with
+the `gbrain auth rescope --token|--client <name> --member <owner>` command that
+binds it, so you bind your own keys on purpose.
+Each key setup mints writes to the run's source and reads a fixed list: that source,
+the `company` source when it exists (`--shape company`), and every source federated
+when the key is minted. The preview names the list and how many pages `company` holds,
+how many of them are imported calls, and that every member reads them all, calls they
+did not attend included. A source federated later reaches these keys only when you run
+setup again: a re-run adds sources to a key setup minted with a list and never removes
+one. Keys minted before this (the default grant) are never changed. When the same run
+adds the `company` source (`--shape company`), setup labels the people first and then
+gives their new keys `company`; `company` itself stays out of default search.
 Setup leaves the stdio server unbound: stdio sessions read only pages no rule
 restricts, and the harness's instructions keep the one-person scoping lines.
 For a Claude Code or Codex install only one person uses, bind that harness alone:

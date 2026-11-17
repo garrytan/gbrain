@@ -323,28 +323,24 @@ function importFolder(exec: Run, launcher: string, dir: string, source: string |
 }
 
 /** Who can read the call pages, from gbrain access who-can-read on one of them and gbrain access serves; read only. */
-function readersOf(exec: Run, launcher: string, slug: string, federated: boolean | null): NonNullable<TranscriptsOutcome['readers']> {
+function readersOf(exec: Run, launcher: string, slug: string): NonNullable<TranscriptsOutcome['readers']> {
   const unknown = { members: null, serves: null, detail: `unknown; run gbrain access who-can-read ${slug} --source ${COMPANY_SOURCE}` };
   let page: { readers: string[] | null; members: 'every_source_reader' | string[] } | undefined;
   let serves: { serves?: 'one' | 'several'; enabled_members?: string[] } = {};
   try { page = (JSON.parse(exec([launcher, 'access', 'who-can-read', slug, '--source', COMPANY_SOURCE, '--json'], undefined, null).stdout) as { pages?: Array<NonNullable<typeof page>> }).pages?.[0]; } catch { return unknown; }
   try { serves = JSON.parse(exec([launcher, 'access', 'serves', '--json', '--no-open-pages'], undefined, null).stdout) as typeof serves; } catch { /* the serves clause is left out */ }
   if (!page) return unknown;
-  const who = serves.serves === 'several' ? `this brain serves several people: ${(serves.enabled_members ?? []).join(', ') || 'none enabled'}`
-    : serves.serves === 'one' ? 'this brain serves one person' : null;
+  const several = serves.serves === 'several';
+  const who = several ? `this brain serves several people: ${(serves.enabled_members ?? []).join(', ') || 'none enabled'}` : serves.serves === 'one' ? 'this brain serves one person' : null;
+  const everyone = several ? `every member key gbrain setup minted, and other keys only when their grant names source ${COMPANY_SOURCE} or it is in default search` : `everyone who can read source ${COMPANY_SOURCE}`;
   const members = page.members;
   const clauses = [...(members === 'every_source_reader' ? [] : [`access rules on source ${COMPANY_SOURCE} cover ${CALLS_PREFIX}/`]), ...(who ? [who] : [])];
-  // GBRA-585: a member key setup mints has no source grant, so it reads only default and federated sources; on a brain that serves several people the company source is not federated, and naming the members here read as if they could.
-  if (members === 'every_source_reader' && serves.serves === 'several' && federated !== true) {
-    return { members, serves: 'several', detail: `no member key setup minted reads them yet: source ${COMPANY_SOURCE} is not federated, and a key with no source grant reads only default and federated sources. `
-      + `gbrain sources federate ${COMPANY_SOURCE} would let every member read every page in it, every call included; ${CALLS_PREFIX}/ pages carry no readers of their own (gbrain access who-can-read ${slug} --source ${COMPANY_SOURCE})` };
-  }
-  const detail = `${members === 'every_source_reader' ? `everyone who can read source ${COMPANY_SOURCE}` : `${members.join(', ') || 'no member'} only`}${clauses.length ? ` (${clauses.join('; ')})` : ''}`;
+  const detail = `${members === 'every_source_reader' ? everyone : `${members.join(', ') || 'no member'} only`}${clauses.length ? ` (${clauses.join('; ')})` : ''}`;
   return { members, serves: serves.serves ?? null, detail };
 }
 
 /** One read-only import of a call-transcript folder into the company source, deferred to the agent above IMPORT_INLINE_MAX files. */
-function importCalls(exec: Run, launcher: string, dir: string, dryRun: boolean, federated: boolean | null): TranscriptsOutcome {
+function importCalls(exec: Run, launcher: string, dir: string, dryRun: boolean): TranscriptsOutcome {
   const { count } = countNotes(dir, IMPORT_INLINE_MAX, CALL_FILES);
   const args = ['import', dir, '--calls', '--prefix', CALLS_PREFIX, '--no-embed'];
   const argv = ['gbrain', ...args, '--source', COMPANY_SOURCE];
@@ -358,7 +354,7 @@ function importCalls(exec: Run, launcher: string, dir: string, dryRun: boolean, 
   const counts = { imported: doc.imported ?? 0, unchanged: doc.unchanged ?? 0, kept: doc.kept ?? 0, redactions: doc.redactions ?? 0 };
   if (!landed.length && (failed || imp.code !== 0)) return { dir, files: count, action: 'failed', argv, ...counts, detail: failed?.error ?? lastLine(imp.stderr) };
   return { dir, files: count, action: 'imported', argv, ...counts, ...(failed ? { detail: `${doc.errors} file(s) not imported: ${failed.error}` } : {}),
-    ...(landed[0] ? { readers: readersOf(exec, launcher, landed[0].slug, federated) } : {}) };
+    ...(landed[0] ? { readers: readersOf(exec, launcher, landed[0].slug) } : {}) };
 }
 
 type DoctorChecks = Array<{ name: string; details?: Record<string, unknown> }>;
@@ -479,7 +475,7 @@ export function applyBrainLayout(opts: { harness: string; scope?: LayoutScope; s
             if (found) outcome.next_question = `In a new session, ask: "what did we decide about ${title}, and why?"`;
           }
         }
-        if (flags.transcripts) outcome.transcripts = importCalls(exec, launcher, flags.transcripts, flags.dryRun, company.federated);
+        if (flags.transcripts) outcome.transcripts = importCalls(exec, launcher, flags.transcripts, flags.dryRun);
         if (!outcome.next_question && !flags.dryRun && !hasPersonal(flags.brain)) {
           outcome.next_question = 'Run gbrain sources demo company-brain to see how a company brain answers, then add one dated line to company/decisions and ask about it in a new session.';
         }
