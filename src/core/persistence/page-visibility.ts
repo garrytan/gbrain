@@ -13,7 +13,7 @@ import type { BrainEngine } from '../engine.ts';
 import { noGrantFloorReads } from '../source-resolver.ts';
 import { hasScope } from '../scope.ts';
 import { viewedEngine } from './switches.ts';
-import { ownerOnlySourcesPresent, sourceIsOwnerOnly } from '../access/owner-only.ts';
+import { ANY_OWNER_ONLY_SQL, ownerOnlySourceSql, ownerOnlySourcesPresent, sourceIsOwnerOnly } from '../access/owner-only.ts';
 
 /** Publication uses fresh policy, independent of the read-side telemetry cache (read through the resolver). */
 export async function excludesPrivateWrites(engine: SqlEngine, remote: boolean): Promise<boolean> {
@@ -39,9 +39,6 @@ export async function excludesPrivateWritesAtAdmission(engine: SqlEngine, remote
 export async function authorizePageVisibility(engine: SqlEngine, authority: WriteAuthority, page: string): Promise<void> {
   if (!authority.remote) return;
   const slug = authorizedSlug(authority, page);
-  // An owner-only source (access/owner-only.ts) takes remote writes only from the owner speaking for itself, so no
-  // other credential plants, rewrites or probes a page there; the refusal reads like any page it may not see.
-  if (await sourceIsOwnerOnly(engine, authority.sourceId) && !await storedOwnerSpeaksForItself(engine, authority)) throw pageNotVisibleError();
   // GBRA-108 design 1: a labelled-only writer reads only pages that name it, so the empty-identity shortcut (a page every
   // caller reads) does not apply to it.
   // The grant probe rides on the empty-identity read, so a write on a brain with no labelled-only member costs no extra
@@ -49,15 +46,24 @@ export async function authorizePageVisibility(engine: SqlEngine, authority: Writ
   const excludePrivate = authority.excludePrivate ?? true;
   const hiddenSql = `SELECT (page_readers IS NOT NULL OR folder_rule_ids IS NOT NULL) FROM pages
       WHERE source_id=$1 AND slug=$2 AND NOT (${readPolicyFragment('pages', [], true)}) LIMIT 1`;
-  let probe: { any_labelled?: boolean; identity_may_open: boolean | null } | undefined;
+  // The owner-only tests (access/owner-only.ts) ride on the same read, so a write on a brain with no owner-only source
+  // costs no extra statement; an unreadable probe reads them live, and an unreadable live read counts as owner-only.
+  let probe: { any_labelled?: boolean; identity_may_open: boolean | null; owner_only_source?: boolean; owner_only_any?: boolean } | undefined;
   if (excludePrivate) {
     try {
-      [probe] = await engine.executeRaw<{ any_labelled: boolean; identity_may_open: boolean | null }>(
-        `SELECT EXISTS (SELECT 1 FROM access_members WHERE labelled_only) AS any_labelled, (${hiddenSql}) AS identity_may_open`, [authority.sourceId, slug]);
+      [probe] = await engine.executeRaw<{ any_labelled: boolean; identity_may_open: boolean | null; owner_only_source: boolean; owner_only_any: boolean }>(
+        `SELECT EXISTS (SELECT 1 FROM access_members WHERE labelled_only) AS any_labelled, (${hiddenSql}) AS identity_may_open,
+          ${ownerOnlySourceSql('$1')} AS owner_only_source, ${ANY_OWNER_ONLY_SQL} AS owner_only_any`, [authority.sourceId, slug]);
     } catch {
       probe = undefined;
     }
   }
+  // An owner-only source takes remote writes only from the owner speaking for itself, so no other credential plants,
+  // rewrites or probes a page there; the refusal reads like any page it may not see.
+  if ((probe?.owner_only_source ?? await sourceIsOwnerOnly(engine, authority.sourceId)) && !await storedOwnerSpeaksForItself(engine, authority)) {
+    throw pageNotVisibleError();
+  }
+  const ownerOnlyPresent = probe?.owner_only_any;
   const anyLabelled = excludePrivate ? probe?.any_labelled ?? true : await anyLabelledOnlyMember(engine);
   const labelled = anyLabelled && await writerLabelledOnly(engine, authority, await writerIdentities(engine, authority));
   // GST-2091: the owner's own page write (storedOwnerWrite) to a live page is held to member access without the privacy
@@ -78,7 +84,7 @@ export async function authorizePageVisibility(engine: SqlEngine, authority: Writ
   const hidePrivate = excludePrivate || !policy.privacyRelaxed;
   if (!hidePrivate && !policy.restricted && !labelled) return;
   const hiddenUnder = async (hide: boolean) => (await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2
-    AND NOT (${await writerReadPolicySql(engine, authority, 'pages', hide, policy.restricted)}) LIMIT 1`, [authority.sourceId, slug])).length > 0;
+    AND NOT (${await writerReadPolicySql(engine, authority, 'pages', hide, policy.restricted, ownerOnlyPresent)}) LIMIT 1`, [authority.sourceId, slug])).length > 0;
   if (!await hiddenUnder(hidePrivate && owner !== true)) return;
   if (hidePrivate && owner === undefined && await ownerOnLivePage() && !await hiddenUnder(false)) return;
   throw pageNotVisibleError();
@@ -91,11 +97,11 @@ export async function authorizePageVisibility(engine: SqlEngine, authority: Writ
  * pages that name it too, the same rule its reads follow.
  */
 export async function writerReadPolicySql(engine: SqlEngine, authority: WriteAuthority, pageAlias: string, hidePrivate: boolean,
-  restricted?: boolean): Promise<string> {
+  restricted?: boolean, ownerOnlyPresent?: boolean): Promise<string> {
   restricted ??= (await readRemotePolicyNow(engine)).restricted;
   const identities = restricted ? await writerIdentities(engine, authority) : [[]];
   const folder = restricted ? await folderAccessForAll(engine, identities) : { satisfiedRuleIds: [], folderCoverage: [] };
-  const owner = await ownerOnlySourcesPresent(engine) && await storedOwnerSpeaksForItself(engine, authority);
+  const owner = (ownerOnlyPresent ?? await ownerOnlySourcesPresent(engine)) && await storedOwnerSpeaksForItself(engine, authority);
   const fragment = withCallerAccess({ folderCoverage: folder.folderCoverage, ...(owner ? { owner: true } : {}) },
     () => readPolicyFragment(pageAlias, { all: identities }, hidePrivate, folder.satisfiedRuleIds));
   if (!restricted || !await anyLabelledOnlyMember(engine) || !await writerLabelledOnly(engine, authority, identities)) return fragment;

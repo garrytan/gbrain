@@ -31,7 +31,7 @@ import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, reade
 import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
 import { holdingSlugSql } from '../facts-fence.ts';
 import { atomMovedOriginPrivateSql, atomOriginSlugsSql } from '../persistence/atom-origin.ts';
-import { OWNER_ONLY_KINDS, ownerOnlyFactSql, ownerOnlyPageSql, ownerOnlySourcesPresent } from '../access/owner-only.ts';
+import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql, ownerOnlySourcesPresent } from '../access/owner-only.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
@@ -127,7 +127,7 @@ export function accessAllowedForAllSql(pageAlias: string, identities: readonly (
  * grant, hatch, lineage setting or owner opt-in relaxes it; empty for the owner.
  */
 function ownerOnlyAllowedSql(pageAlias: string, access: Pick<CallerAccess, 'owner'>): string {
-  return access.owner ? '' : ` AND NOT ${ownerOnlyPageSql(pageAlias)}`;
+  return access.owner ? '' : ` AND NOT ${ownerOnlyPageSql(pageAlias, ownerOnlyForm(readSchemaVersion()))}`;
 }
 
 /**
@@ -682,7 +682,6 @@ function privacyPartFastSql(pageAlias: string): string {
  */
 export function isPrivatePageForCaller(page: { type?: string | null; frontmatter?: unknown; source_id?: string | null; slug?: string | null }): boolean {
   const access = currentCallerAccess();
-  if (!access.owner && typeof page.type === 'string' && OWNER_ONLY_KINDS.includes(page.type)) return true;
   if (!callerReadersAllow(page.frontmatter, page.slug ?? undefined)) return true;
   if (!access.hidePrivate || !isPrivacyPrivatePage(page)) return false;
   if (typeof page.frontmatter === 'object' && page.frontmatter !== null && (page.frontmatter as Record<string, unknown>).pinned_question != null) return true;
@@ -743,12 +742,17 @@ export function privateSnapshotFilterFragment(alias: string): string {
 /** The schema version (migration v311) that creates gbrain_concept_inputs_private; a literal so the CLI dispatcher never loads a migration module. */
 export const CONCEPT_INPUTS_PRIVATE_SINCE = 311;
 
+/** The read's schema version: the one its remote, scope or attested caller record carries, else the one the engine in scope recorded (schemaVersionSeen); undefined when neither. */
+function readSchemaVersion(): number | undefined {
+  const { remotePolicy } = currentCallerAccess();
+  const scoped = engineScopeStore.getStore();
+  return remotePolicy ? remotePolicy.schemaVersion : scoped ? schemaVersionSeen(scoped) : undefined;
+}
+
 function derivedOriginPrivateSql(p: string, shadowedPages: boolean): string {
   const privateOrigin = (atom: string, alias: string) => `EXISTS (SELECT 1 FROM pages ${alias} WHERE ${alias}.source_id = ${atom}.source_id
       AND ${alias}.slug = ANY(${atomOriginSlugsSql(atom)}) AND ${alias}.frontmatter->>'visibility' = 'private')`;
-  const { remotePolicy } = currentCallerAccess();
-  const scoped = engineScopeStore.getStore();
-  const schema = remotePolicy ? remotePolicy.schemaVersion : scoped ? schemaVersionSeen(scoped) : undefined;
+  const schema = readSchemaVersion();
   const conceptInputsPrivate = !shadowedPages && schema !== undefined && schema >= CONCEPT_INPUTS_PRIVATE_SINCE ? `gbrain_concept_inputs_private((${p}.id)::integer)`
     : `EXISTS (SELECT 1 FROM links derived_input_link
       JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id
@@ -1038,7 +1042,7 @@ export function privateProvenanceFilterFragment(factAlias: string): string {
 
 /** A fact held in or derived from an owner-only source (access/owner-only.ts) passes only for an owner read; empty for the owner. */
 function ownerOnlyFactAllowedSql(factAlias: string): string {
-  return currentCallerAccess().owner ? '' : ` AND NOT ${ownerOnlyFactSql(factAlias)}`;
+  return currentCallerAccess().owner ? '' : ` AND NOT ${ownerOnlyFactSql(factAlias, ownerOnlyForm(readSchemaVersion()))}`;
 }
 
 /**

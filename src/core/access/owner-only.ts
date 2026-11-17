@@ -6,12 +6,12 @@
  * exactly what a page that does not exist gets, whatever the operator relaxed: `--private-pages granted-sources`, the
  * `search.remote_private_pages` hatch, `access.members_read_lineage` and the owner opt-in widen nothing here.
  *
- * The rule follows lineage at read time and stores nothing per page, so it needs no migration and works the same on a
+ * The rule follows lineage at read time and stores nothing per page, so it needs no backfill and works the same on a
  * repo-less brain: a page or fact in an owner-only source, a synthesized concept or question with an input page there,
  * and any page or fact whose recorded derivation inputs (`derivation_inputs`, followed transitively) reach a page,
  * fact, take or timeline row there. Atoms, Life Chronicle events and `derived_from` pages resolve their origin in their
- * own source, so the source test covers them. Every fragment leads with one uncorrelated test of whether the brain has
- * an owner-only source at all, so a brain without one pays a single InitPlan per statement.
+ * own source, so the source test covers them. The test is the v320 function gbrain_owner_only_lineage(table, id), behind
+ * its zero-argument form (does the brain hold an owner-only source at all?), so a brain without one never calls it.
  */
 import type { BrainEngine } from '../engine.ts';
 
@@ -25,9 +25,16 @@ function ownerOnlySourceRowSql(alias: string): string {
   return `(${alias}.config->>'kind' IN (${OWNER_ONLY_KINDS.map(kind => `'${kind}'`).join(',')}) OR ${alias}.config->>'${OWNER_ONLY_FLAG}' = 'true')`;
 }
 
-/** The ids of every owner-only source, as a subquery. */
-export const OWNER_ONLY_SOURCE_IDS_SQL = `(SELECT oo_src.id FROM sources oo_src WHERE ${ownerOnlySourceRowSql('oo_src')})`;
-const ANY_OWNER_ONLY_SQL = `EXISTS (SELECT 1 FROM sources oo_any WHERE ${ownerOnlySourceRowSql('oo_any')})`;
+/**
+ * Does the brain hold an owner-only source? Uncorrelated, so a statement evaluates it once. Like search's other live read
+ * checks (search/read-policy-sql.ts, guests/marker.ts) it reads sources as `read_source`: a read check, not a listing.
+ */
+export const ANY_OWNER_ONLY_SQL = `EXISTS (SELECT 1 FROM sources read_source WHERE ${ownerOnlySourceRowSql('read_source')})`;
+
+/** The source whose id is the SQL expression `sourceId` is owner-only (the SQL twin of sourceIsOwnerOnly). */
+export function ownerOnlySourceSql(sourceId: string): string {
+  return `EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = ${sourceId} AND ${ownerOnlySourceRowSql('read_source')})`;
+}
 
 /** A parsed `sources.config` is owner-only. */
 export function isOwnerOnlySourceConfig(config: unknown): boolean {
@@ -61,42 +68,33 @@ export async function sourceIsOwnerOnly(engine: Pick<BrainEngine, 'executeRaw'>,
   }
 }
 
-/** A text row id as the integer it names, or NULL (an input recorded by slug never matches a row id). */
-const rowId = (text: string) => `(CASE WHEN ${text} ~ '^[0-9]{1,18}$' THEN (${text})::bigint END)`;
+/** The read-time function (schema migration v320) that answers whether a page or fact row is owner-only. */
+export const OWNER_ONLY_LINEAGE_FN = 'gbrain_owner_only_lineage';
+/** The schema version (migration v320) that creates it; a literal so a read never loads a migration module. */
+export const OWNER_ONLY_LINEAGE_SINCE = 320;
 
-/** A derivation input `(table, id)` is a row held in an owner-only source. */
-function inputInOwnerOnlySql(table: string, id: string): string {
-  return `((${table} = 'pages' AND EXISTS (SELECT 1 FROM pages oo_ip WHERE oo_ip.id = ${rowId(id)} AND oo_ip.source_id IN ${OWNER_ONLY_SOURCE_IDS_SQL}))
-    OR (${table} = 'facts' AND EXISTS (SELECT 1 FROM facts oo_if WHERE oo_if.id = ${rowId(id)} AND oo_if.source_id IN ${OWNER_ONLY_SOURCE_IDS_SQL}))
-    OR (${table} = 'takes' AND EXISTS (SELECT 1 FROM takes oo_it JOIN pages oo_itp ON oo_itp.id = oo_it.page_id WHERE oo_it.id = ${rowId(id)} AND oo_itp.source_id IN ${OWNER_ONLY_SOURCE_IDS_SQL}))
-    OR (${table} = 'timeline_entries' AND EXISTS (SELECT 1 FROM timeline_entries oo_ie JOIN pages oo_iep ON oo_iep.id = oo_ie.page_id WHERE oo_ie.id = ${rowId(id)} AND oo_iep.source_id IN ${OWNER_ONLY_SOURCE_IDS_SQL})))`;
-}
+/**
+ * Which form of the owner-only test a read emits, by its schema version. `fn` at or above OWNER_ONLY_LINEAGE_SINCE: the
+ * v320 functions, so the planner sees the guard as one Result node and the test as one call that the guard keeps from
+ * running on a brain with no owner-only source. `closed` below it or when the version is unknown: the functions may not
+ * exist, so on a brain that holds an owner-only source every row counts as owner-only (fail closed); a brain without one
+ * pays one InitPlan. Remote reads carry the version in their request record, so they take the `fn` form.
+ */
+export type OwnerOnlyForm = 'fn' | 'closed';
 
-/** Derivation hops followed from a derived row back to its inputs. */
-export const OWNER_ONLY_LINEAGE_DEPTH = 8;
-
-/** The derived row `(derivedTable, alias.id)` has a recorded input, at any depth up to the bound, held in an owner-only source. */
-function derivationReachesOwnerOnlySql(derivedTable: string, alias: string): string {
-  return `EXISTS (WITH RECURSIVE oo_up(t, id, depth) AS (
-      SELECT d.input_table, d.input_id, 1 FROM derivation_inputs d WHERE d.derived_table = '${derivedTable}' AND d.derived_id = (${alias}.id)::text
-      UNION SELECT d.input_table, d.input_id, oo_up.depth + 1 FROM derivation_inputs d JOIN oo_up ON d.derived_table = oo_up.t AND d.derived_id = oo_up.id
-        WHERE oo_up.depth < ${OWNER_ONLY_LINEAGE_DEPTH})
-    SELECT 1 FROM oo_up WHERE ${inputInOwnerOnlySql('oo_up.t', 'oo_up.id')})`;
+export function ownerOnlyForm(schemaVersion: number | undefined): OwnerOnlyForm {
+  return schemaVersion !== undefined && schemaVersion >= OWNER_ONLY_LINEAGE_SINCE ? 'fn' : 'closed';
 }
 
 /**
  * The page row `alias` is owner-only: held in an owner-only source, a synthesized concept or question with an input page
- * there, or derived (by its recorded inputs) from a row there. `alias` is a code-provided literal.
+ * there, or derived (by its recorded inputs, up to 8 hops) from a row there. `alias` is a code-provided literal.
  */
-export function ownerOnlyPageSql(alias: string): string {
-  return `(${ANY_OWNER_ONLY_SQL} AND (${alias}.source_id IN ${OWNER_ONLY_SOURCE_IDS_SQL}
-    OR (${alias}.type IN ('concept', 'question') AND EXISTS (SELECT 1 FROM links oo_l JOIN pages oo_lp ON oo_lp.id = oo_l.to_page_id
-      WHERE oo_l.from_page_id = ${alias}.id AND oo_l.link_source = 'concept-provenance' AND oo_l.link_type = 'synthesized_from'
-        AND oo_lp.source_id IN ${OWNER_ONLY_SOURCE_IDS_SQL}))
-    OR ${derivationReachesOwnerOnlySql('pages', alias)}))`;
+export function ownerOnlyPageSql(alias: string, form: OwnerOnlyForm): string {
+  return form === 'fn' ? `((SELECT ${OWNER_ONLY_LINEAGE_FN}()) AND ${OWNER_ONLY_LINEAGE_FN}('pages', ${alias}.id))` : ANY_OWNER_ONLY_SQL;
 }
 
 /** The fact row `alias` is owner-only: held in an owner-only source, or derived (by its recorded inputs) from a row there. */
-export function ownerOnlyFactSql(alias: string): string {
-  return `(${ANY_OWNER_ONLY_SQL} AND (${alias}.source_id IN ${OWNER_ONLY_SOURCE_IDS_SQL} OR ${derivationReachesOwnerOnlySql('facts', alias)}))`;
+export function ownerOnlyFactSql(alias: string, form: OwnerOnlyForm): string {
+  return form === 'fn' ? `((SELECT ${OWNER_ONLY_LINEAGE_FN}()) AND ${OWNER_ONLY_LINEAGE_FN}('facts', ${alias}.id))` : ANY_OWNER_ONLY_SQL;
 }

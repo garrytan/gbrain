@@ -48,8 +48,9 @@ describe('unrestricted fast path (pglite, repo-less)', () => {
     const short = withCallerAccess({ restricted: false }, () => accessAllowedSql('p', ['member:alice-example']));
     expect(full).toContain('gbrain_access_origin_restricted');
     expect(short).not.toContain('gbrain_access_origin_restricted');
-    // Owner-only sources (access/owner-only.ts) stay mandatory on the short form; its guard is one uncorrelated EXISTS.
-    expect(short).toBe(`(p.page_readers IS NULL AND p.folder_rule_ids IS NULL AND NOT ${ownerOnlyPageSql('p')})`);
+    // Owner-only sources (access/owner-only.ts) stay mandatory on the short form. With no schema version in scope it is the
+    // fail-closed form: one uncorrelated EXISTS.
+    expect(short).toBe(`(p.page_readers IS NULL AND p.folder_rule_ids IS NULL AND NOT ${ownerOnlyPageSql('p', 'closed')})`);
     expect(accessAllowedSql('p', [])).toContain('gbrain_access_origin_restricted');
   });
 

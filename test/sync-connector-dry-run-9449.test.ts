@@ -23,6 +23,7 @@ const configs: Record<string, Record<string, unknown>> = {
   github: githubConfig,
   meetings: { kind: 'meetings', m_provider: 'fireflies', m_record: 'database', federated: false },
   slack: { kind: 'slack', s_channels: 'CGENERAL01' },
+  imessage: { kind: 'imessage', federated: false },
 };
 const googleContacts = withGoogleAccount(async () => json({ connections: [contact('first', 'First Example')], nextSyncToken: 'contacts-1' }));
 const providers: Record<string, (url: string, init?: RequestInit) => Promise<Response>> = {
@@ -30,6 +31,7 @@ const providers: Record<string, (url: string, init?: RequestInit) => Promise<Res
   github: githubFetch(),
   meetings: async () => json({ data: {} }),
   slack: async () => json({ ok: true, messages: [] }),
+  imessage: async () => json({ threads: [] }),
 };
 
 function files(dir: string): string[] {

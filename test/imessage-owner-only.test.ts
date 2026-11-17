@@ -40,6 +40,8 @@ import { options } from './helpers/connector-fixture.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
+import { OWNER_ONLY_FLAG, OWNER_ONLY_KINDS, ownerOnlyFactSql, ownerOnlyPageSql, type OwnerOnlyForm } from '../src/core/access/owner-only.ts';
+import { v320 } from '../src/core/schema-migrations/v320-owner-only-lineage.ts';
 
 const DIMS = 1536;
 function vectorFor(text: string): number[] {
@@ -257,6 +259,23 @@ for (const kind of testBackends()) {
       expect((await dispatchToolCall(engine, 'get_page', { slug: HIDDEN.plain.slug }, { remote: false, sourceId: IMSG })).content.map(c => c.text).join('\n')).toContain(HIDDEN.plain.canary);
       const own = await put('owner-writes-messages', IMSG, 'notes/owner-wrote');
       expect({ refused: own.isError, text: own.isError ? own.text : '' }).toEqual({ refused: false, text: '' });
+    }, 120_000);
+    test('the v320 functions mark exactly the owner-only rows, the fail-closed form marks every row, and the migration names the same kinds', async () => {
+      const verdicts = async (table: 'pages' | 'facts', sql: (alias: string, form: OwnerOnlyForm) => string) => engine.executeRaw<{ id: number; fn: boolean; closed: boolean }>(
+        `SELECT r.id, ${sql('r', 'fn')} AS fn, ${sql('r', 'closed')} AS closed FROM ${table} r ORDER BY r.id`);
+      const pages = await verdicts('pages', ownerOnlyPageSql);
+      const facts = await verdicts('facts', ownerOnlyFactSql);
+      const hiddenIds = (await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = ANY($1::text[])', [Object.values(HIDDEN).map(h => h.slug)])).map(r => r.id);
+      const openId = (await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1 AND source_id = $2', [OPEN.slug, OPEN_SRC]))[0]!.id;
+      expect(hiddenIds.length).toBe(Object.keys(HIDDEN).length);
+      expect(pages.filter(r => hiddenIds.includes(r.id) && !r.fn)).toEqual([]);
+      expect(pages.find(r => r.id === openId)?.fn).toBe(false);
+      expect(facts.some(r => r.fn)).toBe(true);
+      // Without the functions (a schema below v320, or none recorded) a brain holding an owner-only source hides every row.
+      expect([...pages, ...facts].every(r => r.closed)).toBe(true);
+      // The function's kinds and flag are frozen in the migration; a new owner-only kind needs a new migration.
+      expect(v320.sql).toContain(`IN (${OWNER_ONLY_KINDS.map(k => `'${k}'`).join(', ')})`);
+      expect(v320.sql).toContain(`config->>'${OWNER_ONLY_FLAG}' = 'true'`);
     }, 120_000);
   });
 }
