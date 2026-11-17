@@ -939,11 +939,9 @@ affected call.
 **Keyword-only on purpose is not degraded.** With embeddings turned off on
 purpose (`gbrain init --no-embedding`), search, query, find_experts and recall carry no stamp
 and no `degraded_recall`, nor for `keyword_zero`. `_meta.retrieval` still
-records `embed_unavailable` with reason `embedding_disabled`, and an empty
-result's `empty_retrieval` info notice says the search was keyword-only: no
-page this caller can read holds those words (a synonym or the display name
-may still match). No
-provider configured (`no_provider`), timeouts and failed arms still stamp.
+records the run, and an empty result's `empty_retrieval` info notice says the
+search was keyword-only: no page this caller can read holds those words.
+`no_provider`, timeouts and failed arms still stamp.
 
 | Output | Where the stamp is |
 |---|---|
