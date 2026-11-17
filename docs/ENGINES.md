@@ -1645,19 +1645,38 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   `addTimelineEntriesBatch`, `getTimeline`. These capabilities stay unreported, because other members of the same
   capability (`revertToVersion`, `getChunkPage`, `searchTitles`, `getBacklinkCounts`, `getTimelineForDate`, ...) still refuse.
 
-A served member never drops what it cannot keep. An option or input the store has no home for refuses
-`engine_capability_missing` and writes nothing: a chunk that carries a vector, a `getChunks` read of unsealed chunks or
-embeddings, a keyword search with an offset, `where` or a date window, and a link batch that sets a link kind or
-resolution. Vectors are refused with that typed code for now and arrive later: the store keeps no vectors yet, so a
-Rust brain has no vector search and no embeddings until it does. Keyword search hides what PGLite hides: soft-deleted
-pages, archived sources, and pages that carry a `quarantine` or `pinned_question` frontmatter key, whatever its value.
-Ranking-only options of `searchKeyword` are accepted and ignored, because Rust ranks with BM25 and this is not parity
-with PGLite (design D5). Its scores and tie order differ from PGLite's. The expected difference is listed in
-`test/rust-expected-divergence.tsv`.
+A served member never drops what it cannot keep. An option or input the store has no home for, or cannot answer the
+way PGLite does, refuses `engine_capability_missing` and writes nothing. These are refused today:
+
+- a chunk that carries a vector or an image vector, and a Rust brain whose config sets `search_embedding_column` or
+  `embedding_columns` (the store keeps no vectors yet, so a Rust brain has no vector search and no embeddings until it
+  does; this arrives later);
+- a `putPage` that claims a `source_path` (the store has no such claim);
+- `listPages` with `listColumnsOnly`;
+- `resolveSlugs` when no live page has exactly that slug, because PGLite goes on to a fuzzy title match the store does
+  not have, so an empty answer would be wrong to give;
+- a `getChunks` over more than one distinct `sourceIds` entry, a read of unsealed chunks or embeddings;
+- a keyword search with an offset, `where` or a date window, and a link batch that sets a link kind or resolution.
+
+What the Rust members do the way PGLite does: `putPage` writes the page alone. It does not chunk and does not seal,
+and `upsertChunks` does not seal either; only `sealChunks` replaces the chunks outright and seals them to the page's
+revision, so a page is searchable only after `sealChunks`. `getChunks` returns `[]` for a page that is not sealed at its
+current revision. `deletePage` hard-deletes from the default source. `softDeletePage` and `restorePage` with no
+`sourceId` act on every source. Slugs are matched as written. A cancelled `AbortSignal` stops `upsertChunks`,
+`addLinksBatch` and `addTimelineEntriesBatch` before anything is written, but a write already running in the native
+store cannot be cancelled, which is a difference from PGLite. Overlapping `connect()` calls share one open, and a
+`disconnect()` during a connect wins: the connect rejects `engine_closed` and the store it opened is closed.
+
+Keyword search hides what PGLite hides: soft-deleted pages, archived sources, and pages that carry a `quarantine` or
+`pinned_question` frontmatter key, whatever its value. Ranking-only options of `searchKeyword` are accepted and
+ignored, because Rust ranks with BM25 and this is not parity with PGLite (design D5). Its scores and tie order differ
+from PGLite's. The expected difference is listed in `test/rust-expected-divergence.tsv`.
 
 The parity suite checks this: with `GBRAIN_TEST_RUST_ARM=1` each `test/engine-parity/` file adds a Rust arm. A case that
-reaches a member Rust refuses must stop on that typed refusal; any other case must return what PGLite returns, unless
-its row in `test/rust-expected-divergence.tsv` says why not (a row that stops being true fails the run). The suite
+reaches a member or an option Rust refuses must end on that typed refusal (a refusal the case caught on the way to
+another outcome does not count); any other case must return what PGLite returns, or differ only as its row in
+`test/rust-expected-divergence.tsv` names with a normaliser, and Rust must still return a value (a thrown error never
+passes, and a row that stops being true fails the run). The suite
 runs on PGLite alone without the flag.
 
 **Transactions and the belief ledger.** Both stay refused on the Rust engine, on purpose.

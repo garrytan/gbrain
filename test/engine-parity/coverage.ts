@@ -17,8 +17,11 @@
  *
  * The per-arm columns say what each arm must do for the method: `yes` (runs
  * and is compared), `serves` (the Rust engine serves the member, so with
- * GBRAIN_TEST_RUST_ARM=1 it must return the same answer unless a row in
- * test/rust-expected-divergence.tsv says why not), `refuses:<capability>` (the arm must throw the typed
+ * GBRAIN_TEST_RUST_ARM=1 it must return the same answer, or end on the typed refusal of an
+ * option or input it declines (a served member can refuse part of its surface: a
+ * `source_path` write, `listColumnsOnly`, a vector, a fuzzy `resolveSlugs`, a
+ * multi-source `getChunks`), or differ only the way a row in
+ * test/rust-expected-divergence.tsv names), `refuses:<capability>` (the arm must throw the typed
  * `engine_capability_missing` refusal) or `n/a:<why>` (the method does not
  * exist on that arm). They come from each case's `requires` declaration and
  * test/engine-parity/arm-capabilities.ts.
@@ -214,7 +217,9 @@ export function buildCoverage(): CoverageReport {
     '# covered = called by a test/engine-parity harness case; the per-arm columns say where that case runs.',
     '# legacy_e2e = called by the Postgres-gated test/e2e/engine-parity*.test.ts suite (informational).',
     '# pglite/postgres/rust = what each arm must do: yes (runs, compared), serves (the Rust engine serves the member: with',
-    '#   GBRAIN_TEST_RUST_ARM=1 its case must match PGLite unless test/rust-expected-divergence.tsv says why not),',
+    '#   GBRAIN_TEST_RUST_ARM=1 its case must match PGLite, end on the typed refusal of an option or input the member declines',
+    '#   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in',
+    '#   test/rust-expected-divergence.tsv names),',
     '#   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).',
     `# covered: ${covered.length}/${methods.length}`,
     ...perFamily,

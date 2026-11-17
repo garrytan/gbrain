@@ -182,11 +182,11 @@ secondary indexes yet.
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.readPageSnapshot(slug, { sourceId?, sourceIds?, includeDeleted? }?)` | `{ page, tags, revision, sourceIncarnation, withdrawals: [] }` or `null`. `sourceIds` wins over `sourceId`; with neither, the first match, `default` first | `readPageSnapshot` |
-| `brain.putPage(slug, page, { sourceId?, allowEmptyOverwrite?, expectedRevision?, force? }?)` | the stored `Page` | `putPage` |
+| `brain.putPage(slug, page, { sourceId?, allowEmptyOverwrite?, expectedRevision?, force?, chunks?, index? }?)` | the stored `Page`. By default the store also installs chunks and seals the page (see "Chunks and keyword search"); `index: false` writes the page alone, which is what the TypeScript engine always passes, as PGLite's `putPage` writes no chunks | `putPage` |
 | `brain.listPages(filters?)` | `Page[]` (default `limit` 100). Filters: `type`, `tag`, `updated_after`, `updatedAfterKeyset { updatedAt, slug }`, `slugPrefix` (literal), `excludeSlugPrefixes`, `slugAfter`, `sourceId`, `sourceIds`, `includeDeleted`, `sort` (`updated_desc` default, `updated_asc`, `created_desc`, `slug`) | `listPages` |
 | `brain.countPages({ sourceId? }?)` | number of live pages | `countPages` |
 | `brain.lockPageKeys([{ sourceId, slug }])` | `null`. One process owns the brain and one write runs at a time, so keys are already held; it checks the keys are well formed | `lockPageKeys` |
-| `brain.resolveSlugs(partial, { sourceId?, sourceIds? }?)` | `[slug]` for an exact live slug, else up to 5 live slugs whose slug or title contains `partial` (case-insensitive, ordered by slug; PGLite orders by title similarity) | `resolveSlugs` |
+| `brain.resolveSlugs(partial, { sourceId?, sourceIds? }?)` | `[slug]` for the exact live slug, else `[]`. Exact only: PGLite goes on to a fuzzy title match this store does not have, so `[]` means "no exact match", and the TypeScript engine refuses `engine_capability_missing` instead of returning it | `resolveSlugs` (exact half) |
 | `brain.softDeletePage(slug, { sourceId? }?)` | `{ slug }` or `null` | `softDeletePage` |
 | `brain.restorePage(slug, { sourceId? }?)` | `boolean` | `restorePage` |
 | `brain.deletePage(slug, { sourceId? }?)` | `null`; removes the page and its versions | `deletePage` |
@@ -216,20 +216,21 @@ secondary indexes yet.
 ### Chunks and keyword search
 
 A page's text is indexed as chunks (`chunk_source` is `compiled_truth`, `timeline`, `fenced_code` or
-`image_asset`; a chunk is one record plus one posting per word). `putPage` installs the chunks in the
-same transaction as the page: `opts.chunks` when the caller passes `ChunkInput[]`, otherwise the
-built-in chunker (paragraphs packed to about 1500 characters; simpler than the TypeScript chunker,
-so callers that need its exact chunks pass them). Installing chunks sets
-`text_projection_revision = knowledge_revision`. Search serves only pages in that state, as PGLite
-does, so a tag change, soft delete or restore hides a page from search until a `putPage` or an
-`upsertChunks` with `expectedRevision` indexes it again. Vectors are not stored; `embedding` is
+`image_asset`; a chunk is one record plus one posting per word). The store's own `putPage`, unless it is
+given `index: false`, installs the chunks in the same transaction as the page: `opts.chunks` when the
+caller passes `ChunkInput[]`, otherwise the built-in chunker (paragraphs packed to about 1500 characters;
+simpler than the TypeScript chunker). The TypeScript engine does not use that: its `putPage` passes
+`index: false` and writes no chunks, and only `sealChunks` (or `upsertChunks` with `seal: true`) seals.
+`upsertChunks` without `seal` never seals. Sealing sets `text_projection_revision = knowledge_revision`.
+Search serves only pages in that state, as PGLite does, so a tag change, soft delete or restore hides a
+page from search until the store's indexing `putPage` or a seal indexes it again. Vectors are not stored; `embedding` is
 `null`.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.putPage(slug, page, { ..., chunks? })` | as above; `chunks` replaces the page's chunks | `putPage` plus `upsertChunks` |
 | `brain.upsertChunks(slug, chunks, { sourceId?, expectedRevision?, seal? }?)` | `null`; writes the page's chunks as PGLite does: chunks not in `chunks` are removed, a chunk whose text is unchanged keeps the metadata the write leaves null, an empty list unseals the page. `page_not_found`, `revision_conflict` (`expectedRevision` only checks), `invalid_argument` for a bad `chunk_source`. With `seal: true` the chunks replace the old ones outright and are sealed to the page's revision (PGLite's `sealChunks`) | `upsertChunks` |
-| `brain.getChunks(slug, { sourceId?, sourceIds?, includeDeleted? }?)` | `Chunk[]` in index order, `embedding: null` | `getChunks` |
+| `brain.getChunks(slug, { sourceId?, sourceIds?, includeDeleted? }?)` | `Chunk[]` in index order, `embedding: null`; `[]` unless the page is sealed at its current revision; the slug is matched as written; soft-deleted pages are read, as PGLite reads them. The TypeScript engine refuses more than one distinct `sourceIds` entry | `getChunks` |
 | `brain.deleteChunks(slug, { sourceId? }?)` | `null`; the page stays | `deleteChunks` |
 | `brain.countChunks()` | number of chunks in the brain | none |
 | `brain.searchKeyword(query, opts?)` | `SearchResult[]` (`slug, page_id, title, type, source_id, chunk_text, chunk_source, chunk_id, chunk_index, score, stale`, plus `effective_date` when set). `stale` is PGLite's rule: the page's `updated_at` is older than the newest `created_at` of its timeline entries | `searchKeyword` |

@@ -2,7 +2,9 @@
 # covered = called by a test/engine-parity harness case; the per-arm columns say where that case runs.
 # legacy_e2e = called by the Postgres-gated test/e2e/engine-parity*.test.ts suite (informational).
 # pglite/postgres/rust = what each arm must do: yes (runs, compared), serves (the Rust engine serves the member: with
-#   GBRAIN_TEST_RUST_ARM=1 its case must match PGLite unless test/rust-expected-divergence.tsv says why not),
+#   GBRAIN_TEST_RUST_ARM=1 its case must match PGLite, end on the typed refusal of an option or input the member declines
+#   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
+#   test/rust-expected-divergence.tsv names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
 # covered: 198/198
 # lifecycle: 9/9
