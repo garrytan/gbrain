@@ -10,6 +10,262 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.735.0] - 2026-11-17
+
+**Conversation archive pages written while a brain was personal are now kept to the owner as soon as a command makes the brain shared, instead of staying readable by every member until the next archive run.**
+
+<!-- behavior-change: archive_rescope_on_shared_9563 -->
+
+### Fixed
+- `gbrain access member add` and `gbrain access member enable` (when they make two or more enabled members), `gbrain config set brain.audience shared` and `gbrain access owner set` now apply the owner-only rules to the conversation archive before they return. `member add` and `member enable` do it before the member is added, enabled or bound to a token, and change nothing if it fails; a `member add` refused for its own input (a bad kind, email or group) changes nothing either. Each command prints one line on stderr per archive source; `--json` output is unchanged. (#9563)
+- Still waiting, and named by `gbrain transcripts archive status` and `gbrain doctor`: a brain that turns shared from client usage with no command run (`gbrain transcripts archive run` applies it), a shared brain with no owner (`gbrain access owner set <member>`), and access rules kept in git (add the `conversations/` owner-only rule to `.gbrain/access.yml`). Pages an archive run already in progress writes into new folders stay readable by members until the next run; with maintenance off, that run is manual.
+
+**Forwarding an email with only an FYI note no longer opens a "waiting on them" loop.**
+
+### Fixed
+- A forward whose own note asks nothing ("FYI, see below.") over someone else's question opened an `unanswered_outbound` loop, against the rule in docs/guides/open-loops.md that an FYI or forward without a question opens nothing. Since #8941 a forward keeps its whole body, and the loop detector counted a question mark anywhere in that body. It now reads only the note above the forward separator (Gmail's "Forwarded message" line or Apple Mail's "Begin forwarded message:"). A forward whose note does ask still opens a loop, and forwards still keep their full content.
+- The same reading applies to mail sent to you, so a "Thanks!" reply to someone's FYI forward counts as the reply again instead of leaving a reply-owed loop open.
+- A loop that already opened this way is not closed by the upgrade. It closes when the other person replies, or with `gbrain loops drop <id>`.
+
+<!-- behavior-change: forward_fyi_no_loop_gst2899 -->
+
+**Keyword search finds the people behind a reworded relationship question again.**
+
+### Fixed
+- On a brain with no embedding provider, a question that names a company in words its people's pages don't use ("Who is on the payroll at Acme?") returned the company page and little else. Since v0.60.338.0 (#7135) the title step's any-word retry read page titles only, so it no longer saw the people whose dated timeline names the company. For a local caller the retry now reads titles and timelines again while at most 5,000 pages match the question's words, and titles only past that, so a date or a very common word in a question still can't pull every dated timeline into ranking. Remote MCP callers are unchanged.
+- On the public one-hop relationship set (870 keyless rows), recall at 5 for reworded questions went from 0.381 to 0.573 with relational retrieval off and from 0.512 to 0.661 with it on, on both PGLite and Postgres.
+- On a 1,000,000-page Postgres brain the retry adds one bounded statement, 0.03 to 0.14 s in the cases measured.
+
+<!-- behavior-change: title_retry_reads_timelines_gst2899 -->
+
+**`gbrain repair open-facts` now keeps a fact private once its end date has passed, and opens facts tables that sit below the timeline.**
+
+<!-- behavior-change: open_facts_lapsed_timeline_8194 -->
+
+### Fixed
+- A private fact whose `valid_until` date has passed stays private, and the preview counts it under a new reason, `lapsed`. Before, the repair could open a fact that was no longer true.
+- A fact in a `## Facts` table below the timeline sentinel now opens in place. Before, the apply looked only above the timeline and reported every such fact `fact_left_private`.
+- The preview warns that a fact saved private on purpose before the cut looks the same as a legacy one, and that `--ids-file` limits the run to the ids you list.
+
+**Seven small fixes from outside reports: Claude Code transcript ingest, date-only search windows, the unit runner's failure log, doctor's Hermes hook check, get_page grep on tables, skill-catalog rebuilds and Windows sync paths.**
+
+### Fixed
+- `gbrain transcripts ingest` skips the state files Claude Code 2.1 keeps inside each session directory, instead of failing each with `unknown format` and holding `--since last` back (#9365, reported and first fixed by @Masashi-Ono0611).
+- A date-only `since` in search, query and image query starts at UTC midnight, so a one-day window covers that UTC day whatever the database's timezone (#9533, reported and first fixed by @DanCanadian).
+- The unit runner's `.context/test-failures.log` keeps each failing test's own error and diff instead of the next test's (#9315, reported and first fixed by @Masashi-Ono0611).
+- `gbrain doctor` recognizes a gbrain turn-rule hook added by hand to an existing Hermes `hooks:` section, so `harness_wiring` no longer warns about it (#8846, reported and first fixed by @Masashi-Ono0611).
+- `get_page` grep returns the matching table row instead of the whole table (#9104, reported and first fixed by @Masashi-Ono0611).
+- `gbrain setup` keeps a skill catalog's `--routing` table when it rebuilds a stale catalog (#9332, reported and first fixed by @Masashi-Ono0611).
+- Sync on Windows accepts a page whose stored path uses the other path separator, instead of refusing it with `page_identity_changed` (#9118, reported and first fixed by @yuriysan).
+
+<!-- behavior-change: date_only_since_utc_9533 -->
+
+**Five small fixes from outside reports: connector sync on a brain with an active writer, Gmail bodies that are HTML labelled as plain text, `repair captured-facts` for Codex sessions, `doctor --only` on checks that need no database, and `regen:all --check` for the CLI flag registry.**
+
+<!-- behavior-change: connectors_sync_managed_brain_9124 -->
+<!-- behavior-change: gmail_html_plain_body_8937 -->
+<!-- behavior-change: captured_facts_codex_sessions_9554 -->
+<!-- behavior-change: doctor_only_engine_free_9527 -->
+
+### Fixed
+- `gbrain connectors sync <provider>` run in the foreground now imports chat history on a brain whose writes go through the writer, the way `gbrain transcripts ingest` already does, instead of being refused. A `--background` or scheduled sync, and the `connector_sync` operation, still pass no write context. (#9124, reported and first fixed by @Masashi-Ono0611)
+- A Gmail message part labelled `text/plain` that is really an HTML document is now stripped to readable text instead of being stored with its raw tags and CSS. (#8937, reported and first fixed by @Masashi-Ono0611)
+- `gbrain repair captured-facts` now recognises facts captured from Codex sessions, in both the live and the archived Codex session folders, instead of counting them as unclassifiable. (#9554, reported and first fixed by @Masashi-Ono0611)
+- `gbrain doctor --only <check>` on a check that needs no database now reports "No finding" when the check has nothing to say, instead of a warning that the database checks stopped early. A connection that really failed still reports the stop. (#9527, reported and first fixed by @Masashi-Ono0611)
+- `bun run regen:all --check` now fails when the committed CLI flag registry is out of date, by comparing it with a fresh render. (#9019, reported and first fixed by @sx4im)
+
+**A token or OAuth client can now be allowed to read private facts in the sources its grant names, without changing any fact (`gbrain auth rescope --private-facts granted-sources`).**
+
+<!-- behavior-change: private_facts_grant_8194 -->
+
+### Added
+- `gbrain auth rescope --token <name> --private-facts granted-sources` (or `--client <id>`) lets that one credential's remote reads see facts saved with visibility private, only in the sources its grant names explicitly; `--private-facts none` turns it off on the next request. Every existing and new token and client starts at `none` (Discussion #8194).
+- It never opens a fact held on, provenanced from or about a private, `readable_by`, folder-ruled, quarantined or member page; `context_pack`, `delta`, writes and audience or attested reads stay world-only. Only the local CLI on the brain host can set it.
+- `gbrain auth list` (and `--json`), `gbrain auth clients` and the rescope before/after output show the new axis.
+
+**A new Postgres test now fails if the local title search stops using the index for rare words or the cheap early stop for common ones.**
+
+### Added
+- A test against the real Postgres planner checks the candidates step of the local title search. A word on a few pages must read matches from the full-text index, and a word on nearly every page must walk the primary key and stop after the page cap. The test changes no behavior.
+
+**Commands no longer print a "wedged" migration notice asking for a forced retry once a newer migration has completed since; doctor and apply-migrations name each source still in conflict and its next step instead.**
+
+### Fixed
+- Since v0.60.725.0 every ordinary command (remember, recall, config get and the rest) printed `Upgrade migration(s) 0.53.0 failed several runs in a row and are wedged` with an ask-the-user `--force-retry` fix on a brain whose upgrade ledger held three old partial runs of a migration, even though a newer migration had completed since and `gbrain apply-migrations` called it history. The notice now follows apply-migrations, which treats that migration as history, so ordinary commands print nothing about it. A stuck migration with no newer migration past it still gets the notice.
+- The shared-skills migration (v0.53.0) reports a source conflict where an operator looks, and never advises a forced retry: `gbrain doctor` (connected) warns with each source in conflict, its code and its next step, and goes quiet once none is left; `gbrain apply-migrations --dry-run`, `--yes` and `post-upgrade` name the same sources. They read the migration's own read-only preview, which takes under a second on a brain with five sources of 20,000 files each.
+- A source conflict now carries a code. `shared_skills_unmanifested` (`gbrain errors shared_skills_unmanifested`) means a source's `skills/` folder holds skills with no `skillpack.json` declaring them: declare the ones to share in a `skillpack.json` at the source's root, or keep the source out of shared-skills adoption with `gbrain sources shared-skills <id> off`. Other conflicts carry the code of the error that stopped the inventory.
+- A named run of a wedged v0.53.0 (`gbrain apply-migrations --migration 0.53.0 --yes`) still refuses, now with the read-only preview as its fix instead of a forced retry.
+
+### Tests
+- A source with no local path (a database-only source such as the conversation archive's) is pinned never to answer a path lookup, on PGLite and Postgres.
+
+<!-- behavior-change: migration_wedge_notice_history -->
+
+**`gbrain doctor` now names any purge or withdrawal guard on Postgres that still lacks its ledger check, and a migration run no longer hides a failed guard re-create.**
+
+### Added
+- New doctor check `guard_ledger_checks`. On Postgres it names each purge or withdrawal guard whose body is missing the check that refuses a write role row-level security keeps from the ledger, so that role could still store purged content again or save a withdrawn fact active. It names the role that owns each guard. When the role doctor connects as may re-create them, the fix is `gbrain apply-migrations --yes`. Otherwise it prints the SQL the owning role runs. On PGLite, which has no row-level security, it reports not applicable (GST-2885, follow-up to #7632 and #9517).
+
+### Fixed
+- Every migration run re-creates the guards its role owns. That step used to swallow every error. Now only a guard another role owns stays silent (SQLSTATE 42501). Any other failure is reported on stderr with a line pointing at `guard_ledger_checks`. A concurrent update of the same function is retried (GST-2885).
+
+### Documentation
+- docs/ENGINES.md ("Purge and withdrawal guards"): a bulk fact insert whose row matches a withdrawal needs an `UPDATE` policy on `facts` for the write role, beside its `SELECT` policy (GST-2885).
+
+<!-- behavior-change: guard_ledger_checks_gst2885 -->
+
+**The nightly heavy upgrade matrix no longer dies with exit 141 on a large doctor report, and the IPC takeover test no longer fails on slow macOS runners (#6049).**
+
+### Tests and CI
+- `tests/heavy/pg_upgrade_matrix.sh` read doctor's top-level status with `grep -o | head -1` under `pipefail`. Doctor's one-line JSON report now holds more than one pipe buffer of `"status"` matches, so `head` closed the pipe early, `grep` took SIGPIPE and `set -e` ended the script with exit 141 and no message, which turned the nightly Heavy Tests red (#6049). It now reads with `sed -n`, which consumes the whole stream, and a report with no status fails that shape by name. `test/scripts/pg-upgrade-matrix-status.test.ts` fails before the fix and passes after it.
+- The "simultaneous processes elect one provider" IPC test asked the elected provider through the 250 ms production budget, so a slow darwin-x64 runner read it as unavailable. The test now pauses the provider for 400 ms on every run and asks with a test-sized wait. `resolveViaIpc` takes an optional `{ timeoutMs }` like its sibling clients; the default is unchanged.
+
+**New `gbrain repair purged-change-reasons` finds page-history change reasons that still quote a claim you purged before the #8635 fix, and redacts them after you agree.**
+
+### Added
+- Before #8635 was fixed, a sync that read a page's `gbrain-reason` trailer just before a fact purge could still store the purged text as that page version's change reason. `gbrain repair purged-change-reasons` re-reads each reason the purge recorded from the source's Git checkout, counts the page versions that still hold it (for the whole brain and for each source, never printing the text), and with `--apply --expect <hash> --yes` sets exactly those to `[purged]`, the value a purge writes. The same text under another file, or from a commit that gives the file two reasons, is kept unless you pass `--include-ambiguous`. It runs only when you name it, and never on upgrade, sync or doctor. Repo-less sources have nothing to check and the preview still succeeds. Pages, files and Git history are not changed (GST-2886, follow-up to #8635).
+
+<!-- behavior-change: purged_change_reasons_repair_gst2886 -->
+
+**The research maps and the draft plan for a Rust storage engine are now in the repository, so anyone can read what gbrain does today and how the Rust work is meant to proceed.**
+
+### Added
+- `docs/research/rust-engine/`: maps of TypeScript gbrain as it is today (the `BrainEngine` interface, schema, Postgres features, CLI, MCP tools, brain format, background jobs, test suites, subsystems) and of gbrain-evals as the parity oracle, with an index in `docs/research/rust-engine/README.md`. They are research notes pinned to one commit, not a description of current behavior.
+- `docs/plans/PLAN.md`: the draft, phased plan for a Rust storage engine. It is pending review and approves no build phase. Nothing changes for gbrain users.
+
+**On a read-only mirror, the held file-drift comparison no longer points at previews that find nothing, and a pass that only re-held what a retry asked for no longer counts as progress.**
+
+### Fixed
+- On a read-only mirror, `gbrain repair file-drift --held` keeps each differing page's verdict and evidence but no longer names a `--prefer` preview, because those previews read every mirror page as database-only. It says the page stays held until the source is writable again (`gbrain sources mirror-writable <id>`).
+- A stopped sync pass whose only rewritten holds were re-checked because `sync unblock` or `sources retry-held` asked, or that brought a transient hold to its attempt cap, no longer resets the abandoned-pass count.
+- The sync-unblock runbook's `pass_abandoned` row, the repair guide (mirror comparison, `complete: false` on a held dry run) and the `sources status` key-file entry (`by_code` counts every hold) now match what gbrain does.
+
+<!-- behavior-change: mirror_compare_names_writable_route_gst2869 -->
+<!-- behavior-change: rehold_retry_not_progress_gst2869 -->
+
+**On PGLite, a managed `gbrain sync` that holds or skips many pages in a row now stops promptly on SIGTERM and keeps its timers running, instead of going silent for seconds at a time.**
+
+### Fixed
+- PGLite runs Postgres inside the gbrain process and answers queries without ever handing control back to the event loop, so a managed pass that settled pages without waiting on a write (pages held for file drift, for example) could run for several seconds at a time with no timer, progress watchdog or signal handler able to run. On a test mirror whose pass held page after page, the longest stall was 8.3 seconds and a SIGTERM took 7.8 seconds to reach its handler; with this fix the longest stall was 89 milliseconds and the handler ran 21 milliseconds after the signal. Each step of a PGLite managed pass now lets the event loop take a turn first. Postgres syncs are unchanged (GST-2914).
+
+**`gbrain sync` stopped by SIGTERM or SIGHUP now records why its pass stopped.**
+
+### Fixed
+- A managed `gbrain sync` that gets SIGTERM or SIGHUP in the middle of a pass saves the pass as resumable with stop reason `terminated`, prints its result and resume command, and exits 143 (129 for SIGHUP). `gbrain sync status` reads `pass_terminated` instead of guessing `pass_interrupted`, and the drain's JSON stop reads `terminated` instead of `deadline`. A pass stopped this way that committed nothing still counts toward `pass_abandoned`. A second signal, or a run still saving or printing its result 3 seconds after the handler starts, exits as before. On PGLite the handler can start tens of seconds after the signal, as it already did before this change, so a supervisor that kills the process sooner leaves the pass open as today; it reads `pass_interrupted` and the plain sync resumes it. Ctrl-C and sync jobs inside `jobs work` are unchanged (GST-2869).
+- On a read-only mirror, `gbrain repair file-drift --held` no longer names a `--prefer` preview for a held deleted page whose file differs either; it names `gbrain sources mirror-writable <id>` like the other mirror pages. The sync-unblock runbook's `pass_abandoned` row now says that a retry whose re-check changed the hold's code or file bytes still counts as progress once.
+
+<!-- behavior-change: sync_sigterm_recorded_gst2869 -->
+
+**Questions about the past now see earlier values in the facts block, with when each was told.**
+
+<!-- behavior-change: facts_block_history_gbra574 -->
+<!-- behavior-change: facts_block_told_after_gbra574 -->
+<!-- behavior-change: facts_block_contested_gbra574 -->
+
+### Added
+- On a history cue (a history word, or a date that has passed), the query facts block also takes the named entity's ended facts (superseded, or past their `valid_until`), each with its own validity window. Forgotten and withdrawn facts, and facts from a deleted and purged page, never appear, and the caller's read policy applies as before.
+- When a question names one date, each fact header in the block says `; told after DATE` for a fact said after it and `; learn date unknown` when the saying date is unknown.
+
+### Fixed
+- The facts block shows recall's contested label: `(contested by #ID)` on a fact in a pending supersede proposal whose other fact the caller can read; a failed lookup reports `contested_unavailable`.
+
+**The facts block shows when a moved or changed value stopped being true: conversation facts carry a slot (where someone lives, who employs them, their role), and `query` works out each value's validity window when it reads.**
+
+<!-- behavior-change: conversation_fact_slot_windows_gbra574 -->
+
+### Added
+- `gbrain extract-conversation-facts` asks the model for one slot per fact (location, employer or role) and stores it on the fact's ontology columns (`dimension`, `value`, `value_hash`, `dim_status`), on managed and unmanaged brains, with or without a git repository. Other fact extractors keep their prompt byte for byte.
+- The `query` facts block (and the temporal fact reserve) shows an older slot value as "valid FROM to UNTIL", ending where the next value starts, when both came from the same conversation page or the newer fact states the change in plain English. Without such a cue, both values stay open and nothing is labelled. A stored end date wins, and only facts the caller can read take part.
+- `gbrain extract-conversation-facts --dry-run` prints an estimate of the paid run: segments, input and output tokens, and dollars at the extraction model's price.
+
+### Changed
+- The ontology (`ontology_get`, `ontology_propose`, the chronicle conflict check, the dimension census and `gbrain repair ontology-facts`) ignores conversation facts, which are never closed in storage, so an extracted slot never shadows, closes or absorbs an owner's observation. A conversation fact that holds the exact key an ontology observation needs gives up its slot and keeps its text. Ontology observations report exactly as before.
+- A re-extraction or a retention purge that keeps a conversation fact as expired history clears its slot, so the slot never blocks the page's next facts.
+
+### For existing brains
+- Nothing is re-extracted automatically. Preview with `gbrain extract-conversation-facts --force --dry-run`, then run `gbrain extract-conversation-facts --force` to add slots.
+
+**Code blocks on pages made with `gbrain publish` get a Copy button, and `gbrain mcp expose` prints one-click links that add the brain to Cursor and, for a public brain, to Claude.**
+
+### Added
+- Every code block on a published page, including a password-protected page once it is unlocked, shows a Copy button in its top-right corner. It copies the block's exact text, works from the keyboard, and reads "Copied" for a moment. Pages opened from a file or a plain-http host fall back to the browser's older copy command. Code blocks also get a bordered panel that scrolls sideways, so long lines no longer stretch the page. Contributed by @Pierre-Bouquet (#9453).
+- `gbrain mcp expose` ends its `Next` block with a `Cursor` line: Cursor's install link, which opens Cursor's MCP install prompt with the brain's URL filled in. With `--funnel` a `Claude` line comes first: Anthropic's custom connector install link, which opens claude.ai's add-connector form the same way. A tailnet-only publish gets no Claude line, because claude.ai connects from Anthropic's servers and can't reach the tailnet. `--status` repeats the links when everything verifies, and `--json` adds them as `install_links` (only when there is at least one). The links carry no credential, and a URL that isn't plain https gets none.
+- docs/mcp/README.md has a "One-click client links" section with ready links for hosted gbrain.io, docs/mcp/CLAUDE_DESKTOP.md puts the Claude shortcut above its manual steps, and docs/guides/remote-mcp.md shows the new line in its example output.
+
+### Fixed
+- A published page whose markdown contains a closing `</script>` tag, such as a code block that shows HTML, now renders that text instead of breaking the page. Before, the tag ended the page's script early, so the rest of the page was lost and any HTML after it skipped the sanitizer.
+- The password-protected page now renders unlocked content through the same sanitizing function as an open page, instead of patching its unlock script by string replacement.
+
+Contributed by @Pierre-Bouquet
+
+**Three agent-facing docs that had hit their size caps now have room again; no cap was raised.**
+
+### Documentation
+- The guard registry and self-test section moved out of `docs/TESTING.md` into its own page, `docs/ci-guards.md`. Links to its anchors, guard error messages and the guard baselines now point at the new page.
+- The key-files entries for page windows and large page writes moved from `core-services-2-continued.md` to a new `core-services-2-page-window.md`, and the entries from `src/core/sql-query.ts` through `src/core/utils.ts` moved from `core-utilities-2.md` to a new `core-utilities-2-continued.md`. Each full page links its continuation from its last line.
+- `llms-full.txt` links "Connect a hosted brain" (`docs/guides/hosted-harness-access.md`) instead of inlining it. It applies only once a brain runs on another machine, and the inlined AGENTS.md already routes those agents to it.
+
+**A `.gbrain-scan-allow` line can now allow one secret-scan rule in matching files, instead of skipping every rule there.**
+
+<!-- behavior-change: scan_allow_rule_entry -->
+
+### Added
+- `.gbrain-scan-allow` accepts `path:<glob> pattern:<rule>`, which allows only the named rule (for example `jwt` on newsletter unsubscribe links) in the files the glob matches; every other rule still blocks a push there. Path globs and fingerprints keep their meaning. A malformed rule line or an unknown rule name allows nothing and is named by the push refusal, `gbrain git scan` and bootstrap verify, and `gbrain git scan` lists each hit a rule line allowed with the line that allowed it (`allowed[]`, `allowlist_problems[]` in `--json`).
+
+**Four failures that used to happen silently now either work or report themselves: connector pages on a managed brain get facts again, `takes extract --dry-run` sends nothing to the model unless you also pass `--yes`, turning off mention linking records each removed link in the belief ledger, and a claude-cli call that hits the chat timeout fails only that call.**
+
+<!-- behavior-change: takes_extract_dry_run_needs_yes_9547 -->
+
+### Fixed
+- On a managed brain, Slack and meeting pages that a connector publishes are queued for fact extraction again. The connector used to call a queue path that a managed brain refuses, and the refusal was swallowed, so those pages never got facts. Each import's publication now queues the extraction itself and keeps `--no-extract` and the 50-page limit per run. Gmail, calendar and GitHub imports queue no facts on a managed brain, the same as on a classic brain. On a classic brain, a page whose extraction could not be queued is now logged to `ingest_log` and reported on stderr instead of being dropped. Slack pages synced before this fix get their facts from `gbrain extract-conversation-facts --source-id <id> --types slack --yes` (#9552, reported by @lloydsilvertwo).
+- `gbrain takes extract --from-pages --dry-run` without `--yes` lists and counts the candidate pages and calls no model, as its "preview" wording promised. It used to send every candidate page to the chat model without `--yes`. Its output says nothing was sent and no claims were classified, and `--json` carries `dry_run: true` with `claims_extracted: null`. `--dry-run --yes` keeps the old preview, which classifies the candidates and writes nothing (#9547, reported and first fixed by @Kkkkkuro).
+- Turning off mention linking for a source that the belief ledger covers now writes one `link.retracted` event for each mention link it removes, so the ledger no longer asserts links that are gone. The turn-off and the mention reconcile take a per-source lock in a fixed order, so the two cannot deadlock (#9548, reported and first fixed by @akinduroifedayo).
+- When a claude-cli call hits the chat timeout (`GBRAIN_AI_CHAT_TIMEOUT_MS`, 300 s by default), the caller now gets the timeout error instead of "claude-cli adapter aborted". Fact extraction records it as a provider error for that page and moves on, so one hung call no longer ends the whole conversation-facts backfill (#9553, reported by @lloydsilvertwo).
+
+**The access commands now say when a page is left readable by no member, and what to run.**
+
+### Fixed
+- `gbrain access member disable` lists the pages naming the member that no enabled member reads remotely any more, with the `gbrain repair visibility --slug <slug> --readers <member>,<owner>` write that gives one back.
+- `gbrain access who-can-read` explains a page no enabled member reads remotely, whether because its readers name only disabled or removed members or because its `readable_by` and the folder rules covering it admit nobody in common.
+- `gbrain access rule add` (and the other rule edits) warns in its preview about pages the change leaves readable by no member, such as a page written into a person's folder before that folder's rule named them.
+- `gbrain auth list` shows a token bound to a disabled or removed member as `refused`; `--json` keeps `status` and adds `member_status`.
+- A thin client whose credential is bound to a disabled member now says so (`access_member_disabled`) instead of "credentials may have been revoked".
+
+<!-- behavior-change: auth_list_member_status_gbra593 -->
+
+**`gbrain skillpack harvest` now harvests a skill whose paired file sits in a folder that starts with the skill's name, such as `skills/foo-extra/` next to `skills/foo/`.**
+
+### Fixed
+- A paired source in a sibling folder whose name starts with the skill's name was treated as a file of the skill folder, so the harvest stopped with `path_traversal` and copied nothing. The harvest now copies it to the same path as any other paired source. Symlinks and files outside the repo are still refused.
+- A harvest that refuses a paired source now stops before it writes anything. Before, it could copy the skill folder first and leave it behind, so a second try stopped with `slug_collision`.
+- A paired source reached through a linked folder that points outside the host repo is now refused with `path_traversal`. Before, harvest refused only a linked file, not a linked folder.
+
+**Keeping a deletion on a read-only mirror now sticks: the held page stops asking again on every re-check.**
+
+<!-- behavior-change: mirror_keep_deleted -->
+
+### Fixed
+- On a read-only mirror, `gbrain repair file-drift --held --side deleted --state tombstone_edited --prefer database` lists each page `keep_deleted` and, once the user agrees to the preview's hash, records the decision on its hold instead of trying to remove a file gbrain never writes. The hold stays, reported carried with reason `mirror_keep_deleted` and `needs_human: false` in `gbrain sources status`, `gbrain sync status` and doctor. A re-check of the same file bytes keeps the decision; a new upstream edit or `gbrain restore` asks again; a purge moves it to the `purged_differs` hold, where it stays while the file bytes are the same. The caller's CLI grant must cover the page, as for every other file-drift repair. Nothing is deleted, restored or written into the mirror, and writable sources behave as before.
+
+**A design plan for an optional Rust storage engine is now in the docs; no code ships and nothing changes for any brain.**
+
+### Added
+- `docs/designs/RUST_ENGINE.md`: the plan for a third storage engine, written in Rust, behind the same engine contract as PGLite and Postgres. It covers the parity tests and gbrain-evals bake-off, a shadow mode that runs Rust beside an existing brain and generates a head-to-head report, an opt-in swap with a way back, and a public engine benchmark in gbrain-evals. It sets the bar that the Rust engine must be equal or better than both Postgres and PGLite on every measured axis, including concurrent writes, graph traversal, vector search and memory. The target is 10x better than Postgres and pgvector, and equal or better is the gate to ship. The Rust engine has no SQL dialect and serves typed engine methods only. It refuses raw SQL. It does not copy PGLite's locking. It has no whole-brain lock and no busy error, and a second process can always read and write. Each lock and queue call site becomes a typed engine operation with a stated guarantee and a concurrency test. The embedded engine comes first and is built so it can later serve many users. A full multi-user Rust server that replaces Postgres and pgvector is the end state. The new section "Path to a multi-user server" lists those later phases, and each one needs the maintainer's approval before it starts. Until that server passes the same bar, brains with writers on more than one machine stay on Postgres. Every switch it names ships off.
+- `docs/designs/rust-engine/research/`: twelve read-only maps of the current code that the plan cites, and `docs/designs/rust-engine/review-record.md`: the review record for the plan.
+
+**A new research page shows how proven databases let many users and agents write at once without whole-brain locks, and what the Rust engine should copy.**
+
+### Documentation
+- New `docs/research/rust-engine/multi-user-prior-art.md` compares about 40 databases, storage engines, search indexes and access-control systems on concurrency, crash safety, replication, access control, backup, multi-process use and proof of correctness.
+- It recommends optimistic, serializable transactions checked at commit (the FoundationDB design) over a small proven store, with redb leading the bake-off, and deterministic simulation testing from the start.
+- It maps each Postgres lock and queue pattern gbrain uses today (job claims with `SKIP LOCKED`, advisory locks, row locks, TTL leases, `LISTEN/NOTIFY`, RLS) to a Rust engine replacement without PGLite-style whole-brain locking, and lists what may still wait.
+- It finds that the Rust rewrite of Postgres is not a fit as a dependency: it keeps the Postgres lock model, is AGPL-licensed and is not yet production-ready.
+
+**The access docs now say plainly that restricted pages are still embedded by the brain's configured embedding provider.**
+
+### Documentation
+- `readable_by`, folder rules and `visibility: private` control who reads a page, not which configured providers process it. The memory-boundaries guide ("Where text goes"), the access-designations guide and the company-brain tutorial now say that every page is embedded with the configured provider, that gbrain cannot tell a local endpoint from a remote one, and that a self-hosted provider keeps restricted text on your own hardware. Access designations do not exclude a page from embedding.
+
 ## [0.60.734.0] - 2026-11-17
 
 **Repairs keep a page's safety flag or quarantine, `gbrain facts relink` keeps a fact's origin and exact dates, and consolidate no longer ends a fact because it was said again.**

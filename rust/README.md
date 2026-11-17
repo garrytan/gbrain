@@ -45,13 +45,15 @@ It runs each check and prints `ok` or `FAIL`, then exits 0 only if all passed. I
 
 - the metadata the addon reports (target, ABI, build hash, catalog version);
 - a JavaScript timer still firing while a native task runs;
-- typed arrays: sum, scale into a new array, scale in place, offset views, empty arrays, and async
-  calls copying their input before they return;
+- typed arrays: sum, scale into a new array, scale in place, offset views, empty arrays, async
+  calls copying their input before they return, and a view of a `SharedArrayBuffer` being refused;
 - a panic, sync or async, becoming a normal `Error` with `code: 'internal_error'` while the next
   call still works;
 - a cancelled task rejecting with `code: 'cancelled'` and `completedSteps`;
 - shutdown cancelling queued tasks, waiting a bounded time for running ones, then rejecting later
-  calls with `code: 'engine_shutdown'`;
+  calls with `code: 'engine_shutdown'`, from the moment `shutdown()` returns;
+- a pool's worker count staying between 1 and 256, and a pool collected without `shutdown()`
+  stopping its workers;
 - the bounded callback queue answering `queue_full` and `closing` and losing nothing it accepted;
 - a child process calling `process.exit(0)` while native work runs (must exit 0 at once);
 - a `bun build --compile` executable loading the addon and passing the same core checks.
@@ -133,11 +135,17 @@ Errors from the addon are real `Error` objects with a `code`:
 | `internal_error` | Rust code panicked. Carries a `diagnosticId`; the panic text is not sent to the caller. |
 | `engine_shutdown` | A call arrived after shutdown began. |
 
+A typed-array argument of the wrong type, or a view of a `SharedArrayBuffer`, throws the
+standard Node-API `InvalidArg` error before any Rust code reads it. Rust reads and writes these
+arrays without locks, which is only sound for memory no other thread can reach.
+
 ## Good to know
 
 - A pending native task keeps a process alive. If a script ends without `process.exit()` while a
   pool still has work, it exits only after that work finishes (the smoke test measures this and
   prints the result). Call `pool.shutdown(waitMs)` or `process.exit()` to leave early.
+- `new Pool(workers)` starts 1 to 256 threads. If the system refuses a thread, it throws
+  `internal_error` and stops the threads it started.
 - The callback queue (`Sink`) holds 4 values. That size is fixed at compile time by napi-rs.
 - `rust/bench/` is a separate workspace and is not part of this one.
 - To go back to the normal gbrain path, `unset GBRAIN_RUST_ENGINE_ADDON`.

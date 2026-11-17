@@ -106,7 +106,13 @@
     "skills/skill-budgets.tsv": ["test/skill-health.test.ts"],
     "skills/skills.lock.history.json": ["test/skills-integrity.test.ts", "test/skillpack-safe-update.test.ts"],
     "scripts/check-migration-projection.ts": ["test/scripts/check-migration-projection.test.ts"],
-    "scripts/migration-projection-baseline.tsv": ["test/scripts/check-migration-projection.test.ts"]
+    "scripts/migration-projection-baseline.tsv": ["test/scripts/check-migration-projection.test.ts"],
+    "rust/Cargo.toml": ["rust/crates/gbrain-napi/src/pool.rs"],
+    "rust/Cargo.lock": ["rust/crates/gbrain-napi/src/pool.rs"],
+    "rust/deny.toml": ["rust/crates/gbrain-napi/src/pool.rs"],
+    "rust/rust-toolchain.toml": ["rust/crates/gbrain-napi/src/pool.rs"],
+    "rust/scripts/**": ["rust/smoke/smoke.test.ts"],
+    "rust/smoke/**": ["rust/smoke/smoke.test.ts"]
   },
   "guards": [
     {

@@ -13,6 +13,26 @@ export interface Case {
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
+/** Wait until `check` holds, for at most `ms`. */
+async function until(what: string, check: () => boolean, ms = 5000): Promise<void> {
+  const deadline = performance.now() + ms;
+  while (!check()) {
+    if (performance.now() > deadline) throw new assert.AssertionError({ message: `timed out waiting for ${what}` });
+    await sleep(5);
+  }
+}
+
+/** The error a synchronous call throws. */
+function thrown(call: () => unknown): Error & Record<string, unknown> {
+  try {
+    call();
+  } catch (error) {
+    assert.ok(error instanceof Error, 'throws must be real Error objects');
+    return error as Error & Record<string, unknown>;
+  }
+  throw new assert.AssertionError({ message: 'expected the call to throw' });
+}
+
 /** Await a promise that must reject, and return the rejection. */
 async function rejection(promise: Promise<unknown>): Promise<Error & Record<string, unknown>> {
   try {
@@ -155,7 +175,7 @@ export const cases: Case[] = [
       const running = pool.blockFor(300);
       const queuedA = rejection(pool.blockFor(10));
       const queuedB = rejection(pool.blockFor(10));
-      await sleep(50); // let the first task start
+      await until('the first task to start', () => pool.running === 1);
       assert.equal(pool.running, 1);
       assert.equal(pool.queued, 2);
       const startedAt = performance.now();
@@ -185,7 +205,7 @@ export const cases: Case[] = [
     async run(addon) {
       const pool: Pool = new addon.Pool(1);
       const slow = pool.blockFor(1500);
-      await sleep(50);
+      await until('the slow task to start', () => pool.running === 1);
       const startedAt = performance.now();
       const report = await pool.shutdown(150);
       const waited = performance.now() - startedAt;
@@ -194,6 +214,83 @@ export const cases: Case[] = [
       assert.ok(waited >= 140 && waited < 1000, `waited ${waited.toFixed(0)} ms for a 150 ms bound`);
       assert.equal(pool.state, 'closed');
       assert.equal(await slow, 1500, 'the abandoned task still settles its promise');
+    },
+  },
+  {
+    name: 'shutdown: admission closes before shutdown() returns, not when it settles',
+    async run(addon) {
+      const pool = new addon.Pool(1);
+      const running = pool.blockFor(200);
+      const queued = rejection(pool.blockFor(10));
+      await until('the first task to start', () => pool.running === 1);
+      const pending = pool.shutdown(5000);
+      // The shutdown promise is still pending; nothing new may get in.
+      assert.equal(pool.state, 'shutting_down');
+      assert.equal((await rejection(pool.blockFor(1))).code, 'engine_shutdown');
+      assert.equal((await rejection(pool.runSteps(1, 1))).code, 'engine_shutdown');
+      assert.equal((await rejection(pool.sumF32(new Float32Array([1])))).code, 'engine_shutdown');
+      assert.deepEqual(await pending, { cancelledQueued: 1, finishedRunning: 1, abandonedRunning: 0 });
+      assert.equal((await queued).code, 'cancelled');
+      assert.equal(await running, 200);
+      assert.equal(pool.state, 'closed');
+      await until('the worker to exit', () => pool.workers === 0);
+    },
+  },
+  {
+    name: 'pool: the worker count is bounded and a pool with no workers still gets one',
+    async run(addon) {
+      const one = new addon.Pool(0);
+      assert.equal(one.workers, 1);
+      assert.equal(await one.blockFor(1), 1);
+      await one.shutdown(1000);
+      const capped = new addon.Pool(100_000);
+      assert.equal(capped.workers, 256);
+      await capped.shutdown(1000);
+      await until('the capped workers to exit', () => capped.workers === 0);
+    },
+  },
+  {
+    name: 'pool: a pool collected without shutdown stops its workers',
+    async run(addon) {
+      const collect = (globalThis as { Bun?: { gc(full: boolean): void } }).Bun?.gc;
+      assert.ok(collect, 'this case runs under Bun, which can force a collection');
+      const before = addon.liveWorkers();
+      (() => {
+        for (let i = 0; i < 8; i++) new addon.Pool(2);
+      })();
+      assert.equal(addon.liveWorkers(), before + 16);
+      await until(
+        'the collected pools to stop their workers',
+        () => {
+          collect(true);
+          return addon.liveWorkers() <= before;
+        },
+        10_000,
+      );
+    },
+  },
+  {
+    name: 'typed arrays: a view of a SharedArrayBuffer is refused by every entry point',
+    async run(addon) {
+      const shared = new Float32Array(new SharedArrayBuffer(12));
+      shared.set([1, 2, 3]);
+      const pool = new addon.Pool(1);
+      const calls: Array<[string, () => unknown]> = [
+        ['sumF32', () => addon.sumF32(shared)],
+        ['scaleF32', () => addon.scaleF32(shared, 2)],
+        ['scaleInPlaceF32', () => addon.scaleInPlaceF32(shared, 2)],
+        ['pool.sumF32', () => pool.sumF32(shared)],
+        ['pool.scaleF32', () => pool.scaleF32(shared, 2)],
+      ];
+      for (const [name, call] of calls) {
+        const error = thrown(call);
+        assert.equal(error.code, 'InvalidArg', `${name} code`);
+        assert.match(error.message, /SharedArrayBuffer/, `${name} message`);
+      }
+      assert.deepEqual([...shared], [1, 2, 3], 'nothing wrote into the shared memory');
+      assert.equal(addon.sumF32(new Float32Array([1, 2, 3])), 6, 'a plain array still works');
+      assert.equal(await pool.sumF32(new Float32Array([2])), 2);
+      await pool.shutdown(1000);
     },
   },
   {

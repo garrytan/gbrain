@@ -115,13 +115,17 @@ jobs:
           rustup default "$channel"
           rustc --version
           cargo --version
+      # The cache name is built in a step so the cache key line holds no long literal value.
+      - name: Name the cache from the lock file and toolchain
+        id: cachename
+        run: echo "value=rust-checks-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             rust/target
-          key: rust-checks-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}
+          key: ${{ steps.cachename.outputs.value }}
           restore-keys: |
             rust-checks-${{ runner.os }}-${{ runner.arch }}-
       - name: Format
@@ -198,13 +202,17 @@ jobs:
           rustup default "$channel"
           rustc --version
           cargo --version
+      # The cache name is built in a step so the cache key line holds no long literal value.
+      - name: Name the cache from the lock file and toolchain
+        id: cachename
+        run: echo "value=rust-addon-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             rust/target
-          key: rust-addon-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}
+          key: ${{ steps.cachename.outputs.value }}
           restore-keys: |
             rust-addon-${{ runner.os }}-${{ runner.arch }}-
       - name: Build the addon

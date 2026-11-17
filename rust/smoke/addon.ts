@@ -22,6 +22,7 @@ export interface Pool {
   readonly state: string;
   readonly queued: number;
   readonly running: number;
+  readonly workers: number;
   blockFor(ms: number): Promise<number>;
   runSteps(steps: number, stepMs: number, token?: CancelToken): Promise<number>;
   sumF32(values: Float32Array): Promise<number>;
@@ -47,6 +48,7 @@ export interface Addon {
   scaleF32(values: Float32Array, factor: number): Float32Array;
   scaleInPlaceF32(values: Float32Array, factor: number): number;
   probePanicSync(): void;
+  liveWorkers(): number;
   CancelToken: new () => CancelToken;
   Pool: new (workers: number) => Pool;
   Sink: new (callback: (value: number) => void) => Sink;
