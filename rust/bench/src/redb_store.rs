@@ -1,7 +1,10 @@
 //! redb as a plain ordered key-value store. Durability::Immediate = one fsync per commit.
 
 use crate::kv::*;
-use redb::{Database, Durability, ReadTransaction, ReadableDatabase, TableDefinition};
+use gbrain_sim::SimFile;
+use redb::{
+    Database, Durability, ReadTransaction, ReadableDatabase, StorageBackend, TableDefinition,
+};
 use std::path::Path;
 
 const DATA: TableDefinition<&[u8], &[u8]> = TableDefinition::new("data");
@@ -24,12 +27,48 @@ impl RedbStore {
         let db = Database::builder()
             .create(dir.join("records.redb"))
             .map_err(store_err)?;
+        Self::init(db)
+    }
+
+    /// Open (or create) the database on any `StorageBackend`. The simulation uses this to put
+    /// redb on a fault-injecting `SimDisk`.
+    pub fn open_with_backend(backend: impl StorageBackend) -> Result<Self> {
+        let db = Database::builder()
+            .create_with_backend(backend)
+            .map_err(store_err)?;
+        Self::init(db)
+    }
+
+    fn init(db: Database) -> Result<Self> {
         // Make sure both tables exist so read snapshots can always open them.
         let w = db.begin_write().map_err(store_err)?;
         w.open_table(DATA).map_err(store_err)?;
         w.open_table(LOG).map_err(store_err)?;
         w.commit().map_err(store_err)?;
         Ok(Self { db })
+    }
+}
+
+/// redb's `StorageBackend` over a simulated file: reads, writes, set_len and fsync all go through
+/// `SimDisk`, so the seed decides crashes, torn writes and fsync faults.
+#[derive(Debug)]
+pub struct SimDiskBackend(pub SimFile);
+
+impl StorageBackend for SimDiskBackend {
+    fn len(&self) -> std::io::Result<u64> {
+        self.0.len()
+    }
+    fn read(&self, offset: u64, out: &mut [u8]) -> std::io::Result<()> {
+        self.0.read_at(offset, out)
+    }
+    fn set_len(&self, len: u64) -> std::io::Result<()> {
+        self.0.set_len(len)
+    }
+    fn sync_data(&self) -> std::io::Result<()> {
+        self.0.sync()
+    }
+    fn write(&self, offset: u64, data: &[u8]) -> std::io::Result<()> {
+        self.0.write_at(offset, data)
     }
 }
 

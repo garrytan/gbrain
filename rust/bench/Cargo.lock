@@ -215,6 +215,7 @@ name = "gbrain-bakeoff"
 version = "0.1.0"
 dependencies = [
  "fjall",
+ "gbrain-sim",
  "heed",
  "libc",
  "rayon",
@@ -222,6 +223,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "gbrain-sim"
+version = "0.0.0"
 
 [[package]]
 name = "getrandom"

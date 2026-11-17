@@ -39,6 +39,10 @@ pub const ALL_METRICS: &[&str] = &[
     "write_hot_w16_atomic",
     "crash_recovery",
     "second_process",
+    "sim_crash",
+    "sim_fsync_fault",
+    "sim_commit_layer",
+    "sim_negative_control",
     "disk_bytes",
     "peak_rss_bytes",
 ];
@@ -262,6 +266,15 @@ impl Run {
         if self.wants("second_process") {
             let m = self.second_process().unwrap_or_else(metric_err);
             self.set("second_process", m);
+        }
+        let sim_names = [
+            "sim_crash",
+            "sim_fsync_fault",
+            "sim_commit_layer",
+            "sim_negative_control",
+        ];
+        if sim_names.iter().any(|n| self.wants(n)) {
+            self.sim_metrics(&sim_names);
         }
         if self.wants("disk_bytes") {
             let bytes = dir_bytes(&self.cfg.store);
@@ -947,6 +960,80 @@ impl Run {
             "kill_after_s": kill_after.as_secs(),
             "note": "child writes 4-chunk pages with 4 threads, acknowledges each durable commit on a pipe, and is SIGKILLed after the delay; reopen_ms covers open + commit-pipeline start + page-id scan. lost = acknowledged pages missing or with different chunks",
         }))
+    }
+
+    /// The deterministic simulations (see simrun.rs), run in a child process so their memory and
+    /// any panic stay out of this run's numbers. Seed counts are fixed so runs are comparable.
+    fn sim_metrics(&mut self, names: &[&str]) {
+        self.close();
+        let (seeds, kill_seeds) = if self.cfg.quick { (50, 10) } else { (500, 40) };
+        let dir = format!("{}-sim", self.cfg.store.display());
+        let engine = self.cfg.engine.name();
+        let args: Vec<String> = [
+            "sim",
+            "--engine",
+            engine,
+            "--seeds",
+            &seeds.to_string(),
+            "--kill-seeds",
+            &kill_seeds.to_string(),
+            "--store",
+            &dir,
+            "--json",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let run = match run_child(&args, Duration::from_secs(900)) {
+            Ok(r) => r,
+            Err(e) => {
+                for n in names.iter().filter(|n| self.wants(n)).collect::<Vec<_>>() {
+                    self.set(
+                        n,
+                        metric_err(format!("could not start the simulation: {e}")),
+                    );
+                }
+                return;
+            }
+        };
+        for line in run.stderr.lines().filter(|l| l.contains("sim_")) {
+            self.log(line);
+        }
+        let doc = last_json_line(&run.stdout);
+        let rows = doc.as_ref().and_then(|d| d[engine].as_object());
+        for n in names.iter().filter(|n| self.wants(n)).collect::<Vec<_>>() {
+            match rows.and_then(|r| r.get(*n)) {
+                Some(row) => {
+                    let bad: u64 = ["lost", "torn", "nonserializable", "corrupt"]
+                        .iter()
+                        .map(|k| row[*k].as_u64().unwrap_or(0))
+                        .sum();
+                    // The negative control is supposed to find violations.
+                    if bad > 0 && *n != "sim_negative_control" {
+                        self.failed_checks
+                            .push(format!("{n}: {bad} violation(s); see repro_note"));
+                    }
+                    self.set(n, row.clone());
+                }
+                None if *n == "sim_negative_control" && engine != "redb" => {}
+                None => self.set(
+                    n,
+                    metric_err(format!(
+                        "the simulation produced no {n} row (timed out: {}): {}",
+                        run.timed_out,
+                        run.stderr
+                            .chars()
+                            .rev()
+                            .take(300)
+                            .collect::<String>()
+                            .chars()
+                            .rev()
+                            .collect::<String>()
+                    )),
+                ),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn second_process(&mut self) -> Result<Metric, String> {

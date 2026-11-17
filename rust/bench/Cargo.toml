@@ -19,6 +19,7 @@ name = "gbrain-bakeoff"
 path = "src/main.rs"
 
 [dependencies]
+gbrain-sim = { path = "../crates/gbrain-sim" }
 redb = "4.6"
 fjall = "3.1"
 heed = { version = "0.23", default-features = false }

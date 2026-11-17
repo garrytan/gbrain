@@ -14,6 +14,8 @@ pub mod records;
 pub mod redb_store;
 #[cfg(test)]
 mod sim;
+pub mod simload;
+pub mod simrun;
 pub mod synth;
 pub mod util;
 pub mod vector;

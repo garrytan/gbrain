@@ -52,6 +52,7 @@ pass to `--only`.
 | `write_hot_w16_atomic` | The same with the conflict-free atomic add. |
 | `crash_recovery` | A child process writes continuously and is SIGKILLed after about 2 s; the parent reopens. `lost` counts acknowledged commits that are missing or changed; `consistent` is a whole-store structural check (chunk counts, orphans, page-id index, commit-log contiguity). |
 | `second_process` | While the owner holds the store, a second process tries to open it directly (`outcome` says refused or opened), and then four client processes talk to the owner over a Unix socket (`client_get_page_p50_ms`, `client_errors`). |
+| `sim_crash`, `sim_fsync_fault`, `sim_commit_layer` (and `sim_negative_control` for redb) | The deterministic simulation results for this candidate; see "Deterministic simulation" below. Fields: `seeds`, `crash_points`, `faults`, `lost`, `torn`, `nonserializable`, `corrupt`, `ops_per_s`, `repro_note`. The earlier `write_w*` numbers are unchanged. |
 | `disk_bytes` | Bytes on disk after import and after the write tests. |
 | `peak_rss_bytes` | `ru_maxrss` of the harness process. It includes the in-memory vector matrix and the store's own cache. |
 
@@ -109,10 +110,52 @@ counter, nothing lost and the store consistent after the crash, no errors on the
 measured appears as `{"n":0,"error":"..."}`; a store that cannot meet a requirement is a result,
 not a crash.
 
+## Deterministic simulation
+
+The harness lives in `../crates/gbrain-sim` (standard library only, part of the main `rust/`
+workspace, so it survives the store choice). This crate depends on it by path. It has a seeded
+single-threaded scheduler with a fake clock and a trace hash (same seed, same hash), `SimDisk`
+(write, fsync, read, with crash points, a torn last sector, a reordering crash, fsync errors and
+fsync lies, all chosen by the seed), and checkers for lost commits, torn reads, serializability and
+recovery ("opens with exactly a committed prefix, or refuses cleanly, never silent corruption").
+Each checker has a test that makes it fail.
+
+`src/simload.rs` is the workload: eight simulated clients and one flusher run small transactions
+over five keys and hand batches to the real commit layer (`Committer`). `src/simrun.rs` runs it
+per candidate:
+
+| Candidate | How it is crashed | What it can and cannot show |
+| --- | --- | --- |
+| redb | In process on a `SimDisk` plugged into redb's `StorageBackend` trait. The seed picks a crash at any I/O call after the file exists, and whether the crash keeps nothing, a torn tail, or a random subset of unsynced writes. `sim_fsync_fault` adds seeded fsync errors and fsync lies. | Full crash-point and fsync-fault injection. Crashes during first-time creation of the file are not injected (nothing was acknowledged yet). After a lie, losing acknowledged commits is counted as expected (`lost_after_lie_expected`), a torn or corrupt state is not. After a lie the crash is in order (drop or torn tail), never a reordering one. |
+| fjall, LMDB | A child process runs the seeded workload on the real files and acknowledges each durable commit on a pipe. The parent SIGKILLs it after a seed-chosen number of acks plus a seeded sub-millisecond delay, reopens, and checks against a reference run of the same seed on the in-memory store. | Recovery and atomicity after a process crash. A SIGKILL keeps the OS page cache, so unsynced data survives: it does NOT test fsync ordering, torn sectors or fsync faults. `sim_fsync_fault` is reported as not measured (`supported: false`, nulls). Injecting those faults would need a filesystem shim (LD_PRELOAD or FUSE); none was built. That is a gap in the evidence for fjall and LMDB, not a pass. |
+| all | `sim_commit_layer`: the commit layer over the in-memory store under the scheduler. Checks serializability of the committed history, torn snapshot reads, and that the same seed run twice gives the same trace hash. | Independent of the base store. |
+
+Negative controls: `sim_negative_control` (redb) makes every fsync lie and reorder at the crash,
+then tells the checker the disk was honest; it must report violations (it does: redb refuses to
+open or loses commits, which the checker flags). If it found nothing the command fails.
+
+```sh
+# Per-candidate simulation, all engines (this is what CI runs; ~30 s plus the build).
+cargo run --release --locked -- sim --engine all --seeds 2000 --kill-seeds 50
+# One engine, one kind, a wider sweep, a different seed range:
+cargo run --release -- sim --engine redb --kind crash,fault --seeds 100000 --base 5000
+# Replay one failing seed exactly (the failure message prints this line):
+GBRAIN_SIM_SEED=<n> cargo run --release -- sim --engine redb --kind fault
+```
+
+`--kind` takes `crash`, `fault`, `layer`, `control` (default all). `--seeds` sets the in-process
+seed count, `--kill-seeds` the (slower, real-file) SIGKILL seed count, `--base` the first seed,
+`--store` where fjall and LMDB scratch stores go. Exit status is 1 if any checker reports a
+violation. `run` also records the three rows (plus the control for redb) in each result JSON.
+
+`gbrain-sim`'s own tests run under `cargo test` in `rust/`. They include a toy write-ahead log on
+`SimDisk` that must survive 300 seeds of crashes and fsync faults, and the same log with the fsync
+before the acknowledgement removed, which the checkers must catch losing commits.
+
 ## Tests
 
 ```sh
-cargo test                                  # unit tests, the seeded simulation, store contract tests
+cargo test --release                        # unit tests, the seeded simulations, store contract tests, the SIGKILL tests
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
@@ -129,5 +172,7 @@ created under `target/test-tmp/`.
 - `src/keys.rs`, `src/records.rs`: key layout and the page/chunk record layer.
 - `src/corpus.rs`, `src/vector.rs`: corpus reader, exact scan, ground truth.
 - `src/owner.rs`: the owner socket (one process owns the store, others are clients).
+- `src/simload.rs`, `src/simrun.rs`, `tests/sim_kill.rs`: the simulation workload, the per-candidate
+  crash runs, and the SIGKILL tests. The harness itself is `../crates/gbrain-sim`.
 - `src/workload.rs`, `src/children.rs`, `src/main.rs`: the metrics, the child processes
   (cold open, crash writer, second-process probe, socket clients) and the CLI.

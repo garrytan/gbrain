@@ -1,8 +1,8 @@
-//! Tests for the optimistic layer: targeted conflict-detection cases plus a seeded, deterministic
-//! simulation stub that interleaves many simulated transactions over a few keys and checks the
-//! recorded history is serializable. The scheduler is single-threaded and driven by one seed, so a
-//! failing seed replays exactly. (A real simulation harness with I/O and crash injection, and
-//! thread-interleaving tests under shuttle or loom, are follow-ups; this is the stub.)
+//! Tests for the optimistic layer: targeted conflict-detection cases, then seeded simulations on
+//! the `gbrain-sim` scheduler (see `simload.rs`): many simulated transactions over a few keys,
+//! the committed history checked for serializability and torn reads. A failing seed prints a
+//! one-line repro. Crash and fsync-fault simulations are in `simrun.rs`. Thread-interleaving
+//! tests under shuttle or loom are a follow-up.
 
 use crate::kv::*;
 use crate::mem_store::MemStore;
@@ -297,329 +297,54 @@ fn typed_run_retries_to_success_and_never_returns_busy() {
     );
 }
 
-// ---- deterministic simulation stub -----------------------------------------------------------
+// ---- seeded simulations ----------------------------------------------------------------------
 
-struct Rng(u64);
-impl Rng {
-    fn next(&mut self) -> u64 {
-        // splitmix64
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
-    fn below(&mut self, n: usize) -> usize {
-        (self.next() % n as u64) as usize
-    }
-}
-
-#[derive(Clone, Debug)]
-enum SimRead {
-    Get(Vec<u8>, Option<Vec<u8>>),
-    Range {
-        start: Vec<u8>,
-        end: Vec<u8>,
-        limit: usize,
-        /// Own writes made before the range read, as (key -> Some(put)/None(delete)).
-        own: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
-        rows: Vec<(Vec<u8>, Vec<u8>)>,
-    },
-}
-
-struct Active {
-    id: usize,
-    txn: Txn,
-    steps_left: usize,
-    own: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
-    reads: Vec<SimRead>,
-}
-
-struct Committed {
-    snapshot: u64,
-    version: u64,
-    reads: Vec<SimRead>,
-    writes: Vec<(Vec<u8>, Option<Vec<u8>>)>,
-}
-
-const KEYS: [&[u8]; 5] = [b"k/0", b"k/1", b"k/2", b"k/3", b"k/4"];
-
-fn range_of(rng: &mut Rng) -> (Vec<u8>, Vec<u8>) {
-    let a = rng.below(KEYS.len());
-    let b = a + 1 + rng.below(KEYS.len() - a);
-    let end = if b >= KEYS.len() {
-        b"k/9".to_vec()
-    } else {
-        KEYS[b].to_vec()
-    };
-    (KEYS[a].to_vec(), end)
-}
-
-fn run_sim(seed: u64, n_txns: usize) -> (usize, usize, usize) {
-    let mut rng = Rng(seed);
-    let store = mem();
-    let mut committer = committer(&store);
-    let mut active: Vec<Active> = Vec::new();
-    let mut ready: Vec<Active> = Vec::new();
-    let mut committed: Vec<Committed> = Vec::new();
-    let (mut started, mut conflicts, mut multi_batches) = (0usize, 0usize, 0usize);
-
-    while started < n_txns || !active.is_empty() || !ready.is_empty() {
-        match rng.below(10) {
-            // begin a new transaction (snapshot taken now, so it interleaves with others)
-            0..=2 if started < n_txns && active.len() < 8 => {
-                let mut t = txn(&store);
-                t.enable_trace();
-                active.push(Active {
-                    id: started,
-                    txn: t,
-                    steps_left: 1 + rng.below(5),
-                    own: BTreeMap::new(),
-                    reads: vec![],
-                });
-                started += 1;
-            }
-            // advance one active transaction by one step
-            3..=7 if !active.is_empty() => {
-                let i = rng.below(active.len());
-                let a = &mut active[i];
-                match rng.below(4) {
-                    0 | 1 => {
-                        let k = KEYS[rng.below(KEYS.len())];
-                        let got = a.txn.get(k).unwrap();
-                        if let Some(own) = a.own.get(k) {
-                            assert_eq!(&got, own, "read-your-own-write");
-                        } else {
-                            a.reads.push(SimRead::Get(k.to_vec(), got));
-                        }
-                    }
-                    2 => {
-                        let (s, e) = range_of(&mut rng);
-                        let limit = 1 + rng.below(4);
-                        let rows = a.txn.range(&s, &e, limit).unwrap();
-                        a.reads.push(SimRead::Range {
-                            start: s,
-                            end: e,
-                            limit,
-                            own: a.own.clone(),
-                            rows,
-                        });
-                    }
-                    _ => {
-                        let k = KEYS[rng.below(KEYS.len())].to_vec();
-                        if rng.below(5) == 0 {
-                            a.txn.delete(k.clone());
-                            a.own.insert(k, None);
-                        } else {
-                            let v = format!("t{}-{}", a.id, rng.below(1000)).into_bytes();
-                            a.txn.put(k.clone(), v.clone());
-                            a.own.insert(k, Some(v));
-                        }
-                    }
-                }
-                a.steps_left -= 1;
-                if a.steps_left == 0 {
-                    ready.push(active.swap_remove(i));
-                }
-            }
-            // flush a random-sized group of finished transactions as ONE batch, in random order
-            _ if !ready.is_empty() => {
-                let take = 1 + rng.below(ready.len());
-                let mut group = Vec::new();
-                for _ in 0..take {
-                    let j = rng.below(ready.len());
-                    group.push(ready.swap_remove(j));
-                }
-                let mut metas = Vec::new();
-                let mut reqs = Vec::new();
-                for mut a in group {
-                    let observed = a.txn.take_trace();
-                    assert_eq!(observed.len(), a.reads.len(), "trace and sim reads agree");
-                    let req = a.txn.into_request();
-                    let writes: Vec<_> = req
-                        .writes
-                        .iter()
-                        .map(|(k, op)| match op {
-                            WriteOp::Put(v) => (k.clone(), Some(v.clone())),
-                            WriteOp::Delete => (k.clone(), None),
-                            WriteOp::AddI64(_) => {
-                                unreachable!("the simulation does not use atomic adds")
-                            }
-                        })
-                        .collect();
-                    metas.push((req.snapshot_version, a.reads, writes));
-                    reqs.push(req);
-                }
-                let results = committer.commit_batch(reqs, None);
-                let ok_in_batch = results.iter().filter(|r| r.is_ok()).count();
-                if ok_in_batch > 1 {
-                    multi_batches += 1;
-                }
-                for ((snapshot, reads, writes), r) in metas.into_iter().zip(results) {
-                    match r {
-                        Ok(version) => committed.push(Committed {
-                            snapshot,
-                            version,
-                            reads,
-                            writes,
-                        }),
-                        Err(Error::Conflict) => conflicts += 1,
-                        Err(e) => panic!("unexpected error {e}"),
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    check_serializable(&committed, &store);
-    (committed.len(), conflicts, multi_batches)
-}
-
-fn merge_range(
-    model: &BTreeMap<Vec<u8>, Vec<u8>>,
-    own: &BTreeMap<Vec<u8>, Option<Vec<u8>>>,
-    start: &[u8],
-    end: &[u8],
-    limit: usize,
-) -> Vec<(Vec<u8>, Vec<u8>)> {
-    let mut m: BTreeMap<Vec<u8>, Vec<u8>> = model
-        .range(start.to_vec()..end.to_vec())
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-    for (k, v) in own.range(start.to_vec()..end.to_vec()) {
-        match v {
-            Some(v) => {
-                m.insert(k.clone(), v.clone());
-            }
-            None => {
-                m.remove(k);
-            }
-        }
-    }
-    m.into_iter().take(limit).collect()
-}
-
-fn check_serializable(committed: &[Committed], store: &Arc<dyn BaseStore>) {
-    // Versions are unique and strictly increasing in commit order.
-    let mut order: Vec<&Committed> = committed.iter().collect();
-    order.sort_by_key(|c| c.version);
-    for w in order.windows(2) {
-        assert!(w[0].version < w[1].version);
-    }
-
-    // Property 1: replaying committed transactions in commit order reproduces every read.
-    let mut model: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
-    for c in &order {
-        for r in &c.reads {
-            match r {
-                SimRead::Get(k, seen) => assert_eq!(
-                    model.get(k),
-                    seen.as_ref(),
-                    "txn at version {} read a stale value of {:?}",
-                    c.version,
-                    String::from_utf8_lossy(k)
-                ),
-                SimRead::Range {
-                    start,
-                    end,
-                    limit,
-                    own,
-                    rows,
-                } => assert_eq!(
-                    &merge_range(&model, own, start, end, *limit),
-                    rows,
-                    "txn at version {} saw a stale range",
-                    c.version
-                ),
-            }
-        }
-        for (k, v) in &c.writes {
-            match v {
-                Some(v) => {
-                    model.insert(k.clone(), v.clone());
-                }
-                None => {
-                    model.remove(k);
-                }
-            }
-        }
-    }
-
-    // Property 2 (stated directly): no committed transaction read a key that another committed
-    // transaction overwrote between its snapshot and its own commit.
-    for c in &order {
-        for other in &order {
-            if other.version > c.snapshot && other.version < c.version {
-                for r in &c.reads {
-                    match r {
-                        SimRead::Get(k, _) => {
-                            assert!(
-                                !other.writes.iter().any(|(w, _)| w == k),
-                                "overwritten read of {:?}",
-                                k
-                            )
-                        }
-                        SimRead::Range {
-                            start,
-                            end,
-                            rows,
-                            limit,
-                            ..
-                        } => {
-                            // observed extent: up to the last returned key if the page was full
-                            let hi = if rows.len() == *limit {
-                                key_successor(&rows[rows.len() - 1].0)
-                            } else {
-                                end.clone()
-                            };
-                            assert!(
-                                !other.writes.iter().any(|(w, _)| w >= start && *w < hi),
-                                "overwritten range read"
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // The store ends in exactly the replayed state.
-    let snap = store.snapshot().unwrap();
-    for k in KEYS {
-        assert_eq!(snap.get(Table::Data, k).unwrap().as_ref(), model.get(k));
-    }
-    assert_eq!(
-        read_version(snap.as_ref()).unwrap(),
-        order.last().map(|c| c.version).unwrap_or(0)
-    );
-}
+use crate::simload::run_mem;
+use crate::simrun::{layer_seed, redb_seed, Kind, TXNS};
+use gbrain_sim::check::{self, Committed, ReadObs};
+use gbrain_sim::seed::run_seeds;
 
 #[test]
 fn simulation_histories_are_serializable_across_many_seeds() {
-    let (mut commits, mut conflicts, mut multi) = (0, 0, 0);
-    for seed in 0..300u64 {
-        let (c, x, m) = run_sim(seed, 60);
-        commits += c;
-        conflicts += x;
-        multi += m;
-    }
-    // Make sure the stub exercised what it claims to: commits, conflicts and group commits.
+    let totals = std::cell::RefCell::new((0usize, 0usize, 0usize));
+    run_seeds(
+        "cargo test --release -p gbrain-bakeoff simulation_histories_are_serializable_across_many_seeds",
+        300,
+        |seed| {
+            let o = run_mem(seed, 60);
+            if let Some(v) = o.violations.first() {
+                return Err(format!("{}: {}", v.class.name(), v.message));
+            }
+            let mut t = totals.borrow_mut();
+            t.0 += o.committed.len();
+            t.1 += o.conflicts;
+            t.2 += o.multi_batches;
+            Ok(())
+        },
+    );
+    let (commits, conflicts, multi) = *totals.borrow();
+    // Make sure the simulation exercised what it claims to: commits, conflicts and group commits.
     assert!(commits > 3000, "commits {commits}");
     assert!(conflicts > 300, "conflicts {conflicts}");
     assert!(multi > 100, "multi-transaction batches {multi}");
 }
 
 #[test]
-fn simulation_is_deterministic_for_a_seed() {
-    assert_eq!(run_sim(42, 80), run_sim(42, 80));
+fn the_same_seed_twice_gives_the_same_history_and_trace_hash() {
+    for seed in [42, 7, 1234] {
+        let (a, same) = layer_seed(seed, 80);
+        assert!(same, "seed {seed}: trace hash differs between two runs");
+        let b = run_mem(seed, 80);
+        assert_eq!(a.trace_hash, b.trace_hash);
+        assert_eq!(a.committed.len(), b.committed.len());
+        assert_eq!(a.batches, b.batches);
+    }
+    assert_ne!(run_mem(1, 80).trace_hash, run_mem(2, 80).trace_hash);
 }
 
-/// The checker must be able to fail: feeding it a history with a stale read is rejected.
+/// The checker must be able to fail: a history with a stale read is rejected.
 #[test]
-#[should_panic(expected = "stale")]
 fn the_serializability_checker_rejects_a_stale_read() {
-    let store = mem();
     let history = vec![
         Committed {
             snapshot: 0,
@@ -630,9 +355,65 @@ fn the_serializability_checker_rejects_a_stale_read() {
         Committed {
             snapshot: 0,
             version: 2,
-            reads: vec![SimRead::Get(b"k/0".to_vec(), None)], // saw the pre-commit value
+            reads: vec![ReadObs::Point {
+                key: b"k/0".to_vec(),
+                value: None, // saw the pre-commit value
+            }],
             writes: vec![],
         },
     ];
-    check_serializable(&history, &store);
+    let e = check::check_serializable(&history).unwrap_err();
+    assert!(e.message.contains("stale"), "{}", e.message);
+}
+
+// ---- crash simulation on a simulated disk (redb) ---------------------------------------------
+
+#[test]
+fn redb_survives_seeded_crash_points_and_fsync_faults() {
+    for (kind, name) in [(Kind::Crash, "crash"), (Kind::FsyncFault, "fault")] {
+        let cell = std::cell::RefCell::new((0u64, 0u64));
+        run_seeds(
+            &format!("cargo test --release -p gbrain-bakeoff redb_survives_seeded_crash_points_and_fsync_faults  # kind {name}"),
+            150,
+            |seed| {
+                let r = redb_seed(seed, kind, TXNS);
+                let mut c = cell.borrow_mut();
+                c.0 += r.crash_hit as u64;
+                c.1 += r.faults;
+                match r.violations.first() {
+                    Some(v) => Err(format!("{name}: {}: {}", v.class.name(), v.message)),
+                    None => Ok(()),
+                }
+            },
+        );
+        let (crash_points, faults) = *cell.borrow();
+        assert!(crash_points > 50, "{name}: crash points hit {crash_points}");
+        if kind == Kind::FsyncFault {
+            assert!(faults > 50, "faults injected {faults}");
+        }
+    }
+}
+
+#[test]
+fn a_redb_seed_is_deterministic_including_the_disk() {
+    for seed in [3, 99] {
+        let a = redb_seed(seed, Kind::FsyncFault, TXNS);
+        let b = redb_seed(seed, Kind::FsyncFault, TXNS);
+        assert_eq!(a.trace_hash, b.trace_hash, "seed {seed}");
+        assert_eq!(a.io_ops, b.io_ops, "seed {seed}");
+        assert_eq!(a.faults, b.faults, "seed {seed}");
+    }
+}
+
+/// The checker must be able to fail on real redb output: with every fsync lying and a reordering
+/// crash, told the disk was honest, it must flag violations.
+#[test]
+fn the_redb_control_run_is_flagged() {
+    let flagged = (0..60u64)
+        .filter(|s| !redb_seed(*s, Kind::Control, TXNS).violations.is_empty())
+        .count();
+    assert!(
+        flagged > 10,
+        "negative control flagged only {flagged} of 60 seeds"
+    );
 }
