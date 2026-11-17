@@ -943,10 +943,10 @@ real credential publishes it.
 If it is not (a sample value in documentation, a test fixture), run the
 "allow this finding" command from the refusal, review the change to
 `.gbrain-scan-allow`, then run the retry command. The file holds one entry
-per line: a fingerprint (`sha256:` and at least 16 hex characters) or a path
+per line: a fingerprint (`sha256:` and at least 16 hex characters), a path
 glob (a glob without `/` matches a file name at any depth; one with `/` is
-anchored at the repository root), with `#` comments. Commit the file so
-other machines push the same tree.
+anchored at the repository root) or a rule entry (below), with `#` comments.
+Commit the file so other machines push the same tree.
 
 Prefer a fingerprint over a glob. A glob skips the scan for every file it
 matches, including credentials added later.
