@@ -78,17 +78,15 @@ jobs:
         timeout-minutes: 3
         with:
           persist-credentials: false
-      # rustup reads the pinned version from rust/rust-toolchain.toml. The GitHub-hosted macOS
-      # image and most Linux images already have rustup; the install below only runs when it is
-      # missing.
+      # rustup reads the pinned version from rust/rust-toolchain.toml. Every runner this workflow
+      # uses ships rustup; a runner without it fails here rather than piping an installer into sh.
       - name: Install the pinned Rust toolchain
         shell: bash
         run: |
           set -euo pipefail
           if ! command -v rustup >/dev/null 2>&1; then
-            curl --proto '=https' --tlsv1.2 -sSf --retry 3 https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-            export PATH="$HOME/.cargo/bin:$PATH"
+            echo "::error::rustup is not installed on this runner. Use a runner image that ships rustup."
+            exit 1
           fi
           channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$GITHUB_WORKSPACE/rust/rust-toolchain.toml")"
           test -n "$channel"
@@ -164,17 +162,15 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.4.4
-      # rustup reads the pinned version from rust/rust-toolchain.toml. The GitHub-hosted macOS
-      # image and most Linux images already have rustup; the install below only runs when it is
-      # missing.
+      # rustup reads the pinned version from rust/rust-toolchain.toml. Every runner this workflow
+      # uses ships rustup; a runner without it fails here rather than piping an installer into sh.
       - name: Install the pinned Rust toolchain
         shell: bash
         run: |
           set -euo pipefail
           if ! command -v rustup >/dev/null 2>&1; then
-            curl --proto '=https' --tlsv1.2 -sSf --retry 3 https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-            export PATH="$HOME/.cargo/bin:$PATH"
+            echo "::error::rustup is not installed on this runner. Use a runner image that ships rustup."
+            exit 1
           fi
           channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$GITHUB_WORKSPACE/rust/rust-toolchain.toml")"
           test -n "$channel"
