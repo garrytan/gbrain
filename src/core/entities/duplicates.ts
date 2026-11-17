@@ -342,10 +342,10 @@ export interface CleanRuleInput {
 }
 
 /**
- * The rule for `clean` (plan Decision F as approved, narrowed by the conflicting-key veto and the union check):
- * one type, one strict name, one member per source, no vetoing key, and either a key value no page outside the
- * group carries or, for a union, clean parts. Which key classes and how many keys it needs is the owner's open
- * choice; this function is where that choice lands.
+ * The rule for `clean`, rule A as the owner chose it on the bench numbers (plan Decision F, narrowed): one type,
+ * one strict name, one member per source, no vetoing key, and a shared **exclusive** key (LinkedIn, GitHub, a
+ * declared id) whose value no page outside the group carries, or, for a union, clean parts. Contact and handle
+ * keys (email, phone, X handle, domain) never make a group clean on their own.
  */
 export function isCleanGroup(input: CleanRuleInput): boolean {
   const { members } = input;
@@ -353,7 +353,7 @@ export function isCleanGroup(input: CleanRuleInput): boolean {
   if (new Set(members.map(m => m.source_id)).size !== members.length) return false;
   if (input.differing_keys.some(k => k.veto)) return false;
   if (input.union) return true;
-  return input.shared_keys.some(k => k.values_only_in_group > 0);
+  return input.shared_keys.some(k => k.key_class === 'exclusive' && k.values_only_in_group > 0);
 }
 
 interface Draft { kind: DuplicateKind; members: EntityPage[]; evidence: Map<string, DuplicateEvidence>; proposed: DuplicateClass[]; builtin: boolean; union?: { parts: number; failed: boolean } }
@@ -394,6 +394,8 @@ function classOf(d: Draft, carriers: Map<string, number>): { cls: DuplicateClass
   const keys = keyEvidence(d.members, carriers);
   const evidence = [...d.evidence.values(), ...keys.evidence];
   if (d.union?.failed) evidence.push({ matcher: 'key_check', rule: 'union_check_failed' });
+  const shared = keys.input.shared_keys;
+  if (d.kind === 'cross_source' && shared.length && shared.every(k => k.key_class !== 'exclusive')) evidence.push({ matcher: 'key_check', rule: 'contact_key_only' });
   if (d.kind === 'conflict' || d.kind === 'thin') return { cls: d.kind, evidence };
   const plugin = d.proposed.map(c => (c === 'clean' ? 'likely' : c)).filter(c => c === 'likely' || c === 'weak');
   let builtin: DuplicateClass | null = null;
