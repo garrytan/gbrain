@@ -1,6 +1,7 @@
 # Rust engine (experimental)
 
-This folder holds an optional Rust engine for gbrain. Nothing in gbrain uses it yet. Today it is a
+This folder holds an optional Rust engine for gbrain. Nothing in gbrain uses it unless a brain's
+config says `engine: rust`, and the engine itself is not built yet. Today it is a
 small Node-API addon that proves the pieces a Rust engine needs: that Bun can load it, call it,
 cancel its work, survive its panics and shut it down cleanly. You do not need Rust to build, test
 or run gbrain.
@@ -59,6 +60,33 @@ It is a plain script, not a `bun test` file, because the repo's test preloads ca
 `GBRAIN_*` variables.
 
 The same checks run in CI on Linux x64 and macOS arm64 (`.github/workflows/rust-engine.yml`).
+
+## How a release carries the addon
+
+Each gbrain release attaches three extra files next to the gbrain executables:
+`gbrain-engine-rust-linux-x64.node`, `gbrain-engine-rust-darwin-arm64.node` and
+`gbrain-engine-rust.sha256.json`. The JSON file lists each target's file name, SHA-256 and size,
+and the `engine_abi` and `engine_build` of the release. All three carry a GitHub build attestation,
+like the executables.
+
+Nothing is downloaded at install time. The first time a brain with `engine: rust` opens, gbrain:
+
+1. reads the manifest of its own release (`v<VERSION>`) and checks its attestation;
+2. downloads the addon for this machine, then checks its attestation, SHA-256 and size;
+3. saves it as `~/.gbrain/engines/rust/<engine_build>/<target>.node` and loads it, checking that
+   it reports the same `engine_abi`, `engine_build` and target as the manifest.
+
+Later opens load the saved file with no network once its SHA-256 matches. If anything does not
+match, gbrain refuses with `rust_engine_addon_mismatch`; if it cannot get the file, with
+`rust_engine_addon_missing`. It never falls back to another engine. Brains on `pglite` or
+`postgres` never touch any of this.
+
+`GBRAIN_RUST_ENGINE_ADDON=/absolute/path/to/file.node` loads a local build instead (for
+development). It skips only the SHA-256 check; the ABI, build and target checks still run.
+
+CI builds the release files in `.github/workflows/rust-engine.yml` (`release-addon`,
+`release-manifest`), which `release.yml` calls on the commit it releases. A Rust build failure
+stops the release.
 
 ## Everyday commands
 

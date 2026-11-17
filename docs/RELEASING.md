@@ -1000,6 +1000,14 @@ Invariants:
   returns (`gbrain-darwin-arm64`, `gbrain-linux-x64` today). Adding a
   platform means updating BOTH plus the version job's completeness check;
   `test/release-workflow.test.ts` pins all of it.
+- **The Rust engine addon rides every release.** Besides the two gbrain
+  executables, a release carries `gbrain-engine-rust-linux-x64.node`,
+  `gbrain-engine-rust-darwin-arm64.node` and `gbrain-engine-rust.sha256.json`,
+  built by `rust-engine.yml` (called from release.yml's `rust-addon` job) and
+  attested by `rust-addon-attest`. They are in the version job's completeness
+  check, so a release missing one is completed on re-run, and the `release` job
+  needs the Rust build: a Rust build failure blocks the release. The
+  post-publish `smoke-rust-addon` job is a check, not a gate.
 - **Idempotent + self-repairing.** The version job skips when a release for
   `v<VERSION>` already exists with all expected assets; a partial release
   (tag but no release, or missing assets) is completed on re-run. Racing
