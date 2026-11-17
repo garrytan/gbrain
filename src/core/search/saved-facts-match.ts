@@ -13,7 +13,7 @@ import { collapseFactReads } from '../facts/capture-dedup.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
 import { hasCJK } from '../cjk.ts';
-import { privateFactFilterForCaller, resolveExcludePrivatePages } from './private-visibility.ts';
+import { privateFactFilterForReader, resolveExcludePrivatePages, worldOnlyFacts } from './private-visibility.ts';
 import { grantedPrivateFactSql } from '../access/member-facts.ts';
 import { SAVED_FACT_COLLAPSE_COLUMNS, type CollapseColumns } from './entity-facts.ts';
 
@@ -122,8 +122,8 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
   const active = `f.source_id = ANY($1::text[])
          AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
          AND f.source != ALL($2::text[])
-         ${ctx.remote !== false ? `AND (f.visibility = 'world' OR ${grantedPrivateFactSql('f')})` : ''}`;
-  const eligible = `${excludePrivate ? `AND ${privateFactFilterForCaller('f', true)}` : ''}
+         ${worldOnlyFacts(ctx.remote) ? `AND (f.visibility = 'world' OR ${grantedPrivateFactSql('f')})` : ''}`;
+  const eligible = `${excludePrivate ? `AND ${privateFactFilterForReader('f', true)}` : ''}
          AND ${projectionEligibleSql('facts', 'f', { floor: scope.minTrust })}`;
   const lang = getFtsLanguage();
   const doc = factsFtsDocument('f');
