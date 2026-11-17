@@ -940,6 +940,10 @@ describe('#3374 — transient network retry branch', () => {
           return async (slug: string, page: any) => { pageStore.set(slug, page); };
         }
         // Like a real engine, executeRaw always resolves to a row array (#6482: one well-formed unmanaged mode row).
+        // The typed import-guard reads, as a real engine answers them on an empty brain.
+        if (prop === 'readManagedModeRows') return () => Promise.resolve([{ enabled: false }]);
+        if (prop === 'readTransactionSettings') return (names: readonly string[]) => Promise.resolve(names.map(() => ''));
+        if (prop === 'getConfigValues') return () => Promise.resolve([]);
         if (prop === 'executeRaw') return (sql?: unknown) => Promise.resolve(String(sql).includes('FROM persistence_brain') ? [{ enabled: false }] : []);
         return () => Promise.resolve(null);
       },

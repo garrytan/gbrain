@@ -4,12 +4,13 @@
  * seam a default path still reaches is a site the Rust engine cannot serve.
  *
  * Protects: the default import (new page, changed body, unchanged re-import,
- * reordered sections, moved file path) and hybrid search (keyless, and with a
- * vector transport) reach the raw seams (`executeRaw`, `executeRawDirect`,
+ * reordered sections, moved file path), hybrid search (keyless, and with a
+ * vector transport) and the import cycle lock (acquire, refresh, release,
+ * inspect, reap, and the source filesystem lock) reach the raw seams (`executeRaw`, `executeRawDirect`,
  * `withReservedConnection`) only from the call sites listed in
  * REMAINING_RAW_SITES. Each listed site is a known, recorded follow-up.
  * Fails when: a scope B call site that moved behind a typed engine method
- * (search reads, import writes, import guards) goes back to raw SQL, or a new
+ * (search reads, import writes, import guards, cycle lock) goes back to raw SQL, or a new
  * raw call site appears on these paths.
  * Seams: the engine is wrapped in a Proxy that records the first non-engine
  * caller frame of every raw call. A raw call made while an engine method runs
@@ -28,6 +29,10 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { hybridSearch } from '../src/core/search/hybrid.ts';
 import { __setEmbedTransportForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { inspectLocks, listStaleLocks, reapDeadHolderLocks, withRefreshingLock } from '../src/core/db-lock.ts';
+import { withSourceFilesystemLock } from '../src/core/minions/source-filesystem.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 
 const RAW_SEAMS = new Set(['executeRaw', 'executeRawDirect', 'withReservedConnection']);
 const ENGINE_FRAME = /src\/core\/(pglite-engine|postgres-engine|engine-sql\/)/;
@@ -43,6 +48,9 @@ const REMAINING_RAW_SITES = new Set<string>([
   // The origin claim check runs in the caller's transaction before refreshPageOrigin; not moved in scope B.
   'src/core/persistence/origin-guard.ts:assertOriginUnclaimed',
   'src/core/persistence/origin-guard.ts:originScopeOf',
+  // The source filesystem lock's legacy-writer guard (persistence/filesystem-guard.ts) reads the full persistence_brain
+  // row; ten callers share that read, so it moves as one follow-up, not in scope B.
+  'src/core/persistence/managed-mode.ts:readPersistenceBrain',
 ]);
 
 function callerSite(): string {
@@ -154,5 +162,26 @@ describe('Rust engine Track 2: scope B default paths reach raw SQL only from rec
     console.log(`[no-raw-proof] search sites:\n${sites.join('\n')}\n[no-raw-proof] search methods: ${[...methods].sort().join(' ')}`);
     expect(unexpected(sites)).toEqual([]);
     for (const m of ['aliasCanonicalRefs', 'cosinesByChunkIds', 'generatedPagesIn', 'hasSupersedeEdges', 'pageCollapseFacts']) expect(methods.has(m)).toBe(true);
+  });
+
+  test('cycle lock: acquire, refresh, release, inspect, reap, source filesystem lock', async () => {
+    const dir = mkdtempSync(join('/var/tmp', 'gbrain-no-raw-proof-'));
+    const methods = new Set<string>();
+    try {
+      const sites = await trace(async (engine) => {
+        // ttl 1 minute with a 50 ms refresh interval: the 200 ms work spans several refreshes.
+        await withRefreshingLock(engine, 'gbrain-sync:proof', async () => { await new Promise(r => setTimeout(r, 200)); },
+          { ttlMinutes: 1, refreshIntervalMs: 50 });
+        await inspectLocks(engine, ['gbrain-sync:proof']);
+        await listStaleLocks(engine);
+        await reapDeadHolderLocks(engine);
+        await withSourceFilesystemLock(engine, dir, async () => undefined);
+      }, methods);
+      console.log(`[no-raw-proof] cycle-lock sites:\n${sites.join('\n')}\n[no-raw-proof] cycle-lock methods: ${[...methods].sort().join(' ')}`);
+      expect(unexpected(sites)).toEqual([]);
+      for (const m of ['acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'listSourceLocalPaths']) expect(methods.has(m)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
