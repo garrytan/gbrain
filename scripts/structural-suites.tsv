@@ -94,6 +94,7 @@ test/compile-view.test.ts	compileView — determinism	3	readFileSync
 test/compile-view.test.ts	compileView — source isolation + read errors	3	readFileSync
 test/config.test.ts	config source correctness	1	readFileSync
 test/connection-resilience.test.ts	Eng-review D3 — executeRaw has no per-call retry wrapper	3	readFileSync,source-surface-helper
+test/connector-install-links.test.ts	docs carry the hosted gbrain.io links the helpers build	2	readFileSync
 test/context-audit-skill.test.ts	#4988 context-audit skill token estimate	2	readFileSync
 test/contextual-retrieval-service-pure.test.ts	inline import contextual synopsis containment	1	readFileSync
 test/conversation-facts-type-allowlist-drift.test.ts	(file-level)	18	readFileSync
@@ -365,7 +366,7 @@ test/scripts/pregate-remote-gate.test.ts	pregate-remote-gate.sh --list	4	readFil
 test/scripts/pregate-remote-gate.test.ts	reuse of GitHub full runs on the identical tree	9	readFileSync
 test/scripts/pregate-remote-gate.test.ts	ship_lanes_from (/ship lanes carried from CI, docs/ci-event-parity.md#ship-lanes)	3	readFileSync
 test/scripts/promote-stable.test.ts	promote-stable.yml	2	readFileSync
-test/scripts/regen-all.test.ts	regen:all	6	readFileSync
+test/scripts/regen-all.test.ts	regen:all	7	readFileSync
 test/scripts/release-restamp.test.ts	release-restamp --stamp-only	2	readFileSync
 test/scripts/release-restamp.test.ts	release:restamp end to end	16	readFileSync
 test/scripts/release-restamp.test.ts	release:unstamp and merge: direct	7	readFileSync

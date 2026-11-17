@@ -27,6 +27,12 @@ describe('regen:all', () => {
     expect(readFileSync(join(ROOT, 'docs/RELEASING.md'), 'utf8')).toContain('## Generated artifacts');
   });
 
+  test('the CLI flag registry check compares the committed file with a fresh render (#9019)', async () => {
+    const registry = ARTIFACTS.find(a => a.name === 'CLI flag registry')!;
+    expect(registry.check).toEqual(['bun', 'run', 'scripts/generate-flag-registry.ts', '--check']);
+    expect(await checkArtifacts([registry])).toEqual([]);
+  }, 60_000);
+
   test('the public surface is built after the operation manifest it reads', () => {
     const names = ARTIFACTS.map(a => a.name);
     expect(names.indexOf('public surface (docs/contracts/public-surface.json)')).toBeGreaterThan(names.indexOf('operation manifest'));
