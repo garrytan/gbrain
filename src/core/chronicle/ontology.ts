@@ -3,6 +3,13 @@
 // engine methods (mergeOntologyFact / getOntology / …) lean on.
 import { computeContentHash } from '../ingestion/types.ts';
 import { trustRankSql } from '../trust/tier.ts';
+import { CONVERSATION_FACTS_SOURCE_PREFIX } from '../facts/audit-sources.ts';
+
+/**
+ * GBRA-574 B2: conversation facts carry a slot on these columns but are never closed in storage (the facts block
+ * derives their windows at read time), so every move would read as a conflict. findOntologyConflicts skips them.
+ */
+export const NOT_CONVERSATION_SLOT_SQL = `COALESCE(source, '') NOT LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%'`;
 
 /**
  * Deterministic dedup key for an ontology value. Normalized (trim + lowercase +

@@ -8,7 +8,8 @@
  * plain English; across pages without a change cue both values stay open with no label (G4); a restatement continues a
  * stint; a stored valid_until wins; ingest order does not change the block; a slot row the caller cannot see (a remote
  * caller and a private fact) or a withdrawn one never ends a window; facts without slots render as before;
- * findOntologyConflicts keeps its output for ontology rows and ignores conversation rows.
+ * findOntologyConflicts keeps its output for ontology rows and ignores conversation rows; a retention purge expires the
+ * page's slot rows and clears their slots.
  * PGLite (no git), and Postgres through test/e2e/facts-slot-windows-gbra574-postgres.test.ts.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
@@ -18,6 +19,8 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { ExtractedFact } from '../src/core/facts/extract.ts';
 import { runExtractConversationFactsCore } from '../src/commands/extract-conversation-facts.ts';
 import { valueHash } from '../src/core/chronicle/ontology.ts';
+import { expireGonePageFacts } from '../src/core/facts/gone-page-facts.ts';
+import { conversationRunEstimate } from '../src/core/facts/conversation-budget.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -164,6 +167,34 @@ for (const backend of testBackends()) {
       });
     });
 
+    describe('--dry-run price', () => {
+      test('the estimate prices each segment at the extraction model\'s table rate', async () => {
+        await engine.setConfig('facts.extraction_model', 'anthropic:claude-haiku-5-5');
+        const one = await conversationRunEstimate(engine, 1);
+        const three = await conversationRunEstimate(engine, 3);
+        expect(one.model).toBe('anthropic:claude-haiku-5-5');
+        expect(one.usd).toBeGreaterThan(0);
+        expect([three.input_tokens, three.output_tokens]).toEqual([3 * one.input_tokens, 3 * one.output_tokens]);
+        expect(three.usd).toBeCloseTo(3 * one.usd!, 10);
+        await engine.setConfig('facts.extraction_model', 'acme-example:unpriced-model');
+        expect((await conversationRunEstimate(engine, 3)).usd).toBeNull();
+      });
+    });
+
+    describe('retention purge', () => {
+      test('a purge of the page expires its slot rows and clears their slots; an ontology observation sourced there stays', async () => {
+        const page: Page = { slug: 'meetings/chat-a', title: 'Chat A', date: P1, said: [LISBON] };
+        await putPages([page]);
+        await extract([page]);
+        await engine.mergeOntologyFact({ entitySlug: 'people/bob-example', dimension: 'role', value: 'founder', source: 'meetings/chat-a', validFrom: P1, sourceId: 'default' });
+        await expireGonePageFacts(engine, [{ source_id: 'default', slug: 'meetings/chat-a' }]);
+        const [lisbon] = await slotRows();
+        expect(lisbon!.expired_at).not.toBeNull();
+        expect([lisbon!.dimension, lisbon!.value, lisbon!.value_hash]).toEqual([null, null, null]);
+        expect((await engine.getOntology('people/bob-example', { sourceId: 'default' })).map(v => v.value)).toEqual(['founder']);
+      });
+    });
+
     describe('read-time windows in the facts block', () => {
       test('two values on one page chain: the first ends where the second starts; the latest stays open', async () => {
         const page: Page = { slug: 'meetings/chat-a', title: 'Chat A', date: P1,
@@ -255,7 +286,7 @@ for (const backend of testBackends()) {
         await putPages(pages);
         await extract(pages);
         const porto = (await slotRows('meetings/chat-b'))[0]!;
-        const forgot = await dispatchToolCall(engine, 'forget_fact', { id: porto.id }, { remote: false, sourceId: 'default' });
+        const forgot = await dispatchToolCall(engine, 'forget_fact', { id: Number(porto.id) }, { remote: false, sourceId: 'default' });
         expect(forgot.isError).toBeFalsy();
         const rows = await block(LIVE_Q);
         expect(rows.some(r => r.includes('Porto'))).toBe(false);
@@ -299,7 +330,9 @@ describe('managed brain', () => {
   const SLUG = 'meetings/chat-managed';
   const content = convo('Chat Managed', P1);
   async function putManaged(brain: ManagedBrain) {
-    await submitPageMutation(brain.ctx, { operation: 'put_page', params: { slug: SLUG, request_id: randomUUID(), content } });
+    for (const [slug, body] of [[ALICE, '---\ntitle: Alice Example\ntype: person\n---\n# Alice Example\n\nA designer.\n'], [SLUG, content]] as const) {
+      await submitPageMutation(brain.ctx, { operation: 'put_page', params: { slug, request_id: randomUUID(), content: body } });
+    }
     await disposePersistenceConsumer(brain.engine);
   }
   const run = (brain: ManagedBrain, force = false) => runExtractConversationFactsCore(brain.engine, { sourceId: 'default', slugs: [SLUG], sleepMs: 0, overrideDisabled: true, force,

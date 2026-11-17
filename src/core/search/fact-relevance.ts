@@ -41,6 +41,7 @@ import { supportsHnswIterativeScan } from '../vector-index.ts';
 import { VECTOR_EXTENSION_VERSION_SQL } from './vector-statement.ts';
 import { withVectorSettings } from './vector-settings.ts';
 import type { HnswIterativeScanMode } from './hnsw-iterative-scan.ts';
+import type { SlotRow } from '../facts/slots.ts';
 
 const STOPWORDS = new Set(['the', 'and', 'for', 'who', 'what', 'when', 'where', 'which', 'with', 'from', 'that', 'this', 'are', 'was', 'were', 'our', 'your', 'their',
   'now', 'current', 'currently', 'should', 'does', 'did', 'has', 'have', 'how', 'any', 'all', 'about', 'into', 'its', 'next', 'use', 'uses', 'tell']);
@@ -129,6 +130,8 @@ export interface FactCandidate {
   valid_from: Date | string; valid_until: Date | string | null; created_at?: Date | string | null; claim_metric: string | null; claim_period: string | null;
   /** The page the fact was taken from (its observation date) and the columns copies collapse on (capture-dedup.ts). */
   source_markdown_slug?: string | null; visibility?: string; attributed_to?: import('../engine.ts').FactAttribution | null;
+  /** GBRA-574 B2: the fact's slot (facts/slots.ts), when it carries one. */
+  dimension?: string | null; value_hash?: string | null;
   similarity?: number;
   /** Found by the named-entity arm. */
   entity: boolean;
@@ -165,7 +168,7 @@ async function wordStems(engine: BrainEngine, words: string[]): Promise<WordStem
   }
 }
 
-const COLS = 'f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to';
+const COLS = 'f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash';
 
 /** The facts embedding column's type and declared dimensions, or null when there is none. */
 async function factsEmbeddingColumn(engine: BrainEngine): Promise<{ type: string; dims: number } | null> {
@@ -324,6 +327,22 @@ export async function countUncomparableFacts(engine: BrainEngine, scope: FactPoo
      SELECT f.source_id, count(*) AS n FROM facts f WHERE f.id IN (SELECT id FROM u) AND ${where}
      GROUP BY f.source_id ORDER BY count(*) DESC, f.source_id`, [...params, getEmbeddingModel(), ...(declared ? [] : [dims])]);
   return rows.map(r => ({ source_id: r.source_id, n: Number(r.n) }));
+}
+
+/**
+ * GBRA-574 B2: every active slot row (dim_status active) of the given (source, entity, dimension) slots under exactly
+ * the pool's read policy, so a row the caller cannot see never shapes a window the caller sees; ordered by valid_from, id.
+ */
+export async function readSlotRows(engine: BrainEngine, scope: FactPoolScope, slots: ReadonlyArray<{ source_id: string; entity_slug: string; dimension: string }>): Promise<SlotRow[]> {
+  if (!slots.length) return [];
+  const { where, params } = poolPredicate(scope, undefined);
+  const n = params.length;
+  return engine.executeRaw<SlotRow>(
+    `SELECT f.id, f.source_id, f.entity_slug, f.dimension, f.value_hash, f.valid_from, f.source_markdown_slug, f.fact FROM facts f
+     WHERE ${where} AND f.dimension IS NOT NULL AND f.value_hash IS NOT NULL AND COALESCE(f.dim_status, 'active') = 'active'
+       AND (f.source_id, f.entity_slug, f.dimension) IN (SELECT * FROM unnest($${n + 1}::text[], $${n + 2}::text[], $${n + 3}::text[]))
+     ORDER BY f.valid_from, f.id`,
+    [...params, slots.map(s => s.source_id), slots.map(s => s.entity_slug), slots.map(s => s.dimension)]);
 }
 
 /** The distinct (source_id, entity_slug) pairs with a fact in the authorized, filtered pool (the namesake check runs on these before any ranking). */

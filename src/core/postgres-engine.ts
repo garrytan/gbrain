@@ -58,7 +58,7 @@ import { driverPoolStats, enginePoolStats, type DriverPoolStats } from './postgr
 import {
   valueHash,
   normalizeDimension,
-  isNovelDimension, isBackdatedObservation, ONTOLOGY_SUPERSEDE_GUARD,
+  isNovelDimension, isBackdatedObservation, ONTOLOGY_SUPERSEDE_GUARD, NOT_CONVERSATION_SLOT_SQL,
 } from './chronicle/ontology.ts';
 import { logDbDisconnect } from './audit/db-disconnect-audit.ts';
 import { logPoolRecovery } from './audit/pool-recovery-audit.ts';
@@ -2076,7 +2076,7 @@ export class PostgresEngine implements BrainEngine {
       WITH cur AS (
         SELECT entity_slug, dimension, value, source_markdown_slug AS source, confidence, id AS fact_id
         FROM facts
-        WHERE dimension IS NOT NULL AND expired_at IS NULL AND valid_until IS NULL
+        WHERE dimension IS NOT NULL AND expired_at IS NULL AND valid_until IS NULL AND ${sql.unsafe(NOT_CONVERSATION_SLOT_SQL)}
           AND (dim_status IS NULL OR dim_status = 'active')
           AND confidence >= ${minConf} ${scope} ${privacy} ${visibility}
       )

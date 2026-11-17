@@ -20,7 +20,8 @@
 import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope, SearchResult } from '../types.ts';
 import { resolveExcludePrivatePages, worldOnlyFacts } from './private-visibility.ts';
-import { admitted, collectFactCandidates, FACTS_ARM_COSINE_MIN, queryTerms, scoreFactCandidates, type FactCandidate as PoolCandidate, type FactPoolScope } from './fact-relevance.ts';
+import { admitted, collectFactCandidates, FACTS_ARM_COSINE_MIN, queryTerms, readSlotRows, scoreFactCandidates, type FactCandidate as PoolCandidate, type FactPoolScope } from './fact-relevance.ts';
+import { deriveSlotEnds } from '../facts/slots.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { enforceTokenBudget, resultTokens } from './token-budget.ts';
 import { configFlagOn, factDateHeader, factObservationDates } from './evidence-date.ts';
@@ -251,7 +252,8 @@ export function applyFactsBlock(engine: BrainEngine, query: string, results: Sea
 
 async function applyFactReserve(engine: BrainEngine, query: string, results: SearchResult[], opts: FactsArmOpts & { budget: number }, policy: ReservePolicy): Promise<SearchResult[]> {
   try {
-    const { candidates, stems } = await collectFactCandidates(engine, query, await poolScope(engine, opts), opts.queryEmbedding,
+    const scope = await poolScope(engine, opts);
+    const { candidates, stems } = await collectFactCandidates(engine, query, scope, opts.queryEmbedding,
       { depth: { keyword: 50, cosine: 50, entity: policy.maxRows }, cosineForAll: true });
     const scored = scoreFactCandidates(query, candidates, queryTerms(query), stems).filter(s => admitted(s, 'reserve')).map(s => s.candidate);
     if (!scored.length) return results;
@@ -266,6 +268,10 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
     const said = (c: FactCandidate) => dates?.get(Number(c.id)) ?? day(c.created_at ?? c.valid_from) ?? '';
     const groups = members.map(g => g.sort((a, b) => said(a).localeCompare(said(b)) || Number(a.id) - Number(b.id)));
     const shown = groups.map(g => g[0]!);
+    // GBRA-574 B2/G4: a slot value's window ends at read time, from the slot's rows the caller may read (facts/slots.ts).
+    const slots = new Map(shown.flatMap(c => c.entity_slug && c.dimension && c.value_hash
+      ? [[[c.source_id, c.entity_slug, c.dimension].join('\u0000'), { source_id: c.source_id, entity_slug: c.entity_slug, dimension: c.dimension }] as const] : []));
+    const ends = slots.size ? await readSlotRows(engine, scope, [...slots.values()]).then(deriveSlotEnds).catch(() => new Map<number, Date>()) : new Map<number, Date>();
     const pageSlugs = await readableEntityPages(engine, shown, opts.readScope).catch(() => new Set<string>());
     const fromQuoted = await factsFromQuotedPages(engine, shown.map(c => Number(c.id)));
     let left = Math.floor(opts.budget * policy.share);
@@ -275,7 +281,8 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
       const c = group[0]!;
       const restated = group.length > 1 ? ` (stated ${group.length} times, last ${said(group[group.length - 1]!)})` : '';
       const row = factRow(c, 0, c.entity_slug && pageSlugs.has(`${c.source_id}\u0000${c.entity_slug}`) ? c.entity_slug : undefined, fromQuoted.has(Number(c.id)), dates);
-      row.chunk_text = `${factDateHeader(c, undefined, dates?.get(Number(c.id)))}\n${c.fact}${restated}`;
+      const window = c.valid_until ? c : { ...c, valid_until: ends.get(Number(c.id)) ?? null };
+      row.chunk_text = `${factDateHeader(window, undefined, dates?.get(Number(c.id)))}\n${c.fact}${restated}`;
       const cost = resultTokens(row);
       if (cost > left) continue;
       left -= cost;
