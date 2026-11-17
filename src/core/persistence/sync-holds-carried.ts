@@ -38,7 +38,8 @@ export function mirrorKeepDeletedHold(record: Pick<GitHoldRecord, 'code' | 'meta
  */
 export async function carriedKeepDeleted(tx: Exec, existing: GitHoldRecord, input: Omit<GitHoldRecord, 'version' | 'held_at' | 'updated_at'>): Promise<KeepDeletedDecision | undefined> {
   const decision = existing.meta.keep_deleted;
-  if (!decision || input.code !== existing.code || input.meta.side !== 'deleted' || !existing.meta.blob_oid || input.meta.blob_oid !== existing.meta.blob_oid) return undefined;
+  const bytes = existing.meta.blob_oid ?? existing.meta.working_hash;
+  if (!decision || input.code !== existing.code || input.meta.side !== 'deleted' || !bytes || (input.meta.blob_oid ?? input.meta.working_hash) !== bytes) return undefined;
   if (input.meta.state === existing.meta.state && !input.meta.basis_moved) return decision;
   if (existing.meta.state !== 'tombstone_edited' || input.meta.state !== 'purged_differs') return undefined;
   const [marker] = await tx.executeRaw<{ value: { kind?: string } | null }>('SELECT completed_keys->0 AS value FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',

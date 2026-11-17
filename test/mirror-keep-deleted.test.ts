@@ -122,6 +122,21 @@ describe.each(testBackends())('keep it deleted on a read-only mirror (%s)', back
     expect(status.needs_human).toBe(false);
   }, { databaseUrl, setup }), 600_000);
 
+  test('6b: in working-tree mode a re-check of the same bytes carries the decision too', () => managedBrain(async ({ engine, ctx, root }) => {
+    await engine.setConfig('sync.include_working_tree', 'true');
+    await tombstoneEdited(engine, ctx, root);
+    expect((await holdOf(engine))!.meta).toMatchObject({ working: true });
+    expect((await holdOf(engine))!.meta.blob_oid).toBeUndefined();
+    await keepDeleted(engine, root);
+    const decided = (await holdOf(engine))!.meta.keep_deleted;
+    await oldRecoveryVersion(engine);
+    await performManagedSync(engine, OPTS);
+    const hold = (await holdOf(engine))!;
+    expect(hold.meta.recovery_version).toBe(RECOVERY_VERSION);
+    expect(hold.meta.keep_deleted).toEqual(decided);
+    expect((await readSyncStatus(engine, 'default') as any).needs_human).toBe(false);
+  }, { databaseUrl, setup }), 600_000);
+
   test('7a: a new upstream edit voids the decision: the hold asks again', () => managedBrain(async ({ engine, ctx, root }) => {
     await tombstoneEdited(engine, ctx, root);
     await keepDeleted(engine, root);
