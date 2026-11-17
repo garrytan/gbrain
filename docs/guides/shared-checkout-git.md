@@ -293,28 +293,31 @@ hook changed is taken back). A path the last commit holds nothing under, or a fi
 
 In a managed canonical worktree (the checkout gbrain's persistence owner writes), untracking a page file would
 make the next sync delete that page, so `--untrack` there only takes files under a `storage.db_only` directory
-that `gbrain.yml` declares, at HEAD and on disk, and that `.gitignore` ignores. A file is matched by its path under
-the declared directory, whatever its extension, with three extra checks:
+that the source's `gbrain.yml` declares, at HEAD and on disk, and that `.gitignore` ignores. The source's
+`gbrain.yml` sits in the folder the source is rooted in, which can be a folder below the checkout's top
+(`brain/gbrain.yml`); a `gbrain.yml` anywhere else declares nothing. Only the brain records that folder, so every
+untrack there reads the brain first: without migrations, in one read-only transaction, for at most 10 seconds. When
+the brain cannot be read, every file refuses and nothing changes: an untrack in a managed checkout needs the brain
+reachable, and on PGLite that means nothing else holds it, so stop the process that does (a running `gbrain serve` or
+a sync), then rerun the untrack. A plain commit, and an untrack in a checkout with no managed source, never open the
+brain. A file is matched by its path under the declared directory, whatever its extension, with three extra checks:
 
 - A Markdown page file also needs its page slug under a declared directory, because sync keeps a page by its slug
   (a folder spelled `Spaced Example/` gives slugs under `spaced-example/`; declare that spelling too).
 - A code-extension file (`.json`, `.ts`, `.yml` and the rest of sync's code list) is a page with a flattened slug on a
   source whose sync strategy imports code (`code` or `auto`), and a database-only folder does not make that page
-  database-only. commit-push reads the brain for these files only: it admits one when the source's strategy does
-  not import code or when no live page comes from the file, refuses one that is a page, and refuses (fail closed)
-  when the brain cannot be read within 10 seconds, for example while another process holds a PGLite brain. The read
-  opens the brain without migrations and reads in one read-only transaction; on PGLite it takes the data
-  directory's one-process lock for the length of the read. When the refusal says the brain could not be read on PGLite,
-  stop the process that holds it (a running `gbrain serve` or a sync), then rerun the untrack.
+  database-only. The same brain read admits one when the source's strategy does not import code or when no live page
+  comes from the file, and refuses one that is a page. On PGLite the read takes the data directory's one-process lock
+  for its length.
 - A tracked symbolic link that points out of the declared directory, or a file reached through a symlinked
   directory on disk, is refused, and so is a sibling folder that only shares the name as a prefix
   (`backups-old/` is not under `backups/`).
 
 The database row is canonical there, so every admitted page stays live with its content. Anything else refuses
 `untrack_not_db_only` with the index as it was, and the fix names what is missing for each file: declare the folder
-(add it under `storage.db_only` and its `<dir>/` line to `.gitignore`, commit both with
-`gbrain git commit-push -m <msg> -- gbrain.yml .gitignore`), add only the `.gitignore` line, declare the slug
-spelling, or keep the code-file pages tracked. `--dry-run --untrack` makes the same checks, the brain read included,
+(add it under `storage.db_only` in the `gbrain.yml` the refusal names and its `<dir>/` line to `.gitignore`, commit
+both with `gbrain git commit-push -m <msg> -- <that gbrain.yml> .gitignore`), add only the `.gitignore` line, declare
+the slug spelling, keep the code-file pages tracked, or free the brain and rerun. `--dry-run --untrack` makes the same checks, the brain read included,
 and lists the files the real run removes. The commit stays local, like every commit-push there; the owner's next Git
 publish, or `gbrain git commit-push --push-only --keep-checkout`, publishes it.
 

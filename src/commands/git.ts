@@ -16,7 +16,7 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { commitAndPush, checkoutRoot, previewPaths, previewUntrack, pullShared, scopePaths, COMMIT_LOCK_NAME, SOURCE_ROOT_CONFIG, type Resolution } from '../core/git/commit-push.ts';
-import { readUntrackPageVerdict, untrackPageCandidates, UNTRACK_PAGE_READ_TIMEOUT_MS, type UntrackPageCandidate, type UntrackPageVerdict } from '../core/git/untrack-admission.ts';
+import { readUntrackPageVerdict, UNTRACK_PAGE_READ_TIMEOUT_MS, type UntrackPageVerdict } from '../core/git/untrack-admission.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { ManagedFilesystemRoot } from '../core/persistence/filesystem-guard.ts';
 import { guardStatus, installGuard, uninstallGuard } from '../core/git/commit-guard.ts';
@@ -230,7 +230,7 @@ function runScan(p: Parsed): number {
 }
 
 /** Opens this machine's brain with no migration or startup step, reads the verdict, and closes it; any failure or a read past the timeout is `unreadable`. */
-export async function untrackPageVerdict(managed: ManagedFilesystemRoot, candidates: UntrackPageCandidate[]): Promise<UntrackPageVerdict> {
+export async function untrackPageVerdict(managed: ManagedFilesystemRoot, root: string, rel: string[]): Promise<UntrackPageVerdict> {
   const { isThinClient, loadConfig, toEngineConfig } = await import('../core/config.ts');
   const { createEngine } = await import('../core/engine-factory.ts');
   let engine: BrainEngine | null = null, timer: ReturnType<typeof setTimeout> | undefined;
@@ -241,7 +241,7 @@ export async function untrackPageVerdict(managed: ManagedFilesystemRoot, candida
     const engineConfig = config.engine === 'pglite' ? { ...toEngineConfig(config), pglite_shared_buffers: '32MB' } : { ...toEngineConfig(config), pool_max: 1 };
     engine = await createEngine(engineConfig);
     await engine.connect(engineConfig);
-    return readUntrackPageVerdict(engine, managed, candidates);
+    return readUntrackPageVerdict(engine, managed, root, rel);
   })();
   const timeout = new Promise<UntrackPageVerdict>(done => { timer = setTimeout(() => done({ unreadable: `the read took longer than ${UNTRACK_PAGE_READ_TIMEOUT_MS / 1000} s (another process may hold the brain)` }), UNTRACK_PAGE_READ_TIMEOUT_MS); });
   let settled = false;
@@ -255,11 +255,10 @@ export async function untrackPageVerdict(managed: ManagedFilesystemRoot, candida
   }
 }
 
-/** GST-2964: in a managed canonical worktree, what the brain says about the code-extension files an untrack names; the brain is opened only when there are any. */
+/** GST-2964: in a managed canonical worktree, the brain's answer for an untrack (the source's root and its live code-file pages); a checkout with no managed source opens no brain. */
 async function untrackPagesFor(repo: string, paths: string[]): Promise<UntrackPageVerdict | undefined> {
   const managed = managedFilesystemRootFor(repo);
-  const candidates = managed && paths.length ? untrackPageCandidates(repo, paths, managed) : [];
-  return managed && candidates.length ? untrackPageVerdict(managed, candidates) : undefined;
+  return managed && paths.length ? untrackPageVerdict(managed, repo, paths) : undefined;
 }
 
 function emit(json: boolean, doc: Record<string, unknown>, human: string): void {

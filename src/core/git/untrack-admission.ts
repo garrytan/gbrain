@@ -2,13 +2,14 @@
  * GST-2519 / GST-2964: which files `gbrain git commit-push --untrack` may remove from Git (#7753), and in a managed
  * canonical worktree whether untracking a code-extension file under a declared storage.db_only dir would delete a page. Sync
  * keeps a page by its slug, and a code file's slug is flattened (`health-backups-a-json`), so on a source whose sync
- * strategy imports code such a page is not database-only and leaves the brain once its file leaves Git. The brain is
- * read only for that question (src/commands/git.ts opens it), only when the untrack names such a file in a managed
- * canonical worktree: no migration, one read-only transaction under a statement timeout, the whole read bounded by
- * `UNTRACK_PAGE_READ_TIMEOUT_MS`.
+ * strategy imports code such a page is not database-only and leaves the brain once its file leaves Git. In a managed
+ * canonical worktree every untrack reads the brain (src/commands/git.ts opens it): the source's root, which only the
+ * brain records (a source rooted in a folder of its repository is claimed at the repository's top, and sync reads that
+ * folder's gbrain.yml), and the code-extension files that are live pages. No migration, one read-only transaction under a
+ * statement timeout, the whole read bounded by `UNTRACK_PAGE_READ_TIMEOUT_MS`; without that answer nothing is untracked.
  */
-import { lstatSync, readFileSync } from 'node:fs';
-import { join, posix, relative, sep } from 'node:path';
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { isAbsolute, join, posix, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { literalPathspecs } from '../git-env.ts';
 import { git } from './git-run.ts';
@@ -17,27 +18,45 @@ import type { ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
 import { isDeclaredDbOnlySlug, storageConfigFromYaml, unresolvedDbOnlyIn, type StorageConfig } from '../storage-config.ts';
 import { isCodeFilePath, isSyncable, resolveSlugForPath } from '../sync.ts';
 
-/** What the brain says about the code-extension files an untrack names; `unreadable` refuses them (fail closed). */
-export type UntrackPageVerdict = { importsCode: boolean; live: ReadonlySet<string> } | { unreadable: string };
+/** What the brain says about an untrack: the source's root and which code-extension files are live pages; `unreadable` refuses every file (fail closed). */
+export type UntrackPageVerdict = { sourceRoot: string; importsCode: boolean; live: ReadonlySet<string> } | { unreadable: string };
 export interface UntrackPageCandidate { file: string; slug: string; sourcePath: string }
 
 export const UNTRACK_PAGE_READ_TIMEOUT_MS = 10_000;
 
-/** The source's sync strategy and the live pages among `candidates` (by slug or source path), in one read-only transaction. */
-export async function readUntrackPageVerdict(engine: BrainEngine, managed: ManagedFilesystemRoot, candidates: UntrackPageCandidate[]): Promise<UntrackPageVerdict> {
+/**
+ * The managed source's root (canonical, inside the checkout `root`), its sync strategy, and the live pages among the
+ * code-extension files `rel` names (by slug or source path), in one read-only transaction. A worktree recorded without its
+ * source is matched to the one source rooted in it.
+ */
+export async function readUntrackPageVerdict(engine: BrainEngine, managed: ManagedFilesystemRoot, root: string, rel: string[]): Promise<UntrackPageVerdict> {
   return engine.transaction(async tx => {
     await tx.executeRaw("SELECT set_config('statement_timeout', $1, true)", [String(UNTRACK_PAGE_READ_TIMEOUT_MS)]);
-    const [source] = await tx.executeRaw<{ id: string; strategy: string | null }>(managed.sourceId
-      ? "SELECT id, config->>'strategy' AS strategy FROM sources WHERE id=$1" : "SELECT id, config->>'strategy' AS strategy FROM sources WHERE local_path=$1",
-    [managed.sourceId ?? managed.root]);
-    if (!source) return { unreadable: `no source in the brain is bound to ${managed.root}` };
-    const rows = await tx.executeRaw<{ slug: string; source_path: string | null }>(
+    const canonical = (path: string) => { try { return realpathSync(path); } catch { return null; } };
+    const top = canonical(root) ?? root, worktree = canonical(managed.root) ?? managed.root;
+    const within = (outer: string, path: string) => { const r = relative(outer, path); return !r.startsWith('..') && !isAbsolute(r); };
+    const rows = (await tx.executeRaw<{ id: string; strategy: string | null; local_path: string | null }>(managed.sourceId
+      ? "SELECT id, config->>'strategy' AS strategy, local_path FROM sources WHERE id=$1" : "SELECT id, config->>'strategy' AS strategy, local_path FROM sources WHERE local_path IS NOT NULL",
+    managed.sourceId ? [managed.sourceId] : [])).map(row => ({ ...row, path: row.local_path ? canonical(row.local_path) : null }));
+    const matched = managed.sourceId ? rows : rows.filter(row => row.path && within(worktree, row.path));
+    if (matched.length !== 1) return { unreadable: managed.sourceId ? `source ${managed.sourceId} is not in the brain` : `${matched.length ? 'more than one source' : 'no source'} in the brain is rooted in ${managed.root}` };
+    const source = matched[0]!;
+    if (!source.path) return { unreadable: `source ${source.id}'s root ${source.local_path ?? '(none)'} is not a directory on this machine` };
+    if (!within(top, source.path)) return { unreadable: `source ${source.id} is rooted at ${source.path}, outside the checkout ${top}` };
+    const candidates = untrackPageCandidates(root, rel, source.path);
+    const pages = candidates.length ? await tx.executeRaw<{ slug: string; source_path: string | null }>(
       'SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND (slug = ANY($2::text[]) OR source_path = ANY($3::text[]))',
-      [source.id, candidates.map(c => c.slug), candidates.map(c => c.sourcePath)]);
+      [source.id, candidates.map(c => c.slug), candidates.map(c => c.sourcePath)]) : [];
     const live = new Set<string>();
-    for (const c of candidates) if (rows.some(row => row.slug === c.slug || row.source_path === c.sourcePath)) live.add(c.file);
-    return { importsCode: source.strategy === 'code' || source.strategy === 'auto', live };
+    for (const c of candidates) if (pages.some(row => row.slug === c.slug || row.source_path === c.sourcePath)) live.add(c.file);
+    return { sourceRoot: source.path, importsCode: source.strategy === 'code' || source.strategy === 'auto', live };
   }, { readOnly: true });
+}
+
+/** The source root's path in the checkout, `<dir>/` or '' at the top. */
+function sourcePrefix(root: string, sourceRoot: string): string {
+  const base = relative(realpathSync(root), sourceRoot).split(sep).join('/');
+  return base && !base.startsWith('..') ? `${base}/` : '';
 }
 
 /** #7753: the files HEAD holds under each of `rel`; a named path HEAD holds nothing under is refused before anything changes. */
@@ -62,9 +81,10 @@ export function untrackTargets(root: string, rel: string[]): string[] {
 }
 
 /**
- * GST-2519: the files an untrack in a managed canonical worktree would remove, each under a storage.db_only dir that
- * gbrain.yml at HEAD and on disk declares (the database row is canonical there, so sync keeps the page when its file
- * leaves Git) and ignored by .gitignore (so no later commit adds it back). GST-2964: a file is matched by its path under
+ * GST-2519: the files an untrack in a managed canonical worktree would remove, each under a storage.db_only dir that the
+ * source's gbrain.yml (in the source root `pages` names, as sync reads it) declares at HEAD and on disk (the database row
+ * is canonical there, so sync keeps the page when its file leaves Git) and ignored by .gitignore (so no later commit adds
+ * it back). Without the brain's answer (`pages` absent or unreadable) every file refuses. GST-2964: a file is matched by its path under
  * the declared dir, whatever its extension; a file sync may import as a page (Markdown, code) also needs its slug under a
  * declared dir, since sync keeps a page by slug; a code file is admitted when `pages` (the brain, read by the caller) shows
  * that the source's sync strategy does not import code or that no live page comes from the file. A tracked symlink pointing out of the dir, or a file reached through a
@@ -73,11 +93,12 @@ export function untrackTargets(root: string, rel: string[]): string[] {
  */
 export function untrackAdmitted(root: string, rel: string[], managed: ManagedFilesystemRoot, pages?: UntrackPageVerdict): string[] {
   const files = untrackTargets(root, rel);
-  const base = relative(root, managed.root).split(sep).join('/');
-  const prefix = base && !base.startsWith('..') ? `${base}/` : '';
+  const source = pages && !('unreadable' in pages) ? pages : null;
+  const prefix = source ? sourcePrefix(root, source.sourceRoot) : '';
+  const ymlPath = join(source?.sourceRoot ?? root, 'gbrain.yml');
   const yml = git(root, ['show', `HEAD:${prefix}gbrain.yml`]);
   let disk: string | null = null;
-  try { disk = readFileSync(join(managed.root, 'gbrain.yml'), 'utf8'); } catch { disk = null; }
+  try { disk = readFileSync(ymlPath, 'utf8'); } catch { disk = null; }
   const config = (text: string | null, label: string): StorageConfig | null => {
     if (text === null) return null;
     try {
@@ -85,7 +106,7 @@ export function untrackAdmitted(root: string, rel: string[], managed: ManagedFil
       return parsed && !unresolvedDbOnlyIn(text, parsed) ? parsed : null;
     } catch { return null; }
   };
-  const committed = config(yml.code === 0 ? yml.stdout : null, `HEAD:${prefix}gbrain.yml`), onDisk = config(disk, join(managed.root, 'gbrain.yml'));
+  const committed = config(yml.code === 0 ? yml.stdout : null, `HEAD:${prefix}gbrain.yml`), onDisk = config(disk, ymlPath);
   const declaredDir = (path: string) => committed?.db_only.find(dir => isDeclaredDbOnlySlug(path.toLowerCase(), { ...committed, db_only: [dir] }));
   const declared = (path: string) => isDeclaredDbOnlySlug(path.toLowerCase(), committed) && isDeclaredDbOnlySlug(path.toLowerCase(), onDisk);
   const ignored = new Set(git(root, ['check-ignore', '--no-index', '-z', '--stdin'], { input: files.map(f => `${f}\0`).join('') }).stdout.split('\0').filter(Boolean));
@@ -106,14 +127,14 @@ export function untrackAdmitted(root: string, rel: string[], managed: ManagedFil
   const refusals: Record<'undeclared' | 'unignored' | 'link' | 'slug' | 'page' | 'unchecked', string[]> = { undeclared: [], unignored: [], link: [], slug: [], page: [], unchecked: [] };
   const slugs = new Map<string, string>();
   for (const file of files) {
+    if (!source) { refusals.unchecked.push(file); continue; }
     const path = file.slice(prefix.length);
     const dir = file.startsWith(prefix) && declared(path) ? declaredDir(path) : undefined;
     if (!dir) { refusals.undeclared.push(file); continue; }
     if (escapes(file, dir)) { refusals.link.push(file); continue; }
     if (!ignored.has(file)) { refusals.unignored.push(file); continue; }
     if (isCodeFilePath(path)) {
-      if (!pages || 'unreadable' in pages) refusals.unchecked.push(file);
-      else if (pages.importsCode && pages.live.has(file)) refusals.page.push(file);
+      if (source.importsCode && source.live.has(file)) refusals.page.push(file);
       continue;
     }
     if (!pageKind(path)) continue;
@@ -125,17 +146,17 @@ export function untrackAdmitted(root: string, rel: string[], managed: ManagedFil
   const list = (paths: string[], label = (p: string) => p) => `${paths.slice(0, 10).map(label).join(', ')}${paths.length > 10 ? ', ...' : ''}`;
   const slugDirs = [...new Set([...slugs.values()].map(slug => `${posix.dirname(slug)}/`))];
   const groups: Array<[string[], string, string]> = [
-    [refusals.undeclared, 'not under a storage.db_only dir that gbrain.yml declares both at HEAD and on disk',
-      'Declare the folder first: add it under storage.db_only in gbrain.yml and its <dir>/ line to .gitignore, commit both (gbrain git commit-push -m <msg> -- gbrain.yml .gitignore), then rerun the untrack.'],
+    [refusals.undeclared, `not under a storage.db_only dir that the source's gbrain.yml declares both at HEAD (HEAD:${prefix}gbrain.yml) and on disk (${ymlPath})`,
+      `Declare the folder first: add it under storage.db_only in ${prefix}gbrain.yml and its <dir>/ line to .gitignore, commit both (gbrain git commit-push -m <msg> -- ${prefix}gbrain.yml .gitignore), then rerun the untrack.`],
     [refusals.unignored, 'under a declared storage.db_only dir that .gitignore does not ignore',
       'Add the folder\'s <dir>/ line to .gitignore and commit it (gbrain git commit-push -m <msg> -- .gitignore), then rerun the untrack.'],
     [refusals.link, 'symbolic links pointing out of the declared dir, or reached through a symbolic link on disk',
       'Untrack only real files inside the folder: a symbolic link that leaves it, or a folder reached through a symbolic link, is refused; name the other files, or replace the link with the file it points to.'],
     [refusals.slug, 'page files whose page slug, which sync keeps a page by, falls outside the declared dir',
-      `Declare the slug spelling too: add ${slugDirs.join(', ')} under storage.db_only in gbrain.yml and commit it (gbrain git commit-push -m <msg> -- gbrain.yml), then rerun the untrack.`],
+      `Declare the slug spelling too: add ${slugDirs.join(', ')} under storage.db_only in ${prefix}gbrain.yml and commit it (gbrain git commit-push -m <msg> -- ${prefix}gbrain.yml), then rerun the untrack.`],
     [refusals.page, 'code files that are pages on this source, whose sync strategy imports code, so untracking them would delete the page at the next sync',
       'These files are pages on this source and untracking them would delete the pages at the next sync: a database-only folder does not make a code file\'s page database-only. Keep them tracked and untrack the folder\'s other files by name.'],
-    [refusals.unchecked, `code files the brain could not be read to check${pages && 'unreadable' in pages ? ` (${pages.unreadable})` : ''}`,
+    [refusals.unchecked, `files the brain could not be read to check${pages && 'unreadable' in pages ? ` (${pages.unreadable})` : ''}`,
       'The brain could not be read to check whether these files are pages on this source, so nothing was untracked. If another process holds the brain (on PGLite, a running gbrain serve or a sync), stop it, then rerun the untrack; otherwise retry once the brain is reachable.'],
   ];
   const hit = groups.filter(([paths]) => paths.length);
@@ -146,12 +167,11 @@ export function untrackAdmitted(root: string, rel: string[], managed: ManagedFil
 
 /**
  * GST-2964: the code-extension files an untrack in a managed canonical worktree names, each with the slug and source
- * path sync gives it; the caller (src/commands/git.ts) reads the brain about them only when there are any. A path
- * the real run refuses yields none, so that refusal stays the real run's.
+ * path sync gives it under `sourceRoot`; readUntrackPageVerdict looks up the live pages among them only when there are any.
+ * A path the real run refuses yields none, so that refusal stays the real run's.
  */
-export function untrackPageCandidates(root: string, rel: string[], managed: ManagedFilesystemRoot): UntrackPageCandidate[] {
-  const base = relative(root, managed.root).split(sep).join('/');
-  const prefix = base && !base.startsWith('..') ? `${base}/` : '';
+export function untrackPageCandidates(root: string, rel: string[], sourceRoot: string): UntrackPageCandidate[] {
+  const prefix = sourcePrefix(root, sourceRoot);
   let files: string[];
   try { files = untrackTargets(root, rel); } catch { return []; }
   return files.filter(file => file.startsWith(prefix) && isCodeFilePath(file.slice(prefix.length)))
