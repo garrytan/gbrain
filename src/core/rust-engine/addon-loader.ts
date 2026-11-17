@@ -1,7 +1,7 @@
 /**
- * Finds, checks and loads the Rust engine addon. Called only when the `rust` engine is selected
- * (engine-construct.ts imports this module lazily), so a PGLite or Postgres brain never loads it,
- * never reaches the network for it and never creates `<gbrain home>/engines/`.
+ * Finds, checks and loads the Rust engine addon. Only the `rust` engine's open path may import it, lazily,
+ * so a PGLite or Postgres brain never loads it, never reaches the network for it and never creates
+ * `<gbrain home>/engines/`. The engine shell calls {@link loadRustEngineAddon}.
  *
  * Order:
  *   1. GBRAIN_RUST_ENGINE_ADDON (an absolute path to a build you made with `bun run rust:build`) is the development
@@ -18,6 +18,7 @@ import { existsSync, readdirSync, rmdirSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 import { gbrainPath } from '../config.ts';
 import { VERSION } from '../../version.ts';
+import { OperationError } from '../ops/contract.ts';
 import { addonMismatch, addonMissing } from './addon-errors.ts';
 import { RELEASE_ADDON_TARGETS, RUST_ENGINE_ABI, type RustAddonManifest } from './addon-manifest.ts';
 import { detectAddonTarget } from './addon-target.ts';
@@ -154,6 +155,32 @@ export async function loadRustAddon(overrides: Partial<RustAddonLoaderDeps> = {}
     return addon;
   } catch (err) {
     pruneNew([...newDirs]);
+    throw err;
+  }
+}
+
+/** The two refusal codes {@link loadRustEngineAddon} reports; nothing else is ever caught. */
+export type RustEngineAddonRefusalCode = 'rust_engine_addon_missing' | 'rust_engine_addon_mismatch';
+
+/** What {@link loadRustEngineAddon} returns: the loaded addon, or the refusal it raised before touching the brain. */
+export type RustEngineAddonLoad =
+  | { ok: true; addon: RustAddon }
+  | { ok: false; code: RustEngineAddonRefusalCode; reason: string; message: string };
+
+/**
+ * The engine shell's entry point to the addon: {@link loadRustAddon} as a result, never a throw, for the two refusal
+ * codes. Any other error (a bug, not a refusal) is re-thrown unchanged. It is async because a first use may fetch.
+ */
+export async function loadRustEngineAddon(overrides: Partial<RustAddonLoaderDeps> = {}): Promise<RustEngineAddonLoad> {
+  try {
+    return { ok: true, addon: await loadRustAddon(overrides) };
+  } catch (err) {
+    if (err instanceof OperationError) {
+      const code = err.code as string;
+      if (code === 'rust_engine_addon_missing' || code === 'rust_engine_addon_mismatch') {
+        return { ok: false, code, reason: err.reason ?? 'unknown', message: err.message };
+      }
+    }
     throw err;
   }
 }

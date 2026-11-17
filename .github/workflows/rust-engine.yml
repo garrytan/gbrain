@@ -233,7 +233,7 @@ jobs:
       - name: Addon loader tests against the real addon
         timeout-minutes: 10
         shell: bash
-        run: GBRAIN_TEST_RUST_ADDON_REQUIRED=1 bun test test/rust-engine-addon-loader.test.ts test/rust-release-addon-script.test.ts
+        run: GBRAIN_TEST_RUST_ADDON_REQUIRED=1 bun test test/rust-engine-addon-loader.test.ts test/rust-engine-cli.test.ts test/rust-release-addon-script.test.ts
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: gbrain-engine-addon-${{ matrix.target }}
