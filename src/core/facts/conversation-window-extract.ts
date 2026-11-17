@@ -10,6 +10,7 @@ import type { Page } from '../types.ts';
 import { observationDateFrom, resolveObservationDate, type ObservationDate } from '../ai/date-grounding.ts';
 import { BudgetExhausted } from '../budget/budget-tracker.ts';
 import { deriveDateContext } from '../conversation-parser/parse.ts';
+import type { ResolutionSource } from '../entities/resolve.ts';
 import { resolveExtractedEntitiesForSave, type SaveTimeResolutionCounts } from '../entities/resolve-on-save.ts';
 import { NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE, stampExtractorVersion } from './audit-sources.ts';
 import { CONVERSATION_ENTITY_HINTS_CAP } from './conversation-entity-hints.ts';
@@ -17,6 +18,7 @@ import { CONVERSATION_FACTS_SOURCE_PREFIX, type ConversationFactRow } from './co
 import { inferConversationSubjects } from './conversation-subject-infer.ts';
 import type { ConversationSegment } from './conversation-types.ts';
 import { extractFactsFromTurnWithOutcome, type ExtractInput, type ExtractedFact } from './extract.ts';
+import { tagSlots } from './slot-tagging.ts';
 import { tightenToStoredPage, type FactVisibility } from './visibility.ts';
 
 /** What one window's extraction needs from the run. */
@@ -27,6 +29,8 @@ export interface ConversationWindowRun {
   signal: AbortSignal | undefined;
   /** Injected per-segment extractor (BrainBench decision 15); undefined runs the production fail-hard extractor. */
   extractor?: (input: ExtractInput) => Promise<ExtractedFact[]>;
+  /** The run's counters: a window whose slot-tagging call failed adds one to `slot_tagging_failed`. */
+  result: { slot_tagging_failed?: number };
 }
 
 /**
@@ -79,10 +83,11 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
   }
   // This bulk path bypasses writeSingleFact and writes through insertFacts: every extractor-provided entity goes
   // through the shipped resolver (alias_exact / prefix / fuzzy / slugify) while source scope is known.
+  const sources: Array<ResolutionSource | null> = [];
   const resolution = await resolveExtractedEntitiesForSave(run.engine, run.sourceId, extracted, (raw, message) => {
     process.stderr.write(`[extract-conversation-facts] ${page.slug} segment ${seg.startIso}..${seg.endIso} `
       + `entity resolution failed for ${JSON.stringify(raw)}: ${message}; preserving fact without an entity target\n`);
-  });
+  }, sources);
   if (extracted.length === 0) return { extracted: 0, rows: [], resolution };
   const visibility = await tightenToStoredPage(run.engine, run.sourceId, run.factVisibility, page);
   const rows = await inferConversationSubjects(run.engine, run.sourceId, visibility, extracted.map((fact, i) => ({ // #6764
@@ -94,7 +99,17 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
     ...segmentValidFrom(fact.valid_from, seg.startIso),
     context: fact.context ?? `from ${page.slug} segment ${seg.startIso}..${seg.endIso}`,
   })));
-  return { extracted: extracted.length, rows, resolution };
+  // GBRA-574: slots come from a second call over facts whose person was named exactly (an exact page or alias match,
+  // or subject inference, which needs one live page named in full); never on BrainBench's injected extractor.
+  if (run.extractor) return { extracted: extracted.length, rows, resolution };
+  const exact = rows.map((row, i) => sources[i] === 'exact_page' || sources[i] === 'alias_exact' || (!extracted[i]!.entity_slug && !!row.entity_slug));
+  const tagged = await tagSlots(run.engine, run.sourceId, rows, exact, run.signal);
+  if (tagged.failed) {
+    run.result.slot_tagging_failed = (run.result.slot_tagging_failed ?? 0) + 1;
+    process.stderr.write(`[extract-conversation-facts] ${page.slug} segment ${seg.startIso}..${seg.endIso}: slot tagging failed; `
+      + 'the facts are kept without slots, and --force tags them again\n');
+  }
+  return { extracted: extracted.length, rows: tagged.rows, resolution };
 }
 
 /**

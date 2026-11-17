@@ -32,7 +32,8 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
-import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway, __setChatTransportForTests, __setEmbedTransportForTests, type ChatResult } from '../src/core/ai/gateway.ts';
+import { SLOT_TAG_SYSTEM } from '../src/core/facts/slot-tagging.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import { persistencePostgresTemplate } from './helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -500,6 +501,26 @@ describe('managed brain', () => {
           ['Alice Example is based in Lisbon.', null, null, null, null],
         ]);
       }, { databaseUrl: backend === 'postgres' ? requirePostgresTestDatabase() : undefined });
+    }, 120_000);
+
+    test(`${backend}: a slot from the tagging call rides the receipted batch`, async () => {
+      const reply = (text: string) => ({ text, blocks: [{ type: 'text', text }], stopReason: 'end', model: 'test:stub', providerId: 'test',
+        usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 } }) as ChatResult;
+      __setChatTransportForTests(async opts => reply(opts.system === SLOT_TAG_SYSTEM
+        ? '{"slots":[{"i":1,"dimension":"location","value":"Lisbon"}]}'
+        : JSON.stringify({ facts: [{ fact: 'Alice Example lives in Lisbon.', kind: 'fact', entity: ALICE, confidence: 1, notability: 'high' }] })));
+      try {
+        await managedBrain(async (brain) => {
+          await putManaged(brain);
+          const result = await runExtractConversationFactsCore(brain.engine, { sourceId: 'default', slugs: [SLUG], sleepMs: 0, overrideDisabled: true });
+          expect([result.pages_failed, result.pages_processed, result.slot_tagging_failed]).toEqual([0, 1, undefined]);
+          const rows = await brain.engine.executeRaw<{ fact: string; dimension: string | null; value: string | null; value_hash: string | null; dim_status: string | null }>(
+            `SELECT fact, dimension, value, value_hash, dim_status FROM facts WHERE source_id='default' AND source_markdown_slug=$1
+              AND source LIKE 'cli:extract-conversation-facts%' AND fact NOT LIKE 'EXTRACTION_%' AND expired_at IS NULL`, [SLUG]);
+          expect(rows.map(r => [r.fact, r.dimension, r.value, r.value_hash, r.dim_status])).toEqual([
+            ['Alice Example lives in Lisbon.', 'location', 'Lisbon', valueHash('Lisbon'), 'active']]);
+        }, { databaseUrl: backend === 'postgres' ? requirePostgresTestDatabase() : undefined });
+      } finally { __setChatTransportForTests(null); resetGateway(); }
     }, 120_000);
   }
 });
