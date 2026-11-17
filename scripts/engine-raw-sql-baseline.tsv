@@ -314,7 +314,7 @@ src/core/belief/coverage-report.ts	execute_raw	13
 src/core/belief/coverage.ts	execute_raw	5
 src/core/belief/history.ts	execute_raw	2
 src/core/belief/identity.ts	execute_raw	2
-src/core/belief/ledger.ts	execute_raw	2
+src/core/belief/ledger.ts	execute_raw	1
 src/core/belief/lifetimes.ts	execute_raw	6
 src/core/belief/page-at-time.ts	execute_raw	8
 src/core/belief/preimages.ts	execute_raw	2
