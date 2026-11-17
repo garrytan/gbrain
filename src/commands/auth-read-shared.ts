@@ -61,20 +61,20 @@ export function readsChangeLines(reads: RescopeTokenResult['reads'], before: boo
 }
 
 /** GST-2898: `auth create --sources <write,read...> --read-shared on|off`; the write source comes first. */
-export function parseCreateSourceFlags(rest: string[]): { sources?: string[]; readShared?: boolean; values: (string | undefined)[]; error?: string } {
+export function parseCreateSourceFlags(rest: string[]): { sources?: string[]; readShared?: boolean; error?: string } {
   const sourcesIdx = rest.indexOf('--sources');
   const sourcesValue = sourcesIdx >= 0 ? rest[sourcesIdx + 1] : undefined;
   if (sourcesIdx >= 0 && (sourcesValue === undefined || sourcesValue.startsWith('--'))) {
-    return { values: [], error: 'the sources flag requires a value: the write source first, then any other sources it reads (e.g. private-alice-example)' };
+    return { error: 'the sources flag requires a value: the write source first, then any other sources it reads (e.g. private-alice-example)' };
   }
   const sources = sourcesValue !== undefined ? [...new Set(sourcesValue.split(',').map(s => s.trim()).filter(Boolean))] : undefined;
-  if (sources !== undefined && sources.length === 0) return { values: [], error: 'the sources flag needs at least one source id (to mint a key that reads nothing, mint it and run gbrain auth rescope --sources none)' };
+  if (sources !== undefined && sources.length === 0) return { error: 'the sources flag needs at least one source id (to mint a key that reads nothing, mint it and run gbrain auth rescope --sources none)' };
   const sharedIdx = rest.indexOf('--read-shared');
   const sharedValue = sharedIdx >= 0 ? rest[sharedIdx + 1] : undefined;
-  if (sharedIdx >= 0 && sharedValue !== 'on' && sharedValue !== 'off') return { values: [], error: 'the read-shared flag requires on or off' };
+  if (sharedIdx >= 0 && sharedValue !== 'on' && sharedValue !== 'off') return { error: 'the read-shared flag requires on or off' };
   if (sharedValue === 'on' && sources === undefined) {
-    return { values: [], error: '--read-shared on needs --sources <write-source>: a key with no source list already reads every shared source (read_shared_needs_source)' };
+    return { error: '--read-shared on needs --sources <write-source>: a key with no source list already reads every shared source (read_shared_needs_source)' };
   }
-  return { ...(sources !== undefined ? { sources } : {}), ...(sharedValue === 'on' ? { readShared: true } : {}), values: [sourcesValue, sharedValue] };
+  return { ...(sources !== undefined ? { sources } : {}), ...(sharedValue === 'on' ? { readShared: true } : {}) };
 }
 
