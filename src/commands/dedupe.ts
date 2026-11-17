@@ -16,6 +16,8 @@ Read-only: nothing is changed.
   --preview         list the groups (the default and, for now, the only mode)
   --json            print the versioned JSON contract
   --kind <kind>     only groups of this kind (hyphens or underscores)
+                    a cross-source pair whose ids disagree is listed with class conflict but keeps kind
+                    cross_source, so filter by class (class == conflict in --json), not --kind, to see every conflict
   --source <id>     only groups with a member in this source
 `;
 
