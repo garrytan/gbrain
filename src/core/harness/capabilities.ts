@@ -283,7 +283,10 @@ export function grantBlockedNotice(d: GrantDiagnosis, opts: { refused: boolean }
   const reachable = d.blockers.filter(b => b.blocker !== 'scope');
   const scope = d.blockers.find(b => b.blocker === 'scope') as { missing_scopes: string[] } | undefined;
   const parts: string[] = [];
-  if (reachable.length && d.unreachable_count > 0) {
+  // GBRA-585: a snapshot whose left-out operations all existed when it was written is the owner's narrowing (a guest
+  // broker's --operations), so a call it can make carries no widen nudge; a refused call still says why.
+  const deliberate = d.grant_age.state === 'provenance_recorded' && d.grant_age.predates_count === 0 && reachable.every(b => b.blocker === 'operation_snapshot');
+  if (reachable.length && d.unreachable_count > 0 && (opts.refused || !deliberate)) {
     const n = d.unreachable_count;
     const age = 'statement' in d.grant_age ? ` ${d.grant_age.statement}` : '';
     parts.push(`This connection's grant cannot call ${n} operation${n === 1 ? '' : 's'} its scopes allow, blocked by ${reachable.map(blockerPhrase).join(' and by ')} (counted per blocker; an operation can sit behind more than one).${age}`

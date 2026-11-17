@@ -137,8 +137,8 @@ export const LEARN_INSTRUCTION =
   'full-control writes. Always search the brain before answering or writing.';
 
 const SECRET_NOTE =
-  'Note: that bearer token is a long-lived, full-access secret — keep it private and ' +
-  'prefer a scoped/short-lived token if your host supports one.';
+  'Note: that bearer token is a long-lived secret that carries whatever its grant allows (whoami shows its scopes) — ' +
+  'keep it private and prefer a scoped/short-lived token if your host supports one.';
 
 // OAUTH_SECRET_NOTE moved to src/core/mcp-registration.ts (imported +
 // re-exported above; text unchanged).
@@ -164,7 +164,8 @@ Prints a copy-paste setup block for your agent, or wires it up directly with
 https:// URL.
 
 Auth:
-  Bearer token (default)         simple, long-lived, full-access — best local/personal
+  Bearer token (default)         simple, long-lived; carries its grant's scopes — best local/personal
+                                 (a member key from setup's member-keys/ folder works here)
   --oauth                        OAuth 2.1 client credentials (perplexity/generic):
                                  least-privilege scopes + short-lived tokens — best for
                                  anything exposed to a third-party cloud

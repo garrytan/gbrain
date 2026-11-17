@@ -347,14 +347,14 @@ const find_trajectory: Operation = {
     const until  = typeof p.until  === 'string' ? p.until  : undefined;
     const limit  = typeof p.limit  === 'number' ? p.limit  : undefined;
     const scope = sourceScopeOpts(ctx);
-    const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
+    const { resolveExcludePrivatePages, worldOnlyFacts } = await import('../search/private-visibility.ts');
 
-    // D-CDX-1: thread ctx.remote into the engine so visibility filtering
-    // happens at SQL level. Mirrors recall's posture for untrusted callers.
+    // D-CDX-1: the engine filters visibility in SQL. GST-2951: world-only for every remote caller but the brain owner,
+    // as recall and think's trajectory (worldOnlyFacts); page rules still apply through excludePrivate.
     const points = await ctx.engine.findTrajectory({
       entitySlug: p.entity_slug,
       ...scope,
-      remote: ctx.remote !== false, // fail-closed: anything not strictly false is untrusted (CLAUDE.md invariant)
+      remote: worldOnlyFacts(ctx.remote),
       excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote),
       metric,
       kind,

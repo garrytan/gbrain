@@ -1866,6 +1866,8 @@ export interface OntologyReadOpts extends PageReadScope {
   sourceIds?: string[];
   /** Fact visibility tiers the caller may read; undefined reads every tier. */
   visibility?: Array<'private' | 'world'>;
+  /** Leave out observations whose provenance is a life/diary/ page, before each dimension resolves (remote callers). */
+  excludeDiary?: boolean;
 }
 
 // Raw data
