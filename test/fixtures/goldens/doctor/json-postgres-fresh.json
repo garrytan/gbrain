@@ -1245,6 +1245,13 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
+          "message": "Every purge and withdrawal guard refuses a write role that row-level security keeps from its ledger",
+          "name": "guard_ledger_checks",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "elapsed_ms": "<volatile>",
           "message": "The database encoding is UTF8",
           "name": "database_encoding",
           "status": "ok"
@@ -2482,6 +2489,7 @@
             "behind": [],
             "docs": "docs/guides/conversation-archive.md#doctor",
             "enabled": true,
+            "enabled_by": "default",
             "harnesses": [
               {
                 "harness": "claude-code",
@@ -2527,6 +2535,7 @@
               }
             ],
             "held": [],
+            "reason": "on by default on a personal brain",
             "source_id": "conversations",
             "stale_days": 2
           },
@@ -2719,40 +2728,35 @@
           },
           "elapsed_ms": "<volatile>",
           "fix": {
-            "actor": "agent",
+            "actor": "host_admin",
             "argv": [
-              "gbrain",
-              "export",
-              "--source",
-              "default",
-              "--dir",
-              "<BACKUP_DIR>/default",
-              "--brain",
-              "host"
+              "pg_dump",
+              "--format",
+              "custom",
+              "--file",
+              "<DUMP_FILE>",
+              "--dbname",
+              "<DATABASE_URL>"
             ],
-            "command": "gbrain export --source default --dir '<BACKUP_DIR>/default' --brain host",
-            "consent": [],
-            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/operations/backup-check.md",
+            "command": "pg_dump --format custom --file '<DUMP_FILE>' --dbname '<DATABASE_URL>'",
+            "consent": [
+              "credentials"
+            ],
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/memory-boundaries.md#full-backup",
             "inputs": [
               {
-                "how": "Ask the user where backups should live (a directory outside the brain, ideally synced or on another disk).",
-                "name": "BACKUP_DIR"
+                "how": "A new file outside the brain, in a directory only the user can read.",
+                "name": "DUMP_FILE"
+              },
+              {
+                "how": "The brain's Postgres connection, preferably service=<name> from a pg_service file so no password lands in the command line.",
+                "name": "DATABASE_URL"
               }
             ],
-            "next": "run",
+            "next": "tell_user_to_run",
             "requires_exclusive": false,
-            "verify": {
-              "argv": [
-                "gbrain",
-                "doctor",
-                "--only",
-                "backup_coverage",
-                "--json",
-                "--brain",
-                "host"
-              ]
-            },
-            "why": "Writes a Markdown copy of 'default' (pages and facts) to a directory outside the brain so it survives losing the database."
+            "user_message": "This brain lives in Postgres, so back it up with a database dump of its database: `pg_dump --format custom --file <DUMP_FILE> --dbname <DATABASE_URL>`, kept private (it holds every page, fact, member and token); `pg_restore --list <DUMP_FILE>` reads it back. Restore it into a new, empty database with `pg_restore --no-owner --dbname <NEW_DATABASE_URL> <DUMP_FILE>`, then run `gbrain init --url <NEW_DATABASE_URL>` under a separate GBRAIN_HOME, which opens the restored brain. `gbrain export` is not a backup: an import of it puts every page in one source and keeps no members, tokens or facts.",
+            "why": "A database dump keeps every source, page, fact, member, token and folder rule of a Postgres brain; a Markdown export keeps pages only."
           },
           "message": "Not urgent yet: the brain holds 0 page(s)+fact(s) and is under 7 days old (backup coaching starts at 25 items or 7 days). 1 knowledge asset(s) lack verified recovery: default (not_a_git_repo). A source repo with a pushed git remote restores its Markdown files only, never DB-only pages, facts, config or credentials. Run `gbrain backup status` for each asset's fix command.",
           "name": "backup_coverage",

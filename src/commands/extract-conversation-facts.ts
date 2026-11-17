@@ -80,7 +80,7 @@ import { countConversationFacts, enqueueManagedPage, flushManagedBatch, managedC
 import { ConversationRunClaims, listConversationPagesBySlug } from '../core/facts/conversation-enumeration.ts';
 import { BudgetTracker, BudgetExhausted, loadPricingOverrides, type BudgetReason, type NoPricingGuidance } from '../core/budget/budget-tracker.ts';
 import { noPricingMessage } from '../core/budget/no-pricing.ts';
-import { conversationFactsCostCap } from '../core/facts/conversation-budget.ts';
+import { conversationEstimateLine, conversationFactsCostCap, conversationRunEstimate } from '../core/facts/conversation-budget.ts';
 import { listSources } from '../core/sources-ops.ts';
 import {
   loadOpCheckpoint,
@@ -1827,9 +1827,10 @@ export async function runExtractConversationFacts(
   // expecting an envelope. Emit the same counters as the Done: summary as one
   // JSON object on stdout; progress and diagnostics stay on stderr.
   const runStatus = extractRunStatus(aggregate);
+  const estimate = parsed.dryRun ? await conversationRunEstimate(engine, aggregate.segments_processed) : null;
   if (parsed.json) {
     console.log(JSON.stringify({
-      ...aggregate,
+      ...aggregate, ...(estimate ? { estimate } : {}),
       status: runStatus,
       ...(aggregate.pages_failed > 0 ? { next: { action: 'rerun', why: 'Failed pages stay unfinished and are retried by re-running the same command; pages that succeeded are not redone.' } } : {}),
       sources: sourceIds,
@@ -1848,6 +1849,7 @@ export async function runExtractConversationFacts(
       `Spent ~$${totalSpent.toFixed(4)}.`,
     );
     if (parsed.dryRun && parsed.slugs?.length) console.log(`  Targets: ${parsed.slugs.join(', ')}`); // #6764: the preview names what the paid run would re-extract
+    if (estimate) console.log(conversationEstimateLine(estimate));
     if (aggregate.pages_skipped > 0) {
       console.log(`  Skipped ${aggregate.pages_skipped} page(s) without eligible segments or outside the selected types:`);
       console.log(`    ${aggregate.pages_skipped_unparsed} with no parseable speaker turns (retryable); ${aggregate.pages_skipped_type_mismatch} with a type mismatch; ${aggregate.pages_skipped_insufficient_turns} with insufficient turns; ${aggregate.pages_skipped_since} with no eligible segments after --since; ${aggregate.pages_skipped_unrecognized_speaker} declined for speaker attribution.`);

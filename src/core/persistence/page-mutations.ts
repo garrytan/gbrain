@@ -387,7 +387,8 @@ export async function preparePageAdmission(ctx: OperationContext,
   }
   // G6: the hidden-row merge of an untrusted capture's body (page-prepare.ts) is opted into only by the trusted local ingest_capture
   // handler, whose caller never saw the page's non-world rows; a remote put_page has it already, through its authority.
-  if (Object.hasOwn(input.params, 'keep_hidden_rows') && (input.operation !== 'put_page' || ctx.remote !== false || input.params.keep_hidden_rows !== true)) {
+  // GST-2891: and by an enforced member's put_page or edit_page (cli/enforced-member.ts), whose reads left out held rows.
+  if (Object.hasOwn(input.params, 'keep_hidden_rows') && (!['put_page', 'edit_page'].includes(input.operation) || ctx.remote !== false || input.params.keep_hidden_rows !== true)) {
     throw new OperationError('invalid_params', 'keep_hidden_rows is reserved for trusted local ingestion.',
       'Drop keep_hidden_rows and submit the page without it; a remote put_page already keeps the rows its caller could not read.');
   }

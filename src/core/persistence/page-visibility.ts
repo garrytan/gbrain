@@ -312,6 +312,19 @@ export async function storedOwnerSpeaksForItself(engine: SqlEngine, authority: W
 }
 
 /**
+ * GST-2891: whether a stored write's caller reads held fence rows, as worldOnlyFacts decided its reads: the local CLI,
+ * or a credential bound to the live owner member, for itself or for an audience of the owner alone. Any other caller
+ * read the page without them.
+ */
+export async function storedWriterReadsHeld(engine: SqlEngine, authority: WriteAuthority): Promise<boolean> {
+  if (!authority.remote) return true;
+  const audience = authority.actingFor;
+  if (audience !== undefined && !(Array.isArray(audience) && audience.length === 1)) return false;
+  const bound = (await memberIdentityFor(engine, authority)).find(p => p.startsWith('member:')) ?? null;
+  return (audience === undefined || audience[0] === bound) && await defaultSourceWriterIsOwner(engine, bound);
+}
+
+/**
  * GST-2091: whether a stored page write is the brain owner's own (WriteAuthority.ownerWrite), judged live: it still holds
  * write scope and storedOwnerSpeaksForItself still names the same owner member. Such a write reaches a private page the
  * owner reads; readable_by and folder rules still apply to it, like to every other writer.

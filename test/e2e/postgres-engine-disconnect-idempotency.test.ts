@@ -111,6 +111,22 @@ describe.skipIf(skip)('PostgresEngine.disconnect idempotency + module-singleton 
     await expect(engine.disconnect()).resolves.toBeUndefined();
   });
 
+  test('a second disconnect() does not run the before-disconnect hooks again, as on PGLite', async () => {
+    for (const connect of [
+      (e: PostgresEngine) => e.connect({ database_url: DATABASE_URL!, poolSize: 2 }), // instance pool
+      (e: PostgresEngine) => e.connect({ database_url: DATABASE_URL! }),              // module singleton
+    ]) {
+      const engine = new PostgresEngine();
+      await connect(engine);
+      let runs = 0;
+      engine.registerBeforeDisconnect(async () => { runs++; });
+      await engine.disconnect();
+      expect(runs).toBe(1);
+      await engine.disconnect();
+      expect(runs).toBe(1);
+    }
+  });
+
   test('owner reconnect with a live borrower: borrower resolves the rebuilt singleton', async () => {
     const owner = new PostgresEngine();
     await owner.connect({ database_url: DATABASE_URL! }); // owns

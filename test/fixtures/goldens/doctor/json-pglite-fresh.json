@@ -1242,6 +1242,13 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
+          "message": "Skipped (PGLite has no row-level security, so every guard reads its ledgers in full)",
+          "name": "guard_ledger_checks",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "elapsed_ms": "<volatile>",
           "message": "Skipped (PGLite is always UTF8)",
           "name": "database_encoding",
           "status": "ok"
@@ -2471,6 +2478,7 @@
             "behind": [],
             "docs": "docs/guides/conversation-archive.md#doctor",
             "enabled": true,
+            "enabled_by": "default",
             "harnesses": [
               {
                 "harness": "claude-code",
@@ -2516,6 +2524,7 @@
               }
             ],
             "held": [],
+            "reason": "on by default on a personal brain",
             "source_id": "conversations",
             "stale_days": 2
           },
@@ -2711,21 +2720,20 @@
             "actor": "agent",
             "argv": [
               "gbrain",
-              "export",
-              "--source",
-              "default",
-              "--dir",
-              "<BACKUP_DIR>/default",
+              "backup",
+              "create",
+              "--output",
+              "<BACKUP_FILE>",
               "--brain",
               "host"
             ],
-            "command": "gbrain export --source default --dir '<BACKUP_DIR>/default' --brain host",
+            "command": "gbrain backup create --output '<BACKUP_FILE>' --brain host",
             "consent": [],
-            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/operations/backup-check.md",
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/in-agent-setup.md#6-back-up-the-complete-local-database",
             "inputs": [
               {
-                "how": "Ask the user where backups should live (a directory outside the brain, ideally synced or on another disk).",
-                "name": "BACKUP_DIR"
+                "how": "Ask the user for an absolute path to a new archive file, in an existing private directory outside the brain (ideally another disk).",
+                "name": "BACKUP_FILE"
               }
             ],
             "next": "run",
@@ -2741,7 +2749,7 @@
                 "host"
               ]
             },
-            "why": "Writes a Markdown copy of 'default' (pages and facts) to a directory outside the brain so it survives losing the database."
+            "why": "Writes a full snapshot of this PGLite brain (every source, page, fact, member, token and rule) to one archive outside the brain."
           },
           "message": "Not urgent yet: the brain holds 0 page(s)+fact(s) and is under 7 days old (backup coaching starts at 25 items or 7 days). 1 knowledge asset(s) lack verified recovery: default (not_a_git_repo). A source repo with a pushed git remote restores its Markdown files only, never DB-only pages, facts, config or credentials. Run `gbrain backup status` for each asset's fix command.",
           "name": "backup_coverage",

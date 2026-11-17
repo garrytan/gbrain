@@ -351,6 +351,14 @@
     },
     "revertToVersion#default": {},
     "revertToVersion#sourceId": {},
+    "sealChunks#default": {
+      "raw": 5,
+      "tx": 1
+    },
+    "sealChunks#expectedRevision": {
+      "raw": 5,
+      "tx": 1
+    },
     "searchKeyword#cjk": {
       "raw": 2,
       "tx": 1

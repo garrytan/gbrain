@@ -13,7 +13,8 @@ import { collapseFactReads } from '../facts/capture-dedup.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
 import { hasCJK } from '../cjk.ts';
-import { privateFactFilterForCaller, resolveExcludePrivatePages } from './private-visibility.ts';
+import { privateFactFilterForReader, resolveExcludePrivatePages, worldOnlyFacts } from './private-visibility.ts';
+import { grantedPrivateFactSql } from '../access/member-facts.ts';
 import { SAVED_FACT_COLLAPSE_COLUMNS, type CollapseColumns } from './entity-facts.ts';
 
 /** Words too common to count toward a saved-fact match; also the coverage relevance stopwords in ops/search.ts. */
@@ -33,8 +34,8 @@ export interface SavedFactMatches { facts: Array<SavedFactMatch & CollapseColumn
 
 /** Default on (set false to turn off): a newer saved fact carrying a correction cue is returned ahead of the older fact it corrects, which is labelled `corrected_by`. */
 export const SAVED_FACTS_SUPERSEDE_KEY = 'search.saved_facts_supersede';
-/** Cues that withdraw what was said, so they correct without stating a new figure. */
-const RETRACTION = String.raw`retract(s|ed|ing|ion)?|disregard|scratch that|i misspoke|i was wrong|not what (i|we) (posted|said|wrote)|ignore (the|my|that|what)`;
+/** Cues that withdraw what was said, so they correct without stating a new figure; the facts block's retraction cue starts from them (fact-relevance.ts). */
+export const RETRACTION = String.raw`retract(s|ed|ing|ion)?|disregard|scratch that|i misspoke|i was wrong|not what (i|we) (posted|said|wrote)|ignore (the|my|that|what)`;
 const RETRACTION_CUE = new RegExp(String.raw`\b(${RETRACTION})\b`, 'i');
 /** What marks a saved fact as making a correction (Postgres ARE, matched case-insensitively); "corrected" and "correcting" report one made elsewhere. */
 const CORRECTION_CUE = String.raw`\m(correction|${RETRACTION})\M`;
@@ -121,8 +122,8 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
   const active = `f.source_id = ANY($1::text[])
          AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
          AND f.source != ALL($2::text[])
-         ${ctx.remote !== false ? `AND f.visibility = 'world'` : ''}`;
-  const eligible = `${excludePrivate ? `AND ${privateFactFilterForCaller('f', true)}` : ''}
+         ${worldOnlyFacts(ctx.remote) ? `AND (f.visibility = 'world' OR ${grantedPrivateFactSql('f')})` : ''}`;
+  const eligible = `${excludePrivate ? `AND ${privateFactFilterForReader('f', true)}` : ''}
          AND ${projectionEligibleSql('facts', 'f', { floor: scope.minTrust })}`;
   const lang = getFtsLanguage();
   const doc = factsFtsDocument('f');

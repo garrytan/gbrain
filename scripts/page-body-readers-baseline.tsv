@@ -10,7 +10,7 @@
 # its row (`bun scripts/check-page-body-readers.ts --prune` drops stale rows).
 # A new whole-body reader never gets a row: use the segment reader, a bounded
 # lead (boundedBodyPrefixSql), body_bytes or content_hash instead.
-# docs/TESTING.md#page-body-readers
+# docs/ci-guards.md#page-body-readers
 src/cli/main.ts	formatResult	field	STREAM	renders a get_page result body; segmented bodies stream in PR 2
 src/cli/page-render.ts	asOfExitCode	field	NONE	not the page body: tests whether a get_page as_of reply carries compiled_truth (a wire result, not a Page); a segmented edition replies with window, tested first
 src/cli/page-render.ts	formatGetPage	call:serializeMarkdown	SEGW	
@@ -180,6 +180,8 @@ src/core/cycle/synthesize.ts	writeSummaryPage	field	INLINE
 src/core/cycle/transcript-discovery.ts	discoverConversationPages	field	STREAM	
 src/core/cycle/transcript-discovery.ts	discoverConversationPages	sql	STREAM	
 src/core/eligibility/fence-overlay.ts	loadFenceChunkOverlay	field	STREAM	
+src/core/eligibility/fence-overlay.ts	worldLinkContexts	field	INLINE	segmented from page: body never read, its link contexts are emptied for world-only callers (fail closed)
+src/core/eligibility/fence-overlay.ts	worldLinkContexts	sql	INLINE	segmented from page: body never read, its link contexts are emptied for world-only callers (fail closed)
 src/core/eligibility/scan.ts	SELECT	sql	STREAM	
 src/core/eligibility/scan.ts	assess	field	STREAM	
 src/core/embed-consent.ts	estimateEmbedBackfillUsd	sql	META	
@@ -416,12 +418,12 @@ src/core/page-state/projection-schema.ts	PAGE_SEARCH_VECTOR_TRIGGER_SQL	sql	STRE
 src/core/page-state/projections.ts	preparePageProjection	call:prepareMarkdownChunks	STREAM	
 src/core/page-state/projections.ts	readGuardedProjectionSnapshot	field	STREAM	
 src/core/page-state/projections.ts	sealImportedPage	field	STREAM	
-src/core/page-state/projections.ts	sealPageTextProjection	field	STREAM	
 src/core/page-state/schema.ts	PAGE_STATE_SCHEMA_STATEMENTS	sql	STREAM	revision trigger tuple (lane 1a adds body_generation)
 src/core/page-state/snapshot.ts	overlayCanonicalBodies	field	STREAM	overlays a caller-supplied body string (file bytes), not a stored segmented body
 src/core/page-state/snapshot.ts	overlayCanonicalBodies	sql	STREAM	normalizes the caller-supplied body
 src/core/page-state/snapshot.ts	readSnapshotStatement	field	STREAM	withdrawal overlay runs on inline pages only; segmented page skips it (per-window overlay in PR 2)
 src/core/page-state/snapshot.ts	readSnapshotStatement	sql	STREAM	p.* feeds rowToPage (projects body_storage/body_bytes); the fingerprint over a NULL body is empty
+src/core/page-state/text-seal.ts	sealPageTextProjection	field	STREAM	moved from projections.ts unchanged; BrainEngine.sealChunks reuses it after refusing a segmented page
 src/core/page-state/versions.ts	createPageVersion	field	SEGW	lane 1e file: segmented versions reference a generation
 src/core/page-state/versions.ts	createPageVersion	sql	SEGW	lane 1e file: segmented versions reference a generation
 src/core/page-window/bounded-lead.ts	overlaidBoundedPrefix	field	LEAD	see overlaidBoundedRows

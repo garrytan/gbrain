@@ -1,4 +1,5 @@
 import { registerManagedFilesystemEngine } from './persistence/filesystem-guard.ts';
+import { capabilitiesForEngineKind, type EngineCapabilities } from './engine-capabilities.ts';
 import { writerStamp } from './persistence/writer-versions.ts';
 import { noteRequestConfigWrite, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
 import { replaceDerivedLinks, replaceDerivedLinksBatch, type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
@@ -74,7 +75,7 @@ import {
 import {
   valueHash,
   normalizeDimension,
-  isNovelDimension, isBackdatedObservation, ONTOLOGY_SUPERSEDE_GUARD,
+  isNovelDimension, isBackdatedObservation, ONTOLOGY_SUPERSEDE_GUARD, NOT_CONVERSATION_SLOT_SQL, CONVERSATION_SLOT_SQL,
 } from './chronicle/ontology.ts';
 import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatchExhausted } from './audit/batch-retry-audit.ts';
 import { supportsHnswIterativeScan } from './vector-index.ts';
@@ -126,7 +127,7 @@ import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns, keywordPhraseFactorSql } from './search/sql-ranking.ts';
 import { RARE_TERM_CHUNK_CAP, rankOrFallbackByRarity, rareTermPagesSql, type RareTermPages } from './search/keyword-or-rarity.ts';
 import { keywordArmRows } from './search/keyword-identifier-probe.ts';
-import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateFactFilterForCaller, privatePagesFilterForCaller } from './search/private-visibility.ts';
+import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateFactFilterForReader, privatePagesFilterForCaller } from './search/private-visibility.ts';
 import { deletedPageProjectionHiddenSql } from './eligibility/sql.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import {
@@ -737,6 +738,7 @@ export class PGLiteEngine implements BrainEngine {
   private _chunkWritesInTransaction = false;
   private _checkpointGuard: PgliteCheckpointGuard | undefined;
   readonly kind = 'pglite' as const;
+  readonly capabilities: EngineCapabilities = capabilitiesForEngineKind('pglite');
   private _db: PGLiteDB | null = null;
   private _lock: LockHandle | null = null;
   /** Graduation custody: a kernel lock this process already holds, adopted by the next open instead of acquired. */
@@ -1901,6 +1903,10 @@ export class PGLiteEngine implements BrainEngine {
     return chunksImpl.listEmbeddingStateRows(scopedRead(this.engineSql), column, opts);
   }
 
+  async sealChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }): Promise<void> {
+    await this.transaction(tx => { const e = tx as PGLiteEngine; return chunksImpl.sealChunks(e.engineSql, e, slug, chunks, opts); });
+  }
+
   async deleteChunks(slug: string, opts?: { sourceId?: string }): Promise<void> {
     return chunksImpl.deleteChunks(this.engineSql, slug, opts);
   }
@@ -2143,21 +2149,29 @@ export class PGLiteEngine implements BrainEngine {
     const cur = await this.db.query(
       `SELECT id, value_hash, valid_from FROM facts
         WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND expired_at IS NULL AND valid_until IS NULL
-          AND (dim_status IS NULL OR dim_status = 'active')
+          AND (dim_status IS NULL OR dim_status = 'active') AND ${NOT_CONVERSATION_SLOT_SQL}
         ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1`,
       [sourceId, obs.entitySlug, dimension],
     );
     const current = cur.rows[0] as { id: number; value_hash: string; valid_from: string | null } | undefined;
+    // GBRA-574 B2: a conversation fact holding this exact stint key gives up its slot, so the observation is stored.
+    const freeKey = () => validFrom == null ? null : this.db.query(
+      `UPDATE facts SET dimension = NULL, value = NULL, value_hash = NULL, dim_status = NULL
+        WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND value_hash = $4 AND source_markdown_slug = $5
+          AND valid_from = $6::timestamptz AND ${CONVERSATION_SLOT_SQL}`,
+      [sourceId, obs.entitySlug, dimension, vh, obs.source, validFrom],
+    );
 
     if (current && current.value_hash === vh && !isBackdatedObservation(validFrom, current.valid_from)) {
       // This provenance already observed the value during the current stint.
       const seen = await this.db.query(
         `SELECT 1 FROM facts
-          WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND value_hash = $4 AND source_markdown_slug = $5
+          WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND value_hash = $4 AND source_markdown_slug = $5 AND ${NOT_CONVERSATION_SLOT_SQL}
             AND COALESCE(valid_from,'-infinity'::timestamptz) >= COALESCE($6::timestamptz,'-infinity'::timestamptz) LIMIT 1`,
         [sourceId, obs.entitySlug, dimension, vh, obs.source, current.valid_from],
       );
       if (seen.rows.length) return { action: 'noop', factId: null, supersededId: null };
+      await freeKey();
       const ins = await this.db.query(
         `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status,
                             confidence, source, source_markdown_slug, valid_from, valid_until, expired_at, consolidated_into)
@@ -2171,6 +2185,7 @@ export class PGLiteEngine implements BrainEngine {
         : { action: 'noop', factId: null, supersededId: null };
     }
 
+    await freeKey();
     const ins = await this.db.query(
       `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status,
                           confidence, source, source_markdown_slug, valid_from, valid_until)
@@ -2207,7 +2222,7 @@ export class PGLiteEngine implements BrainEngine {
     else { params.push(opts?.sourceId ?? null); scope = `AND ($${params.length}::text IS NULL OR source_id = $${params.length})`; }
     // Page-visibility gate on the provenance and entity pages, applied BEFORE DISTINCT ON
     // so the untrusted caller resolves the newest value they may see; a deleted page's observations are hidden for everyone.
-    const privacy = `AND ${deletedPageProjectionHiddenSql('facts', 'facts')}${opts?.excludePrivate ? ` AND ${privateFactFilterForCaller('facts')}` : ''}`;
+    const privacy = `AND ${deletedPageProjectionHiddenSql('facts', 'facts')}${opts?.excludePrivate ? ` AND ${privateFactFilterForReader('facts')}` : ''}${opts?.excludeDiary ? ` AND NOT starts_with(COALESCE(source_markdown_slug, ''), 'life/diary/')` : ''}`;
     params.push(opts?.visibility ?? null);
     const visibility = `AND ($${params.length}::text[] IS NULL OR visibility = ANY($${params.length}::text[]))`;
     const r = await this.db.query(
@@ -2215,7 +2230,7 @@ export class PGLiteEngine implements BrainEngine {
          source_markdown_slug AS source, valid_from, valid_until AS valid_to,
          COALESCE(dim_status,'active') AS status, id AS fact_id
        FROM facts
-       WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL ${scope} ${privacy} ${visibility}
+       WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL AND ${NOT_CONVERSATION_SLOT_SQL} ${scope} ${privacy} ${visibility}
          AND COALESCE(valid_from,'-infinity'::timestamptz) <= COALESCE($2::timestamptz, now())
          AND COALESCE(valid_until,'infinity'::timestamptz) > COALESCE($2::timestamptz, now())
          AND confidence >= $3
@@ -2233,7 +2248,7 @@ export class PGLiteEngine implements BrainEngine {
     else { params.push(opts?.sourceId ?? null); scope = `AND ($${params.length}::text IS NULL OR source_id = $${params.length})`; }
     const r = await this.db.query(
       `SELECT dimension, count(DISTINCT entity_slug)::int AS entities, count(*)::int AS observations
-       FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL ${scope}
+       FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND ${NOT_CONVERSATION_SLOT_SQL} ${scope}
        GROUP BY dimension ORDER BY entities DESC, dimension`,
       params,
     );
@@ -2243,7 +2258,7 @@ export class PGLiteEngine implements BrainEngine {
     });
   }
 
-  async findOntologyConflicts(opts?: PageReadScope & { minConfidence?: number; visibility?: OntologyReadOpts['visibility'] }): Promise<OntologyConflict[]> {
+  async findOntologyConflicts(opts?: PageReadScope & Pick<OntologyReadOpts, 'minConfidence' | 'visibility' | 'excludeDiary'>): Promise<OntologyConflict[]> {
     const minConf = opts?.minConfidence ?? 0;
     const params: unknown[] = [minConf];
     let scope: string;
@@ -2251,13 +2266,13 @@ export class PGLiteEngine implements BrainEngine {
     else { params.push(opts?.sourceId ?? null); scope = `AND ($${params.length}::text IS NULL OR source_id = $${params.length})`; }
     // Same page gates as getOntology, inside the CTE so a conflict
     // that only exists because of a hidden provenance is never reported.
-    const privacy = `AND ${deletedPageProjectionHiddenSql('facts', 'facts')}${opts?.excludePrivate ? ` AND ${privateFactFilterForCaller('facts')}` : ''}`;
+    const privacy = `AND ${deletedPageProjectionHiddenSql('facts', 'facts')}${opts?.excludePrivate ? ` AND ${privateFactFilterForReader('facts')}` : ''}${opts?.excludeDiary ? ` AND NOT starts_with(COALESCE(source_markdown_slug, ''), 'life/diary/')` : ''}`;
     params.push(opts?.visibility ?? null);
     const visibility = `AND ($${params.length}::text[] IS NULL OR visibility = ANY($${params.length}::text[]))`;
     const r = await this.db.query(
       `WITH cur AS (
          SELECT entity_slug, dimension, value, source_markdown_slug AS source, confidence, id AS fact_id
-         FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND valid_until IS NULL
+         FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND valid_until IS NULL AND ${NOT_CONVERSATION_SLOT_SQL}
            AND (dim_status IS NULL OR dim_status = 'active') AND confidence >= $1 ${scope} ${privacy} ${visibility}
        )
        SELECT entity_slug, dimension,

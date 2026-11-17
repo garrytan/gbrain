@@ -10,6 +10,7 @@ import type { BrainEngine } from './engine.ts';
 import { LATEST_VERSION } from './migrate.ts';
 import { GRADUATION_INVENTORY } from './persistence/graduation-inventory.ts';
 import { isRebuildableCache } from './persistence/rebuildable-cache.ts';
+import { sqlEngineKind } from './sql-engine-kind.ts';
 import { v055 } from './schema-migrations/v055-query-cache-search-lite.ts';
 import { v056 } from './schema-migrations/v056-query-cache-knobs-hash.ts';
 import { v059 } from './schema-migrations/v059-code-traversal-cache-v0-34.ts';
@@ -88,7 +89,8 @@ export async function readMissingTables(engine: BrainEngine): Promise<MissingTab
   const version = parseInt((await engine.getConfig('version')) || '0', 10);
   if (version > LATEST_VERSION) return { status: 'skipped', reason: 'client_behind', version, latest: LATEST_VERSION };
   const atHead = version === LATEST_VERSION;
-  const expected = GRADUATION_INVENTORY.entries.filter(e => e.kind === 'table' && e.engines[engine.kind]
+  const kind = sqlEngineKind(engine.kind, 'schema missing-tables check');
+  const expected = GRADUATION_INVENTORY.entries.filter(e => e.kind === 'table' && e.engines[kind]
     && (atHead || (recreateStep(e.relation) !== undefined && version >= CREATED_BY[e.relation]!)));
   const rows = await engine.executeRaw<{ relation: string }>('SELECT r AS relation FROM unnest($1::text[]) AS r WHERE to_regclass(r) IS NULL ORDER BY r',
     [expected.map(e => e.relation)]);
