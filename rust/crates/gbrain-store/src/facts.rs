@@ -381,12 +381,11 @@ pub(crate) fn write_fact(
     }
     let entries = index_keys(new);
     for (key, unique) in &entries {
-        if let Some(name) = unique {
-            if let Some(holder) = tx.get(key)? {
-                if keys::be8(&holder) != Some(new.id) {
-                    return Err(duplicate(name));
-                }
-            }
+        if let Some(name) = unique
+            && let Some(holder) = tx.get(key)?
+            && keys::be8(&holder) != Some(new.id)
+        {
+            return Err(duplicate(name));
         }
     }
     let id = new.id.to_be_bytes();
@@ -1028,10 +1027,10 @@ impl FactQuery {
         {
             return Ok(false);
         }
-        if let Some(pattern) = &self.grep {
-            if !like(&row.fact, pattern, true)? {
-                return Ok(false);
-            }
+        if let Some(pattern) = &self.grep
+            && !like(&row.fact, pattern, true)?
+        {
+            return Ok(false);
         }
         Ok(!hidden_by_deleted_page(read, row)?)
     }
@@ -1068,6 +1067,7 @@ fn page_of(
 }
 
 impl Store {
+    #[allow(clippy::too_many_arguments)]
     fn list_facts(
         &self,
         op: &str,
@@ -1109,14 +1109,14 @@ impl Store {
             let Some(supersede) = args.supersede_id else {
                 return Ok(json!({ "id": row.id, "status": "inserted" }));
             };
-            if let Some(old) = fact_by_number(tx, OP, "supersedeId", supersede)? {
-                if old.expired_at_us.is_none() {
-                    let mut new = old.clone();
-                    new.expired_at_us = Some(now);
-                    new.superseded_by = Some(row.id);
-                    new.valid_until_us = Some(closed_until(&old, row.valid_from_us, now));
-                    write_fact(tx, Some(&old), &new)?;
-                }
+            if let Some(old) = fact_by_number(tx, OP, "supersedeId", supersede)?
+                && old.expired_at_us.is_none()
+            {
+                let mut new = old.clone();
+                new.expired_at_us = Some(now);
+                new.superseded_by = Some(row.id);
+                new.valid_until_us = Some(closed_until(&old, row.valid_from_us, now));
+                write_fact(tx, Some(&old), &new)?;
             }
             Ok(json!({ "id": row.id, "status": "superseded" }))
         })
@@ -1502,7 +1502,13 @@ fn drop_rekey_duplicates(
     // (entity, sms, dimension, value_hash, valid_from) after the move.
     type Key = (String, String, String, String, i64);
     let key_of = |r: &FactRecord, entity: Option<String>, sms: Option<String>| -> Option<Key> {
-        Some((entity?, sms?, r.dimension.clone()?, r.value_hash.clone()?, r.valid_from_us))
+        Some((
+            entity?,
+            sms?,
+            r.dimension.clone()?,
+            r.value_hash.clone()?,
+            r.valid_from_us,
+        ))
     };
     let moving_ids: HashSet<u64> = moving.iter().map(|r| r.id).collect();
     let mut cand: Vec<(Key, FactRecord, bool)> = Vec::new();
@@ -1520,10 +1526,10 @@ fn drop_rekey_duplicates(
             if t.dimension.is_none() || moving_ids.contains(&t.id) {
                 continue;
             }
-            if let Some(key) = key_of(&t, t.entity_slug.clone(), t.source_markdown_slug.clone()) {
-                if moving_keys.contains(&key) {
-                    cand.push((key, t, false));
-                }
+            if let Some(key) = key_of(&t, t.entity_slug.clone(), t.source_markdown_slug.clone())
+                && moving_keys.contains(&key)
+            {
+                cand.push((key, t, false));
             }
         }
     }
@@ -1575,11 +1581,12 @@ fn drop_rekey_duplicates(
 /// renamed from `old` to `new` in `source_id`, in its statement order: drop the ontology rows the
 /// entity move would duplicate, move `entity_slug`, delete the fence rows still at `new` whose
 /// row_num a row at `old` holds (they belong to a purged page), drop the ontology rows the fence
-/// move would duplicate, then move `source_markdown_slug`. The store keeps no `fact_withdrawals`
-/// records, so the withdrawal move has nothing to do.
-// Called by `cascade::rename_slug_rows` once the interfaces lane adds it.
-#[allow(dead_code)]
-pub(crate) fn move_slug_rows(
+/// move would duplicate, then move `source_markdown_slug` (statements 1 to 6 of "Rename slug
+/// rows" in docs/designs/RUST_ENGINE_INTERFACES.md). Statement 1 moves the `fact_withdrawals`
+/// rows by `subject`; only `executeRaw` writes that ledger (src/core/facts/withdrawal.ts), and the
+/// Rust engine refuses `executeRaw`, so the store holds no withdrawal records and statement 1
+/// moves nothing. Called by `cascade::rename_slug_rows`.
+pub(crate) fn rename_slug_rows(
     tx: &mut dyn KvWrite,
     source_id: &str,
     old: &str,
@@ -1589,7 +1596,11 @@ pub(crate) fn move_slug_rows(
         return Ok(());
     }
     let about = entity_rows(tx, source_id, old)?;
-    let moving = about.iter().filter(|r| r.dimension.is_some()).cloned().collect();
+    let moving = about
+        .iter()
+        .filter(|r| r.dimension.is_some())
+        .cloned()
+        .collect();
     drop_rekey_duplicates(tx, source_id, moving, |r| {
         (Some(new.to_string()), r.source_markdown_slug.clone())
     })?;
@@ -1603,10 +1614,10 @@ pub(crate) fn move_slug_rows(
         .filter_map(|r| r.row_num)
         .collect();
     for row in page_rows(tx, source_id, new)? {
-        if row.row_num.is_some_and(|n| held.contains(&n)) {
-            if let Some(current) = read_fact(tx, row.id)? {
-                delete_fact(tx, &current)?;
-            }
+        if row.row_num.is_some_and(|n| held.contains(&n))
+            && let Some(current) = read_fact(tx, row.id)?
+        {
+            delete_fact(tx, &current)?;
         }
     }
     let moving = page_rows(tx, source_id, old)?
@@ -1689,10 +1700,11 @@ fn link_supersessions(
         // supersessionChainOf: the struck rows of this page that name a successor.
         let mut chain: HashMap<u64, f64> = HashMap::new();
         for other in rows {
-            if other.source_markdown_slug == slug && other.expired_at.is_some() {
-                if let (Some(from), Some(to)) = (other.row_num, other.superseded_by_row) {
-                    chain.insert(num_key(from), to);
-                }
+            if other.source_markdown_slug == slug
+                && other.expired_at.is_some()
+                && let (Some(from), Some(to)) = (other.row_num, other.superseded_by_row)
+            {
+                chain.insert(num_key(from), to);
             }
         }
         let key = match (&slug, int4_ref(target_row)) {
@@ -1741,10 +1753,10 @@ fn link_supersessions(
         }
         let target_id = found.map(|f| f.id).unwrap_or_default();
         links.push((*id, target_id));
-        if let (Some(s), Some(own_n)) = (&slug, row.row_num.and_then(int4_ref)) {
-            if let Some(own_target) = targets.get_mut(&(s.clone(), own_n)) {
-                own_target.next_row = Some(target_row);
-            }
+        if let (Some(s), Some(own_n)) = (&slug, row.row_num.and_then(int4_ref))
+            && let Some(own_target) = targets.get_mut(&(s.clone(), own_n))
+        {
+            own_target.next_row = Some(target_row);
         }
     }
     for (id, target) in links {
@@ -1901,7 +1913,10 @@ mod tests {
             fact_fingerprint("Alice  likes Tea."),
             "b93bc28474baf9644a7ac21462da07350b4215e5a9ad3a54ecfff9ebb8485883"
         );
-        assert_eq!(fact_normalize("Hello... World. e.g. x.y  ."), "hello world e.g x.y");
+        assert_eq!(
+            fact_normalize("Hello... World. e.g. x.y  ."),
+            "hello world e.g x.y"
+        );
         // ILIKE folds with lower(), one code point at a time.
         assert!(!like("Straße", "%STRASSE%", true).unwrap());
         assert!(!like("σ", "ς", true).unwrap());
@@ -1911,14 +1926,21 @@ mod tests {
         assert!(like("abcabc", "a%c", false).unwrap());
         assert!(like("a_b", "a\\_b", false).unwrap());
         let err = like("x", "x\\", false).unwrap_err();
-        assert!(err.message.contains("LIKE pattern must not end with escape character"));
+        assert!(
+            err.message
+                .contains("LIKE pattern must not end with escape character")
+        );
     }
 
+    /// A test fence row: (fact, entity, row_num, (dimension, value, value_hash)).
+    type Row<'a> = (&'a str, &'a str, f64, Option<(&'a str, &'a str, &'a str)>);
+
     #[test]
-    fn move_slug_rows_matches_move_slug_bindings() {
-        // PGLite moveSlugBindings on these rows gives the outcome below (probed).
+    fn rename_slug_rows_matches_move_slug_bindings() {
+        // PGLite moveSlugBindings on these rows gives the outcome below (probed). The rename goes
+        // through the cascade list, as the aliases family's updateSlug will call it.
         let store = crate::test_support::store();
-        let page = |sms: &str, rows: &[(&str, &str, f64, Option<(&str, &str, &str)>)]| -> Vec<u64> {
+        let page = |sms: &str, rows: &[Row]| -> Vec<u64> {
             let rows = rows
                 .iter()
                 .map(|(fact, entity, row_num, dim)| NewFactInput {
@@ -1973,7 +1995,7 @@ mod tests {
             })
             .unwrap();
         store
-            .write(|tx| move_slug_rows(tx, "default", "people/old", "people/new"))
+            .write(|tx| crate::cascade::rename_slug_rows(tx, "default", "people/old", "people/new"))
             .unwrap();
         let read = store.read().unwrap();
         let view = |id: u64| {
@@ -1994,18 +2016,43 @@ mod tests {
         assert_eq!(view(old[0]), None);
         assert_eq!(view(new[0]), None);
         assert_eq!(view(meeting[0]), None);
-        assert_eq!(view(old[1]), at("people/new", "people/new", 2, Some(new[1]), None));
-        assert_eq!(view(new[1]), at("people/new", "people/new", 3, None, Some("employer")));
-        assert_eq!(view(meeting[1]), at("people/new", "meetings/m1", 2, None, Some("title")));
-        assert_eq!(view(meeting[2]), at("people/new", "meetings/m1", 3, None, None));
-        assert!(entity_rows(&*read, "default", "people/old").unwrap().is_empty());
-        assert!(page_rows(&*read, "default", "people/old").unwrap().is_empty());
+        assert_eq!(
+            view(old[1]),
+            at("people/new", "people/new", 2, Some(new[1]), None)
+        );
+        assert_eq!(
+            view(new[1]),
+            at("people/new", "people/new", 3, None, Some("employer"))
+        );
+        assert_eq!(
+            view(meeting[1]),
+            at("people/new", "meetings/m1", 2, None, Some("title"))
+        );
+        assert_eq!(
+            view(meeting[2]),
+            at("people/new", "meetings/m1", 3, None, None)
+        );
+        assert!(
+            entity_rows(&*read, "default", "people/old")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            page_rows(&*read, "default", "people/old")
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(source_rows(&*read, "default").unwrap().len(), 4);
         // A rename onto the same slug changes nothing.
         drop(read);
         store
-            .write(|tx| move_slug_rows(tx, "default", "people/new", "people/new"))
+            .write(|tx| rename_slug_rows(tx, "default", "people/new", "people/new"))
             .unwrap();
-        assert_eq!(source_rows(&*store.read().unwrap(), "default").unwrap().len(), 4);
+        assert_eq!(
+            source_rows(&*store.read().unwrap(), "default")
+                .unwrap()
+                .len(),
+            4
+        );
     }
 }
