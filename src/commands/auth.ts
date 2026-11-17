@@ -32,7 +32,7 @@ import { sqlQueryForEngine, type SqlQuery } from '../core/sql-query.ts';
 import type { OAuthTransaction } from '../core/oauth-grants.ts';
 import { readClientGrant, rescopeClientGrant, resolveGrantProfile, type GrantPatch } from '../core/grants/service.ts';
 import { parseClientRescopeArgs, parseRescopeGrantArgs, splitRescopeTarget, type RescopeGrantArgs } from '../core/grants/cli.ts';
-import { GRANT_PROFILES, GrantError, TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, grantFromClient, privatePagesFromColumn, type ClientGrant, type PrivatePagesGrant } from '../core/grants/model.ts';
+import { GRANT_PROFILES, GrantError, TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, grantFromClient, privatePagesFromColumn, type ClientGrant, type PrivateFactsGrant, type PrivatePagesGrant } from '../core/grants/model.ts';
 import { cliRenderContext, renderAction, type RenderedAction } from '../core/agent-output.ts';
 import type { INSTALL_SURFACE_SET_BY } from '../mcp/surface.ts';
 import { credentialCensus, exposureServes, sharedTokenNotice, writeExposureNotice } from '../core/grants/shared-exposure.ts';
@@ -156,6 +156,11 @@ export function renderPrivatePages(mode: PrivatePagesGrant | undefined): string 
   return mode === 'granted_sources' ? 'granted-sources (private pages in the sources this grant names)' : 'none';
 }
 
+/** GBRA-575: the private-facts axis as `auth clients` and `auth rescope` print it (`auth list` prints the mode alone). */
+export function renderPrivateFacts(mode: PrivateFactsGrant | undefined): string {
+  return mode === 'granted_sources' ? 'granted-sources (private facts in the sources this grant names)' : 'none';
+}
+
 export function renderTokenScopes(scopes: unknown): string {
   const normalized = normalizeTokenScopes(scopes);
   if (normalized === undefined) return 'admin (grandfathered)';
@@ -165,7 +170,7 @@ export function renderTokenScopes(scopes: unknown): string {
 
 async function list(json: boolean) {
   await withConfiguredSql(async (sql) => {
-    // SELECT * reads every schema generation (private_pages arrives with GBRA-156's migration; absent reads as none).
+    // SELECT * reads every schema generation (private_pages and private_facts arrive with their migrations; absent reads as none).
     const rows = await sql`
       SELECT * FROM access_tokens
       ORDER BY created_at DESC
@@ -173,7 +178,7 @@ async function list(json: boolean) {
     if (json) {
       console.log(JSON.stringify(rows.map(r => ({
         id: String(r.id), name: r.name, scopes: renderTokenScopes(r.scopes), created_at: r.created_at, last_used_at: r.last_used_at ?? null,
-        status: r.revoked_at ? 'revoked' : 'active', private_pages: privatePagesFromColumn(r.private_pages),
+        status: r.revoked_at ? 'revoked' : 'active', private_pages: privatePagesFromColumn(r.private_pages), private_facts: privatePagesFromColumn(r.private_facts),
       })), null, 2));
       return;
     }
@@ -181,8 +186,8 @@ async function list(json: boolean) {
       console.log('No tokens found. Create one: gbrain auth create "my-client"');
       return;
     }
-    console.log('ID                                    Name                  Scopes                 Created              Last Used            Status   Private pages');
-    console.log('─'.repeat(141));
+    console.log('ID                                    Name                  Scopes                 Created              Last Used            Status   Private facts    Private pages');
+    console.log('─'.repeat(158));
     for (const r of rows) {
       const id = String(r.id).padEnd(36);
       const name = (r.name as string).padEnd(20);
@@ -190,7 +195,8 @@ async function list(json: boolean) {
       const created = new Date(r.created_at as string).toISOString().slice(0, 19);
       const lastUsed = r.last_used_at ? new Date(r.last_used_at as string).toISOString().slice(0, 19) : 'never'.padEnd(19);
       const status = (r.revoked_at ? 'REVOKED' : 'active').padEnd(7);
-      console.log(`${id}  ${name}  ${scopes}  ${created}  ${lastUsed}  ${status}  ${renderPrivatePages(privatePagesFromColumn(r.private_pages))}`);
+      const facts = privatePagesFromColumn(r.private_facts) === 'granted_sources' ? 'granted-sources' : 'none';
+      console.log(`${id}  ${name}  ${scopes}  ${created}  ${lastUsed}  ${status}  ${facts.padEnd(15)}  ${renderPrivatePages(privatePagesFromColumn(r.private_pages))}`);
     }
   });
 }
@@ -941,7 +947,7 @@ function printClientGrantAxes(grant: ClientGrant, before?: ClientGrant) {
   const axes: Array<[string, (g: ClientGrant) => string]> = [['Scopes', g => g.scopes.join(' ') || '<none>'], ['Write source', g => g.sourcesNone ? 'none (every read and write refused)' : String(g.sourceId)],
     ['Federated reads', g => g.federatedRead.join(', ') || '<none>'], ['Operations', g => g.allowedOperations === null ? 'all (no snapshot)' : g.allowedOperations.join(', ') || 'none'],
     ['Slug prefixes', g => g.boundSlugPrefixes?.join(', ') || '<none>'], ['Takes holders', g => g.takesHolders === null ? 'world (default)' : g.takesHolders.join(', ') || 'none (every take hidden)'],
-    ['Private pages', g => renderPrivatePages(g.privatePages)], ['Tool surface', g => g.surface ?? '<server default>'], ['Delegated spending', g => g.budgetUsdPerDay === null ? 'unlimited' : '$' + g.budgetUsdPerDay + '/day']];
+    ['Private pages', g => renderPrivatePages(g.privatePages)], ['Private facts', g => renderPrivateFacts(g.privateFacts)], ['Tool surface', g => g.surface ?? '<server default>'], ['Delegated spending', g => g.budgetUsdPerDay === null ? 'unlimited' : '$' + g.budgetUsdPerDay + '/day']];
   for (const [label, render] of axes) { const after = render(grant), was = before ? render(before) : after; console.log(`  ${label}: ${was === after ? after : `${was} -> ${after}`}`); }
 }
 
@@ -958,6 +964,10 @@ function printTokenRescope(result: RescopeTokenResult, json: boolean, bound?: Bi
   if (result.before.privatePages || result.after.privatePages) {
     const [ppBefore, ppAfter] = [renderPrivatePages(result.before.privatePages), renderPrivatePages(result.after.privatePages)];
     console.log(`  Private pages: ${ppBefore === ppAfter ? ppAfter : `${ppBefore} -> ${ppAfter}`}`);
+  }
+  if (result.before.privateFacts || result.after.privateFacts) {
+    const [pfBefore, pfAfter] = [renderPrivateFacts(result.before.privateFacts), renderPrivateFacts(result.after.privateFacts)];
+    console.log(`  Private facts: ${pfBefore === pfAfter ? pfAfter : `${pfBefore} -> ${pfAfter}`}`);
   }
   console.log(`  Grant revision: ${result.revision.before === result.revision.after ? result.revision.after : `${result.revision.before} -> ${result.revision.after}`}`);
   if (bound) console.log(bindingLine(bound, result.dryRun));
@@ -1043,6 +1053,8 @@ export interface ClientRow {
   deleted_at?: string | Date | null;
   /** GBRA-156 private-pages axis; absent on schemas without it (reads as none). */
   private_pages?: string | null;
+  /** GBRA-575 private-facts axis; absent on schemas without it (reads as none). */
+  private_facts?: string | null;
 }
 
 /** The operation-snapshot axis of one client, as `auth clients` reports it. */
@@ -1113,7 +1125,16 @@ export async function listClientRows(engine: BrainEngine): Promise<ClientRow[]> 
   // The columns each degrade tier drops; any other missing object rethrows.
   const isSchemaShapeError = (e: unknown): boolean =>
     isMissingSchemaObject(e, 'table', 'oauth_clients') ||
-    isMissingSchemaObject(e, 'column', ['private_pages', 'allowed_operations', 'deleted_at', 'surface', 'surface_set_by', 'source_id', 'federated_read']);
+    isMissingSchemaObject(e, 'column', ['private_facts', 'private_pages', 'allowed_operations', 'deleted_at', 'surface', 'surface_set_by', 'source_id', 'federated_read']);
+  try {
+    return await engine.executeRaw<ClientRow>(
+      `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read, allowed_operations, deleted_at, private_pages, private_facts
+         FROM oauth_clients ORDER BY client_name, client_id`,
+    );
+  } catch (e) {
+    // Brain predates the private-facts column: it reads as none.
+    if (!isSchemaShapeError(e)) throw e;
+  }
   try {
     return await engine.executeRaw<ClientRow>(
       `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read, allowed_operations, deleted_at, private_pages
@@ -1208,6 +1229,7 @@ async function clientsCmd(args: string[]) {
             source_id: c.source_id,
             federated_read: c.federated_read,
             private_pages: privatePagesFromColumn(c.private_pages),
+            private_facts: privatePagesFromColumn(c.private_facts),
             ...clientOperationsView(c),
             revoked_at: c.deleted_at ?? null,
             token_lifetime_clamped: lifetimeClamped.has(c.client_id),
@@ -1235,6 +1257,7 @@ async function clientsCmd(args: string[]) {
         console.log(`  scopes: ${c.scope ?? '<none>'}    surface: ${surfaceStr}`);
         console.log(`  write source: ${c.source_id ?? '<none>'}    federated reads: ${(c.federated_read ?? []).join(', ') || '<none>'}`);
         console.log(`  private pages: ${renderPrivatePages(privatePagesFromColumn(c.private_pages))}`);
+        console.log(`  private facts: ${renderPrivateFacts(privatePagesFromColumn(c.private_facts))}`);
         for (const line of clientOperationsLines(c)) console.log(line);
         if (lifetimeClamped.has(c.client_id)) console.log('  access-token lifetime: clamped to the 90-day maximum by an upgrade (docs/mcp/ADMIN.md#access-token-lifetime)');
         if (parsed.usage) {
@@ -1337,7 +1360,7 @@ Usage:
                                                           page no rule restricts on purpose (credential_scope_required)
   gbrain auth set-min-trust <client|token> <tier|none>    Set or clear the read floor of an OAuth client (id)
                                                           or legacy token (id or name). Local CLI only.
-  gbrain auth list [--json]                                List all tokens (id, scopes, usage, private pages)
+  gbrain auth list [--json]                                List all tokens (id, scopes, usage, private facts and pages)
   gbrain auth revoke <name>                                Revoke a legacy token (ALL active rows with that name)
   gbrain auth revoke --id <uuid>                           Revoke exactly one token by id (names are not unique)
   gbrain auth rescope --token <name>|--id <uuid>|--client <client_id>|<name> [options]
@@ -1372,6 +1395,10 @@ Usage:
                                                           sources this grant names explicitly (never the
                                                           no-grant floor, federation, a client's bound source
                                                           or a request's source_ids); 'none' (default) hides them
+     --private-facts <granted-sources|none>               Remote reads see facts stamped private in the sources this
+                                                          grant names explicitly, never on a private, readable_by,
+                                                          folder-ruled, quarantined or member page; no fact is
+                                                          rewritten; 'none' (default) hides them
      --reset-default <sources,takes-holders,operations>   Token only: restore the auth create default for those axes
      --refresh-operations [--add <op,...>|--all-new]      Token only: preview operations added since the snapshot;
                                                           widen only by the ones --add names (or all with --all-new)

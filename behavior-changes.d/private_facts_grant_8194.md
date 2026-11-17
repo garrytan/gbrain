@@ -1,0 +1,4 @@
+---
+kind: add
+---
+Access tokens and OAuth clients have a new private-facts grant, `none` for every existing and new token and client, so remote fact reads stay world-only until the brain host opts a connection in: `gbrain auth rescope --token <name> --private-facts granted-sources` (or `--client <id>`) lets it read facts saved with visibility private in the sources its grant names, and only those, without rewriting any fact. A token with no source grant, federated sources the grant does not name and a request's `source_ids` never add one, and a fact held on, provenanced from or about a private, `readable_by`, folder-ruled, quarantined or member page stays hidden. `context_pack`, `delta`, writes and audience or attested reads stay world-only. `--private-facts none` turns it off on the next request. No MCP operation or admin HTTP route can set it. `gbrain auth list` and `gbrain auth clients` show it.

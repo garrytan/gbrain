@@ -2525,6 +2525,14 @@ at all: bind the client to the owner instead (`gbrain access owner set`, then
 `gbrain auth rescope --client <id> --member <owner>`), and it reads private
 facts without opening them to anyone else.
 
+On a shared brain with several clients and no owner, `gbrain auth rescope
+--token <name> --private-facts granted-sources` (or `--client <id>`) is the
+per-credential alternative to opening facts: that one credential reads the
+private facts in the sources its grant names, nobody else does, no fact
+changes, and `--private-facts none` switches it off on the next request. It
+never reads a fact on a page this repair would refuse to open
+([MCP administration](../mcp/ADMIN.md)).
+
 ### Lost fence rows
 
 A page rewrite that drops its `## Facts` or takes section is safe on its
