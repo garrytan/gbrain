@@ -220,7 +220,8 @@ describe.each(testBackends())('whole-class file-drift on a read-only mirror (%s)
     const m = (await preview(engine)).class_manifest!;
     expect(m.pages).toBe(2);
     expect(((await inside(() => applyFileDriftClass(ctx, scope, sel(), m.hash))) as any)?.code).toBe('permission_denied');
-    expect(existsSync(join(root, '.gbrain'))).toBe(false);
+    expect(['repair-previews', 'reconciliation-previews'].filter(name => existsSync(join(root, '.gbrain', name)))).toEqual([]);
+    rmSync(join(root, '.gbrain'), { recursive: true, force: true });
     const narrow = await registerLocalWriter(engine, 'cli', { sourceIds: ['*'], operations: null, scopes: ['read', 'write'], slugPrefixes: ['notes/'] }, true);
     const asNarrow = <T>(run: () => Promise<T>) => withVerifiedLocalRegistration(engine, narrow, run);
     const result = await asNarrow(() => previewFileDriftClass(engine, scope, sel(), { remote: false }));
