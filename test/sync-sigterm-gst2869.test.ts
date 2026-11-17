@@ -9,18 +9,22 @@ import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { runSync } from '../src/commands/sync.ts';
+import { performSync, runSync } from '../src/commands/sync.ts';
 import { currentExitCode, setCliExitVerdict } from '../src/core/cli-force-exit.ts';
-import { _resetForTests, hasSignalOwner, installSignalHandlers, registerSignalOwner } from '../src/core/process-cleanup.ts';
+import * as processCleanup from '../src/core/process-cleanup.ts';
+import { _resetForTests, CLEANUP_DEADLINE_MS, hasSignalOwner, installSignalHandlers, registerSignalOwner } from '../src/core/process-cleanup.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { readBlockedManagedSyncs } from '../src/core/persistence/sync-blocked.ts';
 import { abandonedPasses, passStatusNext, passStatusState } from '../src/core/persistence/sync-pass-status.ts';
+import * as passRowModule from '../src/core/persistence/sync-pass-row.ts';
+import * as watermarkModule from '../src/core/persistence/applied-watermark.ts';
 import { MANAGED_SYNC_PASS_OP, readPassRow, transientEnding, type PassRow } from '../src/core/persistence/sync-pass-row.ts';
 import { abortStop, SyncTerminated } from '../src/core/persistence/sync-stop-class.ts';
 import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
+import { waitFor } from './helpers/wait-for.ts';
 
 const git = (root: string, args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', '-c', 'commit.gpgsign=false', ...args],
   { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -199,6 +203,171 @@ for (const backend of testBackends()) {
       expect((await passRow(engine)).telemetry.outcome).toBe('synced');
     } finally { exit.mockRestore(); }
   }, { databaseUrl, setup: seed }), 120_000);
+
+  // Value: protects=a second SIGTERM while the pass saves exits now through the generic path (release + re-raise);
+  //   fails_when=the interrupt.signal.aborted guard in the sync signal owner is dropped; why_new=no test sends a second signal;
+  //   seam=none; no_claim=the real process death (process.kill mocked; pglite unit only)
+  test(`GST-2869 [${backend}]: a second SIGTERM while the pass saves re-raises it through the generic path`, () => managedBrain(async ({ engine, root }) => {
+    const exit = spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const kill = spyOn(process, 'kill').mockImplementation((() => true) as never);
+    try {
+      installSignalHandlers();
+      await quiet(() => runSync(engine, SYNC, { ownSignals: true }));
+      editAll(root, 'twice');
+      let sent = false;
+      installFaultHook(point => { if (point === 'sync:round_start' && !sent) { sent = true; process.emit('SIGTERM' as never); process.emit('SIGTERM' as never); } });
+      await quiet(() => runSync(engine, SYNC, { ownSignals: true }));
+      installFaultHook(undefined);
+      expect(kill).toHaveBeenCalledTimes(1);
+      expect(kill).toHaveBeenCalledWith(process.pid, 'SIGTERM');
+      expect(hasSignalOwner()).toBe(false);
+      expect(currentExitCode()).toBe(143);
+    } finally { exit.mockRestore(); kill.mockRestore(); }
+  }, { databaseUrl, setup: seed }), 120_000);
+
+  // Value: protects=a SIGTERM before any managed pass is live takes the generic path and records no terminated pass;
+  //   fails_when=the !managedPassLive() guard is dropped, so a pre-pass signal aborts the run instead of exiting;
+  //   why_new=existing arms signal only mid-pass; seam=none; no_claim=the real process death (process.kill mocked; pglite unit only)
+  test(`GST-2869 [${backend}]: a SIGTERM with no live managed pass takes the generic path and records nothing`, () => managedBrain(async ({ engine, root }) => {
+    const exit = spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const kill = spyOn(process, 'kill').mockImplementation((() => true) as never);
+    try {
+      installSignalHandlers();
+      await quiet(() => runSync(engine, SYNC, { ownSignals: true }));
+      editAll(root, 'early');
+      signalAtRound('SIGTERM', 'sync:lease_acquired');
+      await quiet(() => runSync(engine, SYNC, { ownSignals: true }));
+      installFaultHook(undefined);
+      expect(kill).toHaveBeenCalledWith(process.pid, 'SIGTERM');
+      expect(currentExitCode()).toBe(0);
+      const ended = await passRow(engine);
+      expect([ended.telemetry.outcome, ended.telemetry.stop_reason]).toEqual(['synced', null]);
+    } finally { exit.mockRestore(); kill.mockRestore(); }
+  }, { databaseUrl, setup: seed }), 120_000);
+
+  // Value: protects=a save that outlasts the cleanup window still exits 128 + n through triggerCleanupAndExit (143 SIGTERM, 129 SIGHUP);
+  //   fails_when=the fallback timer is dropped, uses another delay, or exits with a fixed or wrong code; why_new=no arm reaches the fallback;
+  //   seam=none; no_claim=a real 3 s wall-clock wait (the timer callback is captured and fired by hand; cleanup exit spied)
+  test(`GST-2869 [${backend}]: a save that outlasts the cleanup window exits 128 + n through the generic cleanup`, () => managedBrain(async ({ engine, root }) => {
+    const exit = spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const kill = spyOn(process, 'kill').mockImplementation((() => true) as never);
+    const trigger = spyOn(processCleanup, 'triggerCleanupAndExit').mockImplementation((async () => undefined) as never);
+    try {
+      installSignalHandlers();
+      await quiet(() => runSync(engine, SYNC, { ownSignals: true }));
+      for (const [signal, code] of [['SIGTERM', 143], ['SIGHUP', 129]] as const) {
+        setCliExitVerdict(0);
+        editAll(root, `late-${signal}`);
+        const fallbacks: Array<() => void> = [];
+        let sent = false;
+        installFaultHook(point => {
+          if (point !== 'sync:round_start' || sent) return;
+          sent = true;
+          const realSetTimeout = globalThis.setTimeout;
+          globalThis.setTimeout = ((fn: () => void, ms?: number, ...rest: unknown[]) => {
+            if (ms === CLEANUP_DEADLINE_MS) fallbacks.push(fn);
+            return realSetTimeout(fn, ms, ...rest);
+          }) as typeof setTimeout;
+          try { process.emit(signal as never); } finally { globalThis.setTimeout = realSetTimeout; }
+        });
+        await quiet(() => runSync(engine, SYNC, { ownSignals: true }));
+        installFaultHook(undefined);
+        expect(currentExitCode()).toBe(code);
+        expect(trigger).not.toHaveBeenCalled();
+        expect(fallbacks).toHaveLength(1);
+        fallbacks[0]();
+        expect(trigger).toHaveBeenCalledWith(code);
+        trigger.mockClear();
+      }
+    } finally { exit.mockRestore(); kill.mockRestore(); trigger.mockRestore(); }
+  }, { databaseUrl, setup: seed }), 120_000);
+
+  // Value: protects=a terminated run keeps the cleanup fallback armed until its result is out, so a stalled read after the save still exits;
+  //   fails_when=the fallback is cleared when the pass returns, before the watermark read and the JSON result; why_new=other arms finish fast;
+  //   seam=none; no_claim=a real stalled database (the watermark read is held by a spy)
+  test(`GST-2869 [${backend}]: a terminated run keeps the fallback armed until its result is out`, () => managedBrain(async ({ engine, root }) => {
+    const exit = spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const kill = spyOn(process, 'kill').mockImplementation((() => true) as never);
+    let release: (value: null) => void = () => undefined;
+    const stalled = new Promise<null>(resolve => { release = resolve; });
+    const watermark = spyOn(watermarkModule, 'readAppliedWatermark');
+    const realSetTimeout = globalThis.setTimeout, realClearTimeout = globalThis.clearTimeout;
+    const fallbacks: unknown[] = [], cleared = new Set<unknown>();
+    try {
+      installSignalHandlers();
+      await quiet(() => runSync(engine, SYNC, { ownSignals: true }));
+      editAll(root, 'stalled-tail');
+      let sent = false;
+      installFaultHook(point => {
+        if (point !== 'sync:round_start' || sent) return;
+        sent = true;
+        globalThis.setTimeout = ((fn: () => void, ms?: number, ...rest: unknown[]) => {
+          const handle = realSetTimeout(fn, ms, ...rest);
+          if (ms === CLEANUP_DEADLINE_MS) fallbacks.push(handle);
+          return handle;
+        }) as typeof setTimeout;
+        try { process.emit('SIGTERM' as never); } finally { globalThis.setTimeout = realSetTimeout; }
+      });
+      globalThis.clearTimeout = ((handle?: Parameters<typeof clearTimeout>[0]) => { cleared.add(handle); realClearTimeout(handle); }) as typeof clearTimeout;
+      watermark.mockClear();
+      watermark.mockImplementation((() => stalled) as never);
+      const running = quiet(() => runSync(engine, SYNC, { ownSignals: true }));
+      await waitFor(() => watermark.mock.calls.length > 0, { timeoutMs: 60_000 });
+      expect(fallbacks).toHaveLength(1);
+      expect(cleared.has(fallbacks[0])).toBe(false);
+      release(null);
+      await running;
+      installFaultHook(undefined);
+      expect(cleared.has(fallbacks[0])).toBe(true);
+      expect(currentExitCode()).toBe(143);
+      expect((await passRow(engine)).telemetry.stop_reason).toBe('terminated');
+    } finally { globalThis.clearTimeout = realClearTimeout; watermark.mockRestore(); exit.mockRestore(); kill.mockRestore(); }
+  }, { databaseUrl, setup: seed }), 120_000);
+
+  // Value: protects=gbrain sync --all stopped by SIGTERM records the pass terminated and exits 143;
+  //   fails_when=runSyncAll stops wrapping dispatch in the signal owner or drops the terminated exit verdict;
+  //   why_new=existing arms run single-source only; seam=none; no_claim=the skipped extraction and backup extras (not observed; pglite unit only)
+  test(`GST-2869 [${backend}]: sync --all stopped by SIGTERM records terminated and exits 143`, () => managedBrain(async ({ engine, root }) => {
+    const exit = spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const kill = spyOn(process, 'kill').mockImplementation((() => true) as never);
+    const ALL = ['--all', '--no-pull', '--no-embed', '--json'];
+    try {
+      installSignalHandlers();
+      await quiet(() => runSync(engine, ALL, { ownSignals: true }));
+      expect(currentExitCode()).toBe(0);
+      editAll(root, 'all');
+      signalAtRound('SIGTERM');
+      await quiet(() => runSync(engine, ALL, { ownSignals: true }));
+      installFaultHook(undefined);
+      expect(currentExitCode()).toBe(143);
+      expect(exit).not.toHaveBeenCalled();
+      expect(kill).not.toHaveBeenCalled();
+      expect(hasSignalOwner()).toBe(false);
+      const ended = await passRow(engine);
+      expect([ended.telemetry.outcome, ended.telemetry.stop_reason]).toEqual(['resumable', 'terminated']);
+    } finally { exit.mockRestore(); kill.mockRestore(); }
+  }, { databaseUrl, setup: seed }), 120_000);
+
+  // Value: protects=an abort the sync took as a termination, landing while the pass row is pinned, saves stop_reason terminated;
+  //   fails_when=the pin-site save goes back to a fixed 'timeout'; why_new=existing arms abort after the pin; seam=none;
+  //   no_claim=a real signal at the pin (managedPassLive is false there); a writePassRow spy aborts right after the pin write
+  test(`GST-2869 [${backend}]: a termination abort while the pass is pinned records terminated, not timeout`, () => managedBrain(async ({ engine, root }) => {
+    await quiet(() => performSync(engine, { repoPath: root, sourceId: 'default', noPull: true, noEmbed: true }));
+    editAll(root, 'pin');
+    const controller = new AbortController();
+    const realWrite = passRowModule.writePassRow;
+    const write = spyOn(passRowModule, 'writePassRow').mockImplementation(async (tx, value, opts = {}) => {
+      const written = await realWrite(tx, value, opts);
+      if (opts.pin && !opts.clock && value.telemetry.outcome === 'open' && !controller.signal.aborted) controller.abort(new SyncTerminated('SIGTERM'));
+      return written;
+    });
+    try {
+      await quiet(() => performSync(engine, { repoPath: root, sourceId: 'default', noPull: true, noEmbed: true, drain: true, signal: controller.signal }));
+    } finally { write.mockRestore(); }
+    expect(controller.signal.aborted).toBe(true);
+    const ended = await passRow(engine);
+    expect([ended.telemetry.outcome, ended.telemetry.stop_reason, ended.telemetry.round]).toEqual(['resumable', 'terminated', 0]);
+  }, { databaseUrl, setup: seed }), 120_000);
 }
 
 /**
@@ -206,4 +375,4 @@ for (const backend of testBackends()) {
  * the pass's progress timers kept firing, and master's generic handler waits as long. Once the handler runs, the row is
  * saved within milliseconds, which the pglite arms above pin. This names the wait so a fix has a test to turn green.
  */
-test.todo('GST-2869 follow-up [pglite]: a real SIGTERM reaches the sync handler within the 3 s window while a managed pass writes pages');
+test.todo('GST-2869 follow-up [pglite]: a real SIGTERM reaches the sync handler within the 3 s window while a managed pass writes pages', () => {});

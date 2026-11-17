@@ -56,7 +56,7 @@ const coordinated = (engine: BrainEngine, sql: string, params: unknown[] = []) =
   engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(sql, params), TEST_WRITE_ATTRIBUTION));
 const mirror = (engine: BrainEngine) => engine.executeRaw(`UPDATE sources SET config = config || '{"mirror_read_only": true}'::jsonb WHERE id='default'`);
 const incarnation = async (engine: BrainEngine) => (await engine.executeRaw<{ i: string }>("SELECT incarnation::text AS i FROM sources WHERE id='default'"))[0]!.i;
-const holdRows = async (engine: BrainEngine) => (await engine.executeRaw<{ r: { path: string; code: string; upstream_version: string | null; meta: Record<string, unknown> } }>(
+const holdRows = async (engine: BrainEngine) => (await engine.executeRaw<{ r: { path: string; code: string; upstream_version: string | null; held_at: string; meta: Record<string, unknown> } }>(
   "SELECT completed_keys->0 AS r FROM op_checkpoints WHERE op='sync-hold' ORDER BY fingerprint")).map(({ r }) => r);
 /** Pages as an older gbrain left them: no import record, and a revision no import or write request produced. */
 const legacy = async (engine: BrainEngine) => {

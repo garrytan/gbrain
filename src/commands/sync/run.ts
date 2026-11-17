@@ -834,7 +834,7 @@ const terminationExit = (signal: NodeJS.Signals): number => signal === 'SIGHUP' 
 /**
  * GST-2869: while a managed pass this CLI runs is live, the first SIGTERM or SIGHUP aborts `interrupt` with `SyncTerminated`,
  * so the pass records `resumable` / `terminated` and the run prints its result, then exits 128 + n. A second signal, a signal
- * with no live pass, or a save that outlasts process-cleanup's window takes today's cleanup-and-exit. Never under another
+ * with no live pass, or a run whose save or result outlasts process-cleanup's window takes today's cleanup-and-exit. Never under another
  * owner (a worker's sync job): the newest owner would take that owner's signals.
  */
 async function withTerminationOwner<T>(ownSignals: boolean, interrupt: AbortController, run: () => Promise<T>): Promise<T> {
@@ -846,11 +846,18 @@ async function withTerminationOwner<T>(ownSignals: boolean, interrupt: AbortCont
     if (interrupt.signal.aborted || !managedPassLive()) { release(); process.kill(process.pid, signal); return; }
     process.stderr.write(`[sync] ${signal}: saving the pass and stopping; send it again to exit now\n`);
     interrupt.abort(new SyncTerminated(signal));
-    fallback = setTimeout(() => { release(); void cleanup.triggerCleanupAndExit(terminationExit(signal)); }, cleanup.CLEANUP_DEADLINE_MS);
-    fallback.unref?.();
+    terminationFallback = setTimeout(() => { release(); void cleanup.triggerCleanupAndExit(terminationExit(signal)); }, cleanup.CLEANUP_DEADLINE_MS);
+    terminationFallback.unref?.();
   }, ['SIGTERM', 'SIGHUP']);
-  let fallback: ReturnType<typeof setTimeout> | undefined;
-  try { return await run(); } finally { clearTimeout(fallback); release(); }
+  try { return await run(); } finally { release(); }
+}
+
+let terminationFallback: ReturnType<typeof setTimeout> | undefined;
+
+/** GST-2869: drops the fallback a termination armed once the whole run is done, so the result and its reads stay inside the window. */
+export function clearTerminationFallback(): void {
+  clearTimeout(terminationFallback);
+  terminationFallback = undefined;
 }
 
 /** GST-2869: the exit of a run `withTerminationOwner` stopped, or null. */
