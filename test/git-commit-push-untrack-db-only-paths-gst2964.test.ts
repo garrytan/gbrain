@@ -83,8 +83,10 @@ function declaredCheckout(): string {
   return root;
 }
 const managedAt = (root: string) => ({ root, evidence: 'test' });
+/** Every file the checkout holding `dir` tracks, by its path from the checkout's top: a brain read that checked them all. */
+const tracked = (dir: string) => new Set(git(dir, 'ls-files', '--full-name', '-z').split('\0').filter(Boolean));
 /** The brain's answer for a source rooted at `sourceRoot` whose sync strategy imports no code: every code-extension file is admitted by path. */
-const noCode = (sourceRoot: string): UntrackPageVerdict => ({ sourceRoot, importsCode: false, live: new Set() });
+const noCode = (sourceRoot: string): UntrackPageVerdict => ({ sourceRoot, slugRoot: 'source-root', importsCode: false, checked: tracked(sourceRoot), live: new Set() });
 
 describe('GST-2964: untrackAdmitted matches a file by its path under the declared folder', () => {
   test('every tracked file under a declared, ignored folder is admitted, whatever its extension', () => {
@@ -178,8 +180,8 @@ describe('GST-2964: a code-extension file under the declared folder, decided by 
   test('the candidates are the code-extension files the untrack names, with the slug sync gives each; Markdown and CSV are not', () => {
     const root = declaredCheckout();
     expect(untrackPageCandidates(root, [DIR.slice(0, -1)], root)).toEqual([
-      { file: json, slug: 'health-dedupe-backups-backup-1-json', sourcePath: json },
-      { file: ts, slug: 'health-dedupe-backups-tool-example-ts', sourcePath: ts },
+      { file: json, slugs: ['health-dedupe-backups-backup-1-json'], sourcePaths: [json] },
+      { file: ts, slugs: ['health-dedupe-backups-tool-example-ts'], sourcePaths: [ts] },
     ]);
     expect(untrackPageCandidates(root, [`${DIR}notes-example.md`, `${DIR}backup-2.csv`], root)).toEqual([]);
     expect(untrackPageCandidates(root, ['missing-example'], root)).toEqual([]);
@@ -187,11 +189,18 @@ describe('GST-2964: a code-extension file under the declared folder, decided by 
 
   test('on a source that imports code, a file with no live page is admitted and one with a live page refuses, saying why', () => {
     const root = declaredCheckout();
-    expect(untrackAdmitted(root, [json], managedAt(root), { sourceRoot: root, importsCode: true, live: new Set() })).toEqual([json]);
-    const refused = refusalOf(() => untrackAdmitted(root, [DIR.slice(0, -1)], managedAt(root), { sourceRoot: root, importsCode: true, live: new Set([json]) }));
+    expect(untrackAdmitted(root, [json], managedAt(root), { sourceRoot: root, slugRoot: 'source-root', importsCode: true, checked: tracked(root), live: new Set() })).toEqual([json]);
+    const refused = refusalOf(() => untrackAdmitted(root, [DIR.slice(0, -1)], managedAt(root), { sourceRoot: root, slugRoot: 'source-root', importsCode: true, checked: tracked(root), live: new Set([json]) }));
     expect(refused.code).toBe('untrack_not_db_only');
     expect(JSON.parse(refused.detail!)).toEqual({ paths: [json] });
     expect(refused.suggestion).toContain('pages on this source and untracking them would delete the pages at the next sync');
+  });
+
+  test('a code-extension file the brain read did not check (named after the read) refuses; the rest are admitted', () => {
+    const root = declaredCheckout();
+    const refused = refusalOf(() => untrackAdmitted(root, [DIR.slice(0, -1)], managedAt(root), { ...noCode(root), checked: new Set([json]) } as UntrackPageVerdict));
+    expect(JSON.parse(refused.detail!)).toEqual({ paths: [ts] });
+    expect(refused.suggestion).toContain('could not be read to check');
   });
 
   test('with no answer from the brain, or an unreadable one, every file refuses (fail closed), Markdown and CSV included', () => {
@@ -231,8 +240,9 @@ describe('GST-2964: untrackPageVerdict opens the brain only to read', () => {
       expect(await untrackPageVerdict(managed, root, rel)).toEqual({ unreadable: 'no brain is configured on this machine' });
     });
     await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
-      expect(await untrackPageVerdict(managed, root, rel)).toEqual({ sourceRoot: root, importsCode: true, live: new Set() });
-      expect(await untrackPageVerdict({ ...managed, sourceId: undefined }, root, rel)).toEqual({ sourceRoot: root, importsCode: true, live: new Set() });
+      const answer: UntrackPageVerdict = { sourceRoot: root, slugRoot: 'git-root', importsCode: true, checked: new Set(), live: new Set() };
+      expect(await untrackPageVerdict(managed, root, rel)).toEqual(answer);
+      expect(await untrackPageVerdict({ ...managed, sourceId: undefined }, root, rel)).toEqual(answer);
       expect(await untrackPageVerdict({ ...managed, sourceId: 'missing-example' }, root, rel)).toEqual({ unreadable: 'source missing-example is not in the brain' });
     });
   }, 120_000);
@@ -432,6 +442,30 @@ for (const backend of testBackends()) describe(`[${backend}] GST-2964: --untrack
       expect(synced.deleted).toBe(0);
       expect(await rows(engine)).toEqual(before);
     }
+  }, { databaseUrl, setup: subfolderSetup, sourceDir: SUB }), 180_000);
+
+  test('a source rooted in a folder of its repository that keeps git-root slugs: a page whose slug carries the folder refuses, naming that slug, and a .json page is found under either spelling; nothing is deleted', () => managedBrain(async ({ engine, root }) => {
+    await engine.executeRaw("UPDATE sources SET config = config || jsonb_build_object('slug_root_mode', 'git-root', 'strategy', 'auto') WHERE id='default'");
+    await syncAll(engine);
+    const before = await rows(engine);
+    expect(before[SUB + PAGE]).toMatchObject({ deleted: false });
+    expect(before['brain-health-dedupe-backups-backup-1-json']).toMatchObject({ deleted: false });
+    const managed = managedFilesystemRootFor(root)!;
+    const head = git(root, 'rev-parse', 'HEAD');
+    const paths = [SUB + PAGE + '.md', ...JSON_FILES.map(file => SUB + file)];
+    const pages = await readUntrackPageVerdict(engine, managed, root, paths);
+    expect(pages).toMatchObject({ slugRoot: 'git-root', importsCode: true });
+    for (const run of [() => previewUntrack(root, paths, { untrackPages: pages }), () => commitAndPush({ repo: root, cwd: root, paths, message: 'm', untrack: true, untrackPages: pages })]) {
+      const refused = refusalOf(run);
+      expect(refused.code).toBe('untrack_not_db_only');
+      expect((JSON.parse(refused.detail!) as { paths: string[] }).paths.sort()).toEqual(paths.slice().sort());
+      expect(refused.message).toContain('slug ' + SUB + PAGE);
+      expect(refused.suggestion).toContain('add ' + SUB + DIR + ' under storage.db_only in ' + SUB + 'gbrain.yml');
+      expect(refused.suggestion).toContain('would delete the pages at the next sync');
+    }
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
+    await syncAll(engine);
+    expect(await rows(engine)).toEqual(before);
   }, { databaseUrl, setup: subfolderSetup, sourceDir: SUB }), 180_000);
 
   if (databaseUrl) test('the CLI, run inside a source rooted in a folder of its repository and at the repository top, lists and removes the same files and names the gbrain.yml it read', async () => {

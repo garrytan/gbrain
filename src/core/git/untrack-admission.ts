@@ -18,9 +18,13 @@ import type { ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
 import { isDeclaredDbOnlySlug, storageConfigFromYaml, unresolvedDbOnlyIn, type StorageConfig } from '../storage-config.ts';
 import { isCodeFilePath, isSyncable, resolveSlugForPath } from '../sync.ts';
 
-/** What the brain says about an untrack: the source's root and which code-extension files are live pages; `unreadable` refuses every file (fail closed). */
-export type UntrackPageVerdict = { sourceRoot: string; importsCode: boolean; live: ReadonlySet<string> } | { unreadable: string };
-export interface UntrackPageCandidate { file: string; slug: string; sourcePath: string }
+/**
+ * What the brain says about an untrack: the source's root, the slug root its sync uses (a source rooted in a folder of its
+ * repository keeps slugs from the repository's top in `git-root` mode), the code-extension files the read checked and those
+ * that are live pages; `unreadable` refuses every file (fail closed), and a code-extension file the read did not check refuses.
+ */
+export type UntrackPageVerdict = { sourceRoot: string; slugRoot: 'git-root' | 'source-root'; importsCode: boolean; checked: ReadonlySet<string>; live: ReadonlySet<string> } | { unreadable: string };
+export interface UntrackPageCandidate { file: string; slugs: string[]; sourcePaths: string[] }
 
 export const UNTRACK_PAGE_READ_TIMEOUT_MS = 10_000;
 
@@ -43,13 +47,16 @@ export async function readUntrackPageVerdict(engine: BrainEngine, managed: Manag
     const source = matched[0]!;
     if (!source.path) return { unreadable: `source ${source.id}'s root ${source.local_path ?? '(none)'} is not a directory on this machine` };
     if (!within(top, source.path)) return { unreadable: `source ${source.id} is rooted at ${source.path}, outside the checkout ${top}` };
+    const scope = sourcePrefix(root, source.path);
+    const { resolveSlugRootMode } = await import('../sync-anchor.ts');
+    const slugRoot = scope ? await resolveSlugRootMode(tx, { sourceId: source.id, explicitGitRoot: false, slugPrefix: resolveSlugForPath(`${scope}x.md`).slice(0, -2), dryRun: true }) : 'git-root';
     const candidates = untrackPageCandidates(root, rel, source.path);
     const pages = candidates.length ? await tx.executeRaw<{ slug: string; source_path: string | null }>(
       'SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND (slug = ANY($2::text[]) OR source_path = ANY($3::text[]))',
-      [source.id, candidates.map(c => c.slug), candidates.map(c => c.sourcePath)]) : [];
+      [source.id, candidates.flatMap(c => c.slugs), candidates.flatMap(c => c.sourcePaths)]) : [];
     const live = new Set<string>();
-    for (const c of candidates) if (pages.some(row => row.slug === c.slug || row.source_path === c.sourcePath)) live.add(c.file);
-    return { sourceRoot: source.path, importsCode: source.strategy === 'code' || source.strategy === 'auto', live };
+    for (const c of candidates) if (pages.some(row => c.slugs.includes(row.slug) || (row.source_path !== null && c.sourcePaths.includes(row.source_path)))) live.add(c.file);
+    return { sourceRoot: source.path, slugRoot, importsCode: source.strategy === 'code' || source.strategy === 'auto', checked: new Set(candidates.map(c => c.file)), live };
   }, { readOnly: true });
 }
 
@@ -86,8 +93,8 @@ export function untrackTargets(root: string, rel: string[]): string[] {
  * is canonical there, so sync keeps the page when its file leaves Git) and ignored by .gitignore (so no later commit adds
  * it back). Without the brain's answer (`pages` absent or unreadable) every file refuses. GST-2964: a file is matched by its path under
  * the declared dir, whatever its extension; a file sync may import as a page (Markdown, code) also needs its slug under a
- * declared dir, since sync keeps a page by slug; a code file is admitted when `pages` (the brain, read by the caller) shows
- * that the source's sync strategy does not import code or that no live page comes from the file. A tracked symlink pointing out of the dir, or a file reached through a
+ * declared dir, since sync keeps a page by slug (spelled from the repository's top on a `git-root` source); a code file is
+ * admitted when the read checked it and shows that the source's sync strategy does not import code or that no live page comes from the file. A tracked symlink pointing out of the dir, or a file reached through a
  * symlinked directory on disk, is refused. Anything else refuses `untrack_not_db_only` before the index is touched:
  * untracking any other page file would delete that page at the next sync.
  */
@@ -134,11 +141,12 @@ export function untrackAdmitted(root: string, rel: string[], managed: ManagedFil
     if (escapes(file, dir)) { refusals.link.push(file); continue; }
     if (!ignored.has(file)) { refusals.unignored.push(file); continue; }
     if (isCodeFilePath(path)) {
-      if (source.importsCode && source.live.has(file)) refusals.page.push(file);
+      if (!source.checked.has(file)) refusals.unchecked.push(file);
+      else if (source.importsCode && source.live.has(file)) refusals.page.push(file);
       continue;
     }
     if (!pageKind(path)) continue;
-    const slug = resolveSlugForPath(path);
+    const slug = resolveSlugForPath(source.slugRoot === 'git-root' ? file : path);
     if (!isDeclaredDbOnlySlug(slug, committed) || !isDeclaredDbOnlySlug(slug, onDisk)) { refusals.slug.push(file); slugs.set(file, slug); }
   }
   const refused = files.filter(file => Object.values(refusals).some(list => list.includes(file)));
@@ -166,8 +174,9 @@ export function untrackAdmitted(root: string, rel: string[], managed: ManagedFil
 }
 
 /**
- * GST-2964: the code-extension files an untrack in a managed canonical worktree names, each with the slug and source
- * path sync gives it under `sourceRoot`; readUntrackPageVerdict looks up the live pages among them only when there are any.
+ * GST-2964: the code-extension files an untrack in a managed canonical worktree names, each with the slugs and source
+ * paths sync may give it under `sourceRoot` (relative to that root, and to the repository's top, which a `git-root` source
+ * uses); readUntrackPageVerdict looks up the live pages among them only when there are any.
  * A path the real run refuses yields none, so that refusal stays the real run's.
  */
 export function untrackPageCandidates(root: string, rel: string[], sourceRoot: string): UntrackPageCandidate[] {
@@ -175,5 +184,5 @@ export function untrackPageCandidates(root: string, rel: string[], sourceRoot: s
   let files: string[];
   try { files = untrackTargets(root, rel); } catch { return []; }
   return files.filter(file => file.startsWith(prefix) && isCodeFilePath(file.slice(prefix.length)))
-    .map(file => ({ file, slug: resolveSlugForPath(file.slice(prefix.length)), sourcePath: file.slice(prefix.length) }));
+    .map(file => ({ file, slugs: [...new Set([resolveSlugForPath(file.slice(prefix.length)), resolveSlugForPath(file)])], sourcePaths: [...new Set([file.slice(prefix.length), file])] }));
 }

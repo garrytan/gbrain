@@ -303,7 +303,9 @@ a sync), then rerun the untrack. A plain commit, and an untrack in a checkout wi
 brain. A file is matched by its path under the declared directory, whatever its extension, with three extra checks:
 
 - A Markdown page file also needs its page slug under a declared directory, because sync keeps a page by its slug
-  (a folder spelled `Spaced Example/` gives slugs under `spaced-example/`; declare that spelling too).
+  (a folder spelled `Spaced Example/` gives slugs under `spaced-example/`; declare that spelling too). A source rooted
+  in a folder whose slugs start at the repository's top (`slug_root_mode: git-root`) keeps that folder in each slug,
+  so the refusal asks you to declare `brain/<dir>/` as well.
 - A code-extension file (`.json`, `.ts`, `.yml` and the rest of sync's code list) is a page with a flattened slug on a
   source whose sync strategy imports code (`code` or `auto`), and a database-only folder does not make that page
   database-only. The same brain read admits one when the source's strategy does not import code or when no live page
