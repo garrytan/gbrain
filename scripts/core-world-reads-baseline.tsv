@@ -449,6 +449,9 @@ src/core/git/commit-ledger.ts	spawn_import	1	W7: process-wide effects move to sr
 src/core/git/commit-push.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/git/commit-push.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/git/commit-push.ts	process_env	6	W6: settings plane out of the core
+src/core/git/push-credential.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-2961 reads and writes the 0600 push-refusal record under the checkout git dir, like commit-push.ts conflict state
+src/core/git/push-credential.ts	process_env	2	W6: settings plane out of the core; GST-2961 reads GIT_ASKPASS only to say an askpass program may have answered, shown by its shape-checked program name, never its value
+src/core/git/push-credential.ts	spawn_import	1	W7: process-wide effects move to src/cli; GST-2961 runs git credential fill under GIT_TRACE once after a refused push to name the helper that answered (stdout password dropped in place)
 src/core/git/git-run.ts	spawn_import	1	W7: process-wide effects move to src/cli; GST-2767 moved commit-push's git runner here unchanged
 src/core/git/range-secret-scan.ts	fs_import	1	W7: filesystem boundary moves to the local app (the publish scan streams git output through a private temp file)
 src/core/git/range-secret-scan.ts	spawn_import	1	W7: process-wide effects move to src/cli (the publish scan runs git plumbing)
