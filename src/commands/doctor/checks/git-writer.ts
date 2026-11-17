@@ -31,6 +31,7 @@ import { configuredSourceRoots, localCommitsOutsideRoots, pendingWriteThroughSti
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { doctorVerify } from '../check-fix.ts';
 import { sourceRoots } from './git-convergence.ts';
+import { relativeEscapesRoot } from '../../../core/path-confine.ts';
 
 export const CHECKOUT_LAG_WARN_MS = 60 * 60_000;
 export const DIRTY_AGE_WARN_MS = 30 * 60_000;
@@ -57,7 +58,7 @@ async function checkouts(ctx: DoctorContext): Promise<Checkout[]> {
     const rel = relative(canonical(top), canonical(root)).split(sep).join('/');
     const entry = byTop.get(top) ?? { top, source_ids: [], roots: [] };
     entry.source_ids.push(...ids);
-    entry.roots.push(rel.startsWith('..') ? '' : rel);
+    entry.roots.push(relativeEscapesRoot(rel) ? '' : rel);
     byTop.set(top, entry);
   }
   return [...byTop.values()];
