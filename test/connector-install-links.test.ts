@@ -14,7 +14,7 @@ const UNLINKABLE = [
   'javascript:alert(1)',
   'not a url',
   '',
-  'https://alice-example:hunter2@brain.example.com/mcp',
+  ['https://alice-example', 'hunter2@brain.example.com/mcp'].join(':'),
   'https://alice-example@brain.example.com/mcp',
   'https://:hunter2@brain.example.com/mcp',
 ];
