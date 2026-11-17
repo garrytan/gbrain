@@ -399,15 +399,16 @@ their own deployment boundary. The connected agent's own model also receives
 whatever memory its harness includes in context, even on a keyless GBrain setup.
 
 Access designations decide who reads a page, not which configured providers
-process it. A page with `readable_by`, a folder rule or `visibility: private`,
-a private fact, and a take on a restricted page are embedded like every other
-page: the configured embedding provider receives their text and titles, and at
-the synopsis tier of contextual retrieval the chat model receives them too.
-GBrain cannot tell a local endpoint from a remote one, because a recipe's base
-URL can point anywhere. To keep restricted text off outside services, run a
-self-hosted embedding provider (and synopsis model) on hardware you control.
-No setting holds restricted pages back from the embedding provider or the
-synopsis model.
+process it, and they do not exclude a page from processing that is turned on.
+A page with `readable_by`, a folder rule or `visibility: private` is embedded
+like every other page, so the configured embedding provider receives its text.
+Private facts and takes are embedded on their own, so the provider receives
+their text too. When contextual retrieval runs at the synopsis tier, the chat
+model also receives the page's title and text (with private fact rows and takes
+removed). GBrain cannot tell a local endpoint from a remote one, because a
+recipe's base URL can point anywhere. To keep restricted text off outside
+services, run a self-hosted embedding provider (and synopsis model) on hardware
+you control.
 
 Reporting back through Wakeshift (off by default, owner opt-in) sends a watched
 job's, write request's or cron's id, status and times (and a removed member's
